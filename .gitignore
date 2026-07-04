@@ -12,3 +12,18 @@ out
 .env.development.local
 .env.test.local
 .env.production.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.pytest_cache/
+.venv/
+
+# Build artifacts
+build/
+
+# IDE
+.vscode/
+.idea/
