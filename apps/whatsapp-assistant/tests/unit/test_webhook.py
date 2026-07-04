@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from tests.conftest import sign_payload
 from tests.fixtures.meta_payloads import text_webhook_payload
 

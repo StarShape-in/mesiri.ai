@@ -9,7 +9,7 @@ Ownership: SHARED ARCHITECTURE.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Protocol, runtime_checkable
 
 
@@ -24,7 +24,7 @@ class SystemClock:
     """Real wall-clock time (UTC)."""
 
     def now(self) -> datetime:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
 
 
 class FixedClock:
@@ -32,7 +32,7 @@ class FixedClock:
 
     def __init__(self, moment: datetime) -> None:
         if moment.tzinfo is None:
-            moment = moment.replace(tzinfo=timezone.utc)
+            moment = moment.replace(tzinfo=UTC)
         self._moment = moment
 
     def now(self) -> datetime:

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-import pytest
-
 from ingress.media_ingestion import DownloadedMedia
 from ingress.normalization import MessageNormalizer
 from mesiri_contracts.assistant import MessageType

@@ -11,7 +11,6 @@ Expected Error Result    POSTGRES_UNAVAILABLE / OPERATION_TIMEOUT etc.
 Forbidden Side Effects   raw exception types never cross the boundary
 """
 
-import asyncio
 
 import pytest
 
@@ -38,7 +37,7 @@ def test_connection_errors_map_to_dependency_unavailable() -> None:
 
 @pytest.mark.scenario
 def test_timeouts_map_to_timeout_category() -> None:
-    err = map_postgres_error(asyncio.TimeoutError())
+    err = map_postgres_error(TimeoutError())
     assert err.category == ErrorCategory.TIMEOUT
     assert err.error_code == "OPERATION_TIMEOUT"
     assert err.retryable is True

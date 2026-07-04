@@ -11,21 +11,40 @@ them, defines the expected interface, and proceeds against fakes/fixtures.
 
 ---
 
-## GAP-001 — `NormalizedMessage.v1` not authored in code
+## GAP-001 — `NormalizedMessage.v1` authored, but SHAPE DIVERGES from M3 expectations ⚠️ RESOLVED→REOPENED
 
-- **Missing capability:** `mesiri_contracts.assistant.normalized_message` is an
-  empty stub. M0 defined the shape in docs only (`02_ownership_and_boundaries.md`
-  §28); there is no importable schema.
-- **Why M3 needs it:** M3 must validate inbound messages and its fixtures against
-  the authoritative contract.
-- **M3 interim solution:** `understanding.inbound.NormalizedMessageRef`, a lenient
-  consumer-side reading model, plus fixtures in `scenarios/contracts/m2_to_m3/`.
-- **Backward-compatible resolution:** Alan authors `NormalizedMessage.v1`. M3
-  replaces the reading model with a direct import; the reading model is lenient,
-  so additive M2 fields will not break M3.
-- **Blocks M3 integration?** No (foundation). **Blocks INT-001 gate?** Yes — the
-  contract must be frozen before the real integration run.
-- **Owner:** Alan (author), Ilan (switch consumer import).
+- **Update (post-merge of M2 `c576134`):** Alan has authored
+  `mesiri_contracts.assistant.NormalizedMessage`. GAP-001 (missing schema) is
+  closed, but the concrete shape does **not** match what M3 assumed. My tests
+  still pass because M3 consumes the lenient `NormalizedMessageRef`, not Alan's
+  model directly — so this is a **contract-reconciliation** item for INT-001, not
+  a code break. Field-by-field deltas (M2 field → M3 expectation):
+
+  | M2 `NormalizedMessage` | M3 `NormalizedMessageRef` | Issue |
+  |---|---|---|
+  | *(none)* | `correlation_id` (**required**) | **No `correlation_id` on M2 output** — breaks end-to-end traceability + `UnderstandingResult.correlation_id`. Possibly intended in `metadata`? Must be a first-class field. |
+  | `content` | `text` | field rename |
+  | `message_type` (enum TEXT/IMAGE/VOICE) | `modality` (`InputModality`) | two enums; M2 has no `document`/`interactive`/`unknown` |
+  | `media.file_path` + `media_id` | `media.object_key` | **Media handoff mismatch** — M2 exposes a local file path; M3/Object-Storage Boundary expects an object-storage key resolved via `ObjectStoragePort`. See GAP-002. |
+  | `reply_to` (str) | `reply_context` (obj) | shape difference |
+  | `sender`, `channel`, `metadata`, `timestamp: datetime` | (ignored / partial) | additive — fine (reading model is lenient) |
+
+- **Backward-compatible resolution (needs Contract Change Request, both owners):**
+  add `correlation_id` to `NormalizedMessage`; agree media as an object-storage
+  key (GAP-002); align enum/field names OR keep an explicit, reviewed mapping in
+  M3's reading model (not silent glue).
+- **Blocks M3 foundation?** No. **Blocks INT-001 gate?** **Yes.**
+- **Owner:** shared (Alan = producer contract, Ilan = consumer).
+
+## GAP-001b — Workspace Python baseline + test layout (resolved during merge)
+
+- **Found on merge:** M2 requires Python **3.11** (`datetime.UTC`); my workspace
+  was pinned to 3.10. M2 tests also import `from tests.conftest ...` (authored to
+  run from the app dir).
+- **Resolution applied:** root `requires-python`/ruff/mypy bumped to 3.11; venv
+  recreated on 3.11; `apps/whatsapp-assistant` added to the root pytest
+  `pythonpath` so the whole monorepo suite runs in one pass. **77 tests pass.**
+- No M2 files were edited.
 
 ---
 

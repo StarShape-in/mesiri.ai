@@ -11,8 +11,6 @@ malformed structured output, low-confidence extraction.
 
 from __future__ import annotations
 
-import asyncio
-
 from mesiri_contracts.common.errors import MesiriError
 
 from .core.errors import malformed_output, map_provider_error, provider_unavailable
@@ -107,7 +105,7 @@ LOW_CONFIDENCE_EXTRACTION = ExtractionResult(
 def timeout_error() -> MesiriError:
     # Providers raise the already-mapped MesiriError at the port boundary
     # (the adapter maps the raw SDK timeout via the resilience helper).
-    return map_provider_error("fake", asyncio.TimeoutError())
+    return map_provider_error("fake", TimeoutError())
 
 
 def unavailable_error() -> MesiriError:
