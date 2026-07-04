@@ -1,0 +1,106 @@
+# Mesiri.ai — Python runtime workspace (M1 infrastructure + M3 understanding).
+#
+# The milestone runtime is split across four import roots that are added to the
+# Python path via pytest / PYTHONPATH rather than installed as distributions.
+# This keeps the multi-package layout without packaging ceremony while the
+# architecture is still stabilising.
+#
+#   shared/contracts/src        -> mesiri_contracts   (M0 shared contracts)
+#   platform/ai/src             -> mesiri_ai          (AI Gateway: ports + adapters)
+#   backend/src                 -> mesiri             (domain / infrastructure)
+#   apps/whatsapp-assistant/src -> assistant modules  (ingress[Alan] / understanding[Ilan])
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mesiri-runtime"
+version = "0.1.0"
+description = "Mesiri.ai assistant runtime (M1 infrastructure + M3 understanding foundation)"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+]
+
+# Imports resolve via [tool.pytest.ini_options].pythonpath / PYTHONPATH, not via
+# an installed distribution. The root project exists only to pin dependencies,
+# so it deliberately ships no packages.
+[tool.setuptools]
+packages = []
+
+[project.optional-dependencies]
+# Heavy infrastructure SDKs. Imported lazily inside adapters so the core test
+# suite runs without them. Installed for the live docker golden scenario / CI
+# integration lane.
+infra = [
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.29",
+    "psycopg[binary]>=3.1",   # sync driver used by alembic migrations
+    "redis>=5.0",
+    "boto3>=1.34",
+    "alembic>=1.13",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "httpx>=0.27",
+]
+# AI provider SDKs. Imported lazily inside provider adapters.
+providers = [
+    "google-genai>=0.3",
+    "sarvamai>=0.1",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+    "mypy>=1.9",
+    "fastapi>=0.110",
+    "httpx>=0.27",
+]
+
+[tool.pytest.ini_options]
+# Import roots for the multi-package layout (no editable installs required).
+pythonpath = [
+    "shared/contracts/src",
+    "platform/ai/src",
+    "backend/src",
+    "apps/whatsapp-assistant/src",
+]
+testpaths = [
+    "shared/contracts/tests",
+    "platform/ai/tests",
+    "backend/tests",
+    "apps/whatsapp-assistant/tests",
+    "scenarios",
+]
+asyncio_mode = "auto"
+# Integration (docker) and provider (paid API) tests are opt-in. Run them with
+# `pytest -m integration` / `-m provider`, which overrides this default marker.
+addopts = "-ra -m 'not integration and not provider'"
+markers = [
+    "integration: requires live Postgres/Redis/object-storage (docker). Skipped by default.",
+    "provider: requires real AI provider credentials. Skipped by default.",
+    "scenario: milestone gate scenario.",
+    "golden: milestone golden-path proof.",
+]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = [
+    "shared/contracts/src",
+    "platform/ai/src",
+    "backend/src",
+    "apps/whatsapp-assistant/src",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_ignores = true
+ignore_missing_imports = true
+mypy_path = "shared/contracts/src:platform/ai/src:backend/src:apps/whatsapp-assistant/src"

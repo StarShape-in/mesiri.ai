@@ -1,0 +1,9 @@
+{
+  "message_id": "msg_text_1",
+  "external_message_id": "wamid.TEXT1",
+  "correlation_id": "cor_text_1",
+  "causation_id": "cau_text_1",
+  "timestamp": "2026-07-04T10:00:00Z",
+  "modality": "text",
+  "text": "20 bags cement received, slab work finished"
+}

@@ -1,0 +1,13 @@
+{
+  "message_id": "msg_reply_1",
+  "external_message_id": "wamid.REPLY1",
+  "correlation_id": "cor_reply_1",
+  "causation_id": "cau_reply_1",
+  "timestamp": "2026-07-04T10:04:00Z",
+  "modality": "text",
+  "text": "Actually it was 25 bags",
+  "reply_context": {
+    "replied_to_message_id": "msg_text_1",
+    "replied_to_text": "20 bags cement received, slab work finished"
+  }
+}

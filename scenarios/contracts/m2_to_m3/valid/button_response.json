@@ -1,0 +1,12 @@
+{
+  "message_id": "msg_button_1",
+  "external_message_id": "wamid.BTN1",
+  "correlation_id": "cor_button_1",
+  "causation_id": "cau_button_1",
+  "timestamp": "2026-07-04T10:03:00Z",
+  "modality": "interactive",
+  "interactive_response": {
+    "reply_id": "confirm_yes",
+    "title": "Yes"
+  }
+}

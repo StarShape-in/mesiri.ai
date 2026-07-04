@@ -1,0 +1,6 @@
+{
+  "message_id": "msg_bad_2",
+  "correlation_id": "cor_bad_2",
+  "modality": "hologram",
+  "text": "unsupported modality value"
+}

@@ -1,0 +1,66 @@
+name: CI (Python runtime)
+
+on:
+  push:
+    branches: [main, develop, "integration/**"]
+  pull_request:
+    branches: [main, develop, "integration/**"]
+
+jobs:
+  # Fast lane: lint + the full fake-backed suite. No docker, no credentials.
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: Set up Python
+        run: uv venv --python 3.10
+      - name: Install (runtime + dev + providers, no infra SDKs needed)
+        run: uv pip install -e ".[dev,providers]"
+      - name: Lint
+        run: uv run ruff check .
+      - name: Test (fakes only — no external services)
+        run: uv run pytest
+
+  # Integration lane: real Postgres + Redis via service containers. Still no
+  # paid AI providers and no WhatsApp webhook.
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: mesiri
+          POSTGRES_PASSWORD: mesiri_ci
+          POSTGRES_DB: mesiri
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U mesiri" --health-interval 5s
+          --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 3s --health-retries 10
+    env:
+      MESIRI_ENVIRONMENT: test
+      MESIRI_POSTGRES__HOST: localhost
+      MESIRI_POSTGRES__PASSWORD: mesiri_ci
+      MESIRI_REDIS__HOST: localhost
+      MESIRI_OBJECT_STORAGE__PROVIDER: fake
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv venv --python 3.10
+      - name: Install (with infra SDKs)
+        run: uv pip install -e ".[dev,infra,providers]"
+      - name: Apply migrations
+        run: uv run alembic -c backend/alembic.ini upgrade head
+      - name: Integration tests
+        run: uv run pytest -m integration
+      - name: M1 golden scenario (live Postgres + Redis)
+        env:
+          PYTHONPATH: shared/contracts/src:platform/ai/src:backend/src:apps/whatsapp-assistant/src
+          MESIRI_GOLDEN_USE_FAKES: "false"
+        run: uv run python -m mesiri.scripts.run_m1_golden_scenario

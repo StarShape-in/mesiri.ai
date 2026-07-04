@@ -1,0 +1,6 @@
+{
+  "external_message_id": "wamid.BAD1",
+  "correlation_id": "cor_bad_1",
+  "modality": "text",
+  "text": "no message id present"
+}

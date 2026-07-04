@@ -1,0 +1,13 @@
+{
+  "message_id": "msg_image_1",
+  "external_message_id": "wamid.IMAGE1",
+  "correlation_id": "cor_image_1",
+  "causation_id": "cau_image_1",
+  "timestamp": "2026-07-04T10:02:00Z",
+  "modality": "image",
+  "media": {
+    "object_key": "media/image/msg_image_1.jpg",
+    "mime_type": "image/jpeg",
+    "size_bytes": 102400
+  }
+}

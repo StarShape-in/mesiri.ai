@@ -1,0 +1,154 @@
+"""Understanding pipeline foundation tests (M3).
+
+Run entirely against fakes + the in-memory object store — no M2, no docker, no
+paid APIs. Proves modality routing, extraction mapping, confidence, correlation
+propagation, graceful provider-failure handling, and that missing fields stay
+unknown (never fabricated).
+"""
+
+from __future__ import annotations
+
+from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
+from mesiri_ai import fixtures
+from mesiri_ai.fakes import FakeExtractionProvider, FakeSpeechProvider, FakeVisionProvider
+from mesiri_contracts.assistant.confidence import ConfidenceLevel
+from mesiri_contracts.assistant.enums import InputModality, SemanticType
+from understanding.inbound import MediaReference, NormalizedMessageRef
+from understanding.pipeline import UnderstandingPipeline
+
+
+def _msg(**kwargs) -> NormalizedMessageRef:
+    base = dict(message_id="msg_1", correlation_id="cor_pipeline", modality=InputModality.TEXT)
+    base.update(kwargs)
+    return NormalizedMessageRef(**base)
+
+
+async def _build(*, speech=None, vision=None, extraction=None, storage=None) -> UnderstandingPipeline:
+    return UnderstandingPipeline(
+        speech=speech or FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
+        vision=vision or FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
+        extraction=extraction or FakeExtractionProvider(fixtures.JCB_EQUIPMENT_EXTRACTION),
+        object_storage=storage or FakeObjectStorage(),
+    )
+
+
+# --- INT-001 primary proof (foundation, fake providers) ---------------------
+
+async def test_malayalam_jcb_voice_yields_equipment_facts():
+    storage = FakeObjectStorage()
+    await storage.put_object("voice/1.ogg", b"<audio>")
+    pipeline = await _build(
+        speech=FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
+        extraction=FakeExtractionProvider(fixtures.JCB_EQUIPMENT_EXTRACTION),
+        storage=storage,
+    )
+    msg = _msg(modality=InputModality.VOICE, media=MediaReference(object_key="voice/1.ogg", mime_type="audio/ogg"))
+
+    result = await pipeline.understand(msg)
+
+    assert result.semantic_type == SemanticType.EQUIPMENT_USAGE
+    facts = result.candidates[0].fields
+    assert facts["equipment_name"] == "JCB"
+    assert facts["duration_hours"] == 4
+    assert result.translated_text == "The JCB ran for 4 hours"
+    assert result.overall_confidence == ConfidenceLevel.HIGH
+    # correlation preserved onto the result
+    assert result.correlation_id == "cor_pipeline"
+    # telemetry: both speech and extraction executions recorded
+    ops = {e.operation for e in result.provider_executions}
+    assert {"speech_to_text_translate", "extract"} <= ops
+
+
+# --- INT-001 secondary proof (receipt image) --------------------------------
+
+async def test_receipt_image_yields_expense():
+    storage = FakeObjectStorage()
+    await storage.put_object("img/1.jpg", b"<image>")
+    pipeline = await _build(
+        vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
+        extraction=FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION),
+        storage=storage,
+    )
+    msg = _msg(modality=InputModality.IMAGE, media=MediaReference(object_key="img/1.jpg", mime_type="image/jpeg"))
+
+    result = await pipeline.understand(msg)
+    assert result.semantic_type == SemanticType.EXPENSE
+    assert result.candidates[0].fields["amount"] == 1500
+    assert result.document_classification == "receipt"
+
+
+# --- degraded / failure paths -----------------------------------------------
+
+async def test_partial_receipt_keeps_missing_fields_and_lowers_confidence():
+    storage = FakeObjectStorage()
+    await storage.put_object("img/2.jpg", b"<image>")
+    pipeline = await _build(
+        vision=FakeVisionProvider(fixtures.PARTIAL_RECEIPT_VISION),
+        extraction=FakeExtractionProvider(fixtures.PARTIAL_RECEIPT_EXTRACTION),
+        storage=storage,
+    )
+    msg = _msg(modality=InputModality.IMAGE, media=MediaReference(object_key="img/2.jpg"))
+    result = await pipeline.understand(msg)
+    assert "vendor" in result.missing_fields              # not fabricated
+    assert "vendor" not in result.candidates[0].fields
+    assert result.overall_confidence in (ConfidenceLevel.MEDIUM, ConfidenceLevel.LOW)
+
+
+async def test_unreadable_image_is_unusable():
+    storage = FakeObjectStorage()
+    await storage.put_object("img/3.jpg", b"<image>")
+    pipeline = await _build(vision=FakeVisionProvider(fixtures.UNREADABLE_IMAGE_VISION), storage=storage)
+    msg = _msg(modality=InputModality.IMAGE, media=MediaReference(object_key="img/3.jpg"))
+    result = await pipeline.understand(msg)
+    assert result.overall_confidence == ConfidenceLevel.UNUSABLE
+
+
+async def test_empty_transcript_is_unusable():
+    storage = FakeObjectStorage()
+    await storage.put_object("voice/2.ogg", b"<audio>")
+    pipeline = await _build(speech=FakeSpeechProvider(fixtures.EMPTY_TRANSCRIPT_SPEECH), storage=storage)
+    msg = _msg(modality=InputModality.VOICE, media=MediaReference(object_key="voice/2.ogg"))
+    result = await pipeline.understand(msg)
+    assert result.overall_confidence == ConfidenceLevel.UNUSABLE
+    assert "empty transcript" in result.warnings
+
+
+async def test_provider_timeout_is_handled_and_observable():
+    storage = FakeObjectStorage()
+    await storage.put_object("voice/3.ogg", b"<audio>")
+    pipeline = await _build(
+        speech=FakeSpeechProvider(error=fixtures.timeout_error()), storage=storage
+    )
+    msg = _msg(modality=InputModality.VOICE, media=MediaReference(object_key="voice/3.ogg"))
+    result = await pipeline.understand(msg)
+    assert result.overall_confidence == ConfidenceLevel.UNUSABLE
+    failed = [e for e in result.provider_executions if not e.succeeded]
+    assert failed and failed[0].error_code == "PROVIDER_TIMEOUT"
+
+
+async def test_provider_unavailable_is_handled():
+    pipeline = await _build(extraction=FakeExtractionProvider(error=fixtures.unavailable_error()))
+    result = await pipeline.understand(_msg(text="20 bags cement received"))
+    assert result.overall_confidence == ConfidenceLevel.UNUSABLE
+    assert any(e.error_code == "PROVIDER_UNAVAILABLE" for e in result.provider_executions)
+
+
+async def test_text_message_extraction():
+    pipeline = await _build(extraction=FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION))
+    result = await pipeline.understand(_msg(text="paid 1500 to ABC Hardware"))
+    assert result.semantic_type == SemanticType.EXPENSE
+    assert result.normalized_text == "paid 1500 to ABC Hardware"
+
+
+async def test_empty_text_is_unusable():
+    pipeline = await _build()
+    result = await pipeline.understand(_msg(text="   "))
+    assert result.overall_confidence == ConfidenceLevel.UNUSABLE
+
+
+async def test_understanding_result_is_schema_valid_and_serializable():
+    pipeline = await _build(extraction=FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION))
+    result = await pipeline.understand(_msg(text="paid 1500"))
+    dumped = result.model_dump()
+    assert dumped["version"] == "v1"
+    assert dumped["correlation_id"] == "cor_pipeline"

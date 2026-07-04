@@ -1,0 +1,47 @@
+# Mesiri.ai — local development stack (M1 "Infrastructure Alive").
+#
+# Brings up the required local dependencies for the runtime:
+#   - PostgreSQL (business + infrastructure persistence)
+#   - Redis      (idempotency, checkpointing, coordination — capability only in M1)
+#
+# Object storage (Cloudflare R2) is NOT meaningfully emulated locally; the
+# runtime uses the in-process fake object-storage adapter behind the same M0
+# ObjectStorage interface (MESIRI_OBJECT_STORAGE__PROVIDER=fake). Business logic
+# never couples to R2 directly — see docs/architecture Object Storage Boundary.
+#
+# Start everything:  make dev   (or)  docker compose up -d
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mesiri-postgres
+    environment:
+      POSTGRES_USER: ${MESIRI_POSTGRES__USER:-mesiri}
+      POSTGRES_PASSWORD: ${MESIRI_POSTGRES__PASSWORD:-mesiri_local_dev}
+      POSTGRES_DB: ${MESIRI_POSTGRES__DATABASE:-mesiri}
+    ports:
+      - "${MESIRI_POSTGRES__PORT:-5432}:5432"
+    volumes:
+      - mesiri_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${MESIRI_POSTGRES__USER:-mesiri} -d ${MESIRI_POSTGRES__DATABASE:-mesiri}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: mesiri-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${MESIRI_REDIS__PORT:-6379}:6379"
+    volumes:
+      - mesiri_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  mesiri_pg_data:
+  mesiri_redis_data:

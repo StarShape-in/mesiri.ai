@@ -1,0 +1,127 @@
+"""Redis connection management (M1).
+
+Owns the client lifecycle, namespaced key conventions, JSON serialization with
+optional expiry, and a health probe. The ``redis`` SDK is imported lazily.
+
+M1 provides *capability only*. Conversation memory (M5), LangGraph checkpointing,
+and event consumers (M13) are explicitly out of scope here — this adapter just
+proves Redis is reachable and usable behind the boundary.
+
+Direct ``redis`` SDK access is permitted only inside this package.
+"""
+
+from __future__ import annotations
+
+import json
+from typing import TYPE_CHECKING, Any
+
+from ...bootstrap.settings import RedisSettings
+from ..errors import map_redis_error
+
+if TYPE_CHECKING:  # pragma: no cover
+    from redis.asyncio import Redis
+
+
+class RedisClient:
+    name = "redis"
+    required = True
+
+    def __init__(self, settings: RedisSettings) -> None:
+        self._settings = settings
+        self._client: Redis | None = None
+
+    def namespaced(self, *parts: str) -> str:
+        """Build a namespaced key: ``<namespace>:<part>:<part>``."""
+        return ":".join((self._settings.namespace, *parts))
+
+    async def connect(self) -> None:
+        if self._client is not None:
+            return
+        from redis.asyncio import Redis
+
+        s = self._settings
+        try:
+            self._client = Redis(
+                host=s.host,
+                port=s.port,
+                db=s.db,
+                password=s.password.get_secret_value() if s.password else None,
+                socket_connect_timeout=s.connect_timeout_seconds,
+                decode_responses=True,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise map_redis_error(exc) from exc
+
+    async def disconnect(self) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+
+    @property
+    def _require_client(self) -> Redis:
+        if self._client is None:
+            raise map_redis_error(RuntimeError("redis client not connected"))
+        return self._client
+
+    async def set_json(self, key: str, value: Any, *, ttl_seconds: int | None = None) -> None:
+        client = self._require_client
+        try:
+            await client.set(self.namespaced(key), json.dumps(value), ex=ttl_seconds)
+        except (TypeError, ValueError) as exc:
+            from mesiri_contracts.common.errors import ErrorCategory, ErrorCode, MesiriError
+
+            raise MesiriError(
+                error_code=ErrorCode.SERIALIZATION_ERROR.value,
+                category=ErrorCategory.SERIALIZATION,
+                internal_message=f"redis json serialization failed: {exc}",
+            ) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise map_redis_error(exc) from exc
+
+    async def get_json(self, key: str) -> Any | None:
+        client = self._require_client
+        try:
+            raw = await client.get(self.namespaced(key))
+        except Exception as exc:  # noqa: BLE001
+            raise map_redis_error(exc) from exc
+        return json.loads(raw) if raw is not None else None
+
+    async def check_health(self) -> None:
+        client = self._require_client
+        try:
+            await client.ping()
+        except Exception as exc:  # noqa: BLE001
+            raise map_redis_error(exc) from exc
+
+
+class FakeRedis:
+    """In-memory Redis stand-in for scenarios/tests (no TTL expiry emulation)."""
+
+    name = "redis"
+    required = True
+
+    def __init__(self, *, namespace: str = "mesiri", fail_health: bool = False) -> None:
+        self._namespace = namespace
+        self.fail_health = fail_health
+        self._connected = False
+        self._store: dict[str, str] = {}
+
+    def namespaced(self, *parts: str) -> str:
+        return ":".join((self._namespace, *parts))
+
+    async def connect(self) -> None:
+        self._connected = True
+
+    async def disconnect(self) -> None:
+        self._connected = False
+
+    async def set_json(self, key: str, value: Any, *, ttl_seconds: int | None = None) -> None:
+        self._store[self.namespaced(key)] = json.dumps(value)
+
+    async def get_json(self, key: str) -> Any | None:
+        raw = self._store.get(self.namespaced(key))
+        return json.loads(raw) if raw is not None else None
+
+    async def check_health(self) -> None:
+        if self.fail_health or not self._connected:
+            raise map_redis_error(ConnectionError("fake redis unavailable"))
