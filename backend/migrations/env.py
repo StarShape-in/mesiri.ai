@@ -8,7 +8,22 @@ deliberately not created here.
 
 from __future__ import annotations
 
+import pathlib
+import sys
 from logging.config import fileConfig
+
+# Put all workspace import roots on sys.path so alembic resolves mesiri +
+# mesiri_contracts regardless of how/where it is invoked (the .ini only knows
+# backend/src). Repo root is two levels up: migrations/ -> backend/ -> root.
+_ROOT = pathlib.Path(__file__).resolve().parents[2]
+for _p in (
+    _ROOT / "shared" / "contracts" / "src",
+    _ROOT / "platform" / "ai" / "src",
+    _ROOT / "backend" / "src",
+    _ROOT / "apps" / "whatsapp-assistant" / "src",
+):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool

@@ -79,9 +79,13 @@ testpaths = [
     "scenarios",
 ]
 asyncio_mode = "auto"
+# importlib import mode + namespace packages: the monorepo has several same-named
+# test dirs (e.g. two `tests/unit`) without __init__.py; importlib mode imports
+# each by unique path without sys.path games, avoiding collisions.
+consider_namespace_packages = true
 # Integration (docker) and provider (paid API) tests are opt-in. Run them with
 # `pytest -m integration` / `-m provider`, which overrides this default marker.
-addopts = "-ra -m 'not integration and not provider'"
+addopts = "-ra -m 'not integration and not provider' --import-mode=importlib"
 markers = [
     "integration: requires live Postgres/Redis/object-storage (docker). Skipped by default.",
     "provider: requires real AI provider credentials. Skipped by default.",

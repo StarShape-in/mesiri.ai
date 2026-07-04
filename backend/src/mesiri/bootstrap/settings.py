@@ -16,7 +16,7 @@ from __future__ import annotations
 from enum import Enum
 from functools import lru_cache
 
-from pydantic import Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from mesiri_contracts.common.errors import ErrorCode, MesiriError
@@ -38,8 +38,12 @@ class LogFormat(str, Enum):
     CONSOLE = "console"
 
 
-class _Section(BaseSettings):
-    model_config = SettingsConfigDict(extra="ignore")
+class _Section(BaseModel):
+    # Plain BaseModel — NOT BaseSettings. Nested settings are populated by the
+    # root Settings via env_nested_delimiter (MESIRI_POSTGRES__USER). If these
+    # were BaseSettings they would each independently read *unprefixed* env vars
+    # (e.g. $USER on Linux -> postgres.user), which is a cross-platform trap.
+    model_config = ConfigDict(extra="ignore")
 
 
 class LogSettings(_Section):
