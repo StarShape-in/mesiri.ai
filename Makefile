@@ -30,7 +30,10 @@ test: ## Run the full test suite against fakes (no docker, no external APIs)
 	uv run pytest
 
 test-integration: ## Run integration tests against the live docker stack
-	uv run pytest -m integration
+	# Target the integration path directly: a whole-tree collection would import
+	# the repo's top-level `platform/` dir as a namespace package, shadowing the
+	# stdlib `platform` module that SQLAlchemy imports.
+	uv run pytest backend/tests/integration -m integration
 
 lint: ## Lint the Python runtime
 	uv run ruff check .

@@ -58,7 +58,10 @@ jobs:
       - name: Apply migrations
         run: uv run alembic -c backend/alembic.ini upgrade head
       - name: Integration tests
-        run: uv run pytest -m integration
+        # Target the path directly — a whole-tree collection imports the repo's
+        # top-level `platform/` dir as a namespace package, shadowing stdlib
+        # `platform` (which SQLAlchemy imports).
+        run: uv run pytest backend/tests/integration -m integration
       - name: M1 golden scenario (live Postgres + Redis)
         env:
           PYTHONPATH: shared/contracts/src:platform/ai/src:backend/src:apps/whatsapp-assistant/src
