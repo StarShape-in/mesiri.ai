@@ -57,10 +57,22 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         download_dir=Path(settings.media_download_dir),
         graph_base_url=settings.graph_base_url,
     )
+
+    # M2 -> M3 handoff: run the understanding pipeline on each normalized message.
+    from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
+    from understanding.adapter import build_pipeline, understand
+
+    object_storage = FakeObjectStorage()
+    pipeline = build_pipeline(object_storage)
+
+    async def _on_normalized(message):  # type: ignore[no-untyped-def]
+        await understand(message, pipeline, object_storage)
+
     receiver = WhatsAppReceiver(
         deduplication_store=deduplication_store,
         media_downloader=media_downloader,
         message_store=message_store,
+        on_normalized=_on_normalized,
     )
     return AppContainer(
         settings=settings,

@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
-from collections.abc import Iterator
 from typing import Any, Mapping
 
 from mesiri_contracts.assistant import NormalizedMessage
@@ -63,11 +63,14 @@ class WhatsAppReceiver:
         media_downloader: MediaDownloader,
         message_store: NormalizedMessageStore,
         normalizer: MessageNormalizer | None = None,
+        on_normalized: Callable[[NormalizedMessage], Awaitable[None]] | None = None,
     ) -> None:
         self._deduplication_store = deduplication_store
         self._media_downloader = media_downloader
         self._message_store = message_store
         self._normalizer = normalizer or MessageNormalizer()
+        # Optional M3 handoff: invoked after a message is normalized+stored.
+        self._on_normalized = on_normalized
         self._background_tasks: set[asyncio.Task[None]] = set()
 
     async def handle_payload(self, payload: Mapping[str, Any]) -> int:
@@ -104,6 +107,8 @@ class WhatsAppReceiver:
                 downloaded_media=downloaded_media,
             )
             await self._message_store.save(normalized)
+            if self._on_normalized is not None:
+                await self._on_normalized(normalized)
         except Exception:
             logger.exception("Failed to process WhatsApp message %s", message_id)
 
