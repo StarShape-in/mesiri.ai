@@ -16,6 +16,7 @@ out
 # Python
 __pycache__/
 *.py[cod]
+*.pyo
 .venv/
 venv/
 .pytest_cache/
@@ -25,3 +26,10 @@ venv/
 .coverage
 htmlcov/
 uv.lock
+
+# Build artifacts
+build/
+
+# IDE
+.vscode/
+.idea/
