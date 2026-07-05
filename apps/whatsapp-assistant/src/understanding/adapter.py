@@ -75,38 +75,48 @@ async def to_reading_model(
 
 
 def build_pipeline(object_storage: ObjectStoragePort) -> UnderstandingPipeline:
-    """Construct the understanding pipeline.
+    """Construct the understanding pipeline from configured providers.
 
-    Uses the real Sarvam/Gemini adapters when API keys are configured, otherwise
-    deterministic fakes so the webhook works end-to-end without paid providers.
+    Sarvam -> voice; DeepSeek -> text/transcript extraction; Gemini -> vision
+    (images). Any provider without a configured key falls back to a deterministic
+    fake so the webhook still works end to end.
     """
-    speech: object
-    vision: object
-    extraction: object
+    from mesiri.bootstrap.settings import get_settings
 
-    sarvam_key = os.environ.get("MESIRI_SARVAM__API_KEY")
-    gemini_key = os.environ.get("MESIRI_GEMINI__API_KEY")
+    settings = get_settings()
 
-    if sarvam_key or gemini_key:
-        from mesiri.bootstrap.settings import get_settings
-        from mesiri_ai.adapters.gemini.adapter import GeminiProvider
+    # Speech (voice)
+    if settings.sarvam.api_key:
         from mesiri_ai.adapters.sarvam.adapter import SarvamSpeechProvider
 
-        settings = get_settings()
-        gemini = GeminiProvider(settings.gemini)
-        speech = SarvamSpeechProvider(settings.sarvam) if sarvam_key else FakeSpeechProvider(
-            fixtures.MALAYALAM_JCB_SPEECH
-        )
-        vision = gemini if gemini_key else FakeVisionProvider(fixtures.VALID_RECEIPT_VISION)
-        extraction = gemini if gemini_key else FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION)
-        logger.info("Understanding pipeline using real providers (sarvam=%s gemini=%s)",
-                    bool(sarvam_key), bool(gemini_key))
+        speech: object = SarvamSpeechProvider(settings.sarvam)
     else:
         speech = FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH)
-        vision = FakeVisionProvider(fixtures.VALID_RECEIPT_VISION)
-        extraction = FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION)
-        logger.info("Understanding pipeline using FAKE providers (no AI keys configured)")
 
+    # Structured extraction (text + transcripts)
+    if settings.deepseek.api_key:
+        from mesiri_ai.adapters.deepseek.adapter import DeepSeekExtractionProvider
+
+        extraction: object = DeepSeekExtractionProvider(settings.deepseek)
+    elif settings.gemini.api_key:
+        from mesiri_ai.adapters.gemini.adapter import GeminiProvider
+
+        extraction = GeminiProvider(settings.gemini)
+    else:
+        extraction = FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION)
+
+    # Vision (images) — DeepSeek has no vision; use Gemini if available.
+    if settings.gemini.api_key:
+        from mesiri_ai.adapters.gemini.adapter import GeminiProvider
+
+        vision: object = GeminiProvider(settings.gemini)
+    else:
+        vision = FakeVisionProvider(fixtures.VALID_RECEIPT_VISION)
+
+    logger.info(
+        "Understanding pipeline: speech=%s extraction=%s vision=%s",
+        type(speech).__name__, type(extraction).__name__, type(vision).__name__,
+    )
     return UnderstandingPipeline(
         speech=speech,  # type: ignore[arg-type]
         vision=vision,  # type: ignore[arg-type]
@@ -114,6 +124,28 @@ def build_pipeline(object_storage: ObjectStoragePort) -> UnderstandingPipeline:
         object_storage=object_storage,
         confidence_policy=ConfidencePolicy(),
     )
+
+
+def format_reply(result: UnderstandingResult) -> str:
+    """Render the structured understanding result as a WhatsApp reply."""
+    lines = ["*Mesiri — understood your message*", ""]
+    if result.transcript:
+        lines.append(f"🗣 Transcript: {result.transcript}")
+    if result.translated_text and result.translated_text != result.transcript:
+        lines.append(f"🌐 Translation: {result.translated_text}")
+    if result.document_classification:
+        lines.append(f"📄 Document: {result.document_classification}")
+    lines.append(f"🏷 Type: {result.semantic_type.value}")
+
+    candidate_fields: dict = result.candidates[0].fields if result.candidates else {}
+    if candidate_fields:
+        lines.append("📋 Details:")
+        for key, value in candidate_fields.items():
+            lines.append(f"   • {key}: {value}")
+    if result.missing_fields:
+        lines.append(f"❓ Missing: {', '.join(result.missing_fields)}")
+    lines.append(f"✅ Confidence: {result.overall_confidence.value}")
+    return "\n".join(lines)
 
 
 async def understand(

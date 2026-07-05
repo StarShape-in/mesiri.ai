@@ -117,6 +117,14 @@ class GeminiSettings(_Section):
     max_retries: int = 2
 
 
+class DeepSeekSettings(_Section):
+    api_key: SecretStr | None = None
+    model: str = "deepseek-chat"
+    base_url: str = "https://api.deepseek.com"
+    timeout_seconds: float = 30.0
+    max_retries: int = 2
+
+
 class WhatsAppSettings(_Section):
     # Owned by M2 (Alan); declared for completeness. Unused by M1/M3.
     verify_token: SecretStr | None = None
@@ -143,6 +151,7 @@ class Settings(BaseSettings):
     object_storage: ObjectStorageSettings = Field(default_factory=ObjectStorageSettings)
     sarvam: SarvamSettings = Field(default_factory=SarvamSettings)
     gemini: GeminiSettings = Field(default_factory=GeminiSettings)
+    deepseek: DeepSeekSettings = Field(default_factory=DeepSeekSettings)
     whatsapp: WhatsAppSettings = Field(default_factory=WhatsAppSettings)
 
     def validate_runtime(self) -> None:
