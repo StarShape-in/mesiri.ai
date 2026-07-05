@@ -69,6 +69,13 @@ class UserCreate(BaseModel):
     role: str
     whatsapp_number: Optional[str] = None
 
+class UserUpdate(BaseModel):
+    """Partial update — only provided fields are changed. Email is immutable."""
+    full_name: Optional[str] = None
+    role: Optional[str] = None
+    whatsapp_number: Optional[str] = None
+    password: Optional[str] = None
+
 # ---------------------------------------------------------------------------
 # Dependencies
 # ---------------------------------------------------------------------------
@@ -150,4 +157,68 @@ async def create_user(user_in: UserCreate, admin_payload: dict = Depends(get_cur
         full_name=user_in.full_name,
         role=user_in.role,
         whatsapp_number=user_in.whatsapp_number
+    )
+
+
+@router.patch("/{user_id}", response_model=UserResponse)
+async def update_user(
+    user_id: uuid.UUID,
+    user_in: UserUpdate,
+    admin_payload: dict = Depends(get_current_admin),
+):
+    engine = get_engine()
+    org_id = admin_payload.get("org")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="Admin has no organization")
+
+    if user_in.role is not None:
+        valid_roles = ["ADMIN", "PROJECT_MANAGER", "SITE_ENGINEER", "FINANCE"]
+        if user_in.role not in valid_roles:
+            raise HTTPException(
+                status_code=400, detail=f"Invalid role. Must be one of {valid_roles}"
+            )
+
+    # Build the set of changes from provided fields only.
+    values: dict = {}
+    if user_in.full_name is not None:
+        values["full_name"] = user_in.full_name
+    if user_in.role is not None:
+        values["role"] = user_in.role
+    if user_in.whatsapp_number is not None:
+        # Empty string clears the number; otherwise store the trimmed value.
+        values["whatsapp_number"] = user_in.whatsapp_number.strip() or None
+    if user_in.password:
+        values["hashed_password"] = _hash_pw(user_in.password)
+
+    async with engine.begin() as conn:
+        # Tenant-scoped lookup: an admin can only edit users in their own org.
+        result = await conn.execute(
+            sa.select(users_table).where(
+                users_table.c.id == user_id,
+                users_table.c.organization_id == org_id,
+            )
+        )
+        existing = result.first()
+        if existing is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        if values:
+            await conn.execute(
+                users_table.update()
+                .where(
+                    users_table.c.id == user_id,
+                    users_table.c.organization_id == org_id,
+                )
+                .values(**values)
+            )
+
+    return UserResponse(
+        id=user_id,
+        email=existing.email,
+        full_name=values.get("full_name", existing.full_name),
+        role=values.get("role", existing.role),
+        whatsapp_number=values.get(
+            "whatsapp_number",
+            existing.whatsapp_number,
+        ),
     )

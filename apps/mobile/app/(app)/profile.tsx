@@ -1,12 +1,16 @@
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { Link } from 'expo-router';
 import { useAuth } from '../_layout';
 import { useEffect, useState } from 'react';
 import { getToken } from '@mesiri/auth';
 import { Ionicons } from '@expo/vector-icons';
+import { useTheme, useStyles } from '../../src/theme';
 
 export default function ProfileScreen() {
   const { signOut } = useAuth();
   const [userData, setUserData] = useState<{ sub?: string; org?: string; role?: string; name?: string; org_name?: string } | null>(null);
+  const { theme } = useTheme();
+  const styles = useStyles(createStyles);
 
   useEffect(() => {
     async function loadUser() {
@@ -35,7 +39,7 @@ export default function ProfileScreen() {
     <View style={styles.container}>
       <View style={styles.header}>
         <View style={styles.avatar}>
-          <Ionicons name="person" size={40} color="#FFFFFF" />
+          <Ionicons name="person" size={40} color={theme.colors.textInverse} />
         </View>
         <Text style={styles.name}>{userData?.name || 'Admin User'}</Text>
         <Text style={styles.role}>{userData?.role || 'User'}</Text>
@@ -54,106 +58,133 @@ export default function ProfileScreen() {
         </View>
       </View>
 
+      {userData?.role === 'ADMIN' && (
+        <View style={styles.section}>
+          <Link href="/users" asChild>
+            <TouchableOpacity style={styles.manageTeamButton}>
+              <Ionicons name="people-outline" size={20} color={theme.colors.actionPrimaryForeground} />
+              <Text style={styles.manageTeamText}>Manage Team</Text>
+            </TouchableOpacity>
+          </Link>
+        </View>
+      )}
+
       <TouchableOpacity style={styles.signOutButton} onPress={signOut}>
-        <Ionicons name="log-out-outline" size={20} color="#EF4444" />
+        <Ionicons name="log-out-outline" size={20} color={theme.colors.statusDangerForeground} />
         <Text style={styles.signOutText}>Sign Out</Text>
       </TouchableOpacity>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: any) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FAFAFB',
-    padding: 24,
+    backgroundColor: theme.colors.backgroundApp,
+    padding: theme.spacing.space6, // 24
   },
   header: {
     alignItems: 'center',
-    marginBottom: 32,
-    marginTop: 16,
+    marginBottom: theme.spacing.space8, // 32
+    marginTop: theme.spacing.space4, // 16
   },
   avatar: {
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: '#1F222B',
+    backgroundColor: theme.colors.backgroundInverse, // #1F222B approx
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 16,
-    shadowColor: '#000',
+    marginBottom: theme.spacing.space4,
+    shadowColor: theme.shadow.action.shadowColor,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.1,
     shadowRadius: 12,
     elevation: 4,
   },
   name: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#0E1116',
+    fontSize: theme.typography.size2xl, // 24
+    fontWeight: theme.typography.weightBold,
+    color: theme.colors.textPrimary,
     marginBottom: 4,
   },
   role: {
-    fontSize: 14,
-    color: '#687280',
-    backgroundColor: '#F3F4F6',
+    fontSize: theme.typography.sizeSm,
+    color: theme.colors.textSecondary,
+    backgroundColor: theme.colors.backgroundSubtle,
     paddingHorizontal: 12,
     paddingVertical: 4,
     borderRadius: 12,
     overflow: 'hidden',
-    fontWeight: '500',
+    fontWeight: theme.typography.weightMedium,
   },
   section: {
-    marginBottom: 32,
+    marginBottom: theme.spacing.space8,
   },
   sectionTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#687280',
+    fontSize: theme.typography.sizeSm,
+    fontWeight: theme.typography.weightSemiBold,
+    color: theme.colors.textSecondary,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     marginBottom: 12,
     paddingLeft: 4,
   },
   card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    backgroundColor: theme.colors.backgroundSurface,
+    borderRadius: theme.radius.xl, // 16 is between lg/xl, let's say xl since we used it before for 16
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: theme.colors.borderDefault,
     overflow: 'hidden',
   },
   row: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    padding: 16,
+    padding: theme.spacing.space4,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: theme.colors.backgroundSubtle, // #F3F4F6
   },
   label: {
     fontSize: 15,
-    color: '#485563',
-    fontWeight: '500',
+    color: theme.colors.textMuted,
+    fontWeight: theme.typography.weightMedium,
   },
   value: {
     fontSize: 15,
-    color: '#0E1116',
+    color: theme.colors.textPrimary,
     maxWidth: '50%',
     fontFamily: 'monospace',
+  },
+  manageTeamButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: theme.spacing.space2,
+    padding: theme.spacing.space4,
+    borderRadius: theme.radius.lg,
+    backgroundColor: theme.colors.actionPrimary,
+    borderWidth: 2,
+    borderColor: theme.colors.borderStrong,
+  },
+  manageTeamText: {
+    color: theme.colors.actionPrimaryForeground,
+    fontSize: theme.typography.sizeMd,
+    fontWeight: theme.typography.weightBold,
   },
   signOutButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    padding: 16,
-    borderRadius: 12,
-    backgroundColor: '#FEE2E2',
+    gap: theme.spacing.space2,
+    padding: theme.spacing.space4,
+    borderRadius: theme.radius.lg,
+    backgroundColor: theme.colors.statusDangerBackground,
     borderWidth: 1,
-    borderColor: '#FECACA',
+    borderColor: theme.colors.statusDangerBorder,
   },
   signOutText: {
-    color: '#EF4444',
-    fontSize: 16,
-    fontWeight: '600',
+    color: theme.colors.statusDangerForeground,
+    fontSize: theme.typography.sizeMd,
+    fontWeight: theme.typography.weightSemiBold,
   },
 });

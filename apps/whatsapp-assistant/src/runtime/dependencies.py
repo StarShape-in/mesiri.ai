@@ -60,10 +60,21 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     )
 
     # M2 -> M3 handoff: run the understanding pipeline on each normalized message.
+    import logging as _logging
+
     from channel.whatsapp.outbound import WhatsAppSender
+    from context.live_identity import (
+        ORG_SUSPENDED_MESSAGE,
+        UNREGISTERED_MESSAGE,
+        context_header,
+        get_engine,
+        pick_project,
+        resolve_sender,
+    )
     from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
     from understanding.adapter import build_pipeline, format_reply, understand
 
+    _log = _logging.getLogger("mesiri.context")
     object_storage = FakeObjectStorage()
     pipeline = build_pipeline(object_storage)
     sender = WhatsAppSender(
@@ -75,10 +86,35 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     )
 
     async def _on_normalized(message):  # type: ignore[no-untyped-def]
+        wa_id = message.sender.wa_id
+
+        # M4: WHO is this? Resolve the sender against authoritative data BEFORE
+        # spending on understanding, and reject anyone we don't recognise.
+        try:
+            ctx = await resolve_sender(get_engine(), wa_id)
+        except Exception:  # noqa: BLE001 — never let a lookup error drop the message silently
+            _log.exception("context.identity_lookup_failed wa_id=%s", wa_id)
+            ctx = None
+
+        if ctx is None:
+            _log.info("context.sender_unregistered wa_id=%s", wa_id)
+            await sender.send_text(wa_id, UNREGISTERED_MESSAGE)
+            return
+        if not ctx.org_active:
+            _log.info("context.org_suspended org=%s", ctx.organization_id)
+            await sender.send_text(wa_id, ORG_SUSPENDED_MESSAGE)
+            return
+
         result = await understand(message, pipeline, object_storage)
-        # Reply with the structured understanding. The Interaction layer (M7)
-        # will later replace this with the verify-before-save confirmation flow.
-        await sender.send_text(message.sender.wa_id, format_reply(result))
+        project = pick_project(result, ctx.projects)
+        _log.info(
+            "context.resolved user=%s org=%s project=%s",
+            ctx.user_id, ctx.organization_id, project.id if project else None,
+        )
+        # Reply with the resolved context banner + structured understanding. The
+        # Interaction layer (M7) will later add verify-before-save.
+        reply = context_header(ctx, project) + "\n\n" + format_reply(result)
+        await sender.send_text(wa_id, reply)
 
     receiver = WhatsAppReceiver(
         deduplication_store=deduplication_store,
