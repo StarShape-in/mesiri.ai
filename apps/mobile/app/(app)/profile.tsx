@@ -45,16 +45,10 @@ export default function ProfileScreen() {
         <Text style={styles.sectionTitle}>Account Details</Text>
         
         <View style={styles.card}>
-          <View style={styles.row}>
+          <View style={[styles.row, { borderBottomWidth: 0 }]}>
             <Text style={styles.label}>Organization</Text>
             <Text style={styles.value} numberOfLines={1} ellipsizeMode="tail">
               {userData?.org_name || 'Loading...'}
-            </Text>
-          </View>
-          <View style={[styles.row, { borderBottomWidth: 0 }]}>
-            <Text style={styles.label}>User ID</Text>
-            <Text style={styles.value} numberOfLines={1} ellipsizeMode="middle">
-              {userData?.sub || 'Loading...'}
             </Text>
           </View>
         </View>

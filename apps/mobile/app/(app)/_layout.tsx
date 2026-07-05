@@ -55,6 +55,13 @@ export default function AppLayout() {
         }}
       />
       <Tabs.Screen
+        name="users"
+        options={{
+          title: 'Team',
+          tabBarIcon: ({ color }) => <Ionicons name="people-outline" size={24} color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="reports"
         options={{
           title: 'Reports',

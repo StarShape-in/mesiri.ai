@@ -64,4 +64,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         import logging
         logging.getLogger(__name__).warning("Auth router not loaded: %s", exc)
 
+    # Users routes (tenant management)
+    try:
+        from users.router import router as users_router
+        app.include_router(users_router)
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("Users router not loaded: %s", exc)
+
     return app

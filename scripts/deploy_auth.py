@@ -9,6 +9,8 @@ files = {
     r'E:\Mesiri.AI\apps\whatsapp-assistant\src\admin\router.py':   f'{REMOTE_SRC}/admin/router.py',
     r'E:\Mesiri.AI\apps\whatsapp-assistant\src\auth\__init__.py':  f'{REMOTE_SRC}/auth/__init__.py',
     r'E:\Mesiri.AI\apps\whatsapp-assistant\src\auth\router.py':    f'{REMOTE_SRC}/auth/router.py',
+    r'E:\Mesiri.AI\apps\whatsapp-assistant\src\users\__init__.py': f'{REMOTE_SRC}/users/__init__.py',
+    r'E:\Mesiri.AI\apps\whatsapp-assistant\src\users\router.py':   f'{REMOTE_SRC}/users/router.py',
     r'E:\Mesiri.AI\apps\whatsapp-assistant\src\runtime\lifecycle.py': f'{REMOTE_SRC}/runtime/lifecycle.py',
 }
 
@@ -39,13 +41,7 @@ def deploy():
     print("\nRestarting uvicorn...")
     run(client, "pkill -9 -f 'uvicorn main:app'")
     time.sleep(2)
-    cmd = (
-        "cd /opt/mesiri/apps/whatsapp-assistant/src && "
-        "export $(cat /opt/mesiri/.whatsapp.env | xargs) && "
-        "nohup /opt/mesiri/.venv/bin/uvicorn main:app "
-        "--host 127.0.0.1 --port 8000 "
-        "> /tmp/mesiri_uvicorn.log 2>&1 &"
-    )
+    cmd = "/opt/mesiri/start_api.sh"
     run(client, cmd)
     time.sleep(4)
 
