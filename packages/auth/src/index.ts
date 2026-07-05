@@ -1,1 +1,1 @@
-export const name = 'auth';
+export * from './client';

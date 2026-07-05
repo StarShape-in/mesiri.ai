@@ -6,5 +6,9 @@
   "scripts": {
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "expo-secure-store": "^13.0.1",
+    "axios": "^1.6.8"
   }
 }
