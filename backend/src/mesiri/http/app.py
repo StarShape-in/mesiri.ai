@@ -61,7 +61,4 @@ def create_app(lifecycle: AppLifecycle | None = None) -> FastAPI:
         status_code = 200 if report.state == DependencyState.HEALTHY else 503
         return JSONResponse(status_code=status_code, content=report.model_dump())
 
-    from ..domains.identity.router import router as auth_router
-    app.include_router(auth_router)
-
     return app
