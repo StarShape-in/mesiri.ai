@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     verify_token: str
     app_secret: str
     access_token: str
+    phone_number_id: str = ""
     api_version: str = "v21.0"
     graph_base_url: str = "https://graph.facebook.com"
     media_download_dir: str = "/tmp/mesiri/whatsapp-media"
@@ -59,14 +60,28 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     )
 
     # M2 -> M3 handoff: run the understanding pipeline on each normalized message.
+    from channel.whatsapp.outbound import WhatsAppSender
     from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
     from understanding.adapter import build_pipeline, understand
 
     object_storage = FakeObjectStorage()
     pipeline = build_pipeline(object_storage)
+    sender = WhatsAppSender(
+        client=http_client,
+        access_token=settings.access_token,
+        phone_number_id=settings.phone_number_id,
+        api_version=settings.api_version,
+        graph_base_url=settings.graph_base_url,
+    )
 
     async def _on_normalized(message):  # type: ignore[no-untyped-def]
-        await understand(message, pipeline, object_storage)
+        result = await understand(message, pipeline, object_storage)
+        # Placeholder acknowledgement. The Interaction layer (M7) will later
+        # replace this with the verify-before-save confirmation flow.
+        ack = "✅ Message received — Mesiri is processing your update."
+        if result.overall_confidence.value in ("high", "medium"):
+            ack += f"\n(understood: {result.semantic_type.value})"
+        await sender.send_text(message.sender.wa_id, ack)
 
     receiver = WhatsAppReceiver(
         deduplication_store=deduplication_store,
