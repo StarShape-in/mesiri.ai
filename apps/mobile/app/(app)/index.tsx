@@ -11,14 +11,15 @@ export default function HomeScreen() {
         <Text style={styles.name}>Site Manager</Text>
       </View>
 
-      <View style={styles.card}>
+      {/* Dark Component for high-emphasis intelligence/status */}
+      <View style={styles.darkCard}>
         <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle}>WhatsApp Assistant</Text>
-          <View style={styles.badge}>
-            <Text style={styles.badgeText}>Active</Text>
+          <Text style={styles.darkCardTitle}>WhatsApp Assistant</Text>
+          <View style={styles.badgeSuccess}>
+            <Text style={styles.badgeSuccessText}>Active</Text>
           </View>
         </View>
-        <Text style={styles.cardDescription}>
+        <Text style={styles.darkCardDescription}>
           Your WhatsApp number is linked to this account. You can now log site expenses and labor updates directly via WhatsApp.
         </Text>
       </View>
@@ -44,32 +45,38 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0F172A',
+    backgroundColor: '#FAFAFB', // surface-app
   },
   content: {
-    padding: 24,
-    gap: 24,
+    padding: 20, // mobile page padding (16-20px)
+    paddingTop: 48,
+    gap: 24, // section gap
   },
   header: {
     marginBottom: 8,
   },
   greeting: {
     fontSize: 16,
-    color: '#94A3B8',
+    color: '#687280', // neutral-500
     marginBottom: 4,
   },
   name: {
     fontSize: 28,
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: '#0E1116', // neutral-900
     letterSpacing: -0.5,
   },
-  card: {
-    backgroundColor: '#1E293B',
-    borderRadius: 16,
+  darkCard: {
+    backgroundColor: '#0E1116', // dark-component-bg
+    borderRadius: 16, // card radius
     padding: 20,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: 'rgba(255,255,255,0.10)',
+    shadowColor: '#101828',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 3,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -77,27 +84,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 12,
   },
-  cardTitle: {
+  darkCardTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#F8FAFC',
+    color: '#FFFFFF',
   },
-  badge: {
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+  badgeSuccess: {
+    backgroundColor: '#DCFCE7', // success-soft
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.2)',
   },
-  badgeText: {
-    color: '#10B981',
+  badgeSuccessText: {
+    color: '#22C55E', // success
     fontSize: 12,
     fontWeight: '600',
   },
-  cardDescription: {
+  darkCardDescription: {
     fontSize: 14,
-    color: '#94A3B8',
+    color: '#D1D5DB', // dark-component-text-secondary
     lineHeight: 22,
   },
   statsGrid: {
@@ -106,22 +111,27 @@ const styles = StyleSheet.create({
   },
   statBox: {
     flex: 1,
-    backgroundColor: '#1E293B',
+    backgroundColor: '#FFFFFF', // surface-primary
     borderRadius: 16,
     padding: 20,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#E5E7EB', // border-default
     alignItems: 'center',
+    shadowColor: '#101828',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
   },
   statValue: {
     fontSize: 32,
-    fontWeight: '800',
-    color: '#3B82F6',
+    fontWeight: '700',
+    color: '#0E1116', // neutral-900
     marginBottom: 4,
   },
   statLabel: {
     fontSize: 13,
-    color: '#94A3B8',
+    color: '#687280', // neutral-500
     fontWeight: '500',
     textAlign: 'center',
   },
@@ -129,13 +139,13 @@ const styles = StyleSheet.create({
     marginTop: 24,
     padding: 16,
     borderRadius: 12,
-    backgroundColor: '#1E293B',
+    backgroundColor: '#FFFFFF', // btn-secondary
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#D1D5DB', // btn-secondary border
   },
   signOutText: {
-    color: '#EF4444',
+    color: '#EF4444', // destructive color
     fontSize: 16,
     fontWeight: '600',
   }

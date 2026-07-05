@@ -23,6 +23,7 @@ async def get_db_conn():
         yield conn
 
 class UserCreate(BaseModel):
+    organization_id: str | None = None
     email: str
     password: str
     full_name: str
@@ -50,6 +51,7 @@ async def register(user_in: UserCreate, conn: AsyncConnection = Depends(get_db_c
     # Using SQLAlchemy Core with the connection
     from sqlalchemy import insert
     stmt = insert(UserModel).values(
+        organization_id=user_in.organization_id,
         email=user_in.email,
         hashed_password=hashed_pwd,
         full_name=user_in.full_name,
@@ -61,7 +63,7 @@ async def register(user_in: UserCreate, conn: AsyncConnection = Depends(get_db_c
     user_id = result.scalar_one()
     
     # Generate token
-    access_token = create_access_token(data={"sub": str(user_id), "role": user_in.role.value})
+    access_token = create_access_token(data={"sub": str(user_id), "org": str(user_in.organization_id) if user_in.organization_id else "", "role": user_in.role.value})
     return {"access_token": access_token, "token_type": "bearer"}
 
 @router.post("/login", response_model=Token)
@@ -77,5 +79,5 @@ async def login(user_in: UserLogin, conn: AsyncConnection = Depends(get_db_conn)
     if not verify_password(user_in.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
         
-    access_token = create_access_token(data={"sub": str(user.id), "role": user.role.value})
+    access_token = create_access_token(data={"sub": str(user.id), "org": str(user.organization_id) if user.organization_id else "", "role": user.role.value})
     return {"access_token": access_token, "token_type": "bearer"}

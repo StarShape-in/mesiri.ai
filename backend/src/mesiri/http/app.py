@@ -61,4 +61,27 @@ def create_app(lifecycle: AppLifecycle | None = None) -> FastAPI:
         status_code = 200 if report.state == DependencyState.HEALTHY else 503
         return JSONResponse(status_code=status_code, content=report.model_dump())
 
+    # CORS Configuration
+    from fastapi.middleware.cors import CORSMiddleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # Register Routers
+    try:
+        from mesiri.domains.identity.router import router as identity_router
+        app.include_router(identity_router)
+    except ImportError:
+        pass
+
+    try:
+        from mesiri.domains.admin.router import router as admin_router
+        app.include_router(admin_router)
+    except ImportError:
+        pass
+
     return app

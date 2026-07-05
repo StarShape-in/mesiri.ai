@@ -22,12 +22,7 @@ api.interceptors.request.use(
 );
 
 export async function login(email: string, password: string) {
-  // Hardcoded bypass for testing the UI
-  if (email === 'ilan@erp.com' && password === 'ilan1234') {
-    const mockToken = "mock_jwt_token_for_ilan";
-    await SecureStore.setItemAsync(TOKEN_KEY, mockToken);
-    return { access_token: mockToken, token_type: 'bearer' };
-  }
+// Bypass removed so we only use real JWTs
 
   const response = await api.post('/auth/login', { email, password });
   const { access_token } = response.data;

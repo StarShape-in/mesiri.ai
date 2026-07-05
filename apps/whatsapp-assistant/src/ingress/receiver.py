@@ -106,6 +106,28 @@ class WhatsAppReceiver:
                 display_phone_number=context.display_phone_number,
                 downloaded_media=downloaded_media,
             )
+            
+            # User Identity & Organization Lookup
+            try:
+                from mesiri.bootstrap.settings import PostgresSettings
+                from mesiri.infrastructure.postgres.database import PostgresDatabase
+                from sqlalchemy import text
+                
+                s = PostgresSettings()
+                db = PostgresDatabase(s)
+                await db.connect()
+                try:
+                    result = await db.execute("SELECT full_name, role, organization_id FROM users WHERE whatsapp_number = :wa_id", {"wa_id": normalized.sender.wa_id})
+                    user = result.first()
+                    if user:
+                        normalized.sender.profile_name = user.full_name
+                        normalized.metadata["user_role"] = user.role
+                        normalized.metadata["organization_id"] = str(user.organization_id) if user.organization_id else None
+                finally:
+                    await db.disconnect()
+            except Exception as e:
+                logger.warning(f"Failed to lookup user identity for wa_id {normalized.sender.wa_id}: {e}")
+
             await self._message_store.save(normalized)
             if self._on_normalized is not None:
                 await self._on_normalized(normalized)

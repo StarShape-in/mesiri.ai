@@ -54,8 +54,8 @@ export default function RootLayout() {
 
   if (isLoading) {
     return (
-      <View style={{ flex: 1, backgroundColor: '#0F172A', justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" color="#3B82F6" />
+      <View style={{ flex: 1, backgroundColor: '#FAFAFB', justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" color="#7ED957" />
       </View>
     );
   }
@@ -67,7 +67,7 @@ export default function RootLayout() {
         signOut: () => setIsAuthenticated(false),
         isLoading,
       }}>
-      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#0F172A' } }}>
+      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#FAFAFB' } }}>
         <Stack.Screen name="login" options={{ animation: 'fade' }} />
         <Stack.Screen name="(app)" options={{ animation: 'fade' }} />
       </Stack>

@@ -37,4 +37,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="Mesiri WhatsApp Assistant", lifespan=lifespan)
     app.include_router(webhook_router, prefix="/webhook")
+
+    # CORS for Control Plane dashboard
+    from fastapi.middleware.cors import CORSMiddleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # Admin / Control Plane routes
+    try:
+        from admin.router import router as admin_router
+        app.include_router(admin_router)
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("Admin router not loaded: %s", exc)
+
+    # Auth routes (mobile app login/register)
+    try:
+        from auth.router import router as auth_router
+        app.include_router(auth_router)
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("Auth router not loaded: %s", exc)
+
     return app

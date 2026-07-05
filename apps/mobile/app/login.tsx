@@ -41,14 +41,18 @@ export default function LoginScreen() {
         </View>
 
         <View style={styles.form}>
-          {error ? <Text style={styles.errorText}>{error}</Text> : null}
+          {error ? (
+            <View style={styles.errorContainer}>
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          ) : null}
           
           <View style={styles.inputContainer}>
             <Text style={styles.label}>Email Address</Text>
             <TextInput
               style={styles.input}
               placeholder="you@construction.com"
-              placeholderTextColor="#475569"
+              placeholderTextColor="#9CA3AF"
               autoCapitalize="none"
               keyboardType="email-address"
               value={email}
@@ -61,7 +65,7 @@ export default function LoginScreen() {
             <TextInput
               style={styles.input}
               placeholder="••••••••"
-              placeholderTextColor="#475569"
+              placeholderTextColor="#9CA3AF"
               secureTextEntry
               value={password}
               onChangeText={setPassword}
@@ -74,7 +78,7 @@ export default function LoginScreen() {
             disabled={loading}
           >
             {loading ? (
-              <ActivityIndicator color="#FFFFFF" />
+              <ActivityIndicator color="#0E1116" />
             ) : (
               <Text style={styles.buttonText}>Sign In</Text>
             )}
@@ -88,7 +92,7 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0F172A', // Slate 900
+    backgroundColor: '#FAFAFB', // surface-app
   },
   content: {
     flex: 1,
@@ -96,18 +100,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
   },
   headerContainer: {
-    marginBottom: 48,
+    marginBottom: 40,
   },
   title: {
-    fontSize: 36,
-    fontWeight: '800',
-    color: '#FFFFFF',
-    marginBottom: 12,
+    fontSize: 32,
+    fontWeight: '700',
+    color: '#0E1116', // neutral-900
+    marginBottom: 8,
     letterSpacing: -0.5,
   },
   subtitle: {
     fontSize: 16,
-    color: '#94A3B8', // Slate 400
+    color: '#687280', // neutral-500
     lineHeight: 24,
   },
   form: {
@@ -118,45 +122,45 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#E2E8F0', // Slate 200
+    fontWeight: '500',
+    color: '#1F222B', // neutral-800
   },
   input: {
-    backgroundColor: '#1E293B', // Slate 800
+    backgroundColor: '#FFFFFF', // surface-primary
     borderWidth: 1,
-    borderColor: '#334155', // Slate 700
-    borderRadius: 12,
+    borderColor: '#D1D5DB', // border-strong
+    borderRadius: 12, // input default radius
     padding: 16,
+    height: 52, // Better touch target for mobile (44px min, 52px comfortable)
     fontSize: 16,
-    color: '#F8FAFC',
+    color: '#1F222B', // neutral-800
   },
   button: {
-    backgroundColor: '#3B82F6', // Blue 500
+    backgroundColor: '#7ED957', // primary
     borderRadius: 12,
-    padding: 16,
+    height: 52,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 12,
-    shadowColor: '#3B82F6',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
   },
   buttonDisabled: {
     opacity: 0.7,
   },
   buttonText: {
-    color: '#FFFFFF',
+    color: '#0E1116', // dark-deep
     fontSize: 16,
-    fontWeight: '700',
+    fontWeight: '600',
   },
-  errorText: {
-    color: '#EF4444', // Red 500
-    fontSize: 14,
-    fontWeight: '500',
-    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+  errorContainer: {
+    backgroundColor: '#FEE2E2', // error-soft
     padding: 12,
     borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#EF4444', // error
+  },
+  errorText: {
+    color: '#EF4444',
+    fontSize: 14,
+    fontWeight: '500',
   }
 });

@@ -1,34 +1,71 @@
-import { Tabs } from 'expo-router';
-import { View, StyleSheet } from 'react-native';
+import { Tabs, Link } from 'expo-router';
+import { View, StyleSheet, TouchableOpacity } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 
 export default function AppLayout() {
   return (
     <Tabs
       screenOptions={{
         headerStyle: {
-          backgroundColor: '#0F172A',
+          backgroundColor: '#FFFFFF', // surface-primary
           borderBottomWidth: 1,
-          borderBottomColor: '#1E293B',
+          borderBottomColor: '#E5E7EB', // border-default
+          elevation: 0,
+          shadowOpacity: 0,
         },
-        headerTintColor: '#FFFFFF',
+        headerTitleStyle: {
+          color: '#0E1116', // neutral-900
+          fontWeight: '600',
+        },
+        headerTintColor: '#0E1116',
         tabBarStyle: {
-          backgroundColor: '#0F172A',
+          backgroundColor: '#FFFFFF', // surface-primary
           borderTopWidth: 1,
-          borderTopColor: '#1E293B',
+          borderTopColor: '#E5E7EB', // border-default
           paddingBottom: 8,
           paddingTop: 8,
           height: 60,
+          elevation: 0,
+          shadowOpacity: 0,
         },
-        tabBarActiveTintColor: '#3B82F6',
-        tabBarInactiveTintColor: '#64748B',
+        tabBarActiveTintColor: '#7ED957', // primary
+        tabBarInactiveTintColor: '#9CA3AF', // neutral-400
+        headerRight: () => (
+          <Link href="/profile" asChild>
+            <TouchableOpacity style={{ marginRight: 16 }}>
+              <View style={styles.profileAvatar}>
+                <Ionicons name="person" size={16} color="#FFFFFF" />
+              </View>
+            </TouchableOpacity>
+          </Link>
+        ),
       }}>
       <Tabs.Screen
         name="index"
         options={{
           title: 'Home',
-          tabBarIcon: ({ color }) => (
-            <View style={[styles.iconPlaceholder, { backgroundColor: color }]} />
-          ),
+          tabBarIcon: ({ color }) => <Ionicons name="home-outline" size={24} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="sites"
+        options={{
+          title: 'Sites',
+          tabBarIcon: ({ color }) => <Ionicons name="business-outline" size={24} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="reports"
+        options={{
+          title: 'Reports',
+          tabBarIcon: ({ color }) => <Ionicons name="document-text-outline" size={24} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: 'Profile',
+          href: null, // Hides this from the bottom tab bar
         }}
       />
     </Tabs>
@@ -36,10 +73,12 @@ export default function AppLayout() {
 }
 
 const styles = StyleSheet.create({
-  iconPlaceholder: {
-    width: 24,
-    height: 24,
-    borderRadius: 6,
-    opacity: 0.8,
+  profileAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#1F222B', // neutral-800
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });
