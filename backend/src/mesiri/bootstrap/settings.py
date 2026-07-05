@@ -112,7 +112,7 @@ class SarvamSettings(_Section):
 
 class GeminiSettings(_Section):
     api_key: SecretStr | None = None
-    model: str = "gemini-2.0-flash"
+    model: str = "gemini-2.5-flash"
     timeout_seconds: float = 15.0
     max_retries: int = 2
 
