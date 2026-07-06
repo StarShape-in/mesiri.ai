@@ -6,16 +6,15 @@ import logging
 from datetime import UTC, datetime
 from typing import Any, Mapping, Sequence
 
-from mesiri_contracts.assistant import MediaInfo, MessageType, NormalizedMessage, SenderInfo
-
-from ingress.media_ingestion import DownloadedMedia
+from mesiri_contracts.assistant import MediaReference, NormalizedMessage, ReplyContext, SenderInfo
+from mesiri_contracts.assistant.enums import InputModality
 
 logger = logging.getLogger(__name__)
 
 _SUPPORTED_TYPES = {
-    "text": MessageType.TEXT,
-    "image": MessageType.IMAGE,
-    "audio": MessageType.VOICE,
+    "text": InputModality.TEXT,
+    "image": InputModality.IMAGE,
+    "audio": InputModality.VOICE,
 }
 
 
@@ -29,40 +28,39 @@ class MessageNormalizer:
         contacts: Sequence[Mapping[str, Any]],
         phone_number_id: str | None,
         display_phone_number: str | None,
-        downloaded_media: DownloadedMedia | None = None,
+        media: MediaReference | None = None,
     ) -> NormalizedMessage:
         """Convert one Meta message object into a NormalizedMessage."""
-        message_type = self._resolve_message_type(message)
+        modality = self._resolve_modality(message)
         sender = self._resolve_sender(message, contacts)
-        content = self._resolve_content(message, message_type)
-        media = self._resolve_media(message, message_type, downloaded_media)
-        reply_to = self._resolve_reply_to(message)
+        text = self._resolve_text(message, modality)
+        reply_context = self._resolve_reply_context(message)
 
         normalized = NormalizedMessage(
             message_id=str(message["id"]),
             channel="whatsapp",
             sender=sender,
             timestamp=self._resolve_timestamp(message),
-            message_type=message_type,
-            content=content,
+            modality=modality,
+            text=text,
             media=media,
-            reply_to=reply_to,
+            reply_context=reply_context,
             metadata={
                 "phone_number_id": phone_number_id,
                 "display_phone_number": display_phone_number,
                 "raw_type": message.get("type"),
             },
         )
-        logger.debug("Normalized WhatsApp message %s as %s", normalized.message_id, message_type)
+        logger.debug("Normalized WhatsApp message %s as %s", normalized.message_id, modality)
         return normalized
 
-    def _resolve_message_type(self, message: Mapping[str, Any]) -> MessageType:
+    def _resolve_modality(self, message: Mapping[str, Any]) -> InputModality:
         raw_type = message.get("type")
         if raw_type == "audio":
             audio_payload = message.get("audio") or {}
             if not audio_payload.get("voice"):
                 raise ValueError("Unsupported non-voice audio message")
-            return MessageType.VOICE
+            return InputModality.VOICE
 
         resolved = _SUPPORTED_TYPES.get(raw_type)
         if resolved is None:
@@ -94,53 +92,24 @@ class MessageNormalizer:
         timestamp = int(message["timestamp"])
         return datetime.fromtimestamp(timestamp, tz=UTC)
 
-    def _resolve_content(
+    def _resolve_text(
         self,
         message: Mapping[str, Any],
-        message_type: MessageType,
+        modality: InputModality,
     ) -> str | None:
-        if message_type is MessageType.TEXT:
+        if modality is InputModality.TEXT:
             text_payload = message.get("text") or {}
             return text_payload.get("body")
 
-        if message_type is MessageType.IMAGE:
+        if modality is InputModality.IMAGE:
             image_payload = message.get("image") or {}
             return image_payload.get("caption")
 
         return None
 
-    def _resolve_media(
-        self,
-        message: Mapping[str, Any],
-        message_type: MessageType,
-        downloaded_media: DownloadedMedia | None,
-    ) -> MediaInfo | None:
-        if message_type not in {MessageType.IMAGE, MessageType.VOICE}:
-            return None
-
-        payload_key = "image" if message_type is MessageType.IMAGE else "audio"
-        media_payload = message.get(payload_key) or {}
-        media_id = media_payload.get("id")
-        if not media_id:
-            raise ValueError(f"Missing media id for {message_type.value} message")
-
-        if downloaded_media is None:
-            raise ValueError(
-                f"Downloaded media is required for {message_type.value} messages"
-            )
-
-        if downloaded_media.media_id != media_id:
-            raise ValueError("Downloaded media id does not match webhook payload")
-
-        return MediaInfo(
-            media_id=media_id,
-            mime_type=downloaded_media.mime_type or media_payload.get("mime_type"),
-            file_path=downloaded_media.file_path,
-            sha256=downloaded_media.sha256 or media_payload.get("sha256"),
-            file_size=downloaded_media.file_size,
-        )
-
-    def _resolve_reply_to(self, message: Mapping[str, Any]) -> str | None:
+    def _resolve_reply_context(self, message: Mapping[str, Any]) -> ReplyContext | None:
         context = message.get("context") or {}
         reply_to = context.get("message_id")
-        return str(reply_to) if reply_to else None
+        if not reply_to:
+            return None
+        return ReplyContext(replied_to_message_id=str(reply_to))

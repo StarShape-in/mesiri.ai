@@ -3,20 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, Field
 
+from mesiri_contracts.assistant.enums import InputModality
 from mesiri_contracts.common.ids import new_correlation_id
-
-
-class MessageType(str, Enum):
-    """Supported inbound WhatsApp message categories for M2 ingress."""
-
-    TEXT = "text"
-    IMAGE = "image"
-    VOICE = "voice"
 
 
 class SenderInfo(BaseModel):
@@ -27,33 +19,34 @@ class SenderInfo(BaseModel):
     profile_name: str | None = None
 
 
-class MediaInfo(BaseModel):
-    """Downloaded media metadata attached to a normalized message."""
+class MediaReference(BaseModel):
+    """Pointer to binary media in object storage — never inline bytes."""
 
-    media_id: str
+    object_key: str
     mime_type: str | None = None
-    file_path: str | None = None
-    # Object-storage key once the media is placed behind the ObjectStorage
-    # boundary (set by the M2->M3 media handoff). Downstream reads media via the
-    # ObjectStoragePort using this key, never the local file_path directly.
-    object_key: str | None = None
-    sha256: str | None = None
-    file_size: int | None = None
+    size_bytes: int | None = None
+    duration_seconds: float | None = None
+
+
+class ReplyContext(BaseModel):
+    """Reply threading metadata for inbound messages."""
+
+    replied_to_message_id: str | None = None
+    replied_to_text: str | None = None
 
 
 class NormalizedMessage(BaseModel):
     """Canonical internal representation of an inbound channel message."""
 
     message_id: str
-    # One correlation id per user journey, minted at ingress and propagated
-    # end-to-end (transport -> understanding -> ...). Added for INT-001 so M3 can
-    # keep the whole journey traceable; defaults so existing producers stay valid.
     correlation_id: str = Field(default_factory=new_correlation_id)
     channel: str = "whatsapp"
     sender: SenderInfo
     timestamp: datetime
-    message_type: MessageType
-    content: str | None = None
-    media: MediaInfo | None = None
-    reply_to: str | None = None
+    modality: InputModality
+    text: str | None = None
+    media: MediaReference | None = None
+    reply_context: ReplyContext | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = {"extra": "ignore"}

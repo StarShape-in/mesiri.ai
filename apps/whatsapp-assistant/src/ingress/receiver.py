@@ -10,8 +10,10 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from mesiri_contracts.assistant import NormalizedMessage
+from mesiri_contracts.common.storage import ObjectStoragePort
 
 from ingress.deduplication import DeduplicationStore
+from ingress.media_handoff import upload_downloaded_media
 from ingress.media_ingestion import DownloadedMedia, MediaDownloader
 from ingress.normalization import MessageNormalizer
 
@@ -62,12 +64,14 @@ class WhatsAppReceiver:
         deduplication_store: DeduplicationStore,
         media_downloader: MediaDownloader,
         message_store: NormalizedMessageStore,
+        object_storage: ObjectStoragePort,
         normalizer: MessageNormalizer | None = None,
         on_normalized: Callable[[NormalizedMessage], Awaitable[None]] | None = None,
     ) -> None:
         self._deduplication_store = deduplication_store
         self._media_downloader = media_downloader
         self._message_store = message_store
+        self._object_storage = object_storage
         self._normalizer = normalizer or MessageNormalizer()
         # Optional M3 handoff: invoked after a message is normalized+stored.
         self._on_normalized = on_normalized
@@ -99,12 +103,19 @@ class WhatsAppReceiver:
         message_id = str(context.message["id"])
         try:
             downloaded_media = await self._download_media_if_required(context.message)
+            media = None
+            if downloaded_media is not None:
+                media = await upload_downloaded_media(
+                    message_id=message_id,
+                    downloaded=downloaded_media,
+                    object_storage=self._object_storage,
+                )
             normalized = self._normalizer.normalize(
                 context.message,
                 contacts=context.contacts,
                 phone_number_id=context.phone_number_id,
                 display_phone_number=context.display_phone_number,
-                downloaded_media=downloaded_media,
+                media=media,
             )
             
             # User Identity & Organization Lookup

@@ -1,9 +1,4 @@
-"""M2 -> M3 adapter tests: canonical NormalizedMessage through understanding.
-
-Proves the reconciled contract works: Alan's NormalizedMessage (content,
-message_type, media.file_path, correlation_id) maps cleanly into the pipeline and
-yields a schema-valid UnderstandingResult with the correlation id preserved.
-"""
+"""M2 -> M3 contract tests: shared NormalizedMessage through understanding."""
 
 from __future__ import annotations
 
@@ -13,15 +8,10 @@ from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
 from mesiri_ai import fixtures
 from mesiri_ai.fakes import FakeExtractionProvider, FakeSpeechProvider, FakeVisionProvider
 from mesiri_contracts.assistant.enums import InputModality
-from mesiri_contracts.assistant.normalized_message import (
-    MediaInfo,
-    MessageType,
-    NormalizedMessage,
-    SenderInfo,
-)
+from mesiri_contracts.assistant.normalized_message import MediaReference, NormalizedMessage, SenderInfo
 from mesiri_contracts.assistant.understanding_result import UnderstandingResult
-
-from understanding.adapter import to_reading_model, understand
+from ingress.media_handoff import upload_downloaded_media
+from ingress.media_ingestion import DownloadedMedia
 from understanding.pipeline import UnderstandingPipeline
 
 
@@ -39,55 +29,52 @@ def _msg(**kw) -> NormalizedMessage:
         message_id="wamid.1",
         sender=SenderInfo(wa_id="15550001111"),
         timestamp=datetime.now(timezone.utc),
-        message_type=MessageType.TEXT,
-        content="paid 1500 to ABC Hardware",
+        modality=InputModality.TEXT,
+        text="paid 1500 to ABC Hardware",
     )
     base.update(kw)
     return NormalizedMessage(**base)
 
 
-async def test_text_message_maps_and_understands():
+async def test_text_message_understands_directly():
     storage = FakeObjectStorage()
     msg = _msg(correlation_id="cor_wire_1")
-    result = await understand(msg, _pipeline(storage), storage)
+    result = await _pipeline(storage).understand(msg)
     assert isinstance(result, UnderstandingResult)
     UnderstandingResult.model_validate(result.model_dump())
-    assert result.correlation_id == "cor_wire_1"          # propagated from M2
+    assert result.correlation_id == "cor_wire_1"
     assert result.input_modality == InputModality.TEXT
     assert result.normalized_text == "paid 1500 to ABC Hardware"
 
 
 async def test_normalized_message_has_default_correlation_id():
-    # The contract fix: correlation_id is first-class with a default.
     assert _msg().correlation_id.startswith("cor_")
 
 
-async def test_media_file_is_pushed_to_object_storage(tmp_path):
+async def test_media_upload_populates_object_key_before_m3(tmp_path):
     media_file = tmp_path / "receipt.jpg"
     media_file.write_bytes(b"\xff\xd8fake-jpeg")
     storage = FakeObjectStorage()
-    msg = _msg(
-        message_type=MessageType.IMAGE,
-        content=None,
-        media=MediaInfo(media_id="m1", mime_type="image/jpeg", file_path=str(media_file)),
+    downloaded = DownloadedMedia(
+        media_id="m1",
+        mime_type="image/jpeg",
+        file_path=str(media_file),
+        sha256="abc",
+        file_size=len(b"\xff\xd8fake-jpeg"),
     )
-    ref = await to_reading_model(msg, storage)
-    assert ref.media is not None and ref.media.object_key
-    # The bytes are now behind the ObjectStorage boundary (not read via file_path).
-    stored = await storage.get_object(ref.media.object_key)
-    assert stored.data == b"\xff\xd8fake-jpeg"
-
-
-async def test_image_message_understands_via_object_storage(tmp_path):
-    media_file = tmp_path / "receipt.jpg"
-    media_file.write_bytes(b"\xff\xd8fake-jpeg")
-    storage = FakeObjectStorage()
+    media = await upload_downloaded_media(
+        message_id="wamid.1",
+        downloaded=downloaded,
+        object_storage=storage,
+    )
     msg = _msg(
-        message_type=MessageType.IMAGE,
-        content=None,
-        media=MediaInfo(media_id="m1", mime_type="image/jpeg", file_path=str(media_file)),
+        modality=InputModality.IMAGE,
+        text=None,
+        media=media,
         correlation_id="cor_img_1",
     )
-    result = await understand(msg, _pipeline(storage), storage)
+    result = await _pipeline(storage).understand(msg)
     assert result.correlation_id == "cor_img_1"
     assert result.document_classification == "receipt"
+    stored = await storage.get_object(media.object_key)
+    assert stored.data == b"\xff\xd8fake-jpeg"

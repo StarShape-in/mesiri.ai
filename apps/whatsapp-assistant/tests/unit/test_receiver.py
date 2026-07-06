@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
+from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
 from tests.fixtures.meta_payloads import (
     image_webhook_payload,
     text_webhook_payload,
@@ -14,7 +15,7 @@ from tests.fixtures.meta_payloads import (
 from ingress.deduplication import InMemoryDeduplicationStore
 from ingress.media_ingestion import DownloadedMedia
 from ingress.receiver import InMemoryNormalizedMessageStore, WhatsAppReceiver
-from mesiri_contracts.assistant import MessageType
+from mesiri_contracts.assistant.enums import InputModality
 
 
 @pytest.mark.asyncio
@@ -26,6 +27,7 @@ async def test_receiver_normalizes_text_message() -> None:
         deduplication_store=deduplication_store,
         media_downloader=media_downloader,
         message_store=message_store,
+        object_storage=FakeObjectStorage(),
     )
 
     scheduled = await receiver.handle_payload(text_webhook_payload())
@@ -35,7 +37,7 @@ async def test_receiver_normalizes_text_message() -> None:
     media_downloader.download.assert_not_called()
     normalized = await message_store.get("wamid.text")
     assert normalized is not None
-    assert normalized.message_type is MessageType.TEXT
+    assert normalized.modality is InputModality.TEXT
 
 
 @pytest.mark.asyncio
@@ -47,6 +49,7 @@ async def test_receiver_deduplicates_duplicate_webhooks() -> None:
         deduplication_store=deduplication_store,
         media_downloader=media_downloader,
         message_store=message_store,
+        object_storage=FakeObjectStorage(),
     )
 
     payload = text_webhook_payload()
@@ -59,22 +62,29 @@ async def test_receiver_deduplicates_duplicate_webhooks() -> None:
 
 
 @pytest.mark.asyncio
-async def test_receiver_downloads_media_for_image_and_voice() -> None:
+async def test_receiver_downloads_media_for_image_and_voice(tmp_path) -> None:
     deduplication_store = InMemoryDeduplicationStore()
     message_store = InMemoryNormalizedMessageStore()
+    object_storage = FakeObjectStorage()
     media_downloader = AsyncMock()
+
+    image_path = tmp_path / "media-image-1.jpg"
+    image_path.write_bytes(b"jpeg-bytes")
+    voice_path = tmp_path / "media-audio-1.ogg"
+    voice_path.write_bytes(b"voice-bytes")
+
     media_downloader.download.side_effect = [
         DownloadedMedia(
             media_id="media-image-1",
             mime_type="image/jpeg",
-            file_path="/tmp/media-image-1.jpg",
+            file_path=str(image_path),
             sha256="abc123",
             file_size=1024,
         ),
         DownloadedMedia(
             media_id="media-audio-1",
             mime_type="audio/ogg",
-            file_path="/tmp/media-audio-1.ogg",
+            file_path=str(voice_path),
             sha256="voice123",
             file_size=2048,
         ),
@@ -83,6 +93,7 @@ async def test_receiver_downloads_media_for_image_and_voice() -> None:
         deduplication_store=deduplication_store,
         media_downloader=media_downloader,
         message_store=message_store,
+        object_storage=object_storage,
     )
 
     image_payload = image_webhook_payload(message_id="wamid.image-1")
@@ -96,7 +107,11 @@ async def test_receiver_downloads_media_for_image_and_voice() -> None:
     voice_message = await message_store.get("wamid.voice-1")
 
     assert image_message is not None
-    assert image_message.message_type is MessageType.IMAGE
+    assert image_message.modality is InputModality.IMAGE
+    assert image_message.media is not None
+    assert image_message.media.object_key == "media/wamid.image-1/media-image-1"
     assert voice_message is not None
-    assert voice_message.message_type is MessageType.VOICE
+    assert voice_message.modality is InputModality.VOICE
+    assert voice_message.media is not None
+    assert voice_message.media.object_key == "media/wamid.voice-1/media-audio-1"
     assert media_downloader.download.await_count == 2

@@ -62,7 +62,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     # M2 -> M3 handoff: run the understanding pipeline on each normalized message.
     from channel.whatsapp.outbound import WhatsAppSender
     from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
-    from understanding.adapter import build_pipeline, format_reply, understand
+    from understanding.runtime import build_pipeline, format_reply
 
     object_storage = FakeObjectStorage()
     pipeline = build_pipeline(object_storage)
@@ -75,7 +75,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     )
 
     async def _on_normalized(message):  # type: ignore[no-untyped-def]
-        result = await understand(message, pipeline, object_storage)
+        result = await pipeline.understand(message)
         # Reply with the structured understanding. The Interaction layer (M7)
         # will later replace this with the verify-before-save confirmation flow.
         await sender.send_text(message.sender.wa_id, format_reply(result))
@@ -84,6 +84,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         deduplication_store=deduplication_store,
         media_downloader=media_downloader,
         message_store=message_store,
+        object_storage=object_storage,
         on_normalized=_on_normalized,
     )
     return AppContainer(

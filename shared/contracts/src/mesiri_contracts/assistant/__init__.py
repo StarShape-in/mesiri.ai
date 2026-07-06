@@ -1,15 +1,15 @@
 """Assistant-facing shared contracts."""
 
 from mesiri_contracts.assistant.normalized_message import (
-    MediaInfo,
-    MessageType,
+    MediaReference,
     NormalizedMessage,
+    ReplyContext,
     SenderInfo,
 )
 
 __all__ = [
-    "MediaInfo",
-    "MessageType",
+    "MediaReference",
     "NormalizedMessage",
+    "ReplyContext",
     "SenderInfo",
 ]

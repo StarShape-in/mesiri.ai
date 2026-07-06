@@ -4,6 +4,7 @@
   "correlation_id": "cor_image_1",
   "causation_id": "cau_image_1",
   "timestamp": "2026-07-04T10:02:00Z",
+  "sender": {"wa_id": "919876543210"},
   "modality": "image",
   "media": {
     "object_key": "media/image/msg_image_1.jpg",

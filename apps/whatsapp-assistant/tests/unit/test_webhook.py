@@ -42,7 +42,7 @@ async def test_post_webhook_returns_200_and_persists_text_message(client, app) -
     await container.receiver.wait_until_idle()
     normalized = await container.message_store.get("wamid.text")
     assert normalized is not None
-    assert normalized.content == "Installed 20 bags of cement"
+    assert normalized.text == "Installed 20 bags of cement"
 
 
 @pytest.mark.asyncio

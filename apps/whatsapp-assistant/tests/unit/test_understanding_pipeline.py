@@ -11,16 +11,22 @@ from __future__ import annotations
 from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
 from mesiri_ai import fixtures
 from mesiri_ai.fakes import FakeExtractionProvider, FakeSpeechProvider, FakeVisionProvider
+from mesiri_contracts.assistant import MediaReference, NormalizedMessage
 from mesiri_contracts.assistant.confidence import ConfidenceLevel
 from mesiri_contracts.assistant.enums import InputModality, SemanticType
-from understanding.inbound import MediaReference, NormalizedMessageRef
 from understanding.pipeline import UnderstandingPipeline
 
 
-def _msg(**kwargs) -> NormalizedMessageRef:
-    base = dict(message_id="msg_1", correlation_id="cor_pipeline", modality=InputModality.TEXT)
+def _msg(**kwargs) -> NormalizedMessage:
+    base = dict(
+        message_id="msg_1",
+        correlation_id="cor_pipeline",
+        modality=InputModality.TEXT,
+        sender={"wa_id": "15550001111"},
+        timestamp="2026-07-04T10:00:00Z",
+    )
     base.update(kwargs)
-    return NormalizedMessageRef(**base)
+    return NormalizedMessage.model_validate(base)
 
 
 async def _build(*, speech=None, vision=None, extraction=None, storage=None) -> UnderstandingPipeline:
@@ -31,8 +37,6 @@ async def _build(*, speech=None, vision=None, extraction=None, storage=None) -> 
         object_storage=storage or FakeObjectStorage(),
     )
 
-
-# --- INT-001 primary proof (foundation, fake providers) ---------------------
 
 async def test_malayalam_jcb_voice_yields_equipment_facts():
     storage = FakeObjectStorage()
@@ -52,14 +56,10 @@ async def test_malayalam_jcb_voice_yields_equipment_facts():
     assert facts["duration_hours"] == 4
     assert result.translated_text == "The JCB ran for 4 hours"
     assert result.overall_confidence == ConfidenceLevel.HIGH
-    # correlation preserved onto the result
     assert result.correlation_id == "cor_pipeline"
-    # telemetry: both speech and extraction executions recorded
     ops = {e.operation for e in result.provider_executions}
     assert {"speech_to_text_translate", "extract"} <= ops
 
-
-# --- INT-001 secondary proof (receipt image) --------------------------------
 
 async def test_receipt_image_yields_expense():
     storage = FakeObjectStorage()
@@ -77,8 +77,6 @@ async def test_receipt_image_yields_expense():
     assert result.document_classification == "receipt"
 
 
-# --- degraded / failure paths -----------------------------------------------
-
 async def test_partial_receipt_keeps_missing_fields_and_lowers_confidence():
     storage = FakeObjectStorage()
     await storage.put_object("img/2.jpg", b"<image>")
@@ -89,7 +87,7 @@ async def test_partial_receipt_keeps_missing_fields_and_lowers_confidence():
     )
     msg = _msg(modality=InputModality.IMAGE, media=MediaReference(object_key="img/2.jpg"))
     result = await pipeline.understand(msg)
-    assert "vendor" in result.missing_fields              # not fabricated
+    assert "vendor" in result.missing_fields
     assert "vendor" not in result.candidates[0].fields
     assert result.overall_confidence in (ConfidenceLevel.MEDIUM, ConfidenceLevel.LOW)
 
