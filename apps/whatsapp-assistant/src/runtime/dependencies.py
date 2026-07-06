@@ -59,13 +59,22 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         graph_base_url=settings.graph_base_url,
     )
 
-    # M2 -> M3 handoff: run the understanding pipeline on each normalized message.
-    from channel.whatsapp.outbound import WhatsAppSender
-    from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
-    from understanding.runtime import build_pipeline, format_reply
+    # M4: identity gate — resolve the sender before spending on understanding.
+    import logging as _logging
 
+    from channel.whatsapp.outbound import WhatsAppSender
+    from context.live_identity import (
+        NO_ORG_MESSAGE,
+        ORG_SUSPENDED_MESSAGE,
+        UNREGISTERED_MESSAGE,
+        get_engine,
+        resolve_sender,
+        whoami_reply,
+    )
+    from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
+
+    _log = _logging.getLogger("mesiri.context")
     object_storage = FakeObjectStorage()
-    pipeline = build_pipeline(object_storage)
     sender = WhatsAppSender(
         client=http_client,
         access_token=settings.access_token,
@@ -75,10 +84,37 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     )
 
     async def _on_normalized(message):  # type: ignore[no-untyped-def]
-        result = await pipeline.understand(message)
-        # Reply with the structured understanding. The Interaction layer (M7)
-        # will later replace this with the verify-before-save confirmation flow.
-        await sender.send_text(message.sender.wa_id, format_reply(result))
+        wa_id = message.sender.wa_id
+
+        # M4: WHO is this? Resolve the sender before spending on understanding.
+        try:
+            ctx = await resolve_sender(get_engine(), wa_id)
+        except Exception:  # noqa: BLE001 — never let a lookup error drop the message silently
+            _log.exception("context.identity_lookup_failed wa_id=%s", wa_id)
+            ctx = None
+
+        if ctx is None:
+            _log.info("context.sender_unregistered wa_id=%s", wa_id)
+            await sender.send_text(wa_id, UNREGISTERED_MESSAGE)
+            return
+
+        if ctx.organization_id is None:
+            _log.info("context.user_no_org user=%s", ctx.user_id)
+            await sender.send_text(wa_id, NO_ORG_MESSAGE.format(name=ctx.full_name))
+            return
+
+        if not ctx.org_active:
+            _log.info("context.org_suspended org=%s", ctx.organization_id)
+            await sender.send_text(wa_id, ORG_SUSPENDED_MESSAGE)
+            return
+
+        _log.info(
+            "context.resolved user=%s org=%s projects=%s",
+            ctx.user_id, ctx.organization_id, len(ctx.projects),
+        )
+        # TEST MODE: whoami summary reply until M7 interaction layer lands.
+        reply = whoami_reply(ctx)
+        await sender.send_text(wa_id, reply)
 
     receiver = WhatsAppReceiver(
         deduplication_store=deduplication_store,

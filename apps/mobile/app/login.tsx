@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
 import { login } from '@mesiri/auth';
 import { useAuth } from './_layout';
+import { useTheme, useStyles } from '../src/theme';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -9,6 +10,8 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const { signIn } = useAuth();
+  const { theme } = useTheme();
+  const styles = useStyles(createStyles);
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -52,7 +55,7 @@ export default function LoginScreen() {
             <TextInput
               style={styles.input}
               placeholder="you@construction.com"
-              placeholderTextColor="#9CA3AF"
+              placeholderTextColor={theme.colors.textMuted}
               autoCapitalize="none"
               keyboardType="email-address"
               value={email}
@@ -65,7 +68,7 @@ export default function LoginScreen() {
             <TextInput
               style={styles.input}
               placeholder="••••••••"
-              placeholderTextColor="#9CA3AF"
+              placeholderTextColor={theme.colors.textMuted}
               secureTextEntry
               value={password}
               onChangeText={setPassword}
@@ -78,7 +81,7 @@ export default function LoginScreen() {
             disabled={loading}
           >
             {loading ? (
-              <ActivityIndicator color="#0E1116" />
+              <ActivityIndicator color={theme.colors.actionPrimaryForeground} />
             ) : (
               <Text style={styles.buttonText}>Sign In</Text>
             )}
@@ -89,78 +92,78 @@ export default function LoginScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: any) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FAFAFB', // surface-app
+    backgroundColor: theme.colors.backgroundApp, // surface-app
   },
   content: {
     flex: 1,
     justifyContent: 'center',
-    paddingHorizontal: 24,
+    paddingHorizontal: theme.spacing.space6, // 24
   },
   headerContainer: {
-    marginBottom: 40,
+    marginBottom: theme.spacing.space10, // 40
   },
   title: {
     fontSize: 32,
-    fontWeight: '700',
-    color: '#0E1116', // neutral-900
-    marginBottom: 8,
+    fontWeight: theme.typography.weightBold,
+    color: theme.colors.textPrimary, // neutral-900
+    marginBottom: theme.spacing.space2,
     letterSpacing: -0.5,
   },
   subtitle: {
-    fontSize: 16,
-    color: '#687280', // neutral-500
+    fontSize: theme.typography.sizeMd,
+    color: theme.colors.textSecondary, // neutral-500
     lineHeight: 24,
   },
   form: {
-    gap: 20,
+    gap: theme.spacing.space5, // 20
   },
   inputContainer: {
-    gap: 8,
+    gap: theme.spacing.space2,
   },
   label: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#1F222B', // neutral-800
+    fontSize: theme.typography.sizeSm,
+    fontWeight: theme.typography.weightMedium,
+    color: theme.colors.textPrimary, // neutral-800
   },
   input: {
-    backgroundColor: '#FFFFFF', // surface-primary
+    backgroundColor: theme.colors.backgroundSurface, // surface-primary
     borderWidth: 1,
-    borderColor: '#D1D5DB', // border-strong
-    borderRadius: 12, // input default radius
-    padding: 16,
+    borderColor: theme.colors.borderDefault, // border-strong
+    borderRadius: theme.radius.lg, // input default radius
+    padding: theme.spacing.space4,
     height: 52, // Better touch target for mobile (44px min, 52px comfortable)
-    fontSize: 16,
-    color: '#1F222B', // neutral-800
+    fontSize: theme.typography.sizeMd,
+    color: theme.colors.textPrimary, // neutral-800
   },
   button: {
-    backgroundColor: '#7ED957', // primary
-    borderRadius: 12,
+    backgroundColor: theme.colors.actionPrimary, // primary
+    borderRadius: theme.radius.lg,
     height: 52,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 12,
+    marginTop: theme.spacing.space3,
   },
   buttonDisabled: {
     opacity: 0.7,
   },
   buttonText: {
-    color: '#0E1116', // dark-deep
-    fontSize: 16,
-    fontWeight: '600',
+    color: theme.colors.actionPrimaryForeground, // dark-deep
+    fontSize: theme.typography.sizeMd,
+    fontWeight: theme.typography.weightSemiBold,
   },
   errorContainer: {
-    backgroundColor: '#FEE2E2', // error-soft
-    padding: 12,
-    borderRadius: 8,
+    backgroundColor: theme.colors.statusDangerBackground, // error-soft
+    padding: theme.spacing.space3,
+    borderRadius: theme.radius.md,
     borderWidth: 1,
-    borderColor: '#EF4444', // error
+    borderColor: theme.colors.statusDangerBorder, // error
   },
   errorText: {
-    color: '#EF4444',
-    fontSize: 14,
-    fontWeight: '500',
+    color: theme.colors.statusDangerForeground,
+    fontSize: theme.typography.sizeSm,
+    fontWeight: theme.typography.weightMedium,
   }
 });

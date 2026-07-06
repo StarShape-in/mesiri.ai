@@ -3,7 +3,7 @@
 # These wrap `uv` and `docker compose`. On Windows, run under Git Bash or WSL,
 # or invoke the underlying commands directly (see each target).
 .DEFAULT_GOAL := help
-.PHONY: help venv install dev down logs test test-integration lint typecheck migrate m1-golden
+.PHONY: help venv install dev down logs test test-integration lint typecheck migrate m1-golden m4-gate
 
 # Import roots for scripts invoked as `python -m` (pytest uses pyproject config).
 export PYTHONPATH := shared/contracts/src:platform/ai/src:backend/src:apps/whatsapp-assistant/src
@@ -46,3 +46,7 @@ migrate: ## Apply database migrations to the local Postgres
 
 m1-golden: ## Run the M1 "Infrastructure Alive" golden scenario
 	uv run python -m mesiri.scripts.run_m1_golden_scenario
+
+m4-gate: ## Run the M4 "Context Foundation" golden scenario + M4 scenarios
+	uv run python scripts/run_m4_golden_scenario.py
+	uv run pytest -m scenario scenarios/m4 apps/whatsapp-assistant/tests/unit/test_m4_context.py

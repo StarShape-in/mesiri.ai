@@ -1,0 +1,152 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+# Only one deploy can run at a time. Never cancel an in-progress deploy;
+# let it finish so the VPS is never left in a half-deployed state.
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  # ── Fast Python sanity check ────────────────────────────────────────────────
+  # Runs the unit suite (fakes only, no docker) so a bad push never reaches
+  # the VPS. Mirrors the "unit" job in ci-python.yml.
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv venv --python 3.11
+      - run: uv pip install -e ".[dev,providers]"
+      - name: Lint
+        run: uv run ruff check .
+      - name: Unit tests (fakes only)
+        env:
+          MESIRI_ENVIRONMENT: test
+          MESIRI_OBJECT_STORAGE__PROVIDER: fake
+        run: uv run pytest
+
+  # ── Build control-panel static assets ──────────────────────────────────────
+  build-frontend:
+    name: Build control panel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 8
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - run: pnpm install
+      - run: pnpm --filter control-panel build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: control-panel-dist
+          path: apps/control-panel/dist/
+          retention-days: 1
+
+  # ── Deploy ──────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to VPS
+    runs-on: ubuntu-latest
+    needs: [test, build-frontend]
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download control panel build
+        uses: actions/download-artifact@v4
+        with:
+          name: control-panel-dist
+          path: frontend-dist/
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
+
+      # ── Step 1: update code + deps + run migrations + restart ──────────────
+      - name: Deploy backend
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh -i ~/.ssh/deploy_key "${VPS_USER}@${VPS_HOST}" bash -s << 'ENDSSH'
+          set -euo pipefail
+
+          REPO=/opt/mesiri
+          VENV=${REPO}/.venv
+          PYTHONPATH=${REPO}/shared/contracts/src:${REPO}/platform/ai/src:${REPO}/backend/src:${REPO}/apps/whatsapp-assistant/src
+          export PYTHONPATH
+
+          echo "──────────────────────────────────────────"
+          echo "  Mesiri deploy  $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          echo "──────────────────────────────────────────"
+
+          echo "→ Pulling latest code..."
+          cd "${REPO}"
+          git config credential.helper store
+          printf 'https://x-access-token:%s@github.com\n' '${{ secrets.GH_TOKEN_FOR_VPS }}' \
+            > /root/.git-credentials
+          git fetch --prune origin
+          git reset --hard origin/main
+
+          echo "→ Installing Python dependencies..."
+          ~/.local/bin/uv pip install --python ${VENV}/bin/python -e ".[infra,providers]" --quiet
+
+          echo "→ Running database migrations..."
+          cd "${REPO}/backend"
+          ${VENV}/bin/alembic upgrade head
+
+          echo "→ Restarting backend service..."
+          systemctl restart mesiri
+
+          echo "→ Health check..."
+          for i in 1 2 3 4 5; do
+            sleep 2
+            if curl -sf http://127.0.0.1:8000/health > /dev/null; then
+              echo "✓ Service is healthy"
+              break
+            fi
+            if [ $i -eq 5 ]; then
+              echo "✗ Health check failed after 10s — rolling back"
+              systemctl restart mesiri
+              exit 1
+            fi
+            echo "  waiting... (attempt ${i}/5)"
+          done
+
+          echo "──────────────────────────────────────────"
+          echo "  Backend deploy complete"
+          echo "──────────────────────────────────────────"
+          ENDSSH
+
+      # ── Step 2: sync static frontend ───────────────────────────────────────
+      - name: Upload control panel
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          rsync -avz --delete \
+            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
+            frontend-dist/ \
+            "${VPS_USER}@${VPS_HOST}:/var/www/mesiriadmin/"
+
+          ssh -i ~/.ssh/deploy_key "${VPS_USER}@${VPS_HOST}" \
+            "chown -R www-data:www-data /var/www/mesiriadmin/"
+
+      - name: Notify success
+        if: success()
+        run: |
+          echo "✓ Production deploy finished at $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          echo "  Commit: ${{ github.sha }}"
+          echo "  Triggered by: ${{ github.actor }}"

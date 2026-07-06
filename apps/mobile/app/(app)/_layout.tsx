@@ -1,81 +1,73 @@
-import { Tabs, Link } from 'expo-router';
+import React, { useState } from 'react';
+import { Tabs, Link, useRouter, usePathname } from 'expo-router';
 import { View, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { MesiriBottomNavigation, MesiriTopBar, MenuDrawer } from '../../components/navigation';
+import { ScopeProvider } from '../../state/ScopeProvider';
+import { MesiriScopeBar } from '../../components/scope';
+import { ProjectItem, SiteItem } from '../../components/scope';
+
+// Mock data for authorized projects/sites since there is no backend yet
+const mockProjects: ProjectItem[] = [
+  { id: '1', name: 'Skyline Commercial Towers Phase 2' },
+  { id: '2', name: 'Green Valley Residences' },
+];
+
+const mockSites: Record<string, SiteItem[]> = {
+  '1': [
+    { id: '1a', name: 'Block A', projectId: '1' },
+    { id: '1b', name: 'Block B', projectId: '1' },
+  ],
+  '2': [
+    { id: '2a', name: 'Tower 1', projectId: '2' },
+  ]
+};
 
 export default function AppLayout() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+
+  const hideScopeBar = pathname.startsWith('/settings');
+  const hideBottomNav = pathname.startsWith('/settings') || pathname.startsWith('/projects/new');
+
   return (
-    <Tabs
-      screenOptions={{
-        headerStyle: {
-          backgroundColor: '#FFFFFF', // surface-primary
-          borderBottomWidth: 1,
-          borderBottomColor: '#E5E7EB', // border-default
-          elevation: 0,
-          shadowOpacity: 0,
-        },
-        headerTitleStyle: {
-          color: '#0E1116', // neutral-900
-          fontWeight: '600',
-        },
-        headerTintColor: '#0E1116',
-        tabBarStyle: {
-          backgroundColor: '#FFFFFF', // surface-primary
-          borderTopWidth: 1,
-          borderTopColor: '#E5E7EB', // border-default
-          paddingBottom: 8,
-          paddingTop: 8,
-          height: 60,
-          elevation: 0,
-          shadowOpacity: 0,
-        },
-        tabBarActiveTintColor: '#7ED957', // primary
-        tabBarInactiveTintColor: '#9CA3AF', // neutral-400
-        headerRight: () => (
-          <Link href="/profile" asChild>
-            <TouchableOpacity style={{ marginRight: 16 }}>
-              <View style={styles.profileAvatar}>
-                <Ionicons name="person" size={16} color="#FFFFFF" />
+    <ScopeProvider>
+      <View style={{ flex: 1 }}>
+        <Tabs
+          tabBar={() => hideBottomNav ? null : <MesiriBottomNavigation />}
+          screenOptions={{
+            header: () => (
+              <View style={{ zIndex: 50 }}>
+                <MesiriTopBar
+                  onMenuClick={() => setIsDrawerOpen(true)}
+                  onProfileClick={() => router.push('/profile')}
+                  sticky={false} 
+                />
+                {!hideScopeBar && (
+                  <MesiriScopeBar projects={mockProjects} sitesByProject={mockSites} />
+                )}
               </View>
-            </TouchableOpacity>
-          </Link>
-        ),
-      }}>
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: 'Home',
-          tabBarIcon: ({ color }) => <Ionicons name="home-outline" size={24} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="sites"
-        options={{
-          title: 'Sites',
-          tabBarIcon: ({ color }) => <Ionicons name="business-outline" size={24} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="users"
-        options={{
-          title: 'Team',
-          tabBarIcon: ({ color }) => <Ionicons name="people-outline" size={24} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="reports"
-        options={{
-          title: 'Reports',
-          tabBarIcon: ({ color }) => <Ionicons name="document-text-outline" size={24} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="profile"
-        options={{
-          title: 'Profile',
-          href: null, // Hides this from the bottom tab bar
-        }}
-      />
+            ),
+          }}>
+      <Tabs.Screen name="index" options={{ title: 'Home' }} />
+      <Tabs.Screen name="timeline" options={{ title: 'Timeline' }} />
+      <Tabs.Screen name="analytics" options={{ title: 'Analytics' }} />
+      <Tabs.Screen name="field" options={{ title: 'Field' }} />
+      <Tabs.Screen name="users" options={{ title: 'Team' }} />
+      <Tabs.Screen name="profile" options={{ title: 'Profile' }} />
+      
+      {/* Hidden fallback screens from earlier if needed */}
+      <Tabs.Screen name="sites" options={{ title: 'Sites', href: null }} />
+      <Tabs.Screen name="reports" options={{ title: 'Reports', href: null }} />
+      <Tabs.Screen name="projects/index" options={{ title: 'Projects', href: null }} />
+      <Tabs.Screen name="projects/new" options={{ title: 'New Project', href: null }} />
+      <Tabs.Screen name="settings/theme" options={{ title: 'Theme', href: null }} />
+      <Tabs.Screen name="users/[id]" options={{ title: 'User Details', href: null }} />
     </Tabs>
+    <MenuDrawer isOpen={isDrawerOpen} onClose={() => setIsDrawerOpen(false)} />
+    </View>
+    </ScopeProvider>
   );
 }
 

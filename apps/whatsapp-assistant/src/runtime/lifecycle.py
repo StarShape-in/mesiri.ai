@@ -36,6 +36,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             yield
 
     app = FastAPI(title="Mesiri WhatsApp Assistant", lifespan=lifespan)
+
+    @app.get("/health", tags=["ops"])
+    async def health() -> dict:
+        return {"status": "ok"}
+
     app.include_router(webhook_router, prefix="/webhook")
 
     # CORS for Control Plane dashboard
@@ -71,5 +76,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     except Exception as exc:
         import logging
         logging.getLogger(__name__).warning("Users router not loaded: %s", exc)
+
+    # Projects routes (tenant-scoped project management)
+    try:
+        from projects.router import router as projects_router
+        app.include_router(projects_router)
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("Projects router not loaded: %s", exc)
 
     return app

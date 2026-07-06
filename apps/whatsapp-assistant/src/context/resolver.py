@@ -1,0 +1,402 @@
+"""M4 Context Resolver — the orchestration entry point.
+
+Consumes a ``NormalizedMessage`` + ``UnderstandingResult`` and produces a
+``ResolvedContext`` (or a typed ``MesiriError`` as ``Result.err``). It wires the
+authoritative identity stage to candidate collection, deterministic precedence,
+authorization validation, ambiguity detection, and confidence — emitting a
+structured observability event at every stage.
+
+Boundaries: SQL lives in the Postgres repositories, Redis lives in the active
+context store; this orchestrator only talks to ports. It never selects a
+workflow, persists a business record, or converses with the user (all M5+).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from mesiri.observability import tracing
+from mesiri.observability.logging import get_logger
+from mesiri_contracts.assistant.context_enums import ContextConfidence, ContextSource
+from mesiri_contracts.assistant.normalized_message import NormalizedMessage
+from mesiri_contracts.assistant.resolved_context import ResolvedContext
+from mesiri_contracts.assistant.understanding_result import UnderstandingResult
+from mesiri_contracts.common.errors import MesiriError
+from mesiri_contracts.common.result import Result
+
+from . import context_policy, errors
+from .explicit import ProjectRef, SiteRef, extract_references
+from .identity import Principal, resolve_principal
+from .models import ContextCandidate
+from .ports import (
+    ActiveContextStore,
+    ContextPreferenceRepository,
+    ExternalIdentityRepository,
+    OrganizationMembershipRepository,
+    ProjectRepository,
+    ReplyContextProvider,
+    RolePermissionRepository,
+    SiteRepository,
+    WorkflowContextProvider,
+)
+
+_log = get_logger("mesiri.context")
+
+WHATSAPP_PROVIDER = "whatsapp"
+
+
+@dataclass(slots=True)
+class ContextDependencies:
+    """The full set of ports the resolver needs."""
+
+    identities: ExternalIdentityRepository
+    memberships: OrganizationMembershipRepository
+    roles: RolePermissionRepository
+    projects: ProjectRepository
+    sites: SiteRepository
+    preferences: ContextPreferenceRepository
+    active_context: ActiveContextStore
+    reply_context: ReplyContextProvider
+    workflow_context: WorkflowContextProvider
+
+
+class ContextResolver:
+    def __init__(self, deps: ContextDependencies) -> None:
+        self._d = deps
+
+    async def resolve(
+        self, message: NormalizedMessage, understanding: UnderstandingResult
+    ) -> Result[ResolvedContext]:
+        # Propagate the journey's correlation id (never mint a new one here).
+        with tracing.correlation_scope(
+            correlation_id=message.correlation_id, message_id=message.message_id
+        ):
+            _log.info("context.resolution_started", channel=message.channel)
+            try:
+                ctx = await self._resolve(message, understanding)
+            except MesiriError as err:
+                err.with_correlation(message.correlation_id)
+                _log.error(
+                    "context.resolution_failed", error=err, message_id=message.message_id
+                )
+                return Result.err(err)
+            _log.info(
+                "context.resolution_completed",
+                organization_id=ctx.organization_id,
+                user_id=ctx.user_id,
+                project_id=ctx.project_id,
+                site_id=ctx.site_id,
+                context_source=ctx.context_source.value,
+                result_status="resolved",
+            )
+            return Result.ok(ctx)
+
+    async def _resolve(
+        self, message: NormalizedMessage, understanding: UnderstandingResult
+    ) -> ResolvedContext:
+        principal = await resolve_principal(
+            provider=WHATSAPP_PROVIDER,
+            external_subject=message.sender.wa_id,
+            identities=self._d.identities,
+            memberships=self._d.memberships,
+            roles=self._d.roles,
+        )
+        _log.info("context.identity_resolved", user_id=principal.user_id)
+        _log.info("context.organization_resolved", organization_id=principal.organization_id)
+        _log.info(
+            "context.membership_validated",
+            organization_id=principal.organization_id,
+            membership_id=principal.membership_id,
+        )
+        _log.info(
+            "context.permissions_resolved",
+            user_id=principal.user_id,
+            role_count=len(principal.role_ids),
+            permission_count=len(principal.permissions),
+        )
+
+        candidates = await self._collect_candidates(message, understanding, principal)
+        _log.info(
+            "context.candidates_collected",
+            candidate_count=len(candidates),
+            organization_id=principal.organization_id,
+        )
+
+        winner = context_policy.select(candidates)
+        _log.info(
+            "context.authorization_validated",
+            organization_id=principal.organization_id,
+            authorized_count=sum(1 for c in candidates if c.authorized),
+        )
+
+        if winner is None:
+            return self._build(principal, None, message)
+        return self._build(principal, winner, message)
+
+    # -- Candidate collection -------------------------------------------------
+
+    async def _collect_candidates(
+        self,
+        message: NormalizedMessage,
+        understanding: UnderstandingResult,
+        principal: Principal,
+    ) -> list[ContextCandidate]:
+        candidates: list[ContextCandidate] = []
+        org, user = principal.organization_id, principal.user_id
+
+        # 1. Explicit references in the current message (highest precedence).
+        project_ref, site_ref = extract_references(understanding)
+        explicit = await self._explicit_candidate(org, user, project_ref, site_ref)
+        if explicit is not None:
+            candidates.append(explicit)
+            _log.info("context.explicit_context_evaluated", resolved=True)
+        else:
+            _log.info("context.explicit_context_evaluated", resolved=False)
+
+        # 2. Reply context.
+        if message.reply_to:
+            pair = await self._d.reply_context.context_for_reply(
+                organization_id=org, replied_to_message_id=message.reply_to
+            )
+            cand = await self._validated_candidate(org, user, ContextSource.REPLY_CONTEXT, pair)
+            if cand is not None:
+                candidates.append(cand)
+            _log.info("context.reply_context_evaluated", resolved=cand is not None)
+
+        # 3. Workflow context (behind the M5 port).
+        pair = await self._d.workflow_context.active_workflow_context(
+            organization_id=org, user_id=user
+        )
+        cand = await self._validated_candidate(org, user, ContextSource.WORKFLOW_CONTEXT, pair)
+        if cand is not None:
+            candidates.append(cand)
+        _log.info("context.workflow_context_evaluated", resolved=cand is not None)
+
+        # 4. Active context (Redis) — revalidated against Postgres authorization.
+        active = await self._d.active_context.get_active_context(
+            organization_id=org, user_id=user
+        )
+        cand = None
+        if active is not None:
+            cand = await self._validated_candidate(
+                org, user, ContextSource.ACTIVE_CONTEXT, (active.project_id, active.site_id)
+            )
+            if cand is not None:
+                candidates.append(cand)
+        _log.info(
+            "context.active_context_evaluated",
+            present=active is not None,
+            resolved=cand is not None,
+        )
+
+        # 5. User default assignment (Postgres) — or single-project convenience.
+        default = await self._default_candidate(org, user)
+        if default is not None:
+            candidates.append(default)
+        _log.info("context.default_context_evaluated", resolved=default is not None)
+
+        return candidates
+
+    async def _explicit_candidate(
+        self,
+        org: str,
+        user: str,
+        project_ref: ProjectRef | None,
+        site_ref: SiteRef | None,
+    ) -> ContextCandidate | None:
+        if project_ref is None and site_ref is None:
+            return None
+
+        project_id: str | None = None
+        site_id: str | None = None
+        by_id = False
+        evidence_parts: list[str] = []
+
+        if project_ref is not None:
+            project, pid_by_id = await self._resolve_project_ref(org, user, project_ref)
+            project_id = project.project_id
+            by_id = by_id or pid_by_id
+            evidence_parts.append(f"project={project_ref.value!r}")
+
+        if site_ref is not None:
+            site, sid_by_id = await self._resolve_site_ref(org, user, site_ref, project_id)
+            # Site must belong to the resolved project (if any).
+            if project_id is not None and site.project_id != project_id:
+                raise errors.project_site_mismatch(project_id, site.site_id)
+            site_id = site.site_id
+            if project_id is None:
+                project_id = site.project_id  # infer project from an explicit site
+            by_id = by_id or sid_by_id
+            evidence_parts.append(f"site={site_ref.value!r}")
+
+        return ContextCandidate(
+            source=ContextSource.MESSAGE_EXPLICIT,
+            organization_id=org,
+            project_id=project_id,
+            site_id=site_id,
+            confidence=context_policy.confidence_for_explicit(by_id=by_id),
+            authorized=True,
+            evidence="; ".join(evidence_parts),
+            reference=project_ref.value if project_ref else (site_ref.value if site_ref else None),
+        )
+
+    async def _resolve_project_ref(self, org: str, user: str, ref: ProjectRef):
+        if ref.by_id:
+            proj = await self._d.projects.get_authorized_project(
+                organization_id=org, user_id=user, project_id=ref.value
+            )
+            if proj is not None:
+                return proj, True
+            in_org = await self._d.projects.get_project_in_org(
+                organization_id=org, project_id=ref.value
+            )
+            if in_org is not None:
+                raise errors.project_access_denied(org, user, ref.value)
+            raise errors.project_not_found(ref.value)
+        # Name reference.
+        matches = await self._d.projects.find_authorized_projects_by_name(
+            organization_id=org, user_id=user, name=ref.value
+        )
+        if len(matches) == 1:
+            return matches[0], False
+        if len(matches) > 1:
+            raise errors.ambiguous_project(ref.value, [p.project_id for p in matches])
+        raise errors.project_not_found(ref.value)
+
+    async def _resolve_site_ref(self, org: str, user: str, ref: SiteRef, project_id: str | None):
+        if ref.by_id:
+            site = await self._d.sites.get_authorized_site(
+                organization_id=org, user_id=user, site_id=ref.value
+            )
+            if site is not None:
+                return site, True
+            in_org = await self._d.sites.get_site_in_org(organization_id=org, site_id=ref.value)
+            if in_org is not None:
+                raise errors.site_access_denied(org, user, ref.value)
+            raise errors.site_not_found(ref.value)
+        matches = await self._d.sites.find_authorized_sites_by_name(
+            organization_id=org, user_id=user, name=ref.value, project_id=project_id
+        )
+        if len(matches) == 1:
+            return matches[0], False
+        if len(matches) > 1:
+            raise errors.ambiguous_site(ref.value, [s.site_id for s in matches])
+        raise errors.site_not_found(ref.value)
+
+    async def _validated_candidate(
+        self,
+        org: str,
+        user: str,
+        source: ContextSource,
+        pair: tuple[str | None, str | None] | None,
+    ) -> ContextCandidate | None:
+        """Validate a (project_id, site_id) pair from a non-explicit source.
+
+        Returns an authorized candidate, or None if the pair is missing / stale /
+        no longer authorized (lower-precedence sources then apply).
+        """
+        if pair is None:
+            return None
+        project_id, site_id = pair
+        if project_id is None and site_id is None:
+            return None
+
+        v_project_id: str | None = None
+        v_site_id: str | None = None
+
+        if project_id is not None:
+            proj = await self._d.projects.get_authorized_project(
+                organization_id=org, user_id=user, project_id=project_id
+            )
+            if proj is None:
+                return None  # stale / unauthorized -> drop candidate
+            v_project_id = proj.project_id
+
+        if site_id is not None:
+            site = await self._d.sites.get_authorized_site(
+                organization_id=org, user_id=user, site_id=site_id
+            )
+            if site is None:
+                # Keep an authorized project even if the site went stale.
+                if v_project_id is None:
+                    return None
+            elif v_project_id is not None and site.project_id != v_project_id:
+                pass  # inconsistent pair: keep project, drop site
+            else:
+                v_site_id = site.site_id
+                if v_project_id is None:
+                    v_project_id = site.project_id
+
+        if v_project_id is None and v_site_id is None:
+            return None
+
+        return ContextCandidate(
+            source=source,
+            organization_id=org,
+            project_id=v_project_id,
+            site_id=v_site_id,
+            confidence=context_policy.confidence_for_source(source),
+            authorized=True,
+            evidence=f"{source.value} validated",
+        )
+
+    async def _default_candidate(self, org: str, user: str) -> ContextCandidate | None:
+        prefs = await self._d.preferences.get_preferences(organization_id=org, user_id=user)
+        if prefs is not None and prefs.default_project_id is not None:
+            cand = await self._validated_candidate(
+                org, user, ContextSource.USER_DEFAULT,
+                (prefs.default_project_id, prefs.default_site_id),
+            )
+            if cand is not None:
+                return cand
+        # Single-project convenience: exactly one authorized project.
+        authorized = await self._d.projects.list_authorized_projects(
+            organization_id=org, user_id=user
+        )
+        if len(authorized) == 1:
+            return ContextCandidate(
+                source=ContextSource.USER_DEFAULT,
+                organization_id=org,
+                project_id=authorized[0].project_id,
+                site_id=None,
+                confidence=context_policy.confidence_for_source(ContextSource.USER_DEFAULT),
+                authorized=True,
+                evidence="single authorized project",
+            )
+        return None
+
+    # -- Build ----------------------------------------------------------------
+
+    def _build(
+        self,
+        principal: Principal,
+        winner: ContextCandidate | None,
+        message: NormalizedMessage,
+    ) -> ResolvedContext:
+        if winner is None:
+            source = ContextSource.UNRESOLVED
+            confidence = ContextConfidence.UNRESOLVED
+            project_id = site_id = None
+        else:
+            source = winner.source
+            confidence = winner.confidence
+            project_id = winner.project_id
+            site_id = winner.site_id
+
+        return ResolvedContext(
+            correlation_id=message.correlation_id,
+            source_message_id=message.message_id,
+            causation_id=message.message_id,
+            conversation_id=message.sender.wa_id,
+            organization_id=principal.organization_id,
+            user_id=principal.user_id,
+            membership_id=principal.membership_id,
+            role_ids=principal.role_ids,
+            permissions=principal.permissions,
+            project_id=project_id,
+            site_id=site_id,
+            context_source=source,
+            context_confidence=confidence,
+            locale=principal.locale,
+            timezone=principal.timezone,
+        )
