@@ -9,7 +9,20 @@ All schema/persistence knowledge lives in postgres_actor.PostgresActorReader.
 
 from __future__ import annotations
 
+import re
+
 from backend.ports import ActorIdentity, ActorReader, ProjectSummary
+
+# ---------------------------------------------------------------------------
+# Utility (pure, no I/O)
+# ---------------------------------------------------------------------------
+
+def _digits(s: str | None) -> str:
+    """Strip all non-digit characters, normalising phone / WhatsApp IDs."""
+    if s is None:
+        return ""
+    return re.sub(r"\D", "", str(s))
+
 
 # ---------------------------------------------------------------------------
 # Resolve sender (pure orchestration — no SQL)

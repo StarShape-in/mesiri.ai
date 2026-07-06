@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from backend.ports import ActorIdentity as SenderContext
+from backend.ports import ProjectSummary as ProjectRef
 from context.live_identity import (
     NO_ORG_MESSAGE,
-    ProjectRef,
-    SenderContext,
     _digits,
     context_header,
     pick_project,
