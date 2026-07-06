@@ -1,5 +1,6 @@
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, Modal, ActivityIndicator, Alert } from 'react-native';
 import { useState, useEffect } from 'react';
+import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '@mesiri/auth'; // Reuse axios client
 import { useTheme, useStyles } from '../../src/theme';
@@ -19,6 +20,7 @@ export default function UsersScreen() {
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
+  const router = useRouter();
   const { theme } = useTheme();
   const styles = useStyles(createStyles);
 
@@ -125,7 +127,7 @@ export default function UsersScreen() {
   };
 
   const renderItem = ({ item }: { item: User }) => (
-    <TouchableOpacity style={styles.userCard} onPress={() => openEdit(item)} activeOpacity={0.7}>
+    <TouchableOpacity style={styles.userCard} onPress={() => router.push(`/users/${item.id}`)} activeOpacity={0.7}>
       <View style={styles.userInfo}>
         <View style={styles.avatar}>
           <Text style={styles.avatarText}>{item.full_name.charAt(0)}</Text>

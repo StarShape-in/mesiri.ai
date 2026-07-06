@@ -64,15 +64,15 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
 
     from channel.whatsapp.outbound import WhatsAppSender
     from context.live_identity import (
+        NO_ORG_MESSAGE,
         ORG_SUSPENDED_MESSAGE,
         UNREGISTERED_MESSAGE,
-        context_header,
         get_engine,
-        pick_project,
         resolve_sender,
+        whoami_reply,
     )
     from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
-    from understanding.adapter import build_pipeline, format_reply, understand
+    from understanding.adapter import build_pipeline
 
     _log = _logging.getLogger("mesiri.context")
     object_storage = FakeObjectStorage()
@@ -100,20 +100,27 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             _log.info("context.sender_unregistered wa_id=%s", wa_id)
             await sender.send_text(wa_id, UNREGISTERED_MESSAGE)
             return
+
+        # Registered user, but not attached to any organization.
+        if ctx.organization_id is None:
+            _log.info("context.user_no_org user=%s", ctx.user_id)
+            await sender.send_text(wa_id, NO_ORG_MESSAGE.format(name=ctx.full_name))
+            return
+
         if not ctx.org_active:
             _log.info("context.org_suspended org=%s", ctx.organization_id)
             await sender.send_text(wa_id, ORG_SUSPENDED_MESSAGE)
             return
 
-        result = await understand(message, pipeline, object_storage)
-        project = pick_project(result, ctx.projects)
         _log.info(
-            "context.resolved user=%s org=%s project=%s",
-            ctx.user_id, ctx.organization_id, project.id if project else None,
+            "context.resolved user=%s org=%s projects=%s",
+            ctx.user_id, ctx.organization_id, len(ctx.projects),
         )
-        # Reply with the resolved context banner + structured understanding. The
-        # Interaction layer (M7) will later add verify-before-save.
-        reply = context_header(ctx, project) + "\n\n" + format_reply(result)
+        # TEST MODE: reply with a full whoami summary (role, org, projects,
+        # sites if any) so we can verify identity resolution against the live
+        # DB. This path will be replaced by real understanding-driven replies
+        # once the Interaction layer (M7) lands.
+        reply = whoami_reply(ctx)
         await sender.send_text(wa_id, reply)
 
     receiver = WhatsAppReceiver(
