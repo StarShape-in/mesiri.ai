@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "correlation_id": "cor_bad_3",
+  "source_message_id": "msg_bad_3",
+  "actor": {
+    "whatsapp_wa_id": "919876543210",
+    "user_id": "usr_001",
+    "role": "superadmin"
+  },
+  "scope": {},
+  "reply": {
+    "binds_to_prior_journey": false
+  },
+  "confidence": "high",
+  "resolved_at": "2026-07-06T10:00:00Z"
+}

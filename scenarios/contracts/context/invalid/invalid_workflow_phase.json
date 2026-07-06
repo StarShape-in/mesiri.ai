@@ -1,0 +1,19 @@
+{
+  "version": "v1",
+  "correlation_id": "cor_bad_4",
+  "source_message_id": "msg_bad_4",
+  "actor": {
+    "whatsapp_wa_id": "919876543210",
+    "user_id": "usr_001"
+  },
+  "scope": {},
+  "workflow": {
+    "workflow_instance_id": "wf_bad",
+    "phase": "running_magic"
+  },
+  "reply": {
+    "binds_to_prior_journey": false
+  },
+  "confidence": "high",
+  "resolved_at": "2026-07-06T10:00:00Z"
+}

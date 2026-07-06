@@ -1,0 +1,36 @@
+{
+  "version": "v1",
+  "correlation_id": "cor_ctx_4",
+  "source_message_id": "msg_ctx_4",
+  "actor": {
+    "whatsapp_wa_id": "919876543210",
+    "user_id": "usr_001",
+    "organization_id": "org_001",
+    "role": "site_engineer",
+    "display_name": "Rahul"
+  },
+  "scope": {
+    "project_id": "prj_001",
+    "project_name": "Tower A",
+    "site_id": "site_001",
+    "site_name": "Block 3"
+  },
+  "workflow": {
+    "workflow_instance_id": "wf_d4e5f6",
+    "workflow_kind": "expense",
+    "phase": "awaiting_confirmation"
+  },
+  "interaction": {
+    "interaction_id": "int_001",
+    "kind": "confirmation",
+    "related_message_id": "msg_ctx_3"
+  },
+  "reply": {
+    "replied_to_message_id": "msg_ctx_3",
+    "binds_to_prior_journey": true
+  },
+  "confidence": "high",
+  "ambiguities": [],
+  "warnings": [],
+  "resolved_at": "2026-07-06T10:03:00Z"
+}

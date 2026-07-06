@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import httpx
 from fastapi import Request
@@ -13,6 +14,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from ingress.deduplication import InMemoryDeduplicationStore
 from ingress.media_ingestion import MetaMediaDownloader
 from ingress.receiver import InMemoryNormalizedMessageStore, WhatsAppReceiver
+
+if TYPE_CHECKING:
+    from context.contract_resolver import ContractContextResolver
 
 
 class Settings(BaseSettings):
@@ -26,6 +30,7 @@ class Settings(BaseSettings):
     graph_base_url: str = "https://graph.facebook.com"
     media_download_dir: str = "/tmp/mesiri/whatsapp-media"
     dedup_ttl_hours: int = 24
+    context_debug: bool = False
 
     model_config = SettingsConfigDict(
         env_prefix="WHATSAPP_",
@@ -43,6 +48,7 @@ class AppContainer:
     deduplication_store: InMemoryDeduplicationStore
     message_store: InMemoryNormalizedMessageStore
     receiver: WhatsAppReceiver
+    contract_context_resolver: ContractContextResolver
 
 
 def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppContainer:
@@ -59,7 +65,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         graph_base_url=settings.graph_base_url,
     )
 
-    # M4: identity gate — resolve the sender before spending on understanding.
+    # M4 identity gate, then M2 -> M3 -> contract Context resolver -> reply.
     import logging as _logging
 
     from channel.whatsapp.outbound import WhatsAppSender
@@ -69,12 +75,16 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         UNREGISTERED_MESSAGE,
         get_engine,
         resolve_sender,
-        whoami_reply,
     )
+    from context.runtime import build_context_resolver
     from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
+    from runtime.inbound_journey import process_inbound_message
+    from understanding.runtime import build_pipeline, format_reply
 
     _log = _logging.getLogger("mesiri.context")
     object_storage = FakeObjectStorage()
+    pipeline = build_pipeline(object_storage)
+    contract_context_resolver = build_context_resolver()
     sender = WhatsAppSender(
         client=http_client,
         access_token=settings.access_token,
@@ -83,10 +93,13 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         graph_base_url=settings.graph_base_url,
     )
 
-    async def _on_normalized(message):  # type: ignore[no-untyped-def]
+    async def _send_understanding_reply(message, understanding) -> None:  # type: ignore[no-untyped-def]
+        await sender.send_text(message.sender.wa_id, format_reply(understanding))
+
+    async def _on_normalized(message) -> None:  # type: ignore[no-untyped-def]
         wa_id = message.sender.wa_id
 
-        # M4: WHO is this? Resolve the sender before spending on understanding.
+        # M4: resolve the sender before spending on understanding.
         try:
             ctx = await resolve_sender(get_engine(), wa_id)
         except Exception:  # noqa: BLE001 — never let a lookup error drop the message silently
@@ -110,11 +123,18 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
 
         _log.info(
             "context.resolved user=%s org=%s projects=%s",
-            ctx.user_id, ctx.organization_id, len(ctx.projects),
+            ctx.user_id,
+            ctx.organization_id,
+            len(ctx.projects),
         )
-        # TEST MODE: whoami summary reply until M7 interaction layer lands.
-        reply = whoami_reply(ctx)
-        await sender.send_text(wa_id, reply)
+
+        await process_inbound_message(
+            message,
+            pipeline=pipeline,
+            context_resolver=contract_context_resolver,
+            reply_sender=_send_understanding_reply,
+            context_debug=settings.context_debug,
+        )
 
     receiver = WhatsAppReceiver(
         deduplication_store=deduplication_store,
@@ -129,6 +149,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         deduplication_store=deduplication_store,
         message_store=message_store,
         receiver=receiver,
+        contract_context_resolver=contract_context_resolver,
     )
 
 

@@ -1,0 +1,34 @@
+{
+  "version": "v1",
+  "correlation_id": "cor_ctx_2",
+  "source_message_id": "msg_ctx_2",
+  "actor": {
+    "whatsapp_wa_id": "919999999999",
+    "user_id": null,
+    "organization_id": null,
+    "role": null,
+    "display_name": null
+  },
+  "scope": {
+    "project_id": null,
+    "project_name": null,
+    "site_id": null,
+    "site_name": null
+  },
+  "workflow": null,
+  "interaction": null,
+  "reply": {
+    "replied_to_message_id": null,
+    "binds_to_prior_journey": false
+  },
+  "confidence": "low",
+  "ambiguities": [
+    {
+      "field": "user",
+      "reason": "whatsapp number not registered",
+      "candidates": []
+    }
+  ],
+  "warnings": [],
+  "resolved_at": "2026-07-06T10:01:00Z"
+}

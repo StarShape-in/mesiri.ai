@@ -8,11 +8,16 @@ context; AI understanding provides semantic references only.
 
 from __future__ import annotations
 
-from .resolver import ContextDependencies, ContextResolver
-from .service import ContextSwitchService
+from context.contract_resolver import ContractContextResolver
+from context.resolver import ContextDependencies, ContextResolver
+from context.runtime import build_context_resolver, log_resolved_context
+from context.service import ContextSwitchService
 
 __all__ = [
     "ContextResolver",
+    "ContractContextResolver",
     "ContextDependencies",
     "ContextSwitchService",
+    "build_context_resolver",
+    "log_resolved_context",
 ]
