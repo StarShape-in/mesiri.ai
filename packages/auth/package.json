@@ -10,5 +10,8 @@
   "dependencies": {
     "expo-secure-store": "^13.0.1",
     "axios": "^1.6.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0"
   }
 }
