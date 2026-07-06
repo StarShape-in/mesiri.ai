@@ -46,11 +46,18 @@ class PostgresActorReader:
     All SQL is tenant-scoped on organization_id.
 
     Lifecycle: create once at process startup; the underlying engine maintains
-    a connection pool for the process lifetime.
+    a connection pool for the process lifetime. The engine is built lazily on
+    the first query so unit tests that never make DB calls don't need SQLAlchemy.
     """
 
     def __init__(self, engine=None) -> None:
-        self._engine = engine or _build_engine()
+        # None → built on first resolve call (lazy so unit tests don't need sqlalchemy)
+        self._engine = engine
+
+    def _get_engine(self):
+        if self._engine is None:
+            self._engine = _build_engine()
+        return self._engine
 
     async def resolve_by_whatsapp_id(self, wa_id: str) -> ActorIdentity | None:
         from sqlalchemy import text
@@ -59,7 +66,7 @@ class PostgresActorReader:
         if not digits:
             return None
 
-        async with self._engine.connect() as conn:
+        async with self._get_engine().connect() as conn:
             # ----------------------------------------------------------------
             # 1. Resolve the user + organization in one query.
             # ----------------------------------------------------------------
