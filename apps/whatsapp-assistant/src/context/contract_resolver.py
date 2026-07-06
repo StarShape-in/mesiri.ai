@@ -17,10 +17,8 @@ from mesiri_contracts.assistant.understanding_result import UnderstandingResult
 from mesiri_contracts.common.errors import MesiriError
 from mesiri_contracts.context.enums import ContextAmbiguityField
 from mesiri_contracts.context.ports import (
-    ActiveWorkflowSnapshot,
     IdentityLookupPort,
     IdentityRecord,
-    PendingInteractionSnapshot,
     ScopeLookupPort,
     ScopeRecord,
     WorkflowStateReadPort,

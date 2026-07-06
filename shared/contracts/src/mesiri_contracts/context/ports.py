@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from .enums import InteractionKind, UserRole, WorkflowKind, WorkflowPhase
 

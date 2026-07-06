@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from backend.ports import ActorIdentity, ActorReader, ProjectSummary
 
-
 # ---------------------------------------------------------------------------
 # Resolve sender (pure orchestration — no SQL)
 # ---------------------------------------------------------------------------

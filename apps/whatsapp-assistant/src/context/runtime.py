@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import logging
 
-from mesiri_contracts.context.resolved_context import ResolvedContext
-
 from context.adapters import (
     FakeIdentityLookupPort,
     FakeScopeLookupPort,
     FakeWorkflowStateReadPort,
 )
 from context.contract_resolver import ContractContextResolver
+from mesiri_contracts.context.resolved_context import ResolvedContext
 
 logger = logging.getLogger(__name__)
 

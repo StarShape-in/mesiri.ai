@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-import pytest
-
 from context.adapters import (
     FakeIdentityLookupPort,
     FakeScopeLookupPort,
@@ -14,7 +12,11 @@ from context.adapters import (
 from context.contract_resolver import ContractContextResolver
 from mesiri_contracts.assistant.confidence import ConfidenceLevel
 from mesiri_contracts.assistant.enums import InputModality, SemanticType
-from mesiri_contracts.assistant.normalized_message import NormalizedMessage, ReplyContext, SenderInfo
+from mesiri_contracts.assistant.normalized_message import (
+    NormalizedMessage,
+    ReplyContext,
+    SenderInfo,
+)
 from mesiri_contracts.assistant.understanding_result import UnderstandingResult
 from mesiri_contracts.common.errors import ErrorCategory, ErrorCode, MesiriError
 from mesiri_contracts.context.enums import (

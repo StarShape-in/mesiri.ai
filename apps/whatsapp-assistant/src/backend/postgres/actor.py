@@ -15,7 +15,7 @@ from __future__ import annotations
 import os
 import re
 
-from backend.ports import ActorIdentity, ActorReader, ProjectSummary, SiteSummary
+from backend.ports import ActorIdentity, ProjectSummary, SiteSummary
 
 _ORG_ACTIVE_STATUS = "Active"
 

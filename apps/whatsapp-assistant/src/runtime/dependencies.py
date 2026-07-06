@@ -68,6 +68,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     # M4 identity gate, then M2 -> M3 -> contract Context resolver -> reply.
     import logging as _logging
 
+    from backend.postgres.actor import PostgresActorReader
     from channel.whatsapp.outbound import WhatsAppSender
     from context.live_identity import (
         NO_ORG_MESSAGE,
@@ -75,7 +76,6 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         UNREGISTERED_MESSAGE,
         resolve_sender,
     )
-    from backend.postgres.actor import PostgresActorReader
     from context.runtime import build_context_resolver
     from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
     from runtime.inbound_journey import process_inbound_message

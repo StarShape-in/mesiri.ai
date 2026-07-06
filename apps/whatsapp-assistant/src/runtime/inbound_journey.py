@@ -4,12 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
+from context.contract_resolver import ContractContextResolver
+from context.runtime import log_resolved_context
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage
 from mesiri_contracts.assistant.understanding_result import UnderstandingResult
 from mesiri_contracts.context.resolved_context import ResolvedContext
-
-from context.contract_resolver import ContractContextResolver
-from context.runtime import log_resolved_context
 from understanding.pipeline import UnderstandingPipeline
 
 
