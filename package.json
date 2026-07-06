@@ -2,6 +2,7 @@
   "name": "mesiri-ai",
   "version": "1.0.0",
   "private": true,
+  "packageManager": "pnpm@8.15.9",
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",

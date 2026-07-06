@@ -14,7 +14,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
       - name: Set up Python
-        run: uv venv --python 3.10
+        run: uv venv --python 3.11
       - name: Install (runtime + dev + providers, no infra SDKs needed)
         run: uv pip install -e ".[dev,providers]"
       - name: Lint
@@ -52,7 +52,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
-      - run: uv venv --python 3.10
+      - run: uv venv --python 3.11
       - name: Install (with infra SDKs)
         run: uv pip install -e ".[dev,infra,providers]"
       - name: Apply migrations
