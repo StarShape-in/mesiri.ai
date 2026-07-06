@@ -94,6 +94,10 @@ jobs:
 
           echo "→ Pulling latest code..."
           cd "${REPO}"
+          # Save current commit so we can revert if the new code fails to start.
+          PREV_SHA=$(git rev-parse HEAD)
+          echo "  rollback point: ${PREV_SHA}"
+
           git config credential.helper store
           printf 'https://x-access-token:%s@github.com\n' '${{ secrets.GH_TOKEN_FOR_VPS }}' \
             > /root/.git-credentials
@@ -111,19 +115,32 @@ jobs:
           systemctl restart mesiri
 
           echo "→ Health check..."
+          HEALTHY=false
           for i in 1 2 3 4 5; do
             sleep 2
             if curl -sf http://127.0.0.1:8000/health > /dev/null; then
               echo "✓ Service is healthy"
+              HEALTHY=true
               break
-            fi
-            if [ $i -eq 5 ]; then
-              echo "✗ Health check failed after 10s — rolling back"
-              systemctl restart mesiri
-              exit 1
             fi
             echo "  waiting... (attempt ${i}/5)"
           done
+
+          if [ "${HEALTHY}" = "false" ]; then
+            echo "✗ Health check failed — reverting to ${PREV_SHA}"
+            cd "${REPO}"
+            git reset --hard "${PREV_SHA}"
+            ~/.local/bin/uv pip install --python ${VENV}/bin/python -e ".[infra,providers]" --quiet
+            systemctl restart mesiri
+            # Give the old code a moment to come back up so the VPS stays live
+            sleep 3
+            if curl -sf http://127.0.0.1:8000/health > /dev/null; then
+              echo "✓ Rollback succeeded — old version is live"
+            else
+              echo "✗ Rollback also failed — service may be down, check journalctl"
+            fi
+            exit 1
+          fi
 
           echo "──────────────────────────────────────────"
           echo "  Backend deploy complete"
@@ -146,7 +163,28 @@ jobs:
 
       - name: Notify success
         if: success()
+        env:
+          WEBHOOK_URL: ${{ secrets.NOTIFY_WEBHOOK_URL }}
         run: |
           echo "✓ Production deploy finished at $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
           echo "  Commit: ${{ github.sha }}"
           echo "  Triggered by: ${{ github.actor }}"
+          if [ -n "${WEBHOOK_URL}" ]; then
+            curl -sf -X POST "${WEBHOOK_URL}" \
+              -H "Content-Type: application/json" \
+              -d "{\"text\": \"✅ *Mesiri deployed* by \`${{ github.actor }}\`\nCommit: \`${{ github.sha }}\`\"}" || true
+          fi
+
+      - name: Notify failure
+        if: failure()
+        env:
+          WEBHOOK_URL: ${{ secrets.NOTIFY_WEBHOOK_URL }}
+        run: |
+          echo "✗ Deploy FAILED at $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          echo "  Commit: ${{ github.sha }}"
+          echo "  Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          if [ -n "${WEBHOOK_URL}" ]; then
+            curl -sf -X POST "${WEBHOOK_URL}" \
+              -H "Content-Type: application/json" \
+              -d "{\"text\": \"🚨 *Mesiri deploy FAILED*\nActor: \`${{ github.actor }}\`\nCommit: \`${{ github.sha }}\`\nLogs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" || true
+          fi
