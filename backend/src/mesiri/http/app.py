@@ -84,4 +84,16 @@ def create_app(lifecycle: AppLifecycle | None = None) -> FastAPI:
     except ImportError:
         pass
 
+    try:
+        from mesiri.domains.users.router import router as users_router
+        app.include_router(users_router)
+    except ImportError:
+        pass
+
+    try:
+        from mesiri.domains.projects.router import router as projects_router
+        app.include_router(projects_router)
+    except ImportError:
+        pass
+
     return app

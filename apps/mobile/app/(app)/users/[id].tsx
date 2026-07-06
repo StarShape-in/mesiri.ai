@@ -1,9 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Modal, Switch } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { api } from '@mesiri/auth';
 import { useTheme, useStyles } from '../../../src/theme';
 import { userAccessService, UserDetails, UserAccessPolicy, ProjectAccess } from '../../../src/services/userAccessService';
+import { useProjects } from '../../../hooks/useProjects';
 import { UserSummaryHeader } from '../../../components/features/access/UserSummaryHeader';
 import { AccessSummary } from '../../../components/features/access/AccessSummary';
 import { ProjectAccessRow } from '../../../components/features/access/ProjectAccessRow';
@@ -12,18 +14,7 @@ import { ConfirmationDialog } from '../../../components/ui/ConfirmationDialog';
 
 const ROLES = ["ADMIN", "PROJECT_MANAGER", "SITE_ENGINEER", "FINANCE"];
 
-// Mock projects for the UI to select from
-const ALL_PROJECTS = [
-  { id: '1', name: 'Skyline Commercial Towers Phase 2' },
-  { id: '2', name: 'Green Valley Residences' },
-  { id: '3', name: 'Metro Heights' },
-];
-
-const ALL_SITES: Record<string, {id: string, name: string}[]> = {
-  '1': [{ id: '1a', name: 'Block A' }, { id: '1b', name: 'Block B' }],
-  '2': [{ id: '2a', name: 'Tower 1' }],
-  '3': [{ id: '3a', name: 'Phase 1' }, { id: '3b', name: 'Phase 2' }]
-};
+type SiteItem = { id: string; name: string };
 
 export default function UserDetailsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -31,17 +22,35 @@ export default function UserDetailsScreen() {
   const { theme } = useTheme();
   const styles = useStyles(createStyles);
 
+  const { projects } = useProjects();
+  const [sitesCache, setSitesCache] = useState<Record<string, SiteItem[]>>({});
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [user, setUser] = useState<UserDetails | null>(null);
-  
+
   // Access Draft State
   const [draftPolicy, setDraftPolicy] = useState<UserAccessPolicy | null>(null);
-  
+
   // Modals
   const [roleSheetOpen, setRoleSheetOpen] = useState(false);
   const [siteSheetProject, setSiteSheetProject] = useState<string | null>(null);
   const [deactivateConfirmOpen, setDeactivateConfirmOpen] = useState(false);
+
+  const fetchSitesForProject = useCallback(async (projectId: string) => {
+    if (sitesCache[projectId]) return;
+    try {
+      const { data } = await api.get(`/projects/${projectId}/sites`);
+      setSitesCache(prev => ({ ...prev, [projectId]: data }));
+    } catch {
+      setSitesCache(prev => ({ ...prev, [projectId]: [] }));
+    }
+  }, [sitesCache]);
+
+  // Pre-fetch sites for all projects once they load
+  useEffect(() => {
+    projects.forEach(p => fetchSitesForProject(p.id));
+  }, [projects]);
 
   useEffect(() => {
     if (id) fetchUser();
@@ -165,14 +174,17 @@ export default function UserDetailsScreen() {
     );
   }
 
-  const projectCount = draftPolicy.mode === 'all_projects' ? ALL_PROJECTS.length : (draftPolicy.projects?.length || 0);
+  const projectCount = draftPolicy.mode === 'all_projects'
+    ? projects.length
+    : (draftPolicy.projects?.length || 0);
+
   let siteCount = 0;
   if (draftPolicy.mode === 'all_projects') {
-    siteCount = Object.values(ALL_SITES).flat().length;
+    siteCount = Object.values(sitesCache).flat().length;
   } else {
     draftPolicy.projects?.forEach(p => {
       if (p.siteAccess.mode === 'all_sites') {
-        siteCount += (ALL_SITES[p.projectId] || []).length;
+        siteCount += (sitesCache[p.projectId] || []).length;
       } else {
         siteCount += (p.siteAccess.siteIds?.length || 0);
       }
@@ -256,24 +268,27 @@ export default function UserDetailsScreen() {
             {draftPolicy.mode === 'custom_projects' && (
               <View style={styles.projectList}>
                 <Text style={styles.listHeader}>CUSTOM PROJECTS</Text>
-                {ALL_PROJECTS.map(proj => {
+                {projects.map(proj => {
                   const projAccess = draftPolicy.projects?.find(p => p.projectId === proj.id);
                   const isSelected = !!projAccess;
                   let siteDesc = '';
                   if (isSelected) {
-                    siteDesc = projAccess.siteAccess.mode === 'all_sites' 
-                      ? 'All Sites' 
+                    siteDesc = projAccess.siteAccess.mode === 'all_sites'
+                      ? 'All Sites'
                       : `${projAccess.siteAccess.siteIds?.length || 0} Sites`;
                   }
 
                   return (
-                    <ProjectAccessRow 
+                    <ProjectAccessRow
                       key={proj.id}
                       projectName={proj.name}
                       isSelected={isSelected}
                       siteAccessSummary={siteDesc}
                       onToggle={() => toggleProject(proj.id)}
-                      onOpenSiteAccess={() => setSiteSheetProject(proj.id)}
+                      onOpenSiteAccess={() => {
+                        fetchSitesForProject(proj.id);
+                        setSiteSheetProject(proj.id);
+                      }}
                     />
                   );
                 })}
@@ -345,7 +360,7 @@ export default function UserDetailsScreen() {
 
                 {activeSiteProject.siteAccess.mode === 'custom_sites' && (
                   <View style={styles.siteList}>
-                    {(ALL_SITES[activeSiteProject.projectId] || []).map(site => {
+                    {(sitesCache[activeSiteProject.projectId] || []).map(site => {
                       const isSelected = (activeSiteProject.siteAccess.siteIds || []).includes(site.id);
                       return (
                         <TouchableOpacity key={site.id} style={styles.siteRow} onPress={() => toggleSite(activeSiteProject.projectId, site.id)}>

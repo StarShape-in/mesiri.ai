@@ -73,9 +73,9 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         NO_ORG_MESSAGE,
         ORG_SUSPENDED_MESSAGE,
         UNREGISTERED_MESSAGE,
-        get_engine,
         resolve_sender,
     )
+    from backend.postgres.actor import PostgresActorReader
     from context.runtime import build_context_resolver
     from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
     from runtime.inbound_journey import process_inbound_message
@@ -93,6 +93,9 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         graph_base_url=settings.graph_base_url,
     )
 
+    # Backend capability boundary: create once, reuse the connection pool.
+    actor_reader = PostgresActorReader()
+
     async def _send_understanding_reply(message, understanding) -> None:  # type: ignore[no-untyped-def]
         await sender.send_text(message.sender.wa_id, format_reply(understanding))
 
@@ -101,7 +104,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
 
         # M4: resolve the sender before spending on understanding.
         try:
-            ctx = await resolve_sender(get_engine(), wa_id)
+            ctx = await resolve_sender(actor_reader, wa_id)
         except Exception:  # noqa: BLE001 — never let a lookup error drop the message silently
             _log.exception("context.identity_lookup_failed wa_id=%s", wa_id)
             ctx = None
