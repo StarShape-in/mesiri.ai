@@ -154,9 +154,9 @@ class ContextResolver:
             _log.info("context.explicit_context_evaluated", resolved=False)
 
         # 2. Reply context.
-        if message.reply_to:
+        if message.reply_context:
             pair = await self._d.reply_context.context_for_reply(
-                organization_id=org, replied_to_message_id=message.reply_to
+                organization_id=org, replied_to_message_id=message.reply_context.replied_to_message_id
             )
             cand = await self._validated_candidate(org, user, ContextSource.REPLY_CONTEXT, pair)
             if cand is not None:

@@ -13,8 +13,8 @@ from mesiri_contracts.assistant.candidates import ExpenseCandidate
 from mesiri_contracts.assistant.context_enums import ContextConfidence, ContextSource
 from mesiri_contracts.assistant.enums import InputModality
 from mesiri_contracts.assistant.normalized_message import (
-    MessageType,
     NormalizedMessage,
+    ReplyContext,
     SenderInfo,
 )
 from mesiri_contracts.assistant.understanding_result import UnderstandingResult
@@ -32,11 +32,12 @@ def msg(
     return NormalizedMessage(
         message_id=message_id,
         correlation_id=correlation_id,
+        channel="whatsapp",
         sender=SenderInfo(wa_id=wa_id),
         timestamp=datetime.now(UTC),
-        message_type=MessageType.TEXT,
-        content="hi",
-        reply_to=reply_to,
+        modality=InputModality.TEXT,
+        text="hi",
+        reply_context=ReplyContext(replied_to_message_id=reply_to) if reply_to else None,
     )
 
 
