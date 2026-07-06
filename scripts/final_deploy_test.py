@@ -1,4 +1,6 @@
-import paramiko, time
+import time
+
+import paramiko
 
 HOST = '187.127.180.98'
 USER = 'root'
@@ -13,7 +15,7 @@ def run(client, cmd, block=True):
 
 def upload(client, local_path, remote_path):
     sftp = client.open_sftp()
-    with open(local_path, 'r', encoding='utf-8') as f:
+    with open(local_path, encoding='utf-8') as f:
         content = f.read()
     with sftp.open(remote_path, 'w') as f:
         f.write(content)

@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import os
 import uuid
-from typing import Optional, List
-from fastapi import APIRouter, HTTPException, Depends, Header
-from pydantic import BaseModel
-import sqlalchemy as sa
-from sqlalchemy.ext.asyncio import create_async_engine
-import jwt
+
 import bcrypt as _bcrypt
+import jwt
+import sqlalchemy as sa
+from fastapi import APIRouter, Depends, Header, HTTPException
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import create_async_engine
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -60,21 +60,21 @@ class UserResponse(BaseModel):
     email: str
     full_name: str
     role: str
-    whatsapp_number: Optional[str] = None
+    whatsapp_number: str | None = None
 
 class UserCreate(BaseModel):
     email: str
     password: str
     full_name: str
     role: str
-    whatsapp_number: Optional[str] = None
+    whatsapp_number: str | None = None
 
 class UserUpdate(BaseModel):
     """Partial update — only provided fields are changed. Email is immutable."""
-    full_name: Optional[str] = None
-    role: Optional[str] = None
-    whatsapp_number: Optional[str] = None
-    password: Optional[str] = None
+    full_name: str | None = None
+    role: str | None = None
+    whatsapp_number: str | None = None
+    password: str | None = None
 
 # ---------------------------------------------------------------------------
 # Dependencies
@@ -89,13 +89,13 @@ async def get_current_admin(authorization: str = Header(None)):
         if payload.get("role") != "ADMIN":
             raise HTTPException(status_code=403, detail="Not authorized (Admin only)")
         return payload
-    except jwt.PyJWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    except jwt.PyJWTError as exc:
+        raise HTTPException(status_code=401, detail="Invalid token") from exc
 
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
-@router.get("", response_model=List[UserResponse])
+@router.get("", response_model=list[UserResponse])
 async def list_users(admin_payload: dict = Depends(get_current_admin)):
     engine = get_engine()
     org_id = admin_payload.get("org")

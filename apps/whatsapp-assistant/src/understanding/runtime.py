@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import logging
 
+from mesiri_ai import fixtures
 from mesiri_ai.confidence import ConfidencePolicy
 from mesiri_ai.fakes import FakeExtractionProvider, FakeSpeechProvider, FakeVisionProvider
-from mesiri_ai import fixtures
 from mesiri_contracts.assistant.understanding_result import UnderstandingResult
 from mesiri_contracts.common.storage import ObjectStoragePort
-
 from understanding.pipeline import UnderstandingPipeline
 
 logger = logging.getLogger(__name__)

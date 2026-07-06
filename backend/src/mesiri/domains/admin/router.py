@@ -1,14 +1,15 @@
 import uuid
 from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
+from mesiri.infrastructure.postgres.dependency import get_db_conn
 from pydantic import BaseModel
-from sqlalchemy import select, insert
+from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from mesiri.infrastructure.postgres.dependency import get_db_conn
 from mesiri.infrastructure.postgres.models.organization import (
-    OrganizationModel,
     DeploymentType,
+    OrganizationModel,
     OrganizationStatus,
 )
 
@@ -89,9 +90,10 @@ async def provision_tenant(
     org = org_row[0]
 
     # 2. Create Admin User
+    from sqlalchemy.exc import IntegrityError
+
     from mesiri.domains.identity.auth_service import hash_password
     from mesiri.infrastructure.postgres.models.user import UserModel, UserRole
-    from sqlalchemy.exc import IntegrityError
     
     hashed_pwd = hash_password(prov_in.admin_password)
     stmt_user = insert(UserModel).values(
@@ -104,9 +106,9 @@ async def provision_tenant(
     
     try:
         await conn.execute(stmt_user)
-    except IntegrityError:
+    except IntegrityError as exc:
         # Email already exists
-        raise HTTPException(status_code=400, detail="Admin email is already registered")
+        raise HTTPException(status_code=400, detail="Admin email is already registered") from exc
 
     # 3. Commit transaction (if not auto-commit, but AsyncConnection execution is auto-committed in this context or managed by dependency, assuming managed)
     # Return the created organization

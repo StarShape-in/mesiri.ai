@@ -1,6 +1,6 @@
 import os
+
 import paramiko
-from stat import S_ISDIR
 
 HOST = '187.127.180.98'
 USER = 'root'
@@ -50,7 +50,7 @@ def deploy():
                 remote_path = local_path.replace(DIST_DIR, REMOTE_DIR).replace('\\', '/')
                 try:
                     sftp.mkdir(remote_path)
-                except IOError:
+                except OSError:
                     pass
             for f in files:
                 local_path = os.path.join(root, f)

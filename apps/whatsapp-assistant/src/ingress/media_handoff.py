@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+from ingress.media_ingestion import DownloadedMedia
 from mesiri_contracts.assistant import MediaReference
 from mesiri_contracts.common.storage import ObjectStoragePort
-
-from ingress.media_ingestion import DownloadedMedia
 
 
 async def upload_downloaded_media(

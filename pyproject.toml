@@ -112,7 +112,12 @@ src = [
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 # UP042: keep `str, Enum` (consistent with M2's MessageType) rather than StrEnum.
-ignore = ["E501", "UP042"]
+ignore = [
+    "E501",   # line too long
+    "UP042",  # use X | Y for union types (conflicts with older compat layer)
+    "B008",   # Depends() in function defaults — standard FastAPI DI pattern
+    "E402",   # module-level imports not at top — intentional in migration env.py and scripts that manipulate sys.path
+]
 
 [tool.mypy]
 python_version = "3.11"

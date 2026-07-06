@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
+from ingress.media_handoff import upload_downloaded_media
+from ingress.media_ingestion import DownloadedMedia
 from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
 from mesiri_ai import fixtures
 from mesiri_ai.fakes import FakeExtractionProvider, FakeSpeechProvider, FakeVisionProvider
 from mesiri_contracts.assistant.enums import InputModality
-from mesiri_contracts.assistant.normalized_message import MediaReference, NormalizedMessage, SenderInfo
+from mesiri_contracts.assistant.normalized_message import (
+    NormalizedMessage,
+    SenderInfo,
+)
 from mesiri_contracts.assistant.understanding_result import UnderstandingResult
-from ingress.media_handoff import upload_downloaded_media
-from ingress.media_ingestion import DownloadedMedia
 from understanding.pipeline import UnderstandingPipeline
 
 
@@ -28,7 +31,7 @@ def _msg(**kw) -> NormalizedMessage:
     base = dict(
         message_id="wamid.1",
         sender=SenderInfo(wa_id="15550001111"),
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         modality=InputModality.TEXT,
         text="paid 1500 to ABC Hardware",
     )

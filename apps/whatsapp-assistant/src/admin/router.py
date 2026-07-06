@@ -4,14 +4,11 @@ from __future__ import annotations
 
 import os
 import uuid
-import hashlib
-import enum
 from datetime import datetime
-from typing import Optional
 
+import sqlalchemy as sa
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import create_async_engine
 
 router = APIRouter(prefix="/admin/organizations", tags=["admin"])
@@ -77,8 +74,8 @@ class OrganizationResponse(BaseModel):
     deployment_type: str
     db_route: str
     status: str
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class OrganizationProvision(BaseModel):
@@ -159,8 +156,8 @@ async def provision_tenant(prov_in: OrganizationProvision):
             )
         except Exception as e:
             if "unique" in str(e).lower() or "duplicate" in str(e).lower():
-                raise HTTPException(status_code=400, detail="Admin email is already registered")
-            raise HTTPException(status_code=500, detail=f"User creation failed: {e}")
+                raise HTTPException(status_code=400, detail="Admin email is already registered") from e
+            raise HTTPException(status_code=500, detail=f"User creation failed: {e}") from e
 
     return OrganizationResponse(
         id=org_id,

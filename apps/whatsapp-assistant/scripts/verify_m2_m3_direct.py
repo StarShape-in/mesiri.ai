@@ -20,15 +20,15 @@ sys.path[:0] = [
 assert importlib.util.find_spec("understanding.adapter") is None
 assert importlib.util.find_spec("understanding.inbound") is None
 
+from fixtures.meta_payloads import text_webhook_payload, voice_webhook_payload
+
+from ingress.deduplication import InMemoryDeduplicationStore
+from ingress.media_ingestion import DownloadedMedia
+from ingress.receiver import InMemoryNormalizedMessageStore, WhatsAppReceiver
 from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
 from mesiri_ai import fixtures
 from mesiri_ai.fakes import FakeExtractionProvider, FakeSpeechProvider, FakeVisionProvider
 from mesiri_contracts.assistant.enums import InputModality
-
-from fixtures.meta_payloads import text_webhook_payload, voice_webhook_payload
-from ingress.deduplication import InMemoryDeduplicationStore
-from ingress.media_ingestion import DownloadedMedia
-from ingress.receiver import InMemoryNormalizedMessageStore, WhatsAppReceiver
 from understanding.pipeline import UnderstandingPipeline
 
 

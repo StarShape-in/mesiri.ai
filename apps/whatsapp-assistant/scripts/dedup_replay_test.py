@@ -45,7 +45,7 @@ def extract_message_id(body: bytes) -> str:
 
 
 def main() -> int:
-    settings = Settings()
+    Settings()
     body, signature = load_captured_request()
     message_id = extract_message_id(body)
 

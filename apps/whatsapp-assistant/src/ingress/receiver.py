@@ -5,17 +5,16 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator, Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping
-
-from mesiri_contracts.assistant import NormalizedMessage
-from mesiri_contracts.common.storage import ObjectStoragePort
+from typing import Any
 
 from ingress.deduplication import DeduplicationStore
 from ingress.media_handoff import upload_downloaded_media
 from ingress.media_ingestion import DownloadedMedia, MediaDownloader
 from ingress.normalization import MessageNormalizer
+from mesiri_contracts.assistant import NormalizedMessage
+from mesiri_contracts.common.storage import ObjectStoragePort
 
 logger = logging.getLogger(__name__)
 
@@ -120,9 +119,9 @@ class WhatsAppReceiver:
             
             # User Identity & Organization Lookup
             try:
+
                 from mesiri.bootstrap.settings import PostgresSettings
                 from mesiri.infrastructure.postgres.database import PostgresDatabase
-                from sqlalchemy import text
                 
                 s = PostgresSettings()
                 db = PostgresDatabase(s)

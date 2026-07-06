@@ -15,7 +15,7 @@ def fix_nginx():
     # Download
     sftp.get(CONFIG, 'mercon.conf')
     
-    with open('mercon.conf', 'r') as f:
+    with open('mercon.conf') as f:
         content = f.read()
         
     if 'location ^~ /mesiriadmin' not in content:

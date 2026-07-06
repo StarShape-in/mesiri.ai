@@ -1,4 +1,3 @@
-import os
 import paramiko
 
 HOST = '187.127.180.98'
@@ -26,7 +25,7 @@ def deploy():
 
         print(f"Uploading {local_path} -> {remote_path}")
         try:
-            with open(local_path, 'r', encoding='utf-8') as f:
+            with open(local_path, encoding='utf-8') as f:
                 content = f.read()
             hex_content = content.encode('utf-8').hex()
             write_script = f"import binascii; open('{remote_path}', 'wb').write(binascii.unhexlify('{hex_content}'))"
@@ -35,7 +34,7 @@ def deploy():
             if err:
                 print(f"  ERROR: {err}")
             else:
-                print(f"  OK")
+                print("  OK")
         except Exception as e:
             print(f"  FAILED: {e}")
 
@@ -48,7 +47,7 @@ def deploy():
         remote_dir = remote_path.rsplit('/', 1)[0]
         client.exec_command(f"mkdir -p {remote_dir}")
         try:
-            with open(local_path, 'r', encoding='utf-8') as f:
+            with open(local_path, encoding='utf-8') as f:
                 content = f.read()
             hex_content = content.encode('utf-8').hex()
             write_script = f"import binascii; open('{remote_path}', 'wb').write(binascii.unhexlify('{hex_content}'))"
@@ -80,7 +79,7 @@ def deploy():
         "cd /opt/mesiri/apps/whatsapp-assistant/src && "
         "nohup /opt/mesiri/.venv/bin/uvicorn main:app "
         "--host 127.0.0.1 --port 8000 "
-        f"--env-file /opt/mesiri/.whatsapp.env "
+        "--env-file /opt/mesiri/.whatsapp.env "
         "> /tmp/mesiri_uvicorn.log 2>&1 &"
     )
     stdout.read()

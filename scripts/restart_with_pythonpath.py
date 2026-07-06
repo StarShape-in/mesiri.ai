@@ -1,4 +1,6 @@
-import paramiko, time
+import time
+
+import paramiko
 
 HOST = '187.127.180.98'
 USER = 'root'

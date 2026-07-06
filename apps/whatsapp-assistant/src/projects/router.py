@@ -123,8 +123,8 @@ def _decode(authorization: str | None) -> dict:
         raise HTTPException(status_code=401, detail="Missing or invalid token")
     try:
         return jwt.decode(authorization.split(" ")[1], SECRET_KEY, algorithms=[ALGORITHM])
-    except jwt.PyJWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    except jwt.PyJWTError as exc:
+        raise HTTPException(status_code=401, detail="Invalid token") from exc
 
 
 async def get_current_user(authorization: str = Header(None)) -> dict:

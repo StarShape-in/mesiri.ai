@@ -1,4 +1,5 @@
 import os
+
 import paramiko
 
 HOST = '187.127.180.98'
@@ -35,7 +36,7 @@ def deploy_backend():
         
         print(f"Uploading backend file: {f}...")
         try:
-            with open(local_path, 'r', encoding='utf-8') as local_file:
+            with open(local_path, encoding='utf-8') as local_file:
                 content = local_file.read()
             
             # Use python3 on the remote to safely write the file content
@@ -60,7 +61,7 @@ def deploy_backend():
             remote_path = local_path.replace(dist_dir, remote_ui).replace('\\', '/')
             try:
                 sftp.mkdir(remote_path)
-            except IOError:
+            except OSError:
                 pass
         for f in files:
             local_path = os.path.join(root, f)

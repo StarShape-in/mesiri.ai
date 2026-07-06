@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
+import bcrypt as _bcrypt
+import jwt
+import sqlalchemy as sa
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import create_async_engine
-import jwt
-import bcrypt as _bcrypt
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -68,12 +67,12 @@ class UserLogin(BaseModel):
     password: str
 
 class UserRegister(BaseModel):
-    organization_id: Optional[str] = None
+    organization_id: str | None = None
     email: str
     password: str
     full_name: str
     role: str = "USER"
-    whatsapp_number: Optional[str] = None
+    whatsapp_number: str | None = None
 
 class Token(BaseModel):
     access_token: str
@@ -84,7 +83,7 @@ class Token(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 def _create_token(user_id: str, org_id: str, role: str, name: str = "", org_name: str = "") -> str:
-    expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = datetime.now(UTC) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     payload = {"sub": user_id, "org": org_id, "role": role, "name": name, "org_name": org_name, "exp": expire}
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 

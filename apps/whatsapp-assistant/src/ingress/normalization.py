@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from mesiri_contracts.assistant import MediaReference, NormalizedMessage, ReplyContext, SenderInfo
 from mesiri_contracts.assistant.enums import InputModality

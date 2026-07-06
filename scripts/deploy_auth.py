@@ -1,4 +1,6 @@
-import paramiko, time
+import time
+
+import paramiko
 
 HOST = '187.127.180.98'
 USER = 'root'
@@ -29,7 +31,7 @@ def deploy():
     for local_path, remote_path in files.items():
         remote_dir = remote_path.rsplit('/', 1)[0]
         run(client, f"mkdir -p {remote_dir}")
-        with open(local_path, 'r', encoding='utf-8') as f:
+        with open(local_path, encoding='utf-8') as f:
             content = f.read()
         hex_content = content.encode('utf-8').hex()
         write_script = f"import binascii; open('{remote_path}', 'wb').write(binascii.unhexlify('{hex_content}'))"

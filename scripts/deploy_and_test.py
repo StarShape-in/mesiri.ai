@@ -1,4 +1,6 @@
-import paramiko, time
+import time
+
+import paramiko
 
 HOST = '187.127.180.98'
 USER = 'root'
@@ -14,7 +16,7 @@ def deploy():
     # Upload fixed router
     local_path = r'E:\Mesiri.AI\apps\whatsapp-assistant\src\admin\router.py'
     remote_path = f'{REMOTE_SRC}/admin/router.py'
-    with open(local_path, 'r', encoding='utf-8') as f:
+    with open(local_path, encoding='utf-8') as f:
         content = f.read()
     hex_content = content.encode('utf-8').hex()
     write_script = f"import binascii; open('{remote_path}', 'wb').write(binascii.unhexlify('{hex_content}'))"

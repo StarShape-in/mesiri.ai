@@ -5,7 +5,6 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
-from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
 from tests.fixtures.meta_payloads import (
     image_webhook_payload,
     text_webhook_payload,
@@ -15,6 +14,7 @@ from tests.fixtures.meta_payloads import (
 from ingress.deduplication import InMemoryDeduplicationStore
 from ingress.media_ingestion import DownloadedMedia
 from ingress.receiver import InMemoryNormalizedMessageStore, WhatsAppReceiver
+from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
 from mesiri_contracts.assistant.enums import InputModality
 
 

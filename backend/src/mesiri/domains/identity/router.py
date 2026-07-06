@@ -1,13 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from mesiri.bootstrap.settings import PostgresSettings
 from mesiri.infrastructure.postgres.database import PostgresDatabase
 from mesiri.infrastructure.postgres.models.user import UserModel, UserRole
-from sqlalchemy import select
 
-from .auth_service import hash_password, verify_password, create_access_token
+from .auth_service import create_access_token, hash_password, verify_password
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 

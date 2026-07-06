@@ -37,7 +37,7 @@ _EXTRACTION_PROMPT = (
 class DeepSeekExtractionProvider:
     provider = "deepseek"
 
-    def __init__(self, settings: "DeepSeekSettings") -> None:
+    def __init__(self, settings: DeepSeekSettings) -> None:
         self._s = settings
 
     async def extract(
