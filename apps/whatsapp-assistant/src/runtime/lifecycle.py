@@ -36,6 +36,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             yield
 
     app = FastAPI(title="Mesiri WhatsApp Assistant", lifespan=lifespan)
+
+    @app.get("/health", tags=["ops"])
+    async def health() -> dict:
+        return {"status": "ok"}
+
     app.include_router(webhook_router, prefix="/webhook")
 
     # CORS for Control Plane dashboard
