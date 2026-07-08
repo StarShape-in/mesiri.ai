@@ -16,8 +16,8 @@ jobs:
       - uses: astral-sh/setup-uv@v3
       - name: Set up Python
         run: uv venv --python 3.11
-      - name: Install (runtime + dev + providers, no infra SDKs needed)
-        run: uv pip install -e ".[dev,providers]"
+      - name: Install (runtime + dev + infra + providers)
+        run: uv pip install -e ".[dev,infra,providers]"
       - name: Lint
         run: uv run ruff check .
       - name: Test (fakes only — no external services)

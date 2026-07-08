@@ -20,6 +20,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
+import sqlalchemy as sa
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
@@ -41,10 +42,10 @@ async def test_engine():
 async def clean_db(test_engine: AsyncEngine):
     """Clean test tables before each test."""
     async with test_engine.begin() as conn:
-        await conn.execute("DELETE FROM sites")
-        await conn.execute("DELETE FROM projects")
-        await conn.execute("DELETE FROM users")
-        await conn.execute("DELETE FROM organizations")
+        await conn.execute(sa.text("DELETE FROM sites"))
+        await conn.execute(sa.text("DELETE FROM projects"))
+        await conn.execute(sa.text("DELETE FROM users"))
+        await conn.execute(sa.text("DELETE FROM organizations"))
     yield
 
 
@@ -61,10 +62,10 @@ async def test_org(test_engine: AsyncEngine):
     org_id = uuid.uuid4()
     async with test_engine.begin() as conn:
         await conn.execute(
-            """
+            sa.text("""
             INSERT INTO organizations (id, name, created_at, updated_at)
             VALUES (:id, :name, now(), now())
-            """,
+            """),
             {"id": org_id, "name": "Test Organization"},
         )
     return org_id
@@ -76,12 +77,12 @@ async def test_user(test_engine: AsyncEngine, test_org: uuid.UUID):
     user_id = uuid.uuid4()
     async with test_engine.begin() as conn:
         await conn.execute(
-            """
+            sa.text("""
             INSERT INTO users (id, organization_id, email, hashed_password, full_name,
                              role, status, access_policy, created_at, updated_at)
             VALUES (:id, :org_id, :email, :pwd, :name, :role, :status, :policy::jsonb,
                     now(), now())
-            """,
+            """),
             {
                 "id": user_id,
                 "org_id": test_org,
@@ -127,13 +128,13 @@ async def test_get_projects_returns_canonical_contract(
     project_id = uuid.uuid4()
     async with test_engine.begin() as conn:
         await conn.execute(
-            """
+            sa.text("""
             INSERT INTO projects (id, organization_id, name, code, location, client,
                                 description, status, progress, open_issues,
                                 created_at, updated_at)
             VALUES (:id, :org_id, :name, :code, :location, :client, :description,
                     :status, :progress, :open_issues, now(), now())
-            """,
+            """),
             {
                 "id": project_id,
                 "org_id": test_org,
@@ -205,10 +206,10 @@ async def test_status_mapping_on_track_to_success(
     """Verify on_track database status maps to success StatusType."""
     async with test_engine.begin() as conn:
         await conn.execute(
-            """
+            sa.text("""
             INSERT INTO projects (id, organization_id, name, status, created_at, updated_at)
             VALUES (:id, :org_id, :name, :status, now(), now())
-            """,
+            """),
             {
                 "id": uuid.uuid4(),
                 "org_id": test_org,
@@ -237,10 +238,10 @@ async def test_status_mapping_critical_to_critical(
     """Verify critical database status maps to critical StatusType."""
     async with test_engine.begin() as conn:
         await conn.execute(
-            """
+            sa.text("""
             INSERT INTO projects (id, organization_id, name, status, created_at, updated_at)
             VALUES (:id, :org_id, :name, :status, now(), now())
-            """,
+            """),
             {
                 "id": uuid.uuid4(),
                 "org_id": test_org,
@@ -270,10 +271,10 @@ async def test_projects_ordered_by_name(
     async with test_engine.begin() as conn:
         for name in ["Zebra Project", "Alpha Project", "Beta Project"]:
             await conn.execute(
-                """
+                sa.text("""
                 INSERT INTO projects (id, organization_id, name, created_at, updated_at)
                 VALUES (:id, :org_id, :name, now(), now())
-                """,
+                """),
                 {"id": uuid.uuid4(), "org_id": test_org, "name": name},
             )
 
@@ -311,11 +312,11 @@ async def test_null_optional_fields(
     """Verify optional fields can be null."""
     async with test_engine.begin() as conn:
         await conn.execute(
-            """
+            sa.text("""
             INSERT INTO projects (id, organization_id, name, code, location, client,
                                 description, created_at, updated_at)
             VALUES (:id, :org_id, :name, NULL, NULL, NULL, NULL, now(), now())
-            """,
+            """),
             {"id": uuid.uuid4(), "org_id": test_org, "name": "Minimal Project"},
         )
 
@@ -357,17 +358,17 @@ async def test_organization_isolation(
     other_org_id = uuid.uuid4()
     async with test_engine.begin() as conn:
         await conn.execute(
-            """
+            sa.text("""
             INSERT INTO organizations (id, name, created_at, updated_at)
             VALUES (:id, :name, now(), now())
-            """,
+            """),
             {"id": other_org_id, "name": "Other Organization"},
         )
         await conn.execute(
-            """
+            sa.text("""
             INSERT INTO projects (id, organization_id, name, created_at, updated_at)
             VALUES (:id, :org_id, :name, now(), now())
-            """,
+            """),
             {
                 "id": uuid.uuid4(),
                 "org_id": other_org_id,
