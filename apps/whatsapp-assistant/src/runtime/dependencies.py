@@ -18,6 +18,7 @@ from ingress.receiver import InMemoryNormalizedMessageStore, WhatsAppReceiver
 
 if TYPE_CHECKING:
     from context.resolver import ContextResolver
+    from interactions import InteractionHandler
     from planner import Planner
     from workflows import WorkflowRuntime
 
@@ -54,6 +55,7 @@ class AppContainer:
     context_resolver: ContextResolver
     planner: Planner
     workflow_runtime: WorkflowRuntime
+    interaction_handler: InteractionHandler
     # redis_client is either a real RedisClient (when MESIRI_REDIS__HOST is set)
     # or FakeRedis for local/test.  Both expose connect() / disconnect() so the
     # lifespan handler can manage the lifecycle without special-casing.
@@ -87,6 +89,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         resolve_sender,
     )
     from context.runtime import build_context_resolver
+    from interactions import InteractionHandler
     from mesiri.bootstrap.settings import get_settings as _get_backend_settings
     from mesiri.infrastructure.objectstorage import build_object_storage
     from planner import Planner
@@ -121,6 +124,9 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     workflow_runtime = WorkflowRuntime(
         registry=workflow_registry, repo=PostgresWorkflowInstanceRepository()
     )
+    # M7: resolves a confirmation reply into the pending workflow, or None
+    # (fall through to the normal understanding journey).
+    interaction_handler = InteractionHandler(workflow_runtime)
     sender = WhatsAppSender(
         client=http_client,
         access_token=settings.access_token,
@@ -167,6 +173,18 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             len(ctx.projects),
         )
 
+        # M7: if the user has a workflow awaiting confirmation and this message
+        # is a confirmation reply, resume it and stop — the AI pipeline (and its
+        # token cost) is never touched. A plain "yes" ends here.
+        try:
+            handled = await interaction_handler.handle(ctx.user_id, message)
+        except Exception:  # noqa: BLE001 — a resume error must not drop the message
+            _log.exception("interaction.handle_failed user=%s", ctx.user_id)
+            handled = None
+        if handled is not None:
+            await sender.send_text(wa_id, handled.reply_text)
+            return
+
         await process_inbound_message(
             message,
             pipeline=pipeline,
@@ -194,6 +212,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         context_resolver=context_resolver,
         planner=planner,
         workflow_runtime=workflow_runtime,
+        interaction_handler=interaction_handler,
         redis_client=redis_client,
     )
 

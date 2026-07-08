@@ -6,16 +6,63 @@ from typing import Any
 
 from mesiri_contracts.assistant.planner_decision import WorkflowKey
 from mesiri_contracts.assistant.v2.workflow_state import WorkflowStateV2
+from mesiri_contracts.context.enums import WorkflowPhase
+
+from .ports import LoadedWorkflowInstance, SingleActiveConflict
 
 
 class FakeWorkflowInstanceRepository:
-    """Deterministic in-memory WorkflowInstanceRepository for tests."""
+    """Deterministic in-memory WorkflowInstanceRepository for tests.
+
+    Mirrors the Postgres adapter's contract: version tracking for optimistic
+    locking, the single-active-confirmation invariant on save, and a
+    version-conditional transition.
+    """
 
     def __init__(self) -> None:
-        self.saved: list[WorkflowStateV2] = []
+        # workflow_instance_id -> (state, version)
+        self._rows: dict[str, tuple[WorkflowStateV2, int]] = {}
+
+    @property
+    def saved(self) -> list[WorkflowStateV2]:
+        return [state for state, _ in self._rows.values()]
+
+    def seed(self, state: WorkflowStateV2, version: int = 0) -> None:
+        """Test helper: place an existing instance without invariant checks."""
+        self._rows[state.workflow_instance_id] = (state, version)
 
     async def save(self, state: WorkflowStateV2) -> None:
-        self.saved.append(state)
+        if state.phase is WorkflowPhase.AWAITING_CONFIRMATION:
+            for existing, _ in self._rows.values():
+                if (
+                    existing.user_id == state.user_id
+                    and existing.phase is WorkflowPhase.AWAITING_CONFIRMATION
+                ):
+                    raise SingleActiveConflict(
+                        f"user {state.user_id} already has an awaiting-confirmation workflow"
+                    )
+        self._rows[state.workflow_instance_id] = (state, 0)
+
+    async def get_awaiting_confirmation(self, user_id: str) -> LoadedWorkflowInstance | None:
+        for state, version in self._rows.values():
+            if (
+                state.user_id == user_id
+                and state.phase is WorkflowPhase.AWAITING_CONFIRMATION
+            ):
+                return LoadedWorkflowInstance(state=state, version=version)
+        return None
+
+    async def transition(
+        self, workflow_instance_id: str, expected_version: int, new_state: WorkflowStateV2
+    ) -> bool:
+        row = self._rows.get(workflow_instance_id)
+        if row is None:
+            return False
+        _, version = row
+        if version != expected_version:
+            return False
+        self._rows[workflow_instance_id] = (new_state, version + 1)
+        return True
 
 
 class FakeCompiledGraph:

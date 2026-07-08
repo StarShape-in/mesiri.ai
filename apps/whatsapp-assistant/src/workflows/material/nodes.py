@@ -9,8 +9,8 @@ workflow nodes").
 from __future__ import annotations
 
 from mesiri_contracts.assistant.draft_action import DraftActionType
-from mesiri_contracts.assistant.v2.draft_action import DraftActionV2
 from mesiri_contracts.assistant.planner_decision import WorkflowKey
+from mesiri_contracts.assistant.v2.draft_action import DraftActionV2
 from mesiri_contracts.common.ids import new_id
 
 from ..state import WorkflowGraphState

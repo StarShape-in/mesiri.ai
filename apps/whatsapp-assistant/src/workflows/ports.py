@@ -8,13 +8,48 @@ a repository type from `backend/`; this is the correct dependency direction
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol
 
 from mesiri_contracts.assistant.v2.workflow_state import WorkflowStateV2
 
 
-class WorkflowInstanceRepository(Protocol):
-    """Persists a WorkflowState snapshot. The only place that may touch SQL for
-    workflow_instances is the concrete adapter implementing this port."""
+class SingleActiveConflict(Exception):
+    """Raised by ``save`` when inserting would create a second
+    AWAITING_CONFIRMATION instance for the same user (single-active invariant)."""
 
-    async def save(self, state: WorkflowStateV2) -> None: ...
+
+@dataclass(frozen=True, slots=True)
+class LoadedWorkflowInstance:
+    """A persisted workflow instance plus its optimistic-lock version.
+
+    ``version`` is an infra concern kept out of the durable WorkflowStateV2
+    contract; the runtime passes it back to ``transition`` to guard against
+    concurrent modification (duplicate deliveries / simultaneous replies).
+    """
+
+    state: WorkflowStateV2
+    version: int
+
+
+class WorkflowInstanceRepository(Protocol):
+    """Persists and transitions workflow instances. The concrete adapter is the
+    only place permitted to touch SQL for workflow_instances."""
+
+    async def save(self, state: WorkflowStateV2) -> None:
+        """Insert a new instance. Must fail if it would create a second
+        AWAITING_CONFIRMATION instance for the same user (single-active
+        invariant — enforced by a partial unique index in Postgres)."""
+        ...
+
+    async def get_awaiting_confirmation(self, user_id: str) -> LoadedWorkflowInstance | None:
+        """Return the user's single AWAITING_CONFIRMATION / active instance, or None."""
+        ...
+
+    async def transition(
+        self, workflow_instance_id: str, expected_version: int, new_state: WorkflowStateV2
+    ) -> bool:
+        """Optimistic conditional update: apply ``new_state`` only if the row is
+        still at ``expected_version``. Returns True if applied (rowcount 1),
+        False if a concurrent transition already moved it (rowcount 0)."""
+        ...

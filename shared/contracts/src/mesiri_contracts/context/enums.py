@@ -46,6 +46,12 @@ class WorkflowPhase(str, Enum):
     AWAITING_CONFIRMATION = "awaiting_confirmation"
     COLLECTING_FIELDS = "collecting_fields"
     PAUSED = "paused"
+    # Terminal outcomes of a human confirmation (M7). CONFIRMED is distinct from
+    # COMPLETED: the user approved the draft, but the domain write happens in a
+    # later milestone — the workflow is confirmed-and-handed-off, not done.
+    CONFIRMED = "confirmed"
+    REJECTED = "rejected"
+    CANCELLED = "cancelled"
     COMPLETED = "completed"
     FAILED = "failed"
     UNKNOWN = "unknown"

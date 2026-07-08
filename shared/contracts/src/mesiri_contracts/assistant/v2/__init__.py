@@ -4,6 +4,10 @@ from mesiri_contracts.assistant.v2.canonical_event import (
     CONTRACT_VERSION as CANONICAL_EVENT_V2_VERSION,
 )
 from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
+from mesiri_contracts.assistant.v2.confirmed_action import (
+    CONTRACT_VERSION as CONFIRMED_ACTION_V2_VERSION,
+)
+from mesiri_contracts.assistant.v2.confirmed_action import ConfirmedActionV2
 from mesiri_contracts.assistant.v2.draft_action import (
     CONTRACT_VERSION as DRAFT_ACTION_V2_VERSION,
 )
@@ -32,4 +36,6 @@ __all__ = [
     "WORKFLOW_STATE_V2_VERSION",
     "DraftActionV2",
     "DRAFT_ACTION_V2_VERSION",
+    "ConfirmedActionV2",
+    "CONFIRMED_ACTION_V2_VERSION",
 ]

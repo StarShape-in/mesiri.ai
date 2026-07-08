@@ -75,6 +75,17 @@ async def process_inbound_message(
 
     if workflow_run is not None and workflow_run.status is WorkflowRunStatus.STARTED:
         await send_text(message.sender.wa_id, workflow_run.pending_prompt)
+    elif (
+        workflow_run is not None
+        and workflow_run.status is WorkflowRunStatus.BLOCKED_PENDING_CONFIRMATION
+    ):
+        # A new actionable intent arrived while a confirmation is still pending
+        # (single-active invariant). Ask the user to resolve that first, re-showing it.
+        await send_text(
+            message.sender.wa_id,
+            "⏳ Please finish the pending confirmation first:\n\n"
+            f"{workflow_run.pending_prompt}",
+        )
     else:
         await reply_sender(message, understanding)
 

@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
+from mesiri_contracts.assistant.v2.confirmed_action import ConfirmedActionV2
 from mesiri_contracts.assistant.v2.draft_action import DraftActionV2
 from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
 from mesiri_contracts.assistant.v2.resolved_context import ResolvedContextV2
@@ -22,6 +23,7 @@ _MODELS = {
     "planner_decision": PlannerDecisionV2,
     "workflow_state": WorkflowStateV2,
     "draft_action": DraftActionV2,
+    "confirmed_action": ConfirmedActionV2,
 }
 
 

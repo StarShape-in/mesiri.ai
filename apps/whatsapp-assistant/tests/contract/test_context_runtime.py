@@ -22,6 +22,7 @@ import httpx
 from context import seed
 from context.identity_bridge import deterministic_canonical_uuid as canon
 from context.resolver import ContextResolver
+from interactions import InteractionHandler
 from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
 from mesiri_ai import fixtures
 from mesiri_ai.fakes import FakeExtractionProvider, FakeSpeechProvider, FakeVisionProvider
@@ -30,11 +31,13 @@ from mesiri_contracts.assistant.draft_action import DraftActionType
 from mesiri_contracts.assistant.enums import InputModality
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage, SenderInfo
 from mesiri_contracts.assistant.planner_decision import WorkflowKey
+from mesiri_contracts.assistant.understanding_result import UnderstandingResult
 from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
 from mesiri_contracts.assistant.v2.draft_action import DraftActionV2
 from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
 from mesiri_contracts.assistant.v2.resolved_context import ResolvedContextV2
-from mesiri_contracts.assistant.understanding_result import UnderstandingResult
+from mesiri_contracts.assistant.v2.workflow_state import WorkflowStateV2
+from mesiri_contracts.context.enums import WorkflowPhase
 from planner import Planner
 from runtime.dependencies import Settings, build_container
 from runtime.inbound_journey import process_inbound_message
@@ -259,6 +262,81 @@ async def test_inbound_journey_starts_workflow_and_replies_with_confirmation_pro
     assert sent_texts == [(message.sender.wa_id, "Confirm: 20 bags cement received?")]
 
 
+def _material_pipeline() -> UnderstandingPipeline:
+    return UnderstandingPipeline(
+        speech=FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
+        vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
+        extraction=FakeExtractionProvider(
+            ExtractionResult(
+                semantic_type="material_update",
+                fields={"material_name": "cement", "quantity": 20, "unit": "bags", "direction": "received"},
+                field_confidences={"material_name": 0.98, "quantity": 0.97, "unit": 0.95, "direction": 0.9},
+                model="fake-gemini",
+                latency_ms=180.0,
+            )
+        ),
+        object_storage=FakeObjectStorage(),
+    )
+
+
+async def test_inbound_journey_blocks_new_workflow_while_confirmation_pending():
+    """Single-active invariant: an actionable intent arriving while a confirmation
+    is pending is blocked and re-shows the pending prompt (not a new draft)."""
+    message = _message()
+    context_resolver = _resolver()
+
+    # Pre-seed an awaiting-confirmation workflow for the resolved user.
+    pending = WorkflowStateV2(
+        workflow_instance_id="11111111-1111-4111-8111-1111111111aa",
+        workflow_key=WorkflowKey.MATERIAL_RECEIPT,
+        correlation_id="cor_prev",
+        organization_id=canon(seed.ORG_A),
+        user_id=canon(seed.USER_ENGINEER),
+        phase=WorkflowPhase.AWAITING_CONFIRMATION,
+        draft_action=DraftActionV2(
+            draft_id="draft_prev",
+            correlation_id="cor_prev",
+            workflow_instance_id="11111111-1111-4111-8111-1111111111aa",
+            action_type=DraftActionType.RECORD_MATERIAL_RECEIPT,
+            organization_id=canon(seed.ORG_A),
+            user_id=canon(seed.USER_ENGINEER),
+            fields={"material_name": "steel", "quantity": 10, "unit": "rods"},
+        ),
+        pending_prompt="Confirm: 10 rods steel received?",
+    )
+    repo = FakeWorkflowInstanceRepository()
+    repo.seed(pending, version=0)
+    graph = FakeCompiledGraph({"draft_action": None, "pending_prompt": "x"})
+    workflow_runtime = WorkflowRuntime(
+        registry=FakeWorkflowRegistry({WorkflowKey.MATERIAL_RECEIPT: graph}), repo=repo
+    )
+
+    sent_texts: list[str] = []
+
+    async def capture_send_text(wa_id: str, body: str) -> None:
+        sent_texts.append(body)
+
+    async def unexpected_reply(msg, understanding) -> None:
+        raise AssertionError("must not fall back to understanding reply when blocked")
+
+    result = await process_inbound_message(
+        message,
+        pipeline=_material_pipeline(),
+        context_resolver=context_resolver,
+        planner=Planner(),
+        workflow_runtime=workflow_runtime,
+        reply_sender=unexpected_reply,
+        send_text=capture_send_text,
+    )
+
+    assert result.workflow_run is not None
+    assert result.workflow_run.status is WorkflowRunStatus.BLOCKED_PENDING_CONFIRMATION
+    assert len(sent_texts) == 1
+    assert "Confirm: 10 rods steel received?" in sent_texts[0]
+    # the pre-existing pending workflow is untouched — no second instance created
+    assert len(repo.saved) == 1
+
+
 async def test_build_container_wires_context_resolver(tmp_path):
     settings = Settings(
         verify_token="test-verify-token",
@@ -275,6 +353,8 @@ async def test_build_container_wires_context_resolver(tmp_path):
     assert isinstance(container.planner, Planner)
     assert container.workflow_runtime is not None
     assert isinstance(container.workflow_runtime, WorkflowRuntime)
+    assert container.interaction_handler is not None
+    assert isinstance(container.interaction_handler, InteractionHandler)
 
 
 async def test_context_debug_logs_resolved_context(caplog):

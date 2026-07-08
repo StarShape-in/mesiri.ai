@@ -15,12 +15,14 @@ from enum import Enum
 
 from mesiri_contracts.assistant.planner_decision import PlannerDecisionType, WorkflowKey
 from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
+from mesiri_contracts.assistant.v2.confirmed_action import ConfirmedActionV2
 from mesiri_contracts.assistant.v2.draft_action import DraftActionV2
 from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
 from mesiri_contracts.assistant.v2.workflow_state import WorkflowStateV2
+from mesiri_contracts.common.ids import new_id
 from mesiri_contracts.context.enums import WorkflowPhase
 
-from .ports import WorkflowInstanceRepository
+from .ports import LoadedWorkflowInstance, SingleActiveConflict, WorkflowInstanceRepository
 from .registry import WorkflowRegistry
 from .state import WorkflowGraphState
 
@@ -31,6 +33,9 @@ class WorkflowRunStatus(str, Enum):
     STARTED = "started"
     NO_GRAPH = "no_graph"
     FAILED = "failed"
+    # A new actionable intent arrived while the user already has a confirmation
+    # pending (single-active invariant). Carries the *existing* pending prompt.
+    BLOCKED_PENDING_CONFIRMATION = "blocked_pending_confirmation"
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,17 +51,23 @@ class WorkflowRunResult:
     pending_prompt: str | None = None
 
     def __post_init__(self) -> None:
-        carries_started_fields = (
-            self.workflow_instance_id is not None
-            or self.draft_action is not None
-            or self.pending_prompt is not None
-        )
         if self.status is WorkflowRunStatus.STARTED:
             if not (self.workflow_instance_id and self.draft_action and self.pending_prompt):
                 raise ValueError(
                     "STARTED requires workflow_instance_id, draft_action, and pending_prompt"
                 )
-        elif carries_started_fields:
+        elif self.status is WorkflowRunStatus.BLOCKED_PENDING_CONFIRMATION:
+            if not self.pending_prompt:
+                raise ValueError("BLOCKED_PENDING_CONFIRMATION requires the pending prompt")
+            if self.workflow_instance_id is not None or self.draft_action is not None:
+                raise ValueError(
+                    "BLOCKED_PENDING_CONFIRMATION must carry only pending_prompt"
+                )
+        elif (
+            self.workflow_instance_id is not None
+            or self.draft_action is not None
+            or self.pending_prompt is not None
+        ):
             raise ValueError(
                 f"{self.status.value} must not carry workflow_instance_id/draft_action/pending_prompt"
             )
@@ -88,6 +99,62 @@ class WorkflowRunResult:
     def failed(cls, *, workflow_key: WorkflowKey, correlation_id: str) -> WorkflowRunResult:
         return cls(status=WorkflowRunStatus.FAILED, workflow_key=workflow_key, correlation_id=correlation_id)
 
+    @classmethod
+    def blocked_pending_confirmation(
+        cls, *, workflow_key: WorkflowKey, correlation_id: str, pending_prompt: str
+    ) -> WorkflowRunResult:
+        return cls(
+            status=WorkflowRunStatus.BLOCKED_PENDING_CONFIRMATION,
+            workflow_key=workflow_key,
+            correlation_id=correlation_id,
+            pending_prompt=pending_prompt,
+        )
+
+
+class ResumeAction(str, Enum):
+    """The workflow-layer verb for resuming an awaiting workflow. The interaction
+    layer maps its InteractionIntent onto this — workflows/ never imports
+    interactions/."""
+
+    CONFIRM = "confirm"
+    REJECT = "reject"
+    CANCEL = "cancel"
+
+
+class WorkflowResumeStatus(str, Enum):
+    CONFIRMED = "confirmed"
+    REJECTED = "rejected"
+    CANCELLED = "cancelled"
+    # The optimistic transition found the row already moved on (duplicate
+    # delivery / double reply) — idempotent no-op.
+    ALREADY_RESOLVED = "already_resolved"
+    # The instance was not in AWAITING_CONFIRMATION.
+    NOT_RESUMABLE = "not_resumable"
+
+
+_RESUME_PHASE: dict[ResumeAction, WorkflowPhase] = {
+    ResumeAction.CONFIRM: WorkflowPhase.CONFIRMED,
+    ResumeAction.REJECT: WorkflowPhase.REJECTED,
+    ResumeAction.CANCEL: WorkflowPhase.CANCELLED,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowResumeResult:
+    """Discriminated resume outcome — only CONFIRMED carries a ConfirmedActionV2."""
+
+    status: WorkflowResumeStatus
+    workflow_instance_id: str
+    correlation_id: str
+    confirmed_action: ConfirmedActionV2 | None = None
+
+    def __post_init__(self) -> None:
+        if self.status is WorkflowResumeStatus.CONFIRMED:
+            if self.confirmed_action is None:
+                raise ValueError("CONFIRMED requires a confirmed_action")
+        elif self.confirmed_action is not None:
+            raise ValueError(f"{self.status.value} must not carry a confirmed_action")
+
 
 class WorkflowRuntime:
     """Starts a workflow graph from a PlannerDecision + CanonicalEvent."""
@@ -107,6 +174,23 @@ class WorkflowRuntime:
                 f"got decision_type={decision.decision_type!r} workflow_key={decision.workflow_key!r}"
             )
         workflow_key = decision.workflow_key
+
+        # Single-active invariant: a user may have at most one AWAITING_CONFIRMATION
+        # workflow. If one is pending, block the new one and re-show its prompt
+        # rather than piling up ambiguous confirmations. (The partial unique index
+        # in Postgres is the hard guarantee; this is the friendly pre-check.)
+        existing = await self._repo.get_awaiting_confirmation(event.user_id)
+        if existing is not None and existing.state.pending_prompt:
+            logger.info(
+                "workflow.blocked_pending_confirmation user=%s existing=%s",
+                event.user_id,
+                existing.state.workflow_instance_id,
+            )
+            return WorkflowRunResult.blocked_pending_confirmation(
+                workflow_key=workflow_key,
+                correlation_id=event.correlation_id,
+                pending_prompt=existing.state.pending_prompt,
+            )
 
         # Look up the graph BEFORE minting any identity: an unmapped key must
         # never generate an orphaned workflow_instance_id.
@@ -163,6 +247,23 @@ class WorkflowRuntime:
 
         try:
             await self._repo.save(state)
+        except SingleActiveConflict:
+            # Lost the check-then-insert race — the DB partial unique index is the
+            # real guarantee. Re-fetch to re-show the winning workflow's prompt.
+            existing = await self._repo.get_awaiting_confirmation(event.user_id)
+            prompt = (
+                existing.state.pending_prompt
+                if existing is not None and existing.state.pending_prompt
+                else "You have a pending confirmation. Please reply YES or NO to it first."
+            )
+            logger.info(
+                "workflow.blocked_pending_confirmation_on_insert user=%s", event.user_id
+            )
+            return WorkflowRunResult.blocked_pending_confirmation(
+                workflow_key=workflow_key,
+                correlation_id=event.correlation_id,
+                pending_prompt=prompt,
+            )
         except Exception:
             logger.exception("workflow.save_failed workflow_instance_id=%s", workflow_instance_id)
             return WorkflowRunResult.failed(workflow_key=workflow_key, correlation_id=event.correlation_id)
@@ -173,6 +274,83 @@ class WorkflowRuntime:
             workflow_instance_id=workflow_instance_id,
             draft_action=draft_action,
             pending_prompt=pending_prompt,
+        )
+
+    async def get_awaiting_confirmation(self, user_id: str) -> LoadedWorkflowInstance | None:
+        """The user's single awaiting-confirmation instance, or None. Interactions
+        talk only to the runtime, never the repo directly."""
+        return await self._repo.get_awaiting_confirmation(user_id)
+
+    async def resume(
+        self, loaded: LoadedWorkflowInstance, action: ResumeAction
+    ) -> WorkflowResumeResult:
+        """Transition an AWAITING_CONFIRMATION workflow exactly once."""
+        state = loaded.state
+        instance_id = state.workflow_instance_id
+
+        if state.phase is not WorkflowPhase.AWAITING_CONFIRMATION:
+            logger.info(
+                "workflow.not_resumable workflow_instance_id=%s phase=%s",
+                instance_id,
+                state.phase.value,
+            )
+            return WorkflowResumeResult(
+                status=WorkflowResumeStatus.NOT_RESUMABLE,
+                workflow_instance_id=instance_id,
+                correlation_id=state.correlation_id,
+            )
+
+        # Guard before any write: a CONFIRM must be able to produce the handoff.
+        # An awaiting instance should always carry a draft, but never half-
+        # transition if it somehow doesn't.
+        if action is ResumeAction.CONFIRM and state.draft_action is None:
+            logger.error(
+                "workflow.confirm_without_draft workflow_instance_id=%s", instance_id
+            )
+            return WorkflowResumeResult(
+                status=WorkflowResumeStatus.NOT_RESUMABLE,
+                workflow_instance_id=instance_id,
+                correlation_id=state.correlation_id,
+            )
+
+        new_phase = _RESUME_PHASE[action]
+        new_state = state.model_copy(update={"phase": new_phase})
+
+        applied = await self._repo.transition(instance_id, loaded.version, new_state)
+        if not applied:
+            # A concurrent transition already moved this instance (duplicate
+            # delivery / double reply). Idempotent no-op.
+            logger.info("workflow.already_resolved workflow_instance_id=%s", instance_id)
+            return WorkflowResumeResult(
+                status=WorkflowResumeStatus.ALREADY_RESOLVED,
+                workflow_instance_id=instance_id,
+                correlation_id=state.correlation_id,
+            )
+
+        if action is ResumeAction.CONFIRM:
+            confirmed = ConfirmedActionV2(
+                confirmed_action_id=new_id("confirmed"),
+                workflow_instance_id=instance_id,
+                correlation_id=state.correlation_id,
+                draft_action=state.draft_action,
+                confirmed_by_user_id=state.user_id,
+            )
+            return WorkflowResumeResult(
+                status=WorkflowResumeStatus.CONFIRMED,
+                workflow_instance_id=instance_id,
+                correlation_id=state.correlation_id,
+                confirmed_action=confirmed,
+            )
+
+        status = (
+            WorkflowResumeStatus.REJECTED
+            if action is ResumeAction.REJECT
+            else WorkflowResumeStatus.CANCELLED
+        )
+        return WorkflowResumeResult(
+            status=status,
+            workflow_instance_id=instance_id,
+            correlation_id=state.correlation_id,
         )
 
 
