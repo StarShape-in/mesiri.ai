@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "correlation_id": "cor_pd_1",
+  "source_message_id": "msg_pd_1",
+  "causation_event_id": "evt_pd_1",
+  "decision_type": "start_workflow",
+  "workflow_key": "material.receipt",
+  "reason": "MaterialReceiptRequested",
+  "priority": "normal",
+  "organization_id": "org_001",
+  "user_id": "usr_001",
+  "project_id": "prj_001",
+  "site_id": "site_001",
+  "missing_fields": [],
+  "metadata": {}
+}

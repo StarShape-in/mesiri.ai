@@ -84,6 +84,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from context.runtime import build_context_resolver
     from mesiri.bootstrap.settings import get_settings as _get_backend_settings
     from mesiri.infrastructure.objectstorage import build_object_storage
+    from planner import Planner
     from runtime.inbound_journey import process_inbound_message
     from understanding.runtime import build_pipeline, format_reply
 
@@ -107,6 +108,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
 
     pipeline = build_pipeline(object_storage)
     context_resolver = build_context_resolver(redis=redis_client)
+    planner = Planner()  # stateless — safe to construct once and share
     sender = WhatsAppSender(
         client=http_client,
         access_token=settings.access_token,
@@ -157,6 +159,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             message,
             pipeline=pipeline,
             context_resolver=context_resolver,
+            planner=planner,
             reply_sender=_send_understanding_reply,
             context_debug=settings.context_debug,
         )

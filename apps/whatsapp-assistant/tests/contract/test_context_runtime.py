@@ -1,11 +1,11 @@
-"""Runtime integration: NormalizedMessage → Understanding → Context → reply.
+"""Runtime integration: NormalizedMessage → Understanding → Context → Planner → reply.
 
 Context resolution uses M4 seed fakes so the tests run without a live
 database. The key invariants:
-  - process_inbound_message wires Understanding → Context → reply
+  - process_inbound_message wires Understanding → Context → Canonicalization → Planner → reply
   - reply is sent regardless of context resolution outcome
   - build_container wires an M4 ContextResolver (not ContractContextResolver)
-  - context_debug flag triggers log output from log_resolved_context
+  - context_debug flag triggers log output from log_resolved_context / log_canonical_event / log_planner_decision
 """
 
 from __future__ import annotations
@@ -24,8 +24,10 @@ from mesiri_ai.fakes import FakeExtractionProvider, FakeSpeechProvider, FakeVisi
 from mesiri_contracts.assistant.canonical_event import CanonicalEvent
 from mesiri_contracts.assistant.enums import InputModality
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage, SenderInfo
+from mesiri_contracts.assistant.planner_decision import PlannerDecision
 from mesiri_contracts.assistant.resolved_context import ResolvedContext
 from mesiri_contracts.assistant.understanding_result import UnderstandingResult
+from planner import Planner
 from runtime.dependencies import Settings, build_container
 from runtime.inbound_journey import process_inbound_message
 from understanding.pipeline import UnderstandingPipeline
@@ -68,27 +70,33 @@ async def test_inbound_journey_produces_resolved_context():
     async def capture_reply(msg: NormalizedMessage, understanding: UnderstandingResult) -> None:
         sent_replies.append(format_reply(understanding))
 
-    understanding, resolved, canonical_event = await process_inbound_message(
+    result = await process_inbound_message(
         message,
         pipeline=pipeline,
         context_resolver=context_resolver,
+        planner=Planner(),
         reply_sender=capture_reply,
     )
 
-    assert isinstance(understanding, UnderstandingResult)
+    assert isinstance(result.understanding, UnderstandingResult)
     # seed.WA_ENGINEER is registered in seed fakes → resolution succeeds
-    assert isinstance(resolved, ResolvedContext)
-    assert resolved.correlation_id == message.correlation_id
-    assert resolved.source_message_id == message.message_id
-    assert resolved.user_id == seed.USER_ENGINEER
-    assert resolved.organization_id == seed.ORG_A
+    assert isinstance(result.resolved_context, ResolvedContext)
+    assert result.resolved_context.correlation_id == message.correlation_id
+    assert result.resolved_context.source_message_id == message.message_id
+    assert result.resolved_context.user_id == seed.USER_ENGINEER
+    assert result.resolved_context.organization_id == seed.ORG_A
     assert len(sent_replies) == 1
 
-    # Context resolved successfully → canonicalization runs too.
-    assert isinstance(canonical_event, CanonicalEvent)
-    assert canonical_event.correlation_id == message.correlation_id
-    assert canonical_event.organization_id == seed.ORG_A
-    assert canonical_event.user_id == seed.USER_ENGINEER
+    # Context resolved successfully → canonicalization and planning run too.
+    assert isinstance(result.canonical_event, CanonicalEvent)
+    assert result.canonical_event.correlation_id == message.correlation_id
+    assert result.canonical_event.organization_id == seed.ORG_A
+    assert result.canonical_event.user_id == seed.USER_ENGINEER
+
+    assert isinstance(result.planner_decision, PlannerDecision)
+    assert result.planner_decision.correlation_id == message.correlation_id
+    assert result.planner_decision.organization_id == seed.ORG_A
+    assert result.planner_decision.user_id == seed.USER_ENGINEER
 
 
 async def test_inbound_journey_reply_unchanged_by_context():
@@ -109,6 +117,7 @@ async def test_inbound_journey_reply_unchanged_by_context():
         message,
         pipeline=pipeline,
         context_resolver=context_resolver,
+        planner=Planner(),
         reply_sender=capture_reply,
     )
 
@@ -130,16 +139,18 @@ async def test_inbound_journey_unknown_user_still_sends_reply():
     async def capture_reply(msg: NormalizedMessage, understanding: UnderstandingResult) -> None:
         sent_replies.append(format_reply(understanding))
 
-    understanding, resolved, canonical_event = await process_inbound_message(
+    result = await process_inbound_message(
         message,
         pipeline=pipeline,
         context_resolver=context_resolver,
+        planner=Planner(),
         reply_sender=capture_reply,
     )
 
-    assert isinstance(understanding, UnderstandingResult)
-    assert resolved is None  # context failed gracefully
-    assert canonical_event is None  # canonicalization requires resolved context
+    assert isinstance(result.understanding, UnderstandingResult)
+    assert result.resolved_context is None  # context failed gracefully
+    assert result.canonical_event is None  # canonicalization requires resolved context
+    assert result.planner_decision is None  # no canonical event to plan from
     assert len(sent_replies) == 1  # reply still went out
 
 
@@ -170,6 +181,7 @@ async def test_context_debug_logs_resolved_context(caplog):
         message,
         pipeline=_pipeline(),
         context_resolver=_resolver(),
+        planner=Planner(),
         reply_sender=noop_reply,
         context_debug=True,
     )
@@ -193,12 +205,37 @@ async def test_context_debug_logs_canonical_event(caplog):
         message,
         pipeline=_pipeline(),
         context_resolver=_resolver(),
+        planner=Planner(),
         reply_sender=noop_reply,
         context_debug=True,
     )
 
     assert any(
         "CanonicalEvent correlation_id=cor_context_1" in record.message
+        for record in caplog.records
+    )
+
+
+async def test_context_debug_logs_planner_decision(caplog):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="planner.planner")
+    message = _message()
+
+    async def noop_reply(msg: NormalizedMessage, understanding: UnderstandingResult) -> None:
+        return None
+
+    await process_inbound_message(
+        message,
+        pipeline=_pipeline(),
+        context_resolver=_resolver(),
+        planner=Planner(),
+        reply_sender=noop_reply,
+        context_debug=True,
+    )
+
+    assert any(
+        "PlannerDecision correlation_id=cor_context_1" in record.message
         for record in caplog.records
     )
 
@@ -218,6 +255,7 @@ async def test_reply_sender_receives_same_understanding_as_format_reply():
         message,
         pipeline=pipeline,
         context_resolver=_resolver(),
+        planner=Planner(),
         reply_sender=_send_understanding_reply,
     )
 

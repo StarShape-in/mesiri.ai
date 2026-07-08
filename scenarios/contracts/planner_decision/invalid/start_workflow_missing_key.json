@@ -1,0 +1,10 @@
+{
+  "version": "v1",
+  "correlation_id": "cor_bad_1",
+  "source_message_id": "msg_bad_1",
+  "decision_type": "start_workflow",
+  "workflow_key": null,
+  "reason": "MaterialReceiptRequested",
+  "organization_id": "org_001",
+  "user_id": "usr_001"
+}

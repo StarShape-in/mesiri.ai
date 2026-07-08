@@ -1,0 +1,8 @@
+{
+  "version": "v1",
+  "correlation_id": "cor_bad_5",
+  "source_message_id": "msg_bad_5",
+  "decision_type": "direct_reply",
+  "reason": "GeneralQuestionAsked",
+  "user_id": "usr_001"
+}

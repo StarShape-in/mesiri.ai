@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "correlation_id": "cor_pd_3",
+  "source_message_id": "msg_pd_3",
+  "causation_event_id": "evt_pd_3",
+  "decision_type": "direct_reply",
+  "workflow_key": null,
+  "reason": "GeneralQuestionAsked",
+  "priority": "normal",
+  "organization_id": "org_001",
+  "user_id": "usr_001",
+  "project_id": null,
+  "site_id": null,
+  "missing_fields": [],
+  "metadata": {}
+}
