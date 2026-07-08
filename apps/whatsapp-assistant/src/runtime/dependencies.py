@@ -19,6 +19,7 @@ from ingress.receiver import InMemoryNormalizedMessageStore, WhatsAppReceiver
 if TYPE_CHECKING:
     from context.resolver import ContextResolver
     from planner import Planner
+    from workflows import WorkflowRuntime
 
 
 class Settings(BaseSettings):
@@ -52,6 +53,7 @@ class AppContainer:
     receiver: WhatsAppReceiver
     context_resolver: ContextResolver
     planner: Planner
+    workflow_runtime: WorkflowRuntime
     # redis_client is either a real RedisClient (when MESIRI_REDIS__HOST is set)
     # or FakeRedis for local/test.  Both expose connect() / disconnect() so the
     # lifespan handler can manage the lifecycle without special-casing.
@@ -76,6 +78,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     import logging as _logging
 
     from backend.postgres.actor import PostgresActorReader
+    from backend.postgres.workflow_instance import PostgresWorkflowInstanceRepository
     from channel.whatsapp.outbound import WhatsAppSender
     from context.live_identity import (
         NO_ORG_MESSAGE,
@@ -89,6 +92,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from planner import Planner
     from runtime.inbound_journey import process_inbound_message
     from understanding.runtime import build_pipeline, format_reply
+    from workflows import WorkflowRegistry, WorkflowRuntime
 
     _log = _logging.getLogger("mesiri.context")
 
@@ -111,6 +115,12 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     pipeline = build_pipeline(object_storage)
     context_resolver = build_context_resolver(redis=redis_client)
     planner = Planner()  # stateless — safe to construct once and share
+    # WorkflowRegistry compiles each graph once and caches it — constructed
+    # once here, never per message.
+    workflow_registry = WorkflowRegistry()
+    workflow_runtime = WorkflowRuntime(
+        registry=workflow_registry, repo=PostgresWorkflowInstanceRepository()
+    )
     sender = WhatsAppSender(
         client=http_client,
         access_token=settings.access_token,
@@ -162,7 +172,9 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             pipeline=pipeline,
             context_resolver=context_resolver,
             planner=planner,
+            workflow_runtime=workflow_runtime,
             reply_sender=_send_understanding_reply,
+            send_text=sender.send_text,
             context_debug=settings.context_debug,
         )
 
@@ -181,6 +193,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         receiver=receiver,
         context_resolver=context_resolver,
         planner=planner,
+        workflow_runtime=workflow_runtime,
         redis_client=redis_client,
     )
 

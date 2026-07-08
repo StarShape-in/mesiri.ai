@@ -1,0 +1,10 @@
+{
+  "version": "v1",
+  "draft_id": "draft_bad_1",
+  "correlation_id": "cor_bad_1",
+  "workflow_instance_id": "wf_bad_1",
+  "action_type": "record_material_receipt",
+  "organization_id": "org_001",
+  "user_id": "usr_001",
+  "confidence_level": "high"
+}

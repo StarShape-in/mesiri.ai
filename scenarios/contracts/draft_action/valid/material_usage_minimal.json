@@ -1,0 +1,10 @@
+{
+  "version": "v1",
+  "draft_id": "draft_2",
+  "correlation_id": "cor_da_2",
+  "workflow_instance_id": "wf_da_2",
+  "action_type": "record_material_usage",
+  "organization_id": "org_001",
+  "user_id": "usr_001",
+  "fields": {}
+}

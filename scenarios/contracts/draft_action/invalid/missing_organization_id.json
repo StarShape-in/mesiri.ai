@@ -1,0 +1,8 @@
+{
+  "version": "v1",
+  "draft_id": "draft_bad_3",
+  "correlation_id": "cor_bad_3",
+  "workflow_instance_id": "wf_bad_3",
+  "action_type": "record_material_receipt",
+  "user_id": "usr_001"
+}

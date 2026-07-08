@@ -1,11 +1,15 @@
-"""Runtime integration: NormalizedMessage → Understanding → Context → Planner → reply.
+"""Runtime integration: NormalizedMessage → Understanding → Context → Planner → Workflow → reply.
 
 Context resolution uses M4 seed fakes so the tests run without a live
-database. The key invariants:
-  - process_inbound_message wires Understanding → Context → Canonicalization → Planner → reply
+database. WorkflowRuntime here always uses a FakeWorkflowRegistry/
+FakeWorkflowInstanceRepository — no LangGraph import needed, matching the
+core-suite-runs-without-langgraph invariant. The key invariants:
+  - process_inbound_message wires Understanding → Context → Canonicalization → Planner → Workflow → reply
   - reply is sent regardless of context resolution outcome
   - build_container wires an M4 ContextResolver (not ContractContextResolver)
-  - context_debug flag triggers log output from log_resolved_context / log_canonical_event / log_planner_decision
+  - context_debug flag triggers log output from log_resolved_context / log_canonical_event /
+    log_planner_decision / log_workflow_run
+  - when a workflow actually starts, the reply is the workflow's confirmation prompt
 """
 
 from __future__ import annotations
@@ -17,14 +21,15 @@ import httpx
 
 from context import seed
 from context.resolver import ContextResolver
-from context.runtime import build_context_resolver, log_resolved_context
 from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
 from mesiri_ai import fixtures
 from mesiri_ai.fakes import FakeExtractionProvider, FakeSpeechProvider, FakeVisionProvider
+from mesiri_ai.models import ExtractionResult
 from mesiri_contracts.assistant.canonical_event import CanonicalEvent
+from mesiri_contracts.assistant.draft_action import DraftAction, DraftActionType
 from mesiri_contracts.assistant.enums import InputModality
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage, SenderInfo
-from mesiri_contracts.assistant.planner_decision import PlannerDecision
+from mesiri_contracts.assistant.planner_decision import PlannerDecision, WorkflowKey
 from mesiri_contracts.assistant.resolved_context import ResolvedContext
 from mesiri_contracts.assistant.understanding_result import UnderstandingResult
 from planner import Planner
@@ -32,6 +37,9 @@ from runtime.dependencies import Settings, build_container
 from runtime.inbound_journey import process_inbound_message
 from understanding.pipeline import UnderstandingPipeline
 from understanding.runtime import format_reply
+from workflows import WorkflowRuntime
+from workflows.fakes import FakeCompiledGraph, FakeWorkflowInstanceRepository, FakeWorkflowRegistry
+from workflows.runtime import WorkflowRunStatus
 
 
 def _message(wa_id: str = seed.WA_ENGINEER, **kwargs) -> NormalizedMessage:
@@ -61,6 +69,18 @@ def _resolver() -> ContextResolver:
     return ContextResolver(seed.build_dependencies())
 
 
+def _workflow_runtime(graphs: dict[WorkflowKey, FakeCompiledGraph] | None = None) -> WorkflowRuntime:
+    """A WorkflowRuntime backed entirely by fakes — no LangGraph, no DB."""
+    return WorkflowRuntime(
+        registry=FakeWorkflowRegistry(graphs),
+        repo=FakeWorkflowInstanceRepository(),
+    )
+
+
+async def _noop_send_text(wa_id: str, body: str) -> None:
+    return None
+
+
 async def test_inbound_journey_produces_resolved_context():
     message = _message()
     pipeline = _pipeline()
@@ -75,7 +95,9 @@ async def test_inbound_journey_produces_resolved_context():
         pipeline=pipeline,
         context_resolver=context_resolver,
         planner=Planner(),
+        workflow_runtime=_workflow_runtime(),
         reply_sender=capture_reply,
+        send_text=_noop_send_text,
     )
 
     assert isinstance(result.understanding, UnderstandingResult)
@@ -85,6 +107,8 @@ async def test_inbound_journey_produces_resolved_context():
     assert result.resolved_context.source_message_id == message.message_id
     assert result.resolved_context.user_id == seed.USER_ENGINEER
     assert result.resolved_context.organization_id == seed.ORG_A
+    # No graph registered for expense.submit in this fake registry -> falls
+    # back to the understanding reply, same as before workflows existed.
     assert len(sent_replies) == 1
 
     # Context resolved successfully → canonicalization and planning run too.
@@ -118,7 +142,9 @@ async def test_inbound_journey_reply_unchanged_by_context():
         pipeline=pipeline,
         context_resolver=context_resolver,
         planner=Planner(),
+        workflow_runtime=_workflow_runtime(),
         reply_sender=capture_reply,
+        send_text=_noop_send_text,
     )
 
     assert captured == [expected_reply]
@@ -144,14 +170,88 @@ async def test_inbound_journey_unknown_user_still_sends_reply():
         pipeline=pipeline,
         context_resolver=context_resolver,
         planner=Planner(),
+        workflow_runtime=_workflow_runtime(),
         reply_sender=capture_reply,
+        send_text=_noop_send_text,
     )
 
     assert isinstance(result.understanding, UnderstandingResult)
     assert result.resolved_context is None  # context failed gracefully
     assert result.canonical_event is None  # canonicalization requires resolved context
     assert result.planner_decision is None  # no canonical event to plan from
+    assert result.workflow_run is None  # no planner decision to act on
     assert len(sent_replies) == 1  # reply still went out
+
+
+async def test_inbound_journey_starts_workflow_and_replies_with_confirmation_prompt():
+    """When Planner emits START_WORKFLOW and a graph is registered, the reply is
+    the workflow's confirmation prompt — not the understanding summary. This
+    is the first time context/planner output changes what the user sees."""
+    message = _message()
+    pipeline = UnderstandingPipeline(
+        speech=FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
+        vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
+        extraction=FakeExtractionProvider(
+            ExtractionResult(
+                semantic_type="material_update",
+                fields={
+                    "material_name": "cement",
+                    "quantity": 20,
+                    "unit": "bags",
+                    "direction": "received",
+                },
+                field_confidences={
+                    "material_name": 0.98,
+                    "quantity": 0.97,
+                    "unit": 0.95,
+                    "direction": 0.9,
+                },
+                model="fake-gemini",
+                latency_ms=180.0,
+            )
+        ),
+        object_storage=FakeObjectStorage(),
+    )
+    context_resolver = _resolver()
+
+    draft = DraftAction(
+        draft_id="draft_test",
+        correlation_id="cor_context_1",
+        workflow_instance_id="placeholder",
+        action_type=DraftActionType.RECORD_MATERIAL_RECEIPT,
+        organization_id=seed.ORG_A,
+        user_id=seed.USER_ENGINEER,
+        fields={"material_name": "cement", "quantity": 20, "unit": "bags"},
+    )
+    fake_graph = FakeCompiledGraph(
+        {"draft_action": draft, "pending_prompt": "Confirm: 20 bags cement received?"}
+    )
+    workflow_runtime = _workflow_runtime({WorkflowKey.MATERIAL_RECEIPT: fake_graph})
+
+    sent_texts: list[tuple[str, str]] = []
+
+    async def capture_send_text(wa_id: str, body: str) -> None:
+        sent_texts.append((wa_id, body))
+
+    async def unexpected_reply(msg: NormalizedMessage, understanding: UnderstandingResult) -> None:
+        raise AssertionError("reply_sender must not be called when a workflow starts")
+
+    result = await process_inbound_message(
+        message,
+        pipeline=pipeline,
+        context_resolver=context_resolver,
+        planner=Planner(),
+        workflow_runtime=workflow_runtime,
+        reply_sender=unexpected_reply,
+        send_text=capture_send_text,
+    )
+
+    assert result.planner_decision is not None
+    assert result.planner_decision.workflow_key is WorkflowKey.MATERIAL_RECEIPT
+    assert result.workflow_run is not None
+    assert result.workflow_run.status is WorkflowRunStatus.STARTED
+    assert result.workflow_run.pending_prompt == "Confirm: 20 bags cement received?"
+    assert sent_texts == [(message.sender.wa_id, "Confirm: 20 bags cement received?")]
 
 
 async def test_build_container_wires_context_resolver(tmp_path):
@@ -168,6 +268,8 @@ async def test_build_container_wires_context_resolver(tmp_path):
     assert isinstance(container.context_resolver, ContextResolver)
     assert container.planner is not None
     assert isinstance(container.planner, Planner)
+    assert container.workflow_runtime is not None
+    assert isinstance(container.workflow_runtime, WorkflowRuntime)
 
 
 async def test_context_debug_logs_resolved_context(caplog):
@@ -184,7 +286,9 @@ async def test_context_debug_logs_resolved_context(caplog):
         pipeline=_pipeline(),
         context_resolver=_resolver(),
         planner=Planner(),
+        workflow_runtime=_workflow_runtime(),
         reply_sender=noop_reply,
+        send_text=_noop_send_text,
         context_debug=True,
     )
 
@@ -208,7 +312,9 @@ async def test_context_debug_logs_canonical_event(caplog):
         pipeline=_pipeline(),
         context_resolver=_resolver(),
         planner=Planner(),
+        workflow_runtime=_workflow_runtime(),
         reply_sender=noop_reply,
+        send_text=_noop_send_text,
         context_debug=True,
     )
 
@@ -232,13 +338,40 @@ async def test_context_debug_logs_planner_decision(caplog):
         pipeline=_pipeline(),
         context_resolver=_resolver(),
         planner=Planner(),
+        workflow_runtime=_workflow_runtime(),
         reply_sender=noop_reply,
+        send_text=_noop_send_text,
         context_debug=True,
     )
 
     assert any(
         "PlannerDecision correlation_id=cor_context_1" in record.message
         for record in caplog.records
+    )
+
+
+async def test_context_debug_logs_workflow_run(caplog):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="workflows.runtime")
+    message = _message()
+
+    async def noop_reply(msg: NormalizedMessage, understanding: UnderstandingResult) -> None:
+        return None
+
+    await process_inbound_message(
+        message,
+        pipeline=_pipeline(),
+        context_resolver=_resolver(),
+        planner=Planner(),
+        workflow_runtime=_workflow_runtime(),
+        reply_sender=noop_reply,
+        send_text=_noop_send_text,
+        context_debug=True,
+    )
+
+    assert any(
+        "WorkflowRun correlation_id=cor_context_1" in record.message for record in caplog.records
     )
 
 
@@ -258,7 +391,9 @@ async def test_reply_sender_receives_same_understanding_as_format_reply():
         pipeline=pipeline,
         context_resolver=_resolver(),
         planner=Planner(),
+        workflow_runtime=_workflow_runtime(),
         reply_sender=_send_understanding_reply,
+        send_text=_noop_send_text,
     )
 
     sender.send_text.assert_awaited_once_with(message.sender.wa_id, expected_reply)

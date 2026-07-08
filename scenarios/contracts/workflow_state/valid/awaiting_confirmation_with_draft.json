@@ -1,0 +1,31 @@
+{
+  "version": "v1",
+  "workflow_instance_id": "wf_ws_1",
+  "workflow_key": "material.receipt",
+  "correlation_id": "cor_ws_1",
+  "organization_id": "org_001",
+  "user_id": "usr_001",
+  "project_id": "prj_001",
+  "site_id": "site_001",
+  "phase": "awaiting_confirmation",
+  "collected_fields": {
+    "material_name": "cement",
+    "quantity": 20,
+    "unit": "bags"
+  },
+  "draft_action": {
+    "version": "v1",
+    "draft_id": "draft_1",
+    "correlation_id": "cor_ws_1",
+    "workflow_instance_id": "wf_ws_1",
+    "action_type": "record_material_receipt",
+    "organization_id": "org_001",
+    "user_id": "usr_001",
+    "fields": {
+      "material_name": "cement",
+      "quantity": 20,
+      "unit": "bags"
+    }
+  },
+  "pending_prompt": "Confirm: 20 bags cement received?"
+}

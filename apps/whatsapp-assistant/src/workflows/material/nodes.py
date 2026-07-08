@@ -1,0 +1,57 @@
+"""Material workflow nodes — pure functions, no LangGraph, no I/O, no SQL, no domain rules.
+
+Each node takes the graph's working state and returns the partial update
+LangGraph merges in. Shape-mapping only: quantity>0 and other business rules
+belong to the Domain layer, not here (architecture: "no business logic in
+workflow nodes").
+"""
+
+from __future__ import annotations
+
+from mesiri_contracts.assistant.draft_action import DraftAction, DraftActionType
+from mesiri_contracts.assistant.planner_decision import WorkflowKey
+from mesiri_contracts.common.ids import new_id
+
+from ..state import WorkflowGraphState
+
+_ACTION_TYPE_BY_WORKFLOW_KEY: dict[WorkflowKey, DraftActionType] = {
+    WorkflowKey.MATERIAL_RECEIPT: DraftActionType.RECORD_MATERIAL_RECEIPT,
+    WorkflowKey.MATERIAL_USAGE: DraftActionType.RECORD_MATERIAL_USAGE,
+}
+
+_ACTION_LABEL: dict[DraftActionType, str] = {
+    DraftActionType.RECORD_MATERIAL_RECEIPT: "Material Receipt",
+    DraftActionType.RECORD_MATERIAL_USAGE: "Material Usage",
+}
+
+
+def build_draft(state: WorkflowGraphState) -> dict:
+    """Map collected fields into a DraftAction. Shape-mapping only — no validation."""
+    workflow_key = WorkflowKey(state["workflow_key"])
+    action_type = _ACTION_TYPE_BY_WORKFLOW_KEY[workflow_key]
+    draft = DraftAction(
+        draft_id=new_id("draft"),
+        correlation_id=state["correlation_id"],
+        workflow_instance_id=state["workflow_instance_id"],
+        action_type=action_type,
+        organization_id=state["organization_id"],
+        user_id=state["user_id"],
+        project_id=state.get("project_id"),
+        site_id=state.get("site_id"),
+        fields=dict(state.get("collected_fields") or {}),
+    )
+    return {"draft_action": draft}
+
+
+def request_confirmation(state: WorkflowGraphState) -> dict:
+    """Compose the confirmation prompt. Deterministic formatting only — no
+    localization/templates/AI generation here (that moves to a rendering
+    boundary once those requirements arrive)."""
+    draft: DraftAction = state["draft_action"]
+    label = _ACTION_LABEL[draft.action_type]
+    lines = ["*Confirm this record?*", "", f"📦 {label}"]
+    for key, value in draft.fields.items():
+        lines.append(f"   • {key}: {value}")
+    lines.append("")
+    lines.append("Reply YES to confirm or NO to cancel.")
+    return {"pending_prompt": "\n".join(lines)}

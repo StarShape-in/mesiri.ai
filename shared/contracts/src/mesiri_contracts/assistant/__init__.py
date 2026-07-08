@@ -9,6 +9,10 @@ from mesiri_contracts.assistant.canonical_event import (
     IntentCompleteness,
 )
 from mesiri_contracts.assistant.context_enums import ContextConfidence, ContextSource
+from mesiri_contracts.assistant.draft_action import (
+    CONTRACT_VERSION as DRAFT_ACTION_VERSION,
+)
+from mesiri_contracts.assistant.draft_action import DraftAction, DraftActionType
 from mesiri_contracts.assistant.normalized_message import (
     MediaReference,
     NormalizedMessage,
@@ -28,6 +32,10 @@ from mesiri_contracts.assistant.resolved_context import (
     CONTRACT_VERSION as RESOLVED_CONTEXT_VERSION,
 )
 from mesiri_contracts.assistant.resolved_context import ResolvedContext
+from mesiri_contracts.assistant.workflow_state import (
+    CONTRACT_VERSION as WORKFLOW_STATE_VERSION,
+)
+from mesiri_contracts.assistant.workflow_state import WorkflowState
 
 __all__ = [
     "MediaReference",
@@ -47,4 +55,9 @@ __all__ = [
     "PlannerPriority",
     "WorkflowKey",
     "PLANNER_DECISION_VERSION",
+    "DraftAction",
+    "DraftActionType",
+    "DRAFT_ACTION_VERSION",
+    "WorkflowState",
+    "WORKFLOW_STATE_VERSION",
 ]
