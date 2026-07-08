@@ -23,6 +23,7 @@ import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from mesiri.bootstrap.settings import Settings
 from mesiri.domains.identity.auth_service import create_access_token
@@ -34,7 +35,7 @@ from mesiri.infrastructure.postgres.dependency import get_db_conn
 async def test_engine():
     """Create a test database engine."""
     settings = Settings()
-    engine = create_async_engine(settings.postgres.dsn(), echo=False)
+    engine = create_async_engine(settings.postgres.dsn(), echo=False, poolclass=NullPool)
     yield engine
     await engine.dispose()
 
