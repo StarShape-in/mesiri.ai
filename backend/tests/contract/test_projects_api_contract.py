@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from mesiri.bootstrap.settings import Settings
 from mesiri.domains.identity.auth_service import create_access_token
 from mesiri.http.app import create_app
+from mesiri.infrastructure.postgres.dependency import get_db_conn
 
 
 @pytest.fixture
@@ -50,9 +51,15 @@ async def clean_db(test_engine: AsyncEngine):
 
 
 @pytest.fixture
-def client():
+def client(test_engine: AsyncEngine):
     """FastAPI test client."""
     app = create_app()
+
+    async def override_get_db_conn():
+        async with test_engine.begin() as conn:
+            yield conn
+
+    app.dependency_overrides[get_db_conn] = override_get_db_conn
     return TestClient(app)
 
 
