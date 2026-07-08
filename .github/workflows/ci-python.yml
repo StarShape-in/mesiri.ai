@@ -11,6 +11,8 @@ jobs:
   # Fast lane: lint + the full fake-backed suite. No docker, no credentials.
   unit:
     runs-on: ubuntu-latest
+    env:
+      PYTHONSAFEPATH: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
@@ -27,6 +29,13 @@ jobs:
   # paid AI providers and no WhatsApp webhook.
   integration:
     runs-on: ubuntu-latest
+    env:
+      PYTHONSAFEPATH: "1"
+      MESIRI_ENVIRONMENT: test
+      MESIRI_POSTGRES__HOST: localhost
+      MESIRI_POSTGRES__PASSWORD: mesiri_ci
+      MESIRI_REDIS__HOST: localhost
+      MESIRI_OBJECT_STORAGE__PROVIDER: fake
     services:
       postgres:
         image: postgres:16-alpine
@@ -44,12 +53,6 @@ jobs:
         options: >-
           --health-cmd "redis-cli ping" --health-interval 5s
           --health-timeout 3s --health-retries 10
-    env:
-      MESIRI_ENVIRONMENT: test
-      MESIRI_POSTGRES__HOST: localhost
-      MESIRI_POSTGRES__PASSWORD: mesiri_ci
-      MESIRI_REDIS__HOST: localhost
-      MESIRI_OBJECT_STORAGE__PROVIDER: fake
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3

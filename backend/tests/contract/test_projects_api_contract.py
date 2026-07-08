@@ -63,10 +63,16 @@ async def test_org(test_engine: AsyncEngine):
     async with test_engine.begin() as conn:
         await conn.execute(
             sa.text("""
-            INSERT INTO organizations (id, name, created_at, updated_at)
-            VALUES (:id, :name, now(), now())
+            INSERT INTO organizations (id, name, deployment_type, db_route, status, created_at, updated_at)
+            VALUES (:id, :name, :deployment_type, :db_route, :status, now(), now())
             """),
-            {"id": org_id, "name": "Test Organization"},
+            {
+                "id": org_id,
+                "name": "Test Organization",
+                "deployment_type": "local",
+                "db_route": "default",
+                "status": "active",
+            },
         )
     return org_id
 
@@ -359,10 +365,16 @@ async def test_organization_isolation(
     async with test_engine.begin() as conn:
         await conn.execute(
             sa.text("""
-            INSERT INTO organizations (id, name, created_at, updated_at)
-            VALUES (:id, :name, now(), now())
+            INSERT INTO organizations (id, name, deployment_type, db_route, status, created_at, updated_at)
+            VALUES (:id, :name, :deployment_type, :db_route, :status, now(), now())
             """),
-            {"id": other_org_id, "name": "Other Organization"},
+            {
+                "id": other_org_id,
+                "name": "Other Organization",
+                "deployment_type": "local",
+                "db_route": "default",
+                "status": "active",
+            },
         )
         await conn.execute(
             sa.text("""

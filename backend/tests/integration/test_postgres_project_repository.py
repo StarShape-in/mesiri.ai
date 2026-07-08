@@ -45,10 +45,16 @@ async def test_org(test_engine: AsyncEngine):
     async with test_engine.begin() as conn:
         await conn.execute(
             sa.text("""
-            INSERT INTO organizations (id, name, created_at, updated_at)
-            VALUES (:id, :name, now(), now())
+            INSERT INTO organizations (id, name, deployment_type, db_route, status, created_at, updated_at)
+            VALUES (:id, :name, :deployment_type, :db_route, :status, now(), now())
             """),
-            {"id": org_id, "name": "Test Organization"},
+            {
+                "id": org_id,
+                "name": "Test Organization",
+                "deployment_type": "local",
+                "db_route": "default",
+                "status": "active",
+            },
         )
     return org_id
 
@@ -160,10 +166,16 @@ async def test_organization_isolation(test_engine: AsyncEngine, clean_db):
         for org_id, org_name in [(org_a, "Org A"), (org_b, "Org B")]:
             await conn.execute(
                 sa.text("""
-                INSERT INTO organizations (id, name, created_at, updated_at)
-                VALUES (:id, :name, now(), now())
+                INSERT INTO organizations (id, name, deployment_type, db_route, status, created_at, updated_at)
+                VALUES (:id, :name, :deployment_type, :db_route, :status, now(), now())
                 """),
-                {"id": org_id, "name": org_name},
+                {
+                    "id": org_id,
+                    "name": org_name,
+                    "deployment_type": "local",
+                    "db_route": "default",
+                    "status": "active",
+                },
             )
 
     # Create projects in both orgs
@@ -206,10 +218,16 @@ async def test_custom_scope_respects_organization(test_engine: AsyncEngine, clea
         for org_id, org_name in [(org_a, "Org A"), (org_b, "Org B")]:
             await conn.execute(
                 sa.text("""
-                INSERT INTO organizations (id, name, created_at, updated_at)
-                VALUES (:id, :name, now(), now())
+                INSERT INTO organizations (id, name, deployment_type, db_route, status, created_at, updated_at)
+                VALUES (:id, :name, :deployment_type, :db_route, :status, now(), now())
                 """),
-                {"id": org_id, "name": org_name},
+                {
+                    "id": org_id,
+                    "name": org_name,
+                    "deployment_type": "local",
+                    "db_route": "default",
+                    "status": "active",
+                },
             )
 
     # Create project in org B
