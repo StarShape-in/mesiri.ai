@@ -18,6 +18,7 @@ from ingress.receiver import InMemoryNormalizedMessageStore, WhatsAppReceiver
 
 if TYPE_CHECKING:
     from context.resolver import ContextResolver
+    from planner import Planner
 
 
 class Settings(BaseSettings):
@@ -50,6 +51,7 @@ class AppContainer:
     message_store: InMemoryNormalizedMessageStore
     receiver: WhatsAppReceiver
     context_resolver: ContextResolver
+    planner: Planner
     # redis_client is either a real RedisClient (when MESIRI_REDIS__HOST is set)
     # or FakeRedis for local/test.  Both expose connect() / disconnect() so the
     # lifespan handler can manage the lifecycle without special-casing.
@@ -178,6 +180,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         message_store=message_store,
         receiver=receiver,
         context_resolver=context_resolver,
+        planner=planner,
         redis_client=redis_client,
     )
 

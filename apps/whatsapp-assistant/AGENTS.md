@@ -35,14 +35,15 @@ This folder is the **AI conversation layer** of Mesiri. It owns everything from 
 | Message deduplication (24-hour TTL) | ✅ |
 | Raw Meta payload normalization → `NormalizedMessage.v1` | ✅ |
 | Media download from Meta CDN | ✅ |
-| Media upload to object storage | ✅ (fake adapter only) |
+| Media upload to object storage | ✅ (R2 adapter exists; `FakeObjectStorage` used unless `MESIRI_OBJECT_STORAGE__PROVIDER=r2` is configured) |
 | Identity gate — blocks unregistered / no-org / suspended users | ✅ |
 | Speech-to-text orchestration (Sarvam) | ✅ |
 | Vision / OCR orchestration (Gemini) | ✅ |
 | Structured field extraction (Gemini / DeepSeek) | ✅ |
 | Confidence scoring (deterministic policy) | ✅ |
-| Context resolution — who/org/project/site/role | ⚠️ partial |
-| Planner — routes to the correct workflow | 🔲 stub only |
+| Context resolution — who/org/project/site/role | ✅ wired (~90%) |
+| Canonicalization — normalizes AI output into business intent | ✅ |
+| Planner — routes to the correct workflow | ✅ (not yet consumed downstream) |
 | Workflow runtime — LangGraph state machines | 🔲 stub only |
 | Human-in-the-loop interaction layer | 🔲 stub only |
 | Conversation memory | 🔲 stub only |
@@ -213,12 +214,13 @@ if actor.role == "site_engineer":
 apps/whatsapp-assistant/
 ├── src/
 │   ├── backend/            ← backend capability boundary (ports + one postgres adapter)
+│   ├── canonicalization/   ← normalizes UnderstandingResult + ResolvedContext into CanonicalEvent
 │   ├── channel/            ← outbound WhatsApp message rendering
-│   ├── context/            ← M4 context resolution (two implementations — see §6)
+│   ├── context/            ← M4 context resolution (single ContextResolver — see §6)
 │   ├── ingress/            ← M2 inbound pipeline
 │   ├── interactions/       ← M7 human-in-the-loop (all files 0 bytes)
 │   ├── memory/             ← M8 conversation memory (all files 0 bytes)
-│   ├── planner/            ← M5 routing planner (all files 0 bytes)
+│   ├── planner/            ← M5 routing planner (implemented — routing.py, planner.py)
 │   ├── projects/           ← HTTP API for project management
 │   ├── runtime/            ← dependency injection, lifecycle, journey orchestration
 │   ├── understanding/      ← M3 AI understanding pipeline
@@ -296,23 +298,17 @@ Provider failures are caught as `MesiriError` and surfaced as `UNUSABLE` results
 
 **Single responsibility:** Resolve who is speaking, which org/project/site, what permissions they have, and how confident the resolver is.
 
-> ⚠️ **KNOWN ARCHITECTURAL ISSUE: Two resolver implementations coexist.**
+> ✅ **RESOLVED (2026-07-08): the two-resolver issue is gone.** `ContractContextResolver` and its fake-only ports
+> have been deleted entirely. The single canonical resolver is `ContextResolver` (`resolver.py`), producing
+> `mesiri_contracts.assistant.resolved_context.ResolvedContext` — the only `ResolvedContext` schema left in the repo.
 
-#### Implementation A — `ContextResolver` (`resolver.py`) — M4, production-grade
+#### `ContextResolver` (`resolver.py`) — M4, production-grade, wired
 
 - Uses 9 narrow ports backed by Postgres and Redis
 - Output: `Result[ResolvedContext]` where schema is `mesiri_contracts.assistant.resolved_context.ResolvedContext`
 - Ports: `ExternalIdentityRepository`, `OrganizationMembershipRepository`, `RolePermissionRepository`, `ProjectRepository`, `SiteRepository`, `ContextPreferenceRepository`, `ActiveContextStore`, `ReplyContextProvider`, `WorkflowContextProvider`
-- **Status: Fully implemented and tested. NOT called in the current production runtime.**
-
-#### Implementation B — `ContractContextResolver` (`contract_resolver.py`) — contract ports
-
-- Uses 3 ports from `mesiri_contracts.context.ports`
-- Output: `ResolvedContext` from `mesiri_contracts.context.resolved_context.ResolvedContext`
-- Ports: `IdentityLookupPort`, `ScopeLookupPort`, `WorkflowStateReadPort`
-- **Status: Called in production runtime, but ONLY with fake adapters. Always produces LOW confidence, unknown actor, unresolved scope.**
-
-**The M4 `ContextResolver` schema is canonical. `ContractContextResolver` must be retired once context is unified.**
+- **Status: Fully implemented, tested, and called in production** via `build_context_resolver()` in `context/runtime.py`, wired into `_on_normalized` by `runtime/dependencies.py`.
+- `reply_context` / `workflow_context` ports are still `NullReplyContextProvider` / `NullWorkflowContextProvider` (`workflow_context.py`) — correctly so, since M5/M7 don't have active-workflow state to supply yet. Not a fake; an honest placeholder for a dependency that doesn't exist yet.
 
 #### Other files
 
@@ -321,7 +317,7 @@ Provider failures are caught as `MesiriError` and surfaced as `UNUSABLE` results
 | `live_identity.py` | Orchestration bridge: `resolve_sender(reader, wa_id) → ActorIdentity`. Called before understanding, not after. |
 | `context_policy.py` | Deterministic precedence: `MESSAGE_EXPLICIT > REPLY_CONTEXT > WORKFLOW_CONTEXT > ACTIVE_CONTEXT > USER_DEFAULT`. Pure — no LLM. |
 | `active_context.py` | Redis-backed ephemeral last-known project/site. Never authoritative — always revalidated against Postgres. |
-| `runtime.py` | `build_context_resolver()` wires fake adapters; `log_resolved_context()` dev diagnostics. |
+| `runtime.py` | `build_context_resolver()` wires the real Postgres/Redis adapters (falls back to `FakeRedis` only when `MESIRI_REDIS__HOST` is unset); `log_resolved_context()` dev diagnostics. |
 
 ---
 
@@ -364,11 +360,17 @@ Provider failures are caught as `MesiriError` and surfaced as `UNUSABLE` results
 
 ---
 
+### Implemented: `planner/`
+
+`planner/` is no longer a stub. `Planner.decide(canonical_event)` (`planner.py`) is a pure, deterministic router —
+receives a `CanonicalEvent`, emits a `PlannerDecision` via a static `routing.py` lookup table. It must never import
+LangGraph or any specific graph. `ambiguity.py`, `decision.py`, and `prompts/` remain 0 bytes — no logic needed yet
+(v1 intents are unambiguous, single-candidate).
+
 ### Stub modules — do not add logic yet
 
 | Module | Purpose when built | Current state |
 |---|---|---|
-| `planner/` | Receives `ResolvedContext` + `UnderstandingResult`, emits `PlannerDecision` | All files 0 bytes |
 | `workflows/` | LangGraph graphs for material, expense, labour, equipment capture | All files 0 bytes |
 | `interactions/` | Human-in-the-loop confirmations and field corrections | All files 0 bytes |
 | `memory/` | Conversation history + semantic retrieval for Planner | All files 0 bytes |
@@ -416,18 +418,23 @@ Provider failures are caught as `MesiriError` and surfaced as `UNUSABLE` results
                     │
                     ▼
 ┌─────────────────────────────────────────────┐
-│  M4 — CONTEXT  ⚠️ PARTIAL                  │
-│  ContractContextResolver + fake adapters    │
-│  (always LOW confidence — fake only)        │
-│  M4 ContextResolver built but NOT wired     │
-│  Produces: ResolvedContext (unused today)   │
+│  M4 — CONTEXT  ✅ WIRED (~90%)             │
+│  ContextResolver — real Postgres/Redis      │
+│  Produces: ResolvedContext                  │
 └───────────────────┬─────────────────────────┘
                     │
                     ▼
 ┌─────────────────────────────────────────────┐
-│  M5 — PLANNER  🔲 NOT IMPLEMENTED          │
-│  Requires: unified ResolvedContext           │
-│  Will produce: PlannerDecision              │
+│  CANONICALIZATION  ✅ IMPLEMENTED          │
+│  build_canonical_event()                    │
+│  Produces: CanonicalEvent.v1                │
+└───────────────────┬─────────────────────────┘
+                    │
+                    ▼
+┌─────────────────────────────────────────────┐
+│  M5 — PLANNER  ✅ IMPLEMENTED              │
+│  Planner.decide() — pure routing            │
+│  Produces: PlannerDecision.v1               │
 └───────────────────┬─────────────────────────┘
                     │
                     ▼
@@ -454,7 +461,10 @@ Provider failures are caught as `MesiriError` and surfaced as `UNUSABLE` results
 [WhatsApp Cloud API → worker's phone]
 ```
 
-**Current production reality:** The path terminates at reply immediately after M3. Context runs but its output has no effect on the reply. Planner, Workflow, and Interaction are not started.
+**Current production reality (2026-07-08):** Context, CanonicalEvent, and PlannerDecision are all produced on every
+message and logged under `context_debug`, but the reply is still driven entirely by `UnderstandingResult` — none of
+these three feed back into what gets sent to the user yet. Workflow Runtime and Interaction are not started; the
+Workflow Runtime (M6, LangGraph) is the first real consumer of `PlannerDecision.workflow_key`.
 
 ---
 
@@ -494,9 +504,11 @@ Content-Type: application/json
 
 ### Step 6 — Object storage upload
 
-`upload_downloaded_media()` calls `FakeObjectStorage.put_object(key, data)`, returns a `MediaReference(object_key, mime_type, size_bytes)`.
+`upload_downloaded_media()` calls `build_object_storage(settings).put_object(key, data)`, returns a `MediaReference(object_key, mime_type, size_bytes)`.
 
-> ⚠️ `FakeObjectStorage` is in-memory. All media is lost on process restart. R2 adapter not wired.
+> ⚠️ `R2ObjectStorage` exists (`mesiri.infrastructure.objectstorage.r2`) but `FakeObjectStorage` is still the default —
+> in-memory, media lost on process restart — unless `MESIRI_OBJECT_STORAGE__PROVIDER=r2` is set with credentials in
+> the deployment environment. Remaining work is deployment config + a live verification, not code.
 
 ### Step 7 — Normalization
 
@@ -548,21 +560,43 @@ Provider `MesiriError` → result is `UNUSABLE`, never raised.
 
 **Contract produced: `UnderstandingResult.v1`**
 
-### Step 10 — Context resolution (contract layer, fake adapters)
+### Step 10 — Context resolution (M4, real Postgres/Redis)
 
-`ContractContextResolver.resolve(message, understanding)`:
-
-All three ports are `FakeIdentityLookupPort`, `FakeScopeLookupPort`, `FakeWorkflowStateReadPort` — empty in-memory stores. Result is always: unknown actor, unresolved scope, LOW confidence.
+`ContextResolver.resolve(message, understanding)` queries real Postgres repositories for identity, membership,
+role/permissions, project, and site, plus a Redis-backed active-context store (falls back to `FakeRedis` only when
+`MESIRI_REDIS__HOST` is unset). Returns `Result[ResolvedContext]` — errors are logged and short-circuit the rest of
+the journey (canonicalization/planning are skipped) rather than propagating a bad state.
 
 If `WHATSAPP_CONTEXT_DEBUG=true`: `log_resolved_context()` writes actor/org/project/site/confidence to logger.
 
-**Context output is produced but currently unused.**
+### Step 11 — Canonicalization
 
-### Step 11 — Reply
+`build_canonical_event(understanding, resolved)` (in `canonicalization/`) maps the `UnderstandingResult` +
+`ResolvedContext` into a `CanonicalEvent.v1` — a normalized business-intent signal (e.g. `MaterialReceiptRequested`).
+Per architecture, it never carries the AI's raw confidence score; `completeness` (actionable / needs_clarification /
+not_actionable) is a business-level judgement over which required fields are present instead.
+
+If `WHATSAPP_CONTEXT_DEBUG=true`: `log_canonical_event()` writes it to logger.
+
+### Step 12 — Planning
+
+`Planner().decide(canonical_event)` (in `planner/`) is a pure, deterministic router — no LLM, no I/O, no knowledge of
+LangGraph or any specific graph. It returns a `PlannerDecision.v1`: `START_WORKFLOW` + a `workflow_key` (e.g.
+`material.receipt`) for actionable domain intents, `CLARIFY` for incomplete ones, `DIRECT_REPLY` for questions/
+unrecognized input. A `model_validator` on the contract enforces `workflow_key` is set if and only if the decision is
+`START_WORKFLOW`.
+
+If `WHATSAPP_CONTEXT_DEBUG=true`: `log_planner_decision()` writes it to logger.
+
+**Context, CanonicalEvent, and PlannerDecision are all produced but currently unused by the reply.** They are
+skipped entirely if context resolution fails.
+
+### Step 13 — Reply
 
 `format_reply(understanding)` builds the reply from `UnderstandingResult` only. `WhatsAppSender.send_text(wa_id, text)` sends via Meta Cloud API.
 
-**The reply has no dependency on context. Context does not affect the current reply.**
+**The reply has no dependency on context, the canonical event, or the planner decision yet.** The Workflow Runtime
+(M6) will be the first real consumer of `PlannerDecision`.
 
 ---
 
@@ -570,28 +604,28 @@ If `WHATSAPP_CONTEXT_DEBUG=true`: `log_resolved_context()` writes actor/org/proj
 
 | Module | Status | % | Critical gaps |
 |---|---|---|---|
-| Ingress (M2) | ✅ Implemented | 100% | Inline SQL in `receiver.py`; `FakeObjectStorage` loses media on restart |
-| Understanding (M3) | ✅ Implemented | 100% | None before Planner |
-| Context (M4) | ⚠️ Partial | 65% | Two `ResolvedContext` schemas; M4 resolver built but not wired; fake adapters in production |
+| Ingress (M2) | ✅ Implemented | 100% | Inline SQL removed (2026-07-08); `FakeObjectStorage` used unless `MESIRI_OBJECT_STORAGE__PROVIDER=r2` is configured |
+| Understanding (M3) | ✅ Implemented | 100% | None before Workflow Runtime |
+| Context (M4) | ✅ Wired | 90% | `ContractContextResolver` retired (2026-07-08); real Postgres/Redis in production. Remaining: `reply_context`/`workflow_context` are `Null` providers pending M5/M7; no `FakeActorReader` yet |
 | Identity Gate | ✅ Implemented | 100% | No `FakeActorReader` — identity gate tests require live DB |
-| Planner (M5) | 🔲 Not started | 0% | `PlannerDecision` contract is 0 bytes |
-| Workflow Runtime (M6) | 🔲 Not started | 0% | LangGraph not installed; contracts not defined |
+| Canonicalization | ✅ Implemented | 100% | `CanonicalEvent.v1` wired into the journey (2026-07-08); not yet consumed downstream |
+| Planner (M5) | ✅ Implemented | 100% | `PlannerDecision.v1` wired (2026-07-08); pure router, no LangGraph knowledge. Not yet consumed by anything (Workflow Runtime is the first real consumer) |
+| Workflow Runtime (M6) | 🔲 Not started | 0% | LangGraph not installed; `WorkflowState`/`DraftAction` contracts not defined |
 | Interaction (M7) | 🔲 Not started | 0% | Contracts not defined |
 | Memory (M8) | 🔲 Not started | 0% | `platform/memory/` entirely empty |
 | Rules | 🔲 Not started | 0% | `rules/result.py` is 0 bytes |
 | Tools | 🔲 Not started | 0% | All tool contracts 0 bytes |
-| Authorization (RBAC) | ⚠️ Gate only | 30% | Identity gate works; field-level RBAC not enforced because Context not wired |
+| Authorization (RBAC) | ⚠️ Gate only | 30% | Identity gate works; field-level RBAC not enforced — Context resolves `permissions` now, but nothing downstream consumes them yet |
 | Rendering | ✅ M3-based | 60% | Plain-text only; no templates, no confirmation cards |
 
 ### Next required steps (in order)
 
-1. Remove inline SQL from `ingress/receiver._process_message()`
-2. Wire real `ObjectStoragePort` adapter (R2/S3)
-3. Unify `ResolvedContext` — retire `mesiri_contracts.context.resolved_context` and `ContractContextResolver`
-4. Wire M4 `ContextResolver` into `_on_normalized`
-5. Add `FakeActorReader` for identity gate testing
-6. Define `PlannerDecision` contract (requires Alan + Ilan review)
-7. Define minimum Memory before implementing Planner
+1. Add `FakeActorReader` for identity gate testing
+2. Configure `MESIRI_OBJECT_STORAGE__PROVIDER=r2` + credentials in deployment; verify live (adapter already exists)
+3. Define minimum Memory (conversation history) — a prerequisite for Workflow Runtime checkpointing
+4. Define `WorkflowState` + `DraftAction` contracts (requires Alan + Ilan review)
+5. Install LangGraph and implement the Material workflow (the doc's designated proof-of-architecture module)
+6. Wire `Workflow Registry` (`workflow_key → graph`) as the seam between Planner and LangGraph
 
 ---
 
@@ -621,27 +655,38 @@ All shared contracts live in `shared/contracts/src/mesiri_contracts/`. **Never d
 | **Key fields** | `semantic_type`, `candidates`, `overall_confidence`, `transcript`, `translated_text`, `document_classification`, `missing_fields` |
 | **Status** | **Frozen. Do not modify without cross-review.** |
 
-### `ResolvedContext` — M4 version (canonical)
+### `ResolvedContext.v1` (the only `ResolvedContext` schema — the contract-layer duplicate was deleted 2026-07-08)
 
 | | |
 |---|---|
 | **File** | `mesiri_contracts/assistant/resolved_context.py` |
 | **Producer** | `context/resolver.py` (`ContextResolver`) |
-| **Consumers** | Future Planner |
+| **Consumers** | `canonicalization/builder.py` |
 | **Why** | Single authoritative answer: who is this, where are they, what can they do? |
 | **Key fields** | `organization_id`, `user_id`, `role_ids`, `permissions`, `project_id`, `site_id`, `context_source`, `context_confidence` |
-| **Status** | Implemented, not yet wired. **This is the schema that should survive the unification.** |
+| **Status** | Implemented and wired into production. |
 
-### `ResolvedContext` — contract version (to be retired)
+### `CanonicalEvent.v1`
 
 | | |
 |---|---|
-| **File** | `mesiri_contracts/context/resolved_context.py` |
-| **Producer** | `context/contract_resolver.py` (`ContractContextResolver`) |
-| **Consumers** | `runtime/inbound_journey.py` |
-| **Why** | Created during Phase 1–3 development. Simpler port-contract version. |
-| **Key fields** | `actor`, `scope`, `workflow`, `interaction`, `reply`, `confidence`, `ambiguities`, `warnings` |
-| **Status** | In production today (with fake adapters). **Will be retired when Context is unified.** |
+| **File** | `mesiri_contracts/assistant/canonical_event.py` |
+| **Producer** | `canonicalization/builder.py` (`build_canonical_event`) |
+| **Consumers** | `planner/planner.py` |
+| **Why** | Normalizes AI output into business intent. Per the architecture's layer-ownership rule it must never carry AI-provider or confidence-score knowledge — `completeness` is a business-level judgement over required fields instead. |
+| **Key fields** | `event_type` (`CanonicalEventType`, e.g. `MaterialReceiptRequested`), `completeness`, `organization_id`, `user_id`, `project_id`, `site_id`, `fields`, `missing_fields` |
+| **Status** | Implemented and wired into production (2026-07-08). |
+
+### `PlannerDecision.v1`
+
+| | |
+|---|---|
+| **File** | `mesiri_contracts/assistant/planner_decision.py` |
+| **Producer** | `planner/planner.py` (`Planner.decide`) |
+| **Consumers** | Future Workflow Registry (M6) |
+| **Why** | The Planner "reads CanonicalEvent, returns a workflow_key" — must never know about LangGraph or any specific graph. |
+| **Key fields** | `decision_type` (`start_workflow`/`clarify`/`direct_reply`/`ignore`), `workflow_key` (`WorkflowKey`, set only for `start_workflow` — enforced by a `model_validator`), `reason` (typed `CanonicalEventType`, diagnostic-only), `organization_id`, `user_id`, `project_id`, `site_id`, `missing_fields` |
+| **Status** | Implemented and wired into production (2026-07-08). Not yet consumed — Workflow Runtime (M6) will be the first real consumer. |
 
 ### `ActorIdentity`
 
@@ -657,11 +702,9 @@ All shared contracts live in `shared/contracts/src/mesiri_contracts/`. **Never d
 
 | Contract | File | Required by |
 |---|---|---|
-| `PlannerDecision` | `mesiri_contracts/assistant/planner_decision.py` | Planner (M5) |
 | `WorkflowState` | TBD | Workflow Runtime (M6) |
 | `DraftAction` | TBD | Workflow Runtime → Application Layer |
 | `InteractionSpec` | TBD | Interaction (M7) |
-| `CanonicalEvent` | TBD | Application Layer → Timeline |
 
 ---
 
@@ -1007,4 +1050,4 @@ Before creating or modifying any module, verify every item.
 
 ---
 
-*Reflects codebase state: July 2026. Update this file whenever the architecture changes.*
+*Reflects codebase state: 2026-07-08. Update this file whenever the architecture changes.*

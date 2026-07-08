@@ -166,6 +166,8 @@ async def test_build_container_wires_context_resolver(tmp_path):
 
     assert container.context_resolver is not None
     assert isinstance(container.context_resolver, ContextResolver)
+    assert container.planner is not None
+    assert isinstance(container.planner, Planner)
 
 
 async def test_context_debug_logs_resolved_context(caplog):
