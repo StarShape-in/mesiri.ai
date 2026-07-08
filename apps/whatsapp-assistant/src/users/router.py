@@ -50,7 +50,11 @@ users_table = sa.Table(
     sa.Column("full_name", sa.String),
     sa.Column("role", sa.String),
     sa.Column("whatsapp_number", sa.String),
+    sa.Column("status", sa.String),
+    sa.Column("access_policy", sa.JSON),
 )
+
+_DEFAULT_ACCESS_POLICY: dict = {"mode": "custom_projects", "projects": []}
 
 # ---------------------------------------------------------------------------
 # Schemas
@@ -61,6 +65,8 @@ class UserResponse(BaseModel):
     full_name: str
     role: str
     whatsapp_number: str | None = None
+    status: str
+    access_policy: dict | None = None
 
 class UserCreate(BaseModel):
     email: str
@@ -75,6 +81,24 @@ class UserUpdate(BaseModel):
     role: str | None = None
     whatsapp_number: str | None = None
     password: str | None = None
+
+class StatusUpdate(BaseModel):
+    status: str
+
+class AccessPolicy(BaseModel):
+    mode: str
+    projects: list[dict] | None = None
+
+def _row_to_response(row) -> UserResponse:
+    return UserResponse(
+        id=row.id,
+        email=row.email,
+        full_name=row.full_name,
+        role=row.role,
+        whatsapp_number=row.whatsapp_number,
+        status=row.status or "active",
+        access_policy=row.access_policy or _DEFAULT_ACCESS_POLICY,
+    )
 
 # ---------------------------------------------------------------------------
 # Dependencies
@@ -108,15 +132,31 @@ async def list_users(admin_payload: dict = Depends(get_current_admin)):
         )
         rows = result.fetchall()
         
-    return [
-        UserResponse(
-            id=row.id,
-            email=row.email,
-            full_name=row.full_name,
-            role=row.role,
-            whatsapp_number=row.whatsapp_number
-        ) for row in rows
-    ]
+    return [_row_to_response(row) for row in rows]
+
+@router.get("/{user_id}", response_model=UserResponse)
+async def get_user(
+    user_id: uuid.UUID,
+    admin_payload: dict = Depends(get_current_admin)
+):
+    engine = get_engine()
+    org_id = admin_payload.get("org")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="Admin has no organization")
+
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            sa.select(users_table).where(
+                users_table.c.id == user_id,
+                users_table.c.organization_id == org_id,
+            )
+        )
+        row = result.first()
+        
+    if row is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return _row_to_response(row)
+
 
 @router.post("", response_model=UserResponse)
 async def create_user(user_in: UserCreate, admin_payload: dict = Depends(get_current_admin)):
@@ -148,16 +188,15 @@ async def create_user(user_in: UserCreate, admin_payload: dict = Depends(get_cur
                 full_name=user_in.full_name,
                 role=user_in.role,
                 whatsapp_number=user_in.whatsapp_number,
+                status="active",
+                access_policy=_DEFAULT_ACCESS_POLICY,
             )
         )
 
-    return UserResponse(
-        id=user_id,
-        email=user_in.email,
-        full_name=user_in.full_name,
-        role=user_in.role,
-        whatsapp_number=user_in.whatsapp_number
-    )
+    async with engine.connect() as conn:
+        result = await conn.execute(sa.select(users_table).where(users_table.c.id == user_id))
+        row = result.first()
+    return _row_to_response(row)
 
 
 @router.patch("/{user_id}", response_model=UserResponse)
@@ -212,13 +251,102 @@ async def update_user(
                 .values(**values)
             )
 
-    return UserResponse(
-        id=user_id,
-        email=existing.email,
-        full_name=values.get("full_name", existing.full_name),
-        role=values.get("role", existing.role),
-        whatsapp_number=values.get(
-            "whatsapp_number",
-            existing.whatsapp_number,
-        ),
-    )
+    async with engine.connect() as conn:
+        result = await conn.execute(sa.select(users_table).where(users_table.c.id == user_id))
+        row = result.first()
+    return _row_to_response(row)
+
+
+@router.patch("/{user_id}/status", response_model=UserResponse)
+async def update_user_status(
+    user_id: uuid.UUID,
+    body: StatusUpdate,
+    admin_payload: dict = Depends(get_current_admin),
+):
+    engine = get_engine()
+    org_id = admin_payload.get("org")
+    valid_statuses = {"active", "inactive", "suspended", "invited"}
+    
+    if body.status not in valid_statuses:
+        raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of {sorted(valid_statuses)}")
+
+    async with engine.begin() as conn:
+        result = await conn.execute(
+            sa.select(users_table).where(
+                users_table.c.id == user_id,
+                users_table.c.organization_id == org_id,
+            )
+        )
+        if result.first() is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        await conn.execute(
+            users_table.update()
+            .where(
+                users_table.c.id == user_id,
+                users_table.c.organization_id == org_id,
+            )
+            .values(status=body.status)
+        )
+
+    async with engine.connect() as conn:
+        result = await conn.execute(sa.select(users_table).where(users_table.c.id == user_id))
+        row = result.first()
+    return _row_to_response(row)
+
+
+@router.get("/{user_id}/access", response_model=AccessPolicy)
+async def get_user_access(
+    user_id: uuid.UUID,
+    admin_payload: dict = Depends(get_current_admin),
+):
+    engine = get_engine()
+    org_id = admin_payload.get("org")
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            sa.select(users_table.c.access_policy).where(
+                users_table.c.id == user_id,
+                users_table.c.organization_id == org_id,
+            )
+        )
+        row = result.first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+    policy = row.access_policy or _DEFAULT_ACCESS_POLICY
+    return AccessPolicy(**policy)
+
+
+@router.put("/{user_id}/access", response_model=AccessPolicy)
+async def update_user_access(
+    user_id: uuid.UUID,
+    policy: AccessPolicy,
+    admin_payload: dict = Depends(get_current_admin),
+):
+    engine = get_engine()
+    org_id = admin_payload.get("org")
+    
+    if policy.mode not in ("all_projects", "custom_projects"):
+        raise HTTPException(
+            status_code=400, detail="mode must be 'all_projects' or 'custom_projects'"
+        )
+
+    async with engine.begin() as conn:
+        result = await conn.execute(
+            sa.select(users_table.c.id).where(
+                users_table.c.id == user_id,
+                users_table.c.organization_id == org_id,
+            )
+        )
+        if result.first() is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        await conn.execute(
+            users_table.update()
+            .where(
+                users_table.c.id == user_id,
+                users_table.c.organization_id == org_id,
+            )
+            .values(access_policy=policy.model_dump())
+        )
+    return policy

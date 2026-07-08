@@ -9,16 +9,31 @@ export const api = axios.create({
   timeout: 15000,
 });
 
-// Request interceptor to attach the JWT token to every request
+// Request interceptor to attach the JWT token to every request and log the request
 api.interceptors.request.use(
   async (config) => {
     const token = await SecureStore.getItemAsync(TOKEN_KEY);
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+    console.log(`[API REQUEST] ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`);
     return config;
   },
   (error) => Promise.reject(error)
+);
+
+// Response interceptor to log errors
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response) {
+      console.error(`[API ERROR] ${error.config?.method?.toUpperCase()} ${error.config?.url} - Status: ${error.response.status}`);
+      console.error('Response data:', error.response.data);
+    } else {
+      console.error(`[API ERROR] Network/Unknown:`, error.message);
+    }
+    return Promise.reject(error);
+  }
 );
 
 export async function login(email: string, password: string) {
