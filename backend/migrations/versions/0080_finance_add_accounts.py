@@ -7,8 +7,8 @@ Accounting module can build reconciliation and reporting on top without a
 schema redesign. Expense (and Equipment fuel spend) reference an account and
 each debit is recorded as a transaction row, never as a direct balance update.
 
-Revision ID: 2b3c4d5e6f7a
-Revises: 1a2b3c4d5e6f
+Revision ID: 0080
+Revises: 0070
 Create Date: 2026-07-08
 """
 from __future__ import annotations
@@ -16,8 +16,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "2b3c4d5e6f7a"
-down_revision = "1a2b3c4d5e6f"
+revision = "0080"
+down_revision = "0070"
 branch_labels = None
 depends_on = None
 

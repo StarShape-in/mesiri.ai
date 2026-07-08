@@ -5,8 +5,8 @@ the same control-plane ``organizations`` table the JWT ``org`` claim points at
 (and that ``users`` are FK'd to). This is distinct from the M4 assistant-context
 ``context_projects`` table, which serves understanding/context resolution.
 
-Revision ID: b2c3d4e5f6a7
-Revises: a1b2c3d4e5f6
+Revision ID: 0050
+Revises: 0040
 Create Date: 2026-07-05
 """
 from __future__ import annotations
@@ -14,8 +14,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "b2c3d4e5f6a7"
-down_revision = "a1b2c3d4e5f6"
+revision = "0050"
+down_revision = "0040"
 branch_labels = None
 depends_on = None
 

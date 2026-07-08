@@ -6,8 +6,8 @@ Application Command safe to retry (e.g. after a crash mid-transaction) without
 double-writing a domain row. `result` caches the outcome so a retry can return
 the original result instead of re-executing.
 
-Revision ID: 0d1e2f3a4b5c
-Revises: 9c0d1e2f3a4b
+Revision ID: 0160
+Revises: 0150
 Create Date: 2026-07-08
 """
 from __future__ import annotations
@@ -16,8 +16,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
-revision = "0d1e2f3a4b5c"
-down_revision = "9c0d1e2f3a4b"
+revision = "0160"
+down_revision = "0150"
 branch_labels = None
 depends_on = None
 

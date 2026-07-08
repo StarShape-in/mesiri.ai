@@ -9,8 +9,8 @@ LOCAL_BASE = r'E:\Mesiri.AI\backend'
 REMOTE_BASE = '/opt/mesiri/backend'
 
 files_to_sync = [
-    r'migrations\versions\c4936d8bcaec_add_users_table.py',
-    r'migrations\versions\d5a47e9cdbfd_add_organizations_table.py',
+    r'migrations\versions\0020_identity_add_users.py',
+    r'migrations\versions\0030_orgs_add_organizations.py',
     r'src\mesiri\infrastructure\postgres\models\user.py',
     r'src\mesiri\infrastructure\postgres\models\organization.py',
     r'src\mesiri\domains\identity\router.py',

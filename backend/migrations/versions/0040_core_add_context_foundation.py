@@ -5,8 +5,8 @@ control-plane ``organizations`` / ``users`` tables (which model SaaS
 provisioning) so M4 owns a clean, tenant-scoped authorization model. String
 primary keys follow the repo's prefixed-id convention (e.g. ``proj_...``).
 
-Revision ID: a1b2c3d4e5f6
-Revises: d5a47e9cdbfd
+Revision ID: 0040
+Revises: 0030
 Create Date: 2026-07-05
 """
 from __future__ import annotations
@@ -14,8 +14,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "a1b2c3d4e5f6"
-down_revision = "d5a47e9cdbfd"
+revision = "0040"
+down_revision = "0030"
 branch_labels = None
 depends_on = None
 

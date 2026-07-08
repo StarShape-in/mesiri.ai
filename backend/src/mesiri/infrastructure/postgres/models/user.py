@@ -25,7 +25,7 @@ class UserModel(Base):
     full_name = Column(String, nullable=False)
     role = Column(Enum(UserRole), nullable=False)
     whatsapp_number = Column(String, unique=True, index=True, nullable=True)
-    # Added by migration f7g8h9i0j1k2_add_user_status_sites_access
+    # Added by migration 0060_users_add_status_sites_access
     status = Column(String, nullable=False, server_default="active")
     access_policy = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

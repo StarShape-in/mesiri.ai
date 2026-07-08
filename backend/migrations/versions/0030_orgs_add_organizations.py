@@ -1,7 +1,7 @@
 """add organizations table
 
-Revision ID: d5a47e9cdbfd
-Revises: c4936d8bcaec
+Revision ID: 0030
+Revises: 0020
 Create Date: 2026-07-05 10:00:00.000000
 
 """
@@ -11,8 +11,8 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = 'd5a47e9cdbfd'
-down_revision: str | None = 'c4936d8bcaec'
+revision: str = '0030'
+down_revision: str | None = '0020'
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

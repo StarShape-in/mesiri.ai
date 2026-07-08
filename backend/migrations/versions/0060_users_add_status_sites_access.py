@@ -4,8 +4,8 @@
 - users.access_policy — JSONB project/site access policy saved from the mobile app
 - sites          — org-scoped sites belonging to a project (feeds the site picker)
 
-Revision ID: f7g8h9i0j1k2
-Revises: b2c3d4e5f6a7
+Revision ID: 0060
+Revises: 0050
 Create Date: 2026-07-06
 """
 from __future__ import annotations
@@ -14,8 +14,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
-revision = "f7g8h9i0j1k2"
-down_revision = "b2c3d4e5f6a7"
+revision = "0060"
+down_revision = "0050"
 branch_labels = None
 depends_on = None
 

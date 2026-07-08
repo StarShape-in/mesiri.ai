@@ -5,8 +5,8 @@ A confirmation/clarification/correction request sent to the user; the user's
 reply re-enters via ingress and is matched back to the pending row here by
 `related_message_id` / `correlation_id`.
 
-Revision ID: 8b9c0d1e2f3a
-Revises: 7a8b9c0d1e2f
+Revision ID: 0140
+Revises: 0130
 Create Date: 2026-07-08
 """
 from __future__ import annotations
@@ -14,8 +14,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "8b9c0d1e2f3a"
-down_revision = "7a8b9c0d1e2f"
+revision = "0140"
+down_revision = "0130"
 branch_labels = None
 depends_on = None
 

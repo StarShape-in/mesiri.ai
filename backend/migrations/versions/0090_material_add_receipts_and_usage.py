@@ -6,8 +6,8 @@ distinct conversational flows. `material_id` (FK to a future materials_catalog /
 inventory table) is deliberately NOT added yet — Procurement/Inventory is a
 later module; adding a dangling FK now would be premature.
 
-Revision ID: 3c4d5e6f7a8b
-Revises: 2b3c4d5e6f7a
+Revision ID: 0090
+Revises: 0080
 Create Date: 2026-07-08
 """
 from __future__ import annotations
@@ -15,8 +15,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "3c4d5e6f7a8b"
-down_revision = "2b3c4d5e6f7a"
+revision = "0090"
+down_revision = "0080"
 branch_labels = None
 depends_on = None
 

@@ -1,7 +1,7 @@
 """Add users table
 
-Revision ID: c4936d8bcaec
-Revises: 0001_m1_infra_heartbeat
+Revision ID: 0020
+Revises: 0010
 Create Date: 2026-07-05 11:34:51.302308
 """
 from __future__ import annotations
@@ -9,8 +9,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = 'c4936d8bcaec'
-down_revision = '0001_m1_infra_heartbeat'
+revision = '0020'
+down_revision = '0010'
 branch_labels = None
 depends_on = None
 

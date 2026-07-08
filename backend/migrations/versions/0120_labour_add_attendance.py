@@ -10,8 +10,8 @@ This table is intentionally v1-minimal. Full Workforce (shifts, wages,
 contracts) is a later module and will very likely supersede this table rather
 than extend it — do not over-build here.
 
-Revision ID: 6f7a8b9c0d1e
-Revises: 5e6f7a8b9c0d
+Revision ID: 0120
+Revises: 0110
 Create Date: 2026-07-08
 """
 from __future__ import annotations
@@ -20,8 +20,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
-revision = "6f7a8b9c0d1e"
-down_revision = "5e6f7a8b9c0d"
+revision = "0120"
+down_revision = "0110"
 branch_labels = None
 depends_on = None
 

@@ -7,8 +7,8 @@ Streams. This guarantees no Domain Event is ever lost, even on a crash between
 write and publish (architecture rule: "every business event is published via
 the outbox; none are ever lost").
 
-Revision ID: 1a2b3c4d5e6f
-Revises: f7g8h9i0j1k2
+Revision ID: 0070
+Revises: 0060
 Create Date: 2026-07-08
 """
 from __future__ import annotations
@@ -17,8 +17,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
-revision = "1a2b3c4d5e6f"
-down_revision = "f7g8h9i0j1k2"
+revision = "0070"
+down_revision = "0060"
 branch_labels = None
 depends_on = None
 

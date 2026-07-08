@@ -5,8 +5,8 @@ query business tables directly." A consumer drains outbox_events and projects
 each confirmed event into a row here; the dashboard/timeline UI reads only
 this table, never material_receipts/expenses/etc. directly.
 
-Revision ID: 9c0d1e2f3a4b
-Revises: 8b9c0d1e2f3a
+Revision ID: 0150
+Revises: 0140
 Create Date: 2026-07-08
 """
 from __future__ import annotations
@@ -15,8 +15,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
-revision = "9c0d1e2f3a4b"
-down_revision = "8b9c0d1e2f3a"
+revision = "0150"
+down_revision = "0140"
 branch_labels = None
 depends_on = None
 

@@ -4,8 +4,8 @@
 finance_account_transactions row (application layer), never by mutating a
 balance column directly.
 
-Revision ID: 4d5e6f7a8b9c
-Revises: 3c4d5e6f7a8b
+Revision ID: 0100
+Revises: 0090
 Create Date: 2026-07-08
 """
 from __future__ import annotations
@@ -13,8 +13,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "4d5e6f7a8b9c"
-down_revision = "3c4d5e6f7a8b"
+revision = "0100"
+down_revision = "0090"
 branch_labels = None
 depends_on = None
 

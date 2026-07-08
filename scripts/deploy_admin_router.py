@@ -40,8 +40,8 @@ def deploy():
 
     # Also deploy the alembic migration files
     migration_files = {
-        r'E:\Mesiri.AI\backend\migrations\versions\c4936d8bcaec_add_users_table.py': '/opt/mesiri/backend/migrations/versions/c4936d8bcaec_add_users_table.py',
-        r'E:\Mesiri.AI\backend\migrations\versions\d5a47e9cdbfd_add_organizations_table.py': '/opt/mesiri/backend/migrations/versions/d5a47e9cdbfd_add_organizations_table.py',
+        r'E:\Mesiri.AI\backend\migrations\versions\0020_identity_add_users.py': '/opt/mesiri/backend/migrations/versions/0020_identity_add_users.py',
+        r'E:\Mesiri.AI\backend\migrations\versions\0030_orgs_add_organizations.py': '/opt/mesiri/backend/migrations/versions/0030_orgs_add_organizations.py',
     }
     for local_path, remote_path in migration_files.items():
         remote_dir = remote_path.rsplit('/', 1)[0]

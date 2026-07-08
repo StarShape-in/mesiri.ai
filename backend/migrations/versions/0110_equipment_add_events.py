@@ -6,8 +6,8 @@ splits arrived/used because those carry genuinely different optional fields).
 `event_type` distinguishes them; fuel_* and from/to_site_id columns are only
 populated for the event types they apply to.
 
-Revision ID: 5e6f7a8b9c0d
-Revises: 4d5e6f7a8b9c
+Revision ID: 0110
+Revises: 0100
 Create Date: 2026-07-08
 """
 from __future__ import annotations
@@ -15,8 +15,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "5e6f7a8b9c0d"
-down_revision = "4d5e6f7a8b9c"
+revision = "0110"
+down_revision = "0100"
 branch_labels = None
 depends_on = None
 

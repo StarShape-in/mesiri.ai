@@ -29,7 +29,7 @@ contracts → `shared/contracts` (`mesiri_contracts`); AI gateway → `platform/
 - `mesiri/observability/{logging,tracing,health}.py`
 - `mesiri/infrastructure/{errors,objectstorage/{fake,r2},postgres/database,redis/client}.py`
 - `mesiri/http/app.py` (+ `backend/apps/api/main.py` entrypoint)
-- `backend/alembic.ini`, `backend/migrations/{env.py,script.py.mako,versions/0001_m1_infra_heartbeat.py}`
+- `backend/alembic.ini`, `backend/migrations/{env.py,script.py.mako,versions/0010_infra_heartbeat.py}`
 - `mesiri/scripts/run_m1_golden_scenario.py`
 - Scenarios `scenarios/m1/` (001–010) + `backend/tests/integration/test_live_stack.py`
 

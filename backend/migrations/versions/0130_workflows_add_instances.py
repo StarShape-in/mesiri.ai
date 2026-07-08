@@ -7,8 +7,8 @@ here, matching the architecture rule "LangGraph never imports SQL, Postgres,
 or a repository": the runtime writes through a repository adapter, not
 directly).
 
-Revision ID: 7a8b9c0d1e2f
-Revises: 6f7a8b9c0d1e
+Revision ID: 0130
+Revises: 0120
 Create Date: 2026-07-08
 """
 from __future__ import annotations
@@ -17,8 +17,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
-revision = "7a8b9c0d1e2f"
-down_revision = "6f7a8b9c0d1e"
+revision = "0130"
+down_revision = "0120"
 branch_labels = None
 depends_on = None
 
