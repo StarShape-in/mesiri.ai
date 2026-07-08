@@ -103,13 +103,12 @@ The following diagram shows the **complete intended architecture** of this folde
                     │
                     ▼
 ┌─────────────────────────────────────────────┐
-│  M4 — CONTEXT  ⚠️ PARTIAL                  │
-│  Two resolvers exist (see §7):              │
-│  • ContextResolver (M4, Postgres/Redis)     │
-│    — built but NOT called in runtime        │
-│  • ContractContextResolver (contract ports) │
-│    — called but using FAKE adapters only    │
-│  Produces: ResolvedContext (two schemas)    │
+│  M4 — CONTEXT  ⚠️ PARTIAL — 90%             │
+│  ContextResolver (Postgres/Redis) — wired   │
+│  and called in production. Single canonical │
+│  ResolvedContext schema. Workflow/reply     │
+│  context are Null providers (await M5/M7).  │
+│  Produces: ResolvedContext                  │
 └───────────────────┬─────────────────────────┘
                     │
                     ▼
@@ -403,31 +402,19 @@ GEMINI_API_KEY set   → GeminiProvider            (vision)
 
 **Purpose:** Determine *who is speaking*, *which organization/project/site* the message belongs to, *what they are authorized to do*, and how confident the resolver is in that answer. This is the authorization and scoping layer.
 
-**This folder currently contains two distinct implementations:**
+**The contract-layer duplicate has been retired.** `ContractContextResolver` (`contract_resolver.py`), its fake-only ports, and the `mesiri_contracts.context.resolved_context.ResolvedContext` schema are deleted. There is now a single implementation and a single canonical schema.
 
-#### Implementation A — M4 `ContextResolver` (`resolver.py`)
+#### `ContextResolver` (`resolver.py`) — the only resolver
 
 The full production-grade implementation. Uses 9 narrow ports, Postgres repositories for all identity/project/site data, Redis for ephemeral active context, and a deterministic precedence policy.
 
 - **Input:** `NormalizedMessage` + `UnderstandingResult`
-- **Output:** `Result[ResolvedContext]` where `ResolvedContext` is `mesiri_contracts.assistant.resolved_context.ResolvedContext`
+- **Output:** `Result[ResolvedContext]` where `ResolvedContext` is `mesiri_contracts.assistant.resolved_context.ResolvedContext` (the sole `ResolvedContext` schema)
 - **Ports:** `ExternalIdentityRepository`, `OrganizationMembershipRepository`, `RolePermissionRepository`, `ProjectRepository`, `SiteRepository`, `ContextPreferenceRepository`, `ActiveContextStore`, `ReplyContextProvider`, `WorkflowContextProvider`
-- **Real adapters:** `postgres_repositories.py` — complete SQL implementations
-- **Fake adapters:** `fakes.py` — deterministic in-memory implementations
-- **Status:** Fully implemented and tested. **Not called in the current `_on_normalized` runtime path.**
-
-#### Implementation B — `ContractContextResolver` (`contract_resolver.py`)
-
-A simpler port-based resolver using the `mesiri_contracts.context` port interfaces.
-
-- **Input:** `NormalizedMessage` + `UnderstandingResult`
-- **Output:** `ResolvedContext` from `mesiri_contracts.context.resolved_context.ResolvedContext`
-- **Ports:** `IdentityLookupPort`, `ScopeLookupPort`, `WorkflowStateReadPort` (from `mesiri_contracts.context.ports`)
-- **Real adapters:** None — only fake adapters exist
-- **Fake adapters:** `adapters/fake_identity.py`, `adapters/fake_scope.py`, `adapters/fake_workflow_state.py`
-- **Status:** Called in the runtime path, but only with fake adapters. Context resolution always produces LOW confidence, unknown actor, unresolved scope.
-
-> ⚠️ **KNOWN ARCHITECTURAL ISSUE:** Two different `ResolvedContext` schemas exist. This must be resolved before implementing Planner. Implementation A (M4) is the richer, more complete design and should become canonical.
+- **Real adapters:** `postgres_repositories.py` (Postgres) + `active_context.py` (`RedisActiveContextStore`, with `FakeRedis` fallback when no Redis is configured) — complete
+- **Fake adapters:** `fakes.py` — deterministic in-memory implementations, used in tests
+- **Status:** Fully implemented, tested, and **wired into the `_on_normalized` production runtime path** via `context/runtime.py:build_context_resolver()`.
+- **Remaining gap:** `ReplyContextProvider` and `WorkflowContextProvider` are wired to `NullReplyContextProvider`/`NullWorkflowContextProvider` (`context/workflow_context.py`) — correct for now, since reply-binding and active-workflow context are owned by M5/M7, which don't exist yet. These will be swapped for real providers once Planner/Interaction land.
 
 #### `live_identity.py` — the identity bridge
 
@@ -582,7 +569,7 @@ For image/voice messages, `MetaMediaDownloader.download(media_id)` fetches the b
 - `media` ← `MediaReference` (if applicable)
 - `reply_context` ← `ReplyContext(replied_to_message_id)` (if a reply)
 
-**Note:** There is a Postgres query at this point inside `receiver._process_message()` that enriches `sender.profile_name` and sets `metadata["user_role"]`. This is a boundary violation that should be removed. The identity gate handles this properly.
+**Note:** The inline Postgres query that used to sit here (enriching `sender.profile_name` / `metadata["user_role"]` directly inside `receiver._process_message()`) has been removed. The identity gate is now the only place sender identity is resolved.
 
 **Contract produced:** `NormalizedMessage.v1`
 
@@ -630,16 +617,16 @@ Confidence: `ConfidencePolicy.evaluate(signals)` → `HIGH / MEDIUM / LOW / UNUS
 
 **Contract produced:** `UnderstandingResult.v1`
 
-### Step 10 — Context resolution (contract layer)
+### Step 10 — Context resolution (M4)
 
-`ContractContextResolver.resolve(message, understanding)`:
-- All three ports (`FakeIdentityLookupPort`, `FakeScopeLookupPort`, `FakeWorkflowStateReadPort`) are empty in-memory stores
-- Actor is always `unknown`, scope always `unresolved`, confidence always `LOW`
-- Result is produced but currently unused
+`ContextResolver.resolve(message, understanding)`:
+- Resolves actor, org, project, site, role, and permissions against real Postgres repositories and the Redis-backed active context store
+- Reply-context and active-workflow context resolve to `None` (Null providers — M5/M7 not yet implemented)
+- Returns `Result[ResolvedContext]`; resolution failures are logged and do not block the reply (`inbound_journey.py` degrades gracefully to `resolved=None`)
 
-If `WHATSAPP_CONTEXT_DEBUG=true`: `log_resolved_context()` writes actor/org/project/site/role/confidence to the logger.
+If `WHATSAPP_CONTEXT_DEBUG=true`: `log_resolved_context()` writes actor/org/project/site/confidence/roles/permissions to the logger.
 
-**Contract produced:** `ResolvedContext` (contract version — `mesiri_contracts.context.resolved_context`)
+**Contract produced:** `ResolvedContext` (`mesiri_contracts.assistant.resolved_context`) — the reply itself still does not consume it yet (Planner will be the first real consumer).
 
 ### Step 11 — Reply
 
@@ -679,10 +666,10 @@ If `WHATSAPP_CONTEXT_DEBUG=true`: `log_resolved_context()` writes actor/org/proj
 - **Next:** None required before Planner. Provider selection will eventually move to `platform/ai/core/router.py`.
 
 ### Context (M4)
-- **Status:** Partial — 65%
-- **What works:** M4 `ContextResolver` with all Postgres/Redis adapters — **fully implemented and tested** but not called in production. `ContractContextResolver` called in production but with fake adapters only. Identity gate works correctly.
-- **Critical gap:** Two `ResolvedContext` schemas. The M4 `ContextResolver` (`resolver.py`) must be wired into `_on_normalized` before Planner can start. `ContractContextResolver` must be retired or kept as a testing tool only.
-- **Next:** Unify `ResolvedContext` schema (M4 schema is canonical). Wire M4 `ContextResolver`. Retire fake adapters from production.
+- **Status:** Partial — 90%
+- **What works:** `ContractContextResolver` and its fake-only ports are retired. `ContextResolver` — with real Postgres repositories (identity, membership, roles, projects, sites, preferences) and a Redis-backed active context store — is wired into the production `_on_normalized` path. Single canonical `ResolvedContext` schema. The inline SQL in `ingress/receiver.py` is also removed. Identity gate works correctly.
+- **Remaining gap:** `ReplyContextProvider`/`WorkflowContextProvider` are Null providers, pending M5 (Planner)/M7 (Interaction) — not a Context bug, a real external dependency that doesn't exist yet. No `FakeActorReader` yet, so identity-gate tests still need a live DB.
+- **Next:** Add `FakeActorReader` for identity-gate test coverage. Swap the Null providers for real ones once Planner/Interaction exist. Consider consolidating the identity gate's `ActorReader` lookup with `ContextResolver`'s own identity lookup (currently two separate real Postgres round-trips for overlapping data).
 
 ### Planner (M5)
 - **Status:** Not implemented — 0%
@@ -714,7 +701,7 @@ If `WHATSAPP_CONTEXT_DEBUG=true`: `log_resolved_context()` writes actor/org/proj
 
 ### Authorization
 - **Status:** Implemented at identity gate — field-level RBAC not yet enforced
-- `ActorIdentity` carries `role` string. Permissions are in the M4 `ContextResolver` output (`role_ids`, `permissions`) but Context is not wired, so permissions are not flowing.
+- `ActorIdentity` carries `role` string. `ContextResolver` now resolves `role_ids`/`permissions` from real Postgres data, but nothing downstream consumes them yet for authorization decisions — Planner will be the first consumer.
 
 ### Rendering
 - **Status:** Implemented as M3-based plain text
@@ -742,21 +729,13 @@ Every shared contract consumed or produced by this folder lives in `shared/contr
 - **Key fields:** `semantic_type`, `candidates`, `overall_confidence`, `transcript`, `translated_text`, `document_classification`, `missing_fields`
 - **Status:** Frozen. Do not modify without cross-review.
 
-### `ResolvedContext` (M4 version)
+### `ResolvedContext` (the sole canonical schema)
 - **File:** `assistant/resolved_context.py`
-- **Producer:** M4 `ContextResolver` (`context/resolver.py`)
-- **Consumer:** Future Planner
+- **Producer:** `ContextResolver` (`context/resolver.py`)
+- **Consumer:** `runtime/inbound_journey.py` today; future Planner
 - **Why it exists:** Gives the Planner a single authoritative answer to "who is this, where are they, what can they do?"
 - **Key fields:** `organization_id`, `user_id`, `role_ids`, `permissions`, `project_id`, `site_id`, `context_source`, `context_confidence`
-- **Status:** Implemented, not yet wired to production path. **This should become the canonical `ResolvedContext`.**
-
-### `ResolvedContext` (contract version)
-- **File:** `context/resolved_context.py`
-- **Producer:** `ContractContextResolver` (`context/contract_resolver.py`)
-- **Consumer:** `runtime/inbound_journey.py`
-- **Why it exists:** Designed as a simpler port-contract version during Phase 1–3 development. Currently used in production path with fake adapters only.
-- **Key fields:** `actor` (ActorContext), `scope` (ScopeContext), `workflow`, `interaction`, `reply`, `confidence`, `ambiguities`, `warnings`
-- **Status:** Will be retired or merged into the M4 version once Context is unified.
+- **Status:** Implemented and wired into the production path. The contract-layer duplicate (`context/resolved_context.py`, produced by the now-deleted `ContractContextResolver`) has been retired.
 
 ### `ActorIdentity`
 - **File:** `backend/ports.py` (inside this folder, not shared)
@@ -795,18 +774,17 @@ This means:
 | `ObjectStoragePort` | `mesiri_contracts/common/storage.py` | `FakeObjectStorage` | ⚠️ No real adapter wired |
 | `ActorReader` | `backend/ports.py` | ⚠️ None | `PostgresActorReader` |
 | `DeduplicationStore` | `ingress/deduplication.py` | `InMemoryDeduplicationStore` | ⚠️ No Redis adapter |
-| `IdentityLookupPort` (contract) | `mesiri_contracts/context/ports.py` | `FakeIdentityLookupPort` | ⚠️ None |
-| `ScopeLookupPort` (contract) | `mesiri_contracts/context/ports.py` | `FakeScopeLookupPort` | ⚠️ None |
-| `WorkflowStateReadPort` (contract) | `mesiri_contracts/context/ports.py` | `FakeWorkflowStateReadPort` | ⚠️ None |
-| `ExternalIdentityRepository` (M4) | `context/ports.py` | `FakeExternalIdentityRepository` | `PostgresExternalIdentityRepository` |
-| `ProjectRepository` (M4) | `context/ports.py` | `FakeProjectRepository` | `PostgresProjectRepository` |
-| `SiteRepository` (M4) | `context/ports.py` | `FakeSiteRepository` | `PostgresSiteRepository` |
-| `ActiveContextStore` (M4) | `context/ports.py` | `FakeActiveContextStore` | `RedisActiveContextStore` |
+| `ExternalIdentityRepository` (M4) | `context/ports.py` | `FakeExternalIdentityRepository` | `PostgresExternalIdentityRepository` — **wired in production** |
+| `ProjectRepository` (M4) | `context/ports.py` | `FakeProjectRepository` | `PostgresProjectRepository` — **wired in production** |
+| `SiteRepository` (M4) | `context/ports.py` | `FakeSiteRepository` | `PostgresSiteRepository` — **wired in production** |
+| `ActiveContextStore` (M4) | `context/ports.py` | `FakeActiveContextStore` | `RedisActiveContextStore` — **wired in production** (falls back to `FakeRedis` if `MESIRI_REDIS__HOST` unset) |
+| `ReplyContextProvider` (M4) | `context/ports.py` | — | `NullReplyContextProvider` — placeholder pending M7 |
+| `WorkflowContextProvider` (M4) | `context/ports.py` | — | `NullWorkflowContextProvider` — placeholder pending M5 |
 
 **Missing real adapters (⚠️):**
 - Object storage real adapter (R2/S3) — media lost on restart
 - Redis deduplication adapter — duplicate messages allowed on restart
-- `IdentityLookupPort` / `ScopeLookupPort` real adapters — needed to retire fake context resolvers
+- `ActorReader` fake — identity-gate tests still need a live database
 
 ---
 
@@ -1116,21 +1094,19 @@ This section describes how this folder is expected to evolve, based on the curre
 - M2 ingress pipeline (webhook → `NormalizedMessage`)
 - M3 understanding pipeline (speech, vision, extraction, confidence)
 - M4 identity gate (Postgres-backed, gates unregistered/suspended users)
-- M4 context resolution adapters (Postgres + Redis, not yet wired to production path)
+- M4 context resolution — `ContextResolver` (Postgres + Redis) wired into the production path; single canonical `ResolvedContext`
 - HTTP control-plane APIs (auth, users, projects, admin)
 - WhatsApp reply (M3-based understanding summary)
 
 ### Near Future (required before Planner)
 
-1. **Unify `ResolvedContext`** — retire `mesiri_contracts.context.resolved_context` and `ContractContextResolver`. The M4 `ContextResolver` with `mesiri_contracts.assistant.resolved_context.ResolvedContext` becomes the single canonical output.
+1. **Add `ActorReader` fake** — `PostgresActorReader` has no fake. Tests that need an unregistered user or a suspended org currently require a live database. A `FakeActorReader` is needed for identity gate testing.
 
-2. **Wire M4 `ContextResolver`** — replace `ContractContextResolver` (fake adapters) with `ContextResolver` (real Postgres/Redis adapters) in `_on_normalized`. The identity gate result (`ActorIdentity`) should seed the resolver to avoid a second DB round-trip.
+2. **Define `PlannerDecision` contract** — `shared/contracts/src/mesiri_contracts/assistant/planner_decision.py` is 0 bytes. This must be defined (with Alan + Ilan review) before Planner can be implemented.
 
-3. **Add `ActorReader` fake** — `PostgresActorReader` has no fake. Tests that need an unregistered user or a suspended org currently require a live database. A `FakeActorReader` is needed for identity gate testing.
+3. **Implement minimum Memory** — at minimum, a conversation turn history store so the Planner knows the previous message's semantic type and project context.
 
-4. **Define `PlannerDecision` contract** — `shared/contracts/src/mesiri_contracts/assistant/planner_decision.py` is 0 bytes. This must be defined (with Alan + Ilan review) before Planner can be implemented.
-
-5. **Implement minimum Memory** — at minimum, a conversation turn history store so the Planner knows the previous message's semantic type and project context.
+4. **Consolidate identity resolution** — the identity gate (`backend/postgres/actor.py`) and `ContextResolver` (`context/postgres_repositories.py`) currently run two separate real Postgres queries for overlapping "who is this" data. Worth seeding the resolver from the gate's `ActorIdentity` result once Planner needs the extra round-trip to matter for latency.
 
 ### Medium Term (Planner + Workflows)
 

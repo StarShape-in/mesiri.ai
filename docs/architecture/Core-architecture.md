@@ -322,11 +322,11 @@ These evolve only through versioning (`.v2`, etc.), never breaking changes in pl
 
 ## Known debt (Phase 0, resolve before Phase 1)
 
-- Retire `ContractContextResolver` + fakes; wire the real, tested `ContextResolver` and M4 schema into production
-- Consolidate the two `ResolvedContext` shapes into one
+- ~~Retire `ContractContextResolver` + fakes; wire the real, tested `ContextResolver` and M4 schema into production~~ ✅ Done (2026-07-08) — `ContractContextResolver` deleted; `ContextResolver` with real Postgres/Redis adapters wired into `_on_normalized`
+- ~~Consolidate the two `ResolvedContext` shapes into one~~ ✅ Done (2026-07-08) — `mesiri_contracts.assistant.resolved_context` is the sole canonical schema; the contract-layer duplicate is deleted
+- ~~Fix `UserModel` ORM to match migrations (`status`, `access_policy`)~~ ✅ Done (2026-07-08)
 - Investigate *why* two FastAPI apps duplicate auth/admin/users/projects routes before merging anything
-- Wire real Cloudflare R2 in the live webhook path (currently `FakeObjectStorage`)
-- Fix `UserModel` ORM to match migrations (`status`, `access_policy`)
+- Wire real Cloudflare R2 in the live webhook path — the `R2ObjectStorage` adapter and `build_object_storage()` selector exist and are wired in `build_container()`; remaining work is deployment config (`MESIRI_OBJECT_STORAGE__PROVIDER=r2` + credentials) and a live verification
 
 ## Build phases
 
