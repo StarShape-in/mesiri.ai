@@ -86,7 +86,7 @@ async def test_user(test_engine: AsyncEngine, test_org: uuid.UUID):
             sa.text("""
             INSERT INTO users (id, organization_id, email, hashed_password, full_name,
                              role, status, access_policy, created_at, updated_at)
-            VALUES (:id, :org_id, :email, :pwd, :name, :role, :status, :policy::jsonb,
+            VALUES (:id, :org_id, :email, :pwd, :name, :role, :status, CAST(:policy AS jsonb),
                     now(), now())
             """),
             {
