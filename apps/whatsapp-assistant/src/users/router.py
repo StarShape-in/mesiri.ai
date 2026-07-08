@@ -54,6 +54,21 @@ users_table = sa.Table(
     sa.Column("access_policy", sa.JSON),
 )
 
+projects_table = sa.Table(
+    "projects",
+    sa.MetaData(),
+    sa.Column("id", sa.UUID, primary_key=True),
+    sa.Column("organization_id", sa.UUID),
+)
+
+sites_table = sa.Table(
+    "sites",
+    sa.MetaData(),
+    sa.Column("id", sa.UUID, primary_key=True),
+    sa.Column("project_id", sa.UUID),
+    sa.Column("organization_id", sa.UUID),
+)
+
 _DEFAULT_ACCESS_POLICY: dict = {"mode": "custom_projects", "projects": []}
 
 # ---------------------------------------------------------------------------
@@ -88,6 +103,86 @@ class StatusUpdate(BaseModel):
 class AccessPolicy(BaseModel):
     mode: str
     projects: list[dict] | None = None
+
+
+def _as_uuid(value: object, field: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(str(value))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid {field}") from exc
+
+
+async def _validate_access_policy(conn, org_id: str, policy: AccessPolicy) -> None:
+    if policy.mode not in ("all_projects", "custom_projects"):
+        raise HTTPException(
+            status_code=400, detail="mode must be 'all_projects' or 'custom_projects'"
+        )
+
+    project_grants = policy.projects or []
+    if policy.mode == "all_projects" and not project_grants:
+        return
+
+    project_ids: set[uuid.UUID] = set()
+    site_ids_by_project: dict[uuid.UUID, set[uuid.UUID]] = {}
+
+    for grant in project_grants:
+        if not isinstance(grant, dict):
+            raise HTTPException(status_code=400, detail="Invalid project access entry")
+
+        project_id = _as_uuid(grant.get("projectId"), "projectId")
+        project_ids.add(project_id)
+
+        site_access = grant.get("siteAccess") or {}
+        if not isinstance(site_access, dict):
+            raise HTTPException(status_code=400, detail="Invalid siteAccess")
+
+        site_mode = site_access.get("mode")
+        if site_mode not in ("all_sites", "custom_sites"):
+            raise HTTPException(
+                status_code=400, detail="siteAccess.mode must be 'all_sites' or 'custom_sites'"
+            )
+
+        if site_mode == "custom_sites":
+            site_ids = site_access.get("siteIds") or []
+            if not isinstance(site_ids, list):
+                raise HTTPException(status_code=400, detail="siteIds must be a list")
+            site_ids_by_project[project_id] = {
+                _as_uuid(site_id, "siteId") for site_id in site_ids
+            }
+
+    if not project_ids:
+        return
+
+    project_result = await conn.execute(
+        sa.select(projects_table.c.id).where(
+            projects_table.c.organization_id == org_id,
+            projects_table.c.id.in_(project_ids),
+        )
+    )
+    found_project_ids = {row.id for row in project_result.fetchall()}
+    if found_project_ids != project_ids:
+        raise HTTPException(status_code=400, detail="Project access contains unknown project")
+
+    site_ids = {site_id for ids in site_ids_by_project.values() for site_id in ids}
+    if not site_ids:
+        return
+
+    site_result = await conn.execute(
+        sa.select(sites_table.c.id, sites_table.c.project_id).where(
+            sites_table.c.organization_id == org_id,
+            sites_table.c.id.in_(site_ids),
+        )
+    )
+    found_sites = {row.id: row.project_id for row in site_result.fetchall()}
+    if set(found_sites) != site_ids:
+        raise HTTPException(status_code=400, detail="Site access contains unknown site")
+
+    for project_id, expected_site_ids in site_ids_by_project.items():
+        for site_id in expected_site_ids:
+            if found_sites[site_id] != project_id:
+                raise HTTPException(
+                    status_code=400, detail="Site access contains site outside project"
+                )
 
 def _row_to_response(row) -> UserResponse:
     return UserResponse(
@@ -326,11 +421,6 @@ async def update_user_access(
     engine = get_engine()
     org_id = admin_payload.get("org")
     
-    if policy.mode not in ("all_projects", "custom_projects"):
-        raise HTTPException(
-            status_code=400, detail="mode must be 'all_projects' or 'custom_projects'"
-        )
-
     async with engine.begin() as conn:
         result = await conn.execute(
             sa.select(users_table.c.id).where(
@@ -340,6 +430,8 @@ async def update_user_access(
         )
         if result.first() is None:
             raise HTTPException(status_code=404, detail="User not found")
+
+        await _validate_access_policy(conn, org_id, policy)
 
         await conn.execute(
             users_table.update()

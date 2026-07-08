@@ -69,6 +69,16 @@ projects_table = sa.Table(
     sa.Column("open_issues", sa.Integer),
 )
 
+sites_table = sa.Table(
+    "sites",
+    sa.MetaData(),
+    sa.Column("id", sa.UUID, primary_key=True),
+    sa.Column("project_id", sa.UUID),
+    sa.Column("organization_id", sa.UUID),
+    sa.Column("name", sa.String),
+    sa.Column("status", sa.String),
+)
+
 
 # ---------------------------------------------------------------------------
 # Schemas — shaped for the mobile ProjectHealthCard.
@@ -95,6 +105,13 @@ class ProjectCreate(BaseModel):
     description: str | None = None
     status: str = "on_track"
     progress: int = 0
+
+
+class SiteResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    name: str
+    status: str
 
 
 def _to_response(row) -> ProjectResponse:
@@ -149,6 +166,44 @@ async def list_projects(payload: dict = Depends(get_current_user)):
         )
         rows = result.fetchall()
     return [_to_response(r) for r in rows]
+
+
+@router.get("/{project_id}/sites", response_model=list[SiteResponse])
+async def list_project_sites(project_id: uuid.UUID, payload: dict = Depends(get_current_user)):
+    org_id = payload.get("org")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="User has no organization")
+
+    engine = get_engine()
+    async with engine.connect() as conn:
+        project_result = await conn.execute(
+            sa.select(projects_table.c.id).where(
+                projects_table.c.id == project_id,
+                projects_table.c.organization_id == org_id,
+            )
+        )
+        if project_result.first() is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        result = await conn.execute(
+            sa.select(sites_table)
+            .where(
+                sites_table.c.project_id == project_id,
+                sites_table.c.organization_id == org_id,
+            )
+            .order_by(sites_table.c.name)
+        )
+        rows = result.fetchall()
+
+    return [
+        SiteResponse(
+            id=row.id,
+            project_id=row.project_id,
+            name=row.name,
+            status=row.status or "active",
+        )
+        for row in rows
+    ]
 
 
 @router.post("", response_model=ProjectResponse)
