@@ -1,0 +1,33 @@
+"""HTTP response models for projects API.
+
+Defines the external API contract with proper field naming (camelCase)
+and display value mapping (status -> StatusType + statusLabel).
+"""
+
+from __future__ import annotations
+
+from uuid import UUID
+
+from pydantic import BaseModel, Field
+
+
+class ProjectResponse(BaseModel):
+    """External API response for a project.
+    
+    Canonical contract matching WhatsApp Assistant projects router.
+    Uses camelCase field names and mapped status values.
+    """
+    id: UUID
+    name: str
+    location: str | None = None
+    code: str | None = None
+    client: str | None = None
+    description: str | None = None
+    status: str  # StatusType: "success" | "warning" | "critical" | "neutral"
+    statusLabel: str = Field(..., alias="statusLabel")  # Human-readable status
+    progress: int
+    openIssues: int = Field(..., alias="openIssues")  # camelCase, not snake_case
+    reportingRatio: str | None = Field(None, alias="reportingRatio")
+    
+    class Config:
+        populate_by_name = True  # Allow both alias and field name

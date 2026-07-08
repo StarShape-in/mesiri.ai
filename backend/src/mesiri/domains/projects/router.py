@@ -2,10 +2,16 @@
 
 Endpoints
 ---------
-GET  /projects                     list projects in the caller's org
+GET  /projects                     list projects accessible to the caller
 POST /projects                     create a new project  (admin / PM)
 GET  /projects/{id}/sites          list sites for a project
 POST /projects/{id}/sites          create a site  (admin / PM)
+
+Architecture
+------------
+GET /projects flow:
+HTTP Router → ListProjects Query → Handler → AuthorizationContext →
+Project Repository → PostgreSQL → DTO → Presenter → Response
 """
 
 from __future__ import annotations
@@ -17,13 +23,20 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from ...application.projects.handlers import ListProjectsHandler
+from ...application.projects.queries import ListProjects
+from ...authorization.context import AuthorizationContext
+from ...authorization.service import AuthorizationService
 from ...infrastructure.postgres.dependency import get_db_conn
+from ...infrastructure.postgres.repositories.projects import PostgresProjectRepository
 from ..shared.auth import get_current_user, require_admin
+from .presenter import ProjectPresenter
+from .responses import ProjectResponse
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 # ---------------------------------------------------------------------------
-# Raw table refs
+# Legacy table definitions (used by non-refactored endpoints)
 # ---------------------------------------------------------------------------
 _projects = sa.Table(
     "projects",
@@ -56,18 +69,8 @@ _sites = sa.Table(
 
 
 # ---------------------------------------------------------------------------
-# Schemas
+# Legacy schema definitions (used by non-refactored endpoints)
 # ---------------------------------------------------------------------------
-class ProjectResponse(BaseModel):
-    id: uuid.UUID
-    name: str
-    code: str | None = None
-    location: str | None = None
-    client: str | None = None
-    description: str | None = None
-    status: str
-    progress: int
-    open_issues: int
 
 
 class ProjectCreate(BaseModel):
@@ -90,34 +93,63 @@ class SiteCreate(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Dependencies
+# ---------------------------------------------------------------------------
+
+
+async def get_auth_context(
+    jwt_payload: dict = Depends(get_current_user),
+    conn: AsyncConnection = Depends(get_db_conn),
+) -> AuthorizationContext:
+    """Resolve authorization context for the current request.
+    
+    Validates JWT, loads current user from database, verifies status,
+    and resolves project access scope.
+    """
+    user_id = uuid.UUID(jwt_payload["sub"])
+    org_id = uuid.UUID(jwt_payload["org"])
+    role = jwt_payload.get("role", "user")
+    
+    auth_service = AuthorizationService(conn)
+    return await auth_service.resolve_from_jwt(user_id, org_id, role)
+
+
+# ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
+
 @router.get("", response_model=list[ProjectResponse])
 async def list_projects(
-    user: dict = Depends(get_current_user),
+    auth_context: AuthorizationContext = Depends(get_auth_context),
     conn: AsyncConnection = Depends(get_db_conn),
 ):
-    org_id = user.get("org")
-    if not org_id:
-        raise HTTPException(status_code=400, detail="Token missing org claim")
+    """List all projects accessible to the authenticated user.
+    
+    Returns projects according to the user's access policy:
+    - all_projects mode: all projects in user's organization
+    - custom_projects mode: only explicitly granted projects
+    - Empty custom scope: returns empty list
+    
+    Projects are ordered by name (ascending).
+    Status values are mapped from database (on_track, at_risk, critical)
+    to external API (success, warning, critical).
+    """
+    # Create repository and handler
+    repository = PostgresProjectRepository(conn)
+    handler = ListProjectsHandler(repository)
+    
+    # Execute query
+    query = ListProjects()
+    projects = await handler.handle(query, auth_context)
+    
+    # Transform to HTTP response
+    return ProjectPresenter.to_response_list(projects)
 
-    result = await conn.execute(
-        sa.select(_projects).where(_projects.c.organization_id == org_id)
-    )
-    return [
-        ProjectResponse(
-            id=r.id,
-            name=r.name,
-            code=r.code,
-            location=r.location,
-            client=r.client,
-            description=r.description,
-            status=r.status or "on_track",
-            progress=r.progress or 0,
-            open_issues=r.open_issues or 0,
-        )
-        for r in result.fetchall()
-    ]
+
+# ---------------------------------------------------------------------------
+# Legacy routes (not refactored in this vertical slice)
+# ---------------------------------------------------------------------------
 
 
 @router.post("", response_model=ProjectResponse, status_code=201)
