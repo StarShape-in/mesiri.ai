@@ -6,7 +6,7 @@ const TOKEN_KEY = 'mesiri_access_token';
 // Create a configured Axios instance
 export const api = axios.create({
   baseURL: process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000',
-  timeout: 10000,
+  timeout: 15000,
 });
 
 // Request interceptor to attach the JWT token to every request

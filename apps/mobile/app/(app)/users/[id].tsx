@@ -62,8 +62,13 @@ export default function UserDetailsScreen() {
       setUser(data);
       // Create deep copy for draft
       setDraftPolicy(JSON.parse(JSON.stringify(data.accessPolicy)));
-    } catch (e) {
-      Alert.alert('Error', 'Failed to load user details');
+    } catch (e: any) {
+      const status = e?.response?.status;
+      const detail = e?.response?.data?.detail || e?.message || 'Unknown error';
+      Alert.alert(
+        'Error',
+        `Failed to load user details\n\nStatus: ${status || 'N/A'}\n${detail}`
+      );
     } finally {
       setLoading(false);
     }
