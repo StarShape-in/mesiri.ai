@@ -11,7 +11,7 @@ import uuid
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from mesiri.bootstrap.settings import PostgresSettings
+from mesiri.bootstrap.settings import Settings
 from mesiri.infrastructure.postgres.repositories.projects import PostgresProjectRepository
 
 pytestmark = pytest.mark.integration
@@ -20,8 +20,8 @@ pytestmark = pytest.mark.integration
 @pytest.fixture
 async def test_engine():
     """Create test database engine."""
-    settings = PostgresSettings()
-    engine = create_async_engine(settings.dsn(), echo=False)
+    settings = Settings()
+    engine = create_async_engine(settings.postgres.dsn(), echo=False)
     yield engine
     await engine.dispose()
 

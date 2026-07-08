@@ -18,13 +18,12 @@ Canonical Contract:
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from mesiri.bootstrap.settings import PostgresSettings
+from mesiri.bootstrap.settings import Settings
 from mesiri.domains.identity.auth_service import create_access_token
 from mesiri.http.app import create_app
 
@@ -32,8 +31,8 @@ from mesiri.http.app import create_app
 @pytest.fixture
 async def test_engine():
     """Create a test database engine."""
-    settings = PostgresSettings()
-    engine = create_async_engine(settings.dsn(), echo=False)
+    settings = Settings()
+    engine = create_async_engine(settings.postgres.dsn(), echo=False)
     yield engine
     await engine.dispose()
 
