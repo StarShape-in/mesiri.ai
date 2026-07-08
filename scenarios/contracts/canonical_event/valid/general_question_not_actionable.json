@@ -1,0 +1,18 @@
+{
+  "version": "v1",
+  "event_id": "evt_ce_4",
+  "correlation_id": "cor_ce_4",
+  "source_message_id": "msg_ce_4",
+  "event_type": "GeneralQuestionAsked",
+  "completeness": "not_actionable",
+  "organization_id": "org_001",
+  "user_id": "usr_001",
+  "project_id": null,
+  "site_id": null,
+  "permissions": [],
+  "fields": {
+    "question": "when is the next delivery?"
+  },
+  "missing_fields": [],
+  "warnings": []
+}

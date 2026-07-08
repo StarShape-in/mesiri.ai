@@ -1,5 +1,13 @@
 """Assistant-facing shared contracts."""
 
+from mesiri_contracts.assistant.canonical_event import (
+    CONTRACT_VERSION as CANONICAL_EVENT_VERSION,
+)
+from mesiri_contracts.assistant.canonical_event import (
+    CanonicalEvent,
+    CanonicalEventType,
+    IntentCompleteness,
+)
 from mesiri_contracts.assistant.context_enums import ContextConfidence, ContextSource
 from mesiri_contracts.assistant.normalized_message import (
     MediaReference,
@@ -21,4 +29,8 @@ __all__ = [
     "ContextSource",
     "ContextConfidence",
     "RESOLVED_CONTEXT_VERSION",
+    "CanonicalEvent",
+    "CanonicalEventType",
+    "IntentCompleteness",
+    "CANONICAL_EVENT_VERSION",
 ]

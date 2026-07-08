@@ -21,6 +21,7 @@ from context.runtime import build_context_resolver, log_resolved_context
 from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
 from mesiri_ai import fixtures
 from mesiri_ai.fakes import FakeExtractionProvider, FakeSpeechProvider, FakeVisionProvider
+from mesiri_contracts.assistant.canonical_event import CanonicalEvent
 from mesiri_contracts.assistant.enums import InputModality
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage, SenderInfo
 from mesiri_contracts.assistant.resolved_context import ResolvedContext
@@ -67,7 +68,7 @@ async def test_inbound_journey_produces_resolved_context():
     async def capture_reply(msg: NormalizedMessage, understanding: UnderstandingResult) -> None:
         sent_replies.append(format_reply(understanding))
 
-    understanding, resolved = await process_inbound_message(
+    understanding, resolved, canonical_event = await process_inbound_message(
         message,
         pipeline=pipeline,
         context_resolver=context_resolver,
@@ -82,6 +83,12 @@ async def test_inbound_journey_produces_resolved_context():
     assert resolved.user_id == seed.USER_ENGINEER
     assert resolved.organization_id == seed.ORG_A
     assert len(sent_replies) == 1
+
+    # Context resolved successfully → canonicalization runs too.
+    assert isinstance(canonical_event, CanonicalEvent)
+    assert canonical_event.correlation_id == message.correlation_id
+    assert canonical_event.organization_id == seed.ORG_A
+    assert canonical_event.user_id == seed.USER_ENGINEER
 
 
 async def test_inbound_journey_reply_unchanged_by_context():
@@ -123,7 +130,7 @@ async def test_inbound_journey_unknown_user_still_sends_reply():
     async def capture_reply(msg: NormalizedMessage, understanding: UnderstandingResult) -> None:
         sent_replies.append(format_reply(understanding))
 
-    understanding, resolved = await process_inbound_message(
+    understanding, resolved, canonical_event = await process_inbound_message(
         message,
         pipeline=pipeline,
         context_resolver=context_resolver,
@@ -132,6 +139,7 @@ async def test_inbound_journey_unknown_user_still_sends_reply():
 
     assert isinstance(understanding, UnderstandingResult)
     assert resolved is None  # context failed gracefully
+    assert canonical_event is None  # canonicalization requires resolved context
     assert len(sent_replies) == 1  # reply still went out
 
 
@@ -168,6 +176,29 @@ async def test_context_debug_logs_resolved_context(caplog):
 
     assert any(
         "ResolvedContext correlation_id=cor_context_1" in record.message
+        for record in caplog.records
+    )
+
+
+async def test_context_debug_logs_canonical_event(caplog):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="canonicalization.builder")
+    message = _message()
+
+    async def noop_reply(msg: NormalizedMessage, understanding: UnderstandingResult) -> None:
+        return None
+
+    await process_inbound_message(
+        message,
+        pipeline=_pipeline(),
+        context_resolver=_resolver(),
+        reply_sender=noop_reply,
+        context_debug=True,
+    )
+
+    assert any(
+        "CanonicalEvent correlation_id=cor_context_1" in record.message
         for record in caplog.records
     )
 
