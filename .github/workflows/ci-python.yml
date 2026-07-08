@@ -1,6 +1,7 @@
 name: CI (Python runtime)
 
 on:
+  workflow_dispatch:
   push:
     branches: [main, develop, "integration/**"]
   pull_request:
@@ -57,6 +58,10 @@ jobs:
         run: uv pip install -e ".[dev,infra,providers]"
       - name: Apply migrations
         run: uv run alembic -c backend/alembic.ini upgrade head
+      - name: GET /projects vertical slice tests
+        run: |
+          uv run pytest backend/tests/integration/test_postgres_project_repository.py -v -m integration
+          uv run pytest backend/tests/contract/test_projects_api_contract.py -v -m integration
       - name: Integration tests
         # Target the path directly — a whole-tree collection imports the repo's
         # top-level `platform/` dir as a namespace package, shadowing stdlib
