@@ -21,9 +21,8 @@ import uuid
 
 import pytest
 import sqlalchemy as sa
-from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
-from sqlalchemy.pool import NullPool
 
 from mesiri.bootstrap.settings import Settings
 from mesiri.domains.identity.auth_service import create_access_token
@@ -35,7 +34,7 @@ from mesiri.infrastructure.postgres.dependency import get_db_conn
 async def test_engine():
     """Create a test database engine."""
     settings = Settings()
-    engine = create_async_engine(settings.postgres.dsn(), echo=False, poolclass=NullPool)
+    engine = create_async_engine(settings.postgres.dsn(), echo=False)
     yield engine
     await engine.dispose()
 
@@ -52,7 +51,7 @@ async def clean_db(test_engine: AsyncEngine):
 
 
 @pytest.fixture
-def client(test_engine: AsyncEngine):
+async def client(test_engine: AsyncEngine):
     """FastAPI test client."""
     app = create_app()
 
@@ -61,7 +60,11 @@ def client(test_engine: AsyncEngine):
             yield conn
 
     app.dependency_overrides[get_db_conn] = override_get_db_conn
-    return TestClient(app)
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://testserver",
+    ) as test_client:
+        yield test_client
 
 
 @pytest.fixture
@@ -112,7 +115,7 @@ async def test_user(test_engine: AsyncEngine, test_org: uuid.UUID):
 
 
 @pytest.fixture
-def auth_token(test_user: uuid.UUID, test_org: uuid.UUID) -> str:
+async def auth_token(test_user: uuid.UUID, test_org: uuid.UUID) -> str:
     """Create a valid JWT token for the test user."""
     return create_access_token(
         data={
@@ -130,7 +133,7 @@ def auth_token(test_user: uuid.UUID, test_org: uuid.UUID) -> str:
 
 @pytest.mark.integration
 async def test_get_projects_returns_canonical_contract(
-    client: TestClient,
+    client: AsyncClient,
     test_engine: AsyncEngine,
     test_org: uuid.UUID,
     auth_token: str,
@@ -163,7 +166,7 @@ async def test_get_projects_returns_canonical_contract(
             },
         )
 
-    response = client.get(
+    response = await client.get(
         "/projects",
         headers={"Authorization": f"Bearer {auth_token}"},
     )
@@ -210,7 +213,7 @@ async def test_get_projects_returns_canonical_contract(
 
 @pytest.mark.integration
 async def test_status_mapping_on_track_to_success(
-    client: TestClient,
+    client: AsyncClient,
     test_engine: AsyncEngine,
     test_org: uuid.UUID,
     auth_token: str,
@@ -232,7 +235,7 @@ async def test_status_mapping_on_track_to_success(
             },
         )
 
-    response = client.get("/projects", headers={"Authorization": f"Bearer {auth_token}"})
+    response = await client.get("/projects", headers={"Authorization": f"Bearer {auth_token}"})
 
     assert response.status_code == 200
     project = response.json()[0]
@@ -242,7 +245,7 @@ async def test_status_mapping_on_track_to_success(
 
 @pytest.mark.integration
 async def test_status_mapping_critical_to_critical(
-    client: TestClient,
+    client: AsyncClient,
     test_engine: AsyncEngine,
     test_org: uuid.UUID,
     auth_token: str,
@@ -264,7 +267,7 @@ async def test_status_mapping_critical_to_critical(
             },
         )
 
-    response = client.get("/projects", headers={"Authorization": f"Bearer {auth_token}"})
+    response = await client.get("/projects", headers={"Authorization": f"Bearer {auth_token}"})
 
     assert response.status_code == 200
     project = response.json()[0]
@@ -274,7 +277,7 @@ async def test_status_mapping_critical_to_critical(
 
 @pytest.mark.integration
 async def test_projects_ordered_by_name(
-    client: TestClient,
+    client: AsyncClient,
     test_engine: AsyncEngine,
     test_org: uuid.UUID,
     auth_token: str,
@@ -292,7 +295,7 @@ async def test_projects_ordered_by_name(
                 {"id": uuid.uuid4(), "org_id": test_org, "name": name},
             )
 
-    response = client.get("/projects", headers={"Authorization": f"Bearer {auth_token}"})
+    response = await client.get("/projects", headers={"Authorization": f"Bearer {auth_token}"})
 
     assert response.status_code == 200
     projects = response.json()
@@ -302,13 +305,13 @@ async def test_projects_ordered_by_name(
 
 @pytest.mark.integration
 async def test_empty_projects_returns_empty_list(
-    client: TestClient,
+    client: AsyncClient,
     auth_token: str,
     clean_db,
     test_user: uuid.UUID,
 ):
     """Verify empty result returns empty array, not error."""
-    response = client.get("/projects", headers={"Authorization": f"Bearer {auth_token}"})
+    response = await client.get("/projects", headers={"Authorization": f"Bearer {auth_token}"})
 
     assert response.status_code == 200
     assert response.json() == []
@@ -316,7 +319,7 @@ async def test_empty_projects_returns_empty_list(
 
 @pytest.mark.integration
 async def test_null_optional_fields(
-    client: TestClient,
+    client: AsyncClient,
     test_engine: AsyncEngine,
     test_org: uuid.UUID,
     auth_token: str,
@@ -334,7 +337,7 @@ async def test_null_optional_fields(
             {"id": uuid.uuid4(), "org_id": test_org, "name": "Minimal Project"},
         )
 
-    response = client.get("/projects", headers={"Authorization": f"Bearer {auth_token}"})
+    response = await client.get("/projects", headers={"Authorization": f"Bearer {auth_token}"})
 
     assert response.status_code == 200
     project = response.json()[0]
@@ -346,22 +349,22 @@ async def test_null_optional_fields(
 
 
 @pytest.mark.integration
-async def test_missing_auth_returns_401(client: TestClient):
+async def test_missing_auth_returns_401(client: AsyncClient):
     """Verify missing authentication returns 401."""
-    response = client.get("/projects")
+    response = await client.get("/projects")
     assert response.status_code == 401
 
 
 @pytest.mark.integration
-async def test_invalid_token_returns_401(client: TestClient):
+async def test_invalid_token_returns_401(client: AsyncClient):
     """Verify invalid JWT returns 401."""
-    response = client.get("/projects", headers={"Authorization": "Bearer invalid_token"})
+    response = await client.get("/projects", headers={"Authorization": "Bearer invalid_token"})
     assert response.status_code == 401
 
 
 @pytest.mark.integration
 async def test_organization_isolation(
-    client: TestClient,
+    client: AsyncClient,
     test_engine: AsyncEngine,
     auth_token: str,
     clean_db,
@@ -396,7 +399,7 @@ async def test_organization_isolation(
             },
         )
 
-    response = client.get("/projects", headers={"Authorization": f"Bearer {auth_token}"})
+    response = await client.get("/projects", headers={"Authorization": f"Bearer {auth_token}"})
 
     assert response.status_code == 200
     projects = response.json()
