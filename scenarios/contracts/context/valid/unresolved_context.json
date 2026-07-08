@@ -1,0 +1,9 @@
+{
+  "version": "v1",
+  "correlation_id": "cor_ctx_3",
+  "source_message_id": "msg_ctx_3",
+  "organization_id": "org_003",
+  "user_id": "usr_003",
+  "context_source": "unresolved",
+  "context_confidence": "unresolved"
+}

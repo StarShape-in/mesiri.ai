@@ -1,0 +1,7 @@
+{
+  "version": "v1",
+  "correlation_id": "cor_ctx_2",
+  "source_message_id": "msg_ctx_2",
+  "organization_id": "org_002",
+  "user_id": "usr_002"
+}

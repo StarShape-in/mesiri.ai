@@ -1,15 +1,8 @@
 {
   "version": "v1",
-  "correlation_id": "cor_bad_5",
-  "source_message_id": "msg_bad_5",
-  "actor": {
-    "whatsapp_wa_id": "919876543210"
-  },
-  "scope": {},
-  "reply": {
-    "binds_to_prior_journey": false
-  },
-  "confidence": "high",
-  "resolved_at": "2026-07-06T10:00:00Z",
+  "correlation_id": "cor_bad_4",
+  "source_message_id": "msg_bad_4",
+  "organization_id": "org_001",
+  "user_id": "usr_001",
   "planner_decision": "must_not_appear_on_context_contract"
 }

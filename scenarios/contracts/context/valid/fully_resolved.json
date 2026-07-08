@@ -2,27 +2,15 @@
   "version": "v1",
   "correlation_id": "cor_ctx_1",
   "source_message_id": "msg_ctx_1",
-  "actor": {
-    "whatsapp_wa_id": "919876543210",
-    "user_id": "usr_001",
-    "organization_id": "org_001",
-    "role": "site_engineer",
-    "display_name": "Site Engineer"
-  },
-  "scope": {
-    "project_id": "prj_001",
-    "project_name": "Tower A",
-    "site_id": "site_001",
-    "site_name": "Block 3"
-  },
-  "workflow": null,
-  "interaction": null,
-  "reply": {
-    "replied_to_message_id": null,
-    "binds_to_prior_journey": false
-  },
-  "confidence": "high",
-  "ambiguities": [],
-  "warnings": [],
-  "resolved_at": "2026-07-06T10:00:00Z"
+  "organization_id": "org_001",
+  "user_id": "usr_001",
+  "membership_id": "mbr_001",
+  "role_ids": ["site_engineer"],
+  "permissions": ["material.record", "material.view"],
+  "project_id": "prj_001",
+  "site_id": "site_001",
+  "context_source": "user_default",
+  "context_confidence": "high",
+  "locale": "en",
+  "timezone": "Asia/Kolkata"
 }

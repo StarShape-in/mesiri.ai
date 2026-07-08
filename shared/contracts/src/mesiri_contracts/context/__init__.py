@@ -1,4 +1,14 @@
-"""Context module shared contracts (ResolvedContext.v1 + read ports)."""
+"""Context module port interfaces and enumerations.
+
+Exports the ports, port-side DTOs, and enumerations used by the M4
+ContextResolver and its adapters.
+
+The nested ``ResolvedContext`` (and its sub-classes ``ActorContext``,
+``ScopeContext``, etc.) that previously lived in this package has been
+retired in Phase 0 T4.  The canonical M4 flat schema is:
+
+    mesiri_contracts.assistant.resolved_context.ResolvedContext
+"""
 
 from mesiri_contracts.context.enums import (
     ContextAmbiguityField,
@@ -16,35 +26,17 @@ from mesiri_contracts.context.ports import (
     ScopeRecord,
     WorkflowStateReadPort,
 )
-from mesiri_contracts.context.resolved_context import (
-    CONTRACT_VERSION,
-    ActorContext,
-    ContextAmbiguity,
-    InteractionContext,
-    ReplyBindingContext,
-    ResolvedContext,
-    ScopeContext,
-    WorkflowContext,
-)
 
 __all__ = [
-    "CONTRACT_VERSION",
     "ActiveWorkflowSnapshot",
-    "ActorContext",
-    "ContextAmbiguity",
     "ContextAmbiguityField",
     "IdentityLookupPort",
     "IdentityRecord",
-    "InteractionContext",
     "InteractionKind",
     "PendingInteractionSnapshot",
-    "ReplyBindingContext",
-    "ResolvedContext",
-    "ScopeContext",
     "ScopeLookupPort",
     "ScopeRecord",
     "UserRole",
-    "WorkflowContext",
     "WorkflowKind",
     "WorkflowPhase",
     "WorkflowStateReadPort",
