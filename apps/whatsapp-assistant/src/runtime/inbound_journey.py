@@ -2,28 +2,47 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 
-from context.contract_resolver import ContractContextResolver
+from context.resolver import ContextResolver
 from context.runtime import log_resolved_context
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage
+from mesiri_contracts.assistant.resolved_context import ResolvedContext
 from mesiri_contracts.assistant.understanding_result import UnderstandingResult
-from mesiri_contracts.context.resolved_context import ResolvedContext
 from understanding.pipeline import UnderstandingPipeline
+
+_log = logging.getLogger("mesiri.inbound_journey")
 
 
 async def process_inbound_message(
     message: NormalizedMessage,
     *,
     pipeline: UnderstandingPipeline,
-    context_resolver: ContractContextResolver,
+    context_resolver: ContextResolver,
     reply_sender: Callable[[NormalizedMessage, UnderstandingResult], Awaitable[None]],
     context_debug: bool = False,
-) -> tuple[UnderstandingResult, ResolvedContext]:
-    """Run understanding, resolve context, then send the existing WhatsApp reply."""
+) -> tuple[UnderstandingResult, ResolvedContext | None]:
+    """Run understanding, resolve context, then send the WhatsApp reply.
+
+    Context resolution failures are logged and do not block the reply — the
+    reply path does not yet consume ResolvedContext (Phase 1 will change this).
+    Returns ``None`` for the context component if resolution fails.
+    """
     understanding = await pipeline.understand(message)
-    resolved = await context_resolver.resolve(message, understanding)
-    if context_debug:
-        log_resolved_context(resolved)
+
+    result = await context_resolver.resolve(message, understanding)
+    resolved: ResolvedContext | None = None
+    if result.is_ok:
+        resolved = result.unwrap()
+        if context_debug:
+            log_resolved_context(resolved)
+    else:
+        _log.warning(
+            "context.resolution_failed correlation_id=%s error_code=%s",
+            message.correlation_id,
+            result.error.error_code if result.error else "unknown",
+        )
+
     await reply_sender(message, understanding)
     return understanding, resolved

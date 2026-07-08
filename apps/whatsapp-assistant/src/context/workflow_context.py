@@ -1,10 +1,9 @@
-"""Workflow-context provider port binding (M4).
+"""Workflow-context and reply-context null providers for M4.
 
-Active workflow context (e.g. a running missing-field loop that already knows the
-project) is owned by the M5 Workflow Runtime, which M4 does not implement. M4
-represents it behind ``WorkflowContextProvider`` (see ``ports``) so precedence
-can account for it today. Production wires the ``NullWorkflowContextProvider``
-until M5 exists; tests use ``FakeWorkflowContextProvider``.
+Active workflow context (owned by M5) and reply context binding (owned by M5
+Interaction layer) are not yet implemented. M4 represents them behind ports so
+the resolver's precedence logic can account for them today. Production wires these
+null providers until the respective milestones exist.
 """
 
 from __future__ import annotations
@@ -15,5 +14,14 @@ class NullWorkflowContextProvider:
 
     async def active_workflow_context(
         self, *, organization_id: str, user_id: str
+    ) -> tuple[str | None, str | None] | None:
+        return None
+
+
+class NullReplyContextProvider:
+    """Always returns no reply-context binding (M5 Interaction not yet implemented)."""
+
+    async def context_for_reply(
+        self, *, organization_id: str, replied_to_message_id: str
     ) -> tuple[str | None, str | None] | None:
         return None

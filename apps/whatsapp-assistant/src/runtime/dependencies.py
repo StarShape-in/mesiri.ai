@@ -16,7 +16,7 @@ from ingress.media_ingestion import MetaMediaDownloader
 from ingress.receiver import InMemoryNormalizedMessageStore, WhatsAppReceiver
 
 if TYPE_CHECKING:
-    from context.contract_resolver import ContractContextResolver
+    from context.resolver import ContextResolver
 
 
 class Settings(BaseSettings):
@@ -48,7 +48,7 @@ class AppContainer:
     deduplication_store: InMemoryDeduplicationStore
     message_store: InMemoryNormalizedMessageStore
     receiver: WhatsAppReceiver
-    contract_context_resolver: ContractContextResolver
+    context_resolver: ContextResolver
 
 
 def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppContainer:
@@ -65,7 +65,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         graph_base_url=settings.graph_base_url,
     )
 
-    # M4 identity gate, then M2 -> M3 -> contract Context resolver -> reply.
+    # M4 identity gate, then M2 -> M3 -> M4 Context resolver -> reply.
     import logging as _logging
 
     from backend.postgres.actor import PostgresActorReader
@@ -84,7 +84,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     _log = _logging.getLogger("mesiri.context")
     object_storage = FakeObjectStorage()
     pipeline = build_pipeline(object_storage)
-    contract_context_resolver = build_context_resolver()
+    context_resolver = build_context_resolver()
     sender = WhatsAppSender(
         client=http_client,
         access_token=settings.access_token,
@@ -134,7 +134,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         await process_inbound_message(
             message,
             pipeline=pipeline,
-            context_resolver=contract_context_resolver,
+            context_resolver=context_resolver,
             reply_sender=_send_understanding_reply,
             context_debug=settings.context_debug,
         )
@@ -152,7 +152,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         deduplication_store=deduplication_store,
         message_store=message_store,
         receiver=receiver,
-        contract_context_resolver=contract_context_resolver,
+        context_resolver=context_resolver,
     )
 
 

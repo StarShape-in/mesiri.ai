@@ -2,7 +2,7 @@ import enum
 import uuid
 
 from sqlalchemy import Column, DateTime, Enum, String, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSON, UUID
 
 from .base import Base
 
@@ -14,15 +14,19 @@ class UserRole(str, enum.Enum):
     SITE_MANAGER = "site_manager"
     WORKER = "worker"
 
+
 class UserModel(Base):
     __tablename__ = "users"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id = Column(UUID(as_uuid=True), nullable=True, index=True) # Nullable for migration/seeding
+    organization_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
     full_name = Column(String, nullable=False)
     role = Column(Enum(UserRole), nullable=False)
     whatsapp_number = Column(String, unique=True, index=True, nullable=True)
+    # Added by migration f7g8h9i0j1k2_add_user_status_sites_access
+    status = Column(String, nullable=False, server_default="active")
+    access_policy = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
