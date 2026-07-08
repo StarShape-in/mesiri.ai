@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from fastapi import Request
@@ -49,6 +50,10 @@ class AppContainer:
     message_store: InMemoryNormalizedMessageStore
     receiver: WhatsAppReceiver
     context_resolver: ContextResolver
+    # redis_client is either a real RedisClient (when MESIRI_REDIS__HOST is set)
+    # or FakeRedis for local/test.  Both expose connect() / disconnect() so the
+    # lifespan handler can manage the lifecycle without special-casing.
+    redis_client: Any
 
 
 def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppContainer:
@@ -77,14 +82,31 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         resolve_sender,
     )
     from context.runtime import build_context_resolver
-    from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
+    from mesiri.bootstrap.settings import get_settings as _get_backend_settings
+    from mesiri.infrastructure.objectstorage import build_object_storage
     from runtime.inbound_journey import process_inbound_message
     from understanding.runtime import build_pipeline, format_reply
 
     _log = _logging.getLogger("mesiri.context")
-    object_storage = FakeObjectStorage()
+
+    # Object storage: FakeObjectStorage locally, R2 when
+    # MESIRI_OBJECT_STORAGE__PROVIDER=r2 is set.
+    _backend_settings = _get_backend_settings()
+    object_storage = build_object_storage(_backend_settings)
+
+    # Redis for the active context store.  Use a real RedisClient when
+    # MESIRI_REDIS__HOST is explicitly configured; fall back to FakeRedis.
+    if os.environ.get("MESIRI_REDIS__HOST"):
+        from mesiri.infrastructure.redis.client import RedisClient
+
+        redis_client = RedisClient(_backend_settings.redis)
+    else:
+        from mesiri.infrastructure.redis.client import FakeRedis
+
+        redis_client = FakeRedis()
+
     pipeline = build_pipeline(object_storage)
-    context_resolver = build_context_resolver()
+    context_resolver = build_context_resolver(redis=redis_client)
     sender = WhatsAppSender(
         client=http_client,
         access_token=settings.access_token,
@@ -153,6 +175,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         message_store=message_store,
         receiver=receiver,
         context_resolver=context_resolver,
+        redis_client=redis_client,
     )
 
 

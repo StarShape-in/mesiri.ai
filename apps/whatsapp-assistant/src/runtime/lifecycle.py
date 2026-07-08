@@ -32,8 +32,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """Initialize and tear down shared runtime dependencies."""
         async with httpx.AsyncClient(timeout=30.0) as http_client:
             app.state.container = build_container(app_settings, http_client)
+            # Connect the Redis client (no-op for FakeRedis; real connection
+            # for RedisClient when MESIRI_REDIS__HOST is configured).
+            await app.state.container.redis_client.connect()
             logger.info("WhatsApp assistant runtime initialized")
-            yield
+            try:
+                yield
+            finally:
+                await app.state.container.redis_client.disconnect()
 
     app = FastAPI(title="Mesiri WhatsApp Assistant", lifespan=lifespan)
 

@@ -1,11 +1,11 @@
 """Context resolver production wiring and development diagnostics.
 
-This module constructs the authoritative M4 ContextResolver using real
-PostgreSQL adapters and FakeRedis for the active-context store (Redis wiring
-is Phase 0 T5; see context/active_context.py for the real store).
-
-The engine is built lazily from environment variables so tests that never
-reach this path do not require a running database.
+Constructs the authoritative M4 ContextResolver with:
+- Real PostgreSQL adapters for identity, membership, roles, projects, sites,
+  and preferences (lazily initialized — no sqlalchemy import at module load).
+- A caller-supplied Redis client for the active-context store: a real
+  ``RedisClient`` in production (connected by the lifespan handler) or
+  ``FakeRedis`` for the unit-test / no-Redis lane.
 """
 
 from __future__ import annotations
@@ -58,22 +58,27 @@ class _LazyAsyncEngine:
         return self._engine
 
 
-def build_context_resolver() -> ContextResolver:
+def build_context_resolver(redis=None) -> ContextResolver:
     """Construct the production M4 ContextResolver.
 
-    Uses real PostgreSQL adapters for identity, membership, roles, projects,
-    sites, and preferences. Uses FakeRedis for the active-context store until
-    Phase 0 T5 wires the real RedisClient.
+    Args:
+        redis: A connected redis-like client satisfying the ``_RedisLike``
+            protocol (``namespaced``, ``set_json``, ``get_json``). When
+            ``None`` the in-process ``FakeRedis`` is used — correct for the
+            unit-test lane and for local development without a Redis instance.
+            Pass a connected ``RedisClient`` from ``build_container()`` for
+            production deployments.
 
-    The SQLAlchemy engine is built lazily on the first database query so that
-    the resolver can be constructed in the fast unit-test lane (no sqlalchemy
-    installed) without triggering import errors.
+    The SQLAlchemy engine is built lazily on the first database query so the
+    resolver can be constructed in the fast unit-test lane (no sqlalchemy
+    required at import time).
     """
-    from mesiri.infrastructure.redis.client import FakeRedis
+    if redis is None:
+        from mesiri.infrastructure.redis.client import FakeRedis
+
+        redis = FakeRedis()
 
     engine = _LazyAsyncEngine()
-    # T5: replace FakeRedis with a real RedisClient backed by MESIRI_REDIS__* settings.
-    redis = FakeRedis()
 
     deps = ContextDependencies(
         identities=PostgresExternalIdentityRepository(engine),
