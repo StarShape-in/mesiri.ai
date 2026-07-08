@@ -1,11 +1,4 @@
-"""Builds a CanonicalEvent from an UnderstandingResult + ResolvedContext.
-
-Pure mapping function — no I/O, no ports, no AI SDKs, no persistence. Mirrors
-how `mesiri_ai.confidence.ConfidencePolicy` is a deterministic function over its
-inputs. This is the seam between Context (M4) and Planner (M5): Planner reads
-only the CanonicalEvent this module produces, never UnderstandingResult or
-ResolvedContext directly.
-"""
+"""Builds CanonicalEvent v2 from UnderstandingResult + ResolvedContext v2."""
 
 from __future__ import annotations
 
@@ -13,13 +6,14 @@ import logging
 
 from mesiri_contracts.assistant.candidates import Candidate
 from mesiri_contracts.assistant.canonical_event import (
-    CanonicalEvent,
     CanonicalEventType,
     IntentCompleteness,
 )
 from mesiri_contracts.assistant.confidence import ConfidenceLevel
-from mesiri_contracts.assistant.resolved_context import ResolvedContext
+from mesiri_contracts.assistant.enums import SemanticType
 from mesiri_contracts.assistant.understanding_result import UnderstandingResult
+from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
+from mesiri_contracts.assistant.v2.resolved_context import ResolvedContextV2
 from mesiri_contracts.common.ids import new_id
 
 from .mapping import REQUIRED_FIELDS, resolve_event_type
@@ -32,7 +26,6 @@ _TERMINAL_EVENT_TYPES = frozenset(
 
 
 def _select_candidate(understanding: UnderstandingResult) -> Candidate | None:
-    """The candidate matching the pipeline's own semantic_type, if any."""
     for candidate in understanding.candidates:
         if candidate.semantic_type == understanding.semantic_type:
             return candidate
@@ -44,20 +37,34 @@ def _missing_required(event_type: CanonicalEventType, fields: dict) -> list[str]
     return [name for name in required if not fields.get(name)]
 
 
-def build_canonical_event(
-    understanding: UnderstandingResult, context: ResolvedContext
-) -> CanonicalEvent:
-    """Normalize AI output + resolved context into a CanonicalEvent.
+def _normalize_material_fields(fields: dict) -> dict:
+    """Map common provider aliases onto canonical material field names."""
+    out = dict(fields)
+    if not out.get("material_name") and out.get("material"):
+        out["material_name"] = out["material"]
+    direction = str(out.get("direction", "")).strip().lower()
+    if not direction:
+        event = str(out.get("event", "")).strip().lower()
+        if event in {"arrival", "arrived", "received", "delivery", "delivered"}:
+            out["direction"] = "received"
+        elif event in {"used", "usage", "consumed"}:
+            out["direction"] = "used"
+    return out
 
-    Never carries the raw AI confidence score forward — ``completeness`` is a
-    business-level judgement about which required fields are present.
-    """
+
+def build_canonical_event(
+    understanding: UnderstandingResult, context: ResolvedContextV2
+) -> CanonicalEventV2:
+    """Normalize AI output + resolved context into a CanonicalEvent v2."""
     candidate = _select_candidate(understanding)
     fields: dict = {}
     warnings: list[str] = []
     if candidate is not None:
         fields = {**candidate.fields, **candidate.unknown_fields}
         warnings = list(candidate.warnings)
+
+    if understanding.semantic_type is SemanticType.MATERIAL_UPDATE:
+        fields = _normalize_material_fields(fields)
 
     event_type = resolve_event_type(understanding.semantic_type, fields)
 
@@ -75,7 +82,7 @@ def build_canonical_event(
         else:
             completeness = IntentCompleteness.ACTIONABLE
 
-    return CanonicalEvent(
+    return CanonicalEventV2(
         event_id=new_id("evt"),
         correlation_id=understanding.correlation_id,
         source_message_id=understanding.source_message_id,
@@ -93,8 +100,7 @@ def build_canonical_event(
     )
 
 
-def log_canonical_event(event: CanonicalEvent) -> None:
-    """Log the CanonicalEvent for development visibility (not user-facing)."""
+def log_canonical_event(event: CanonicalEventV2) -> None:
     logger.info(
         "CanonicalEvent correlation_id=%s event_type=%s completeness=%s "
         "organization=%s user=%s project=%s site=%s",

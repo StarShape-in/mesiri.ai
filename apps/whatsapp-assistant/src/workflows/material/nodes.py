@@ -8,7 +8,8 @@ workflow nodes").
 
 from __future__ import annotations
 
-from mesiri_contracts.assistant.draft_action import DraftAction, DraftActionType
+from mesiri_contracts.assistant.draft_action import DraftActionType
+from mesiri_contracts.assistant.v2.draft_action import DraftActionV2
 from mesiri_contracts.assistant.planner_decision import WorkflowKey
 from mesiri_contracts.common.ids import new_id
 
@@ -29,7 +30,7 @@ def build_draft(state: WorkflowGraphState) -> dict:
     """Map collected fields into a DraftAction. Shape-mapping only — no validation."""
     workflow_key = WorkflowKey(state["workflow_key"])
     action_type = _ACTION_TYPE_BY_WORKFLOW_KEY[workflow_key]
-    draft = DraftAction(
+    draft = DraftActionV2(
         draft_id=new_id("draft"),
         correlation_id=state["correlation_id"],
         workflow_instance_id=state["workflow_instance_id"],
@@ -47,7 +48,7 @@ def request_confirmation(state: WorkflowGraphState) -> dict:
     """Compose the confirmation prompt. Deterministic formatting only — no
     localization/templates/AI generation here (that moves to a rendering
     boundary once those requirements arrive)."""
-    draft: DraftAction = state["draft_action"]
+    draft: DraftActionV2 = state["draft_action"]
     label = _ACTION_LABEL[draft.action_type]
     lines = ["*Confirm this record?*", "", f"📦 {label}"]
     for key, value in draft.fields.items():

@@ -32,8 +32,8 @@ export function MesiriBottomNavigation() {
   };
 
   return (
-    <View style={[styles.wrapper, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-      <View style={styles.container}>
+    <View style={[styles.bar, { paddingBottom: insets.bottom }]}>
+      <View style={styles.row}>
         {NAVIGATION_CONFIG.map((item) => {
           if (item.isAction) {
             return (
@@ -60,30 +60,17 @@ export function MesiriBottomNavigation() {
 }
 
 const createStyles = (theme: any) => StyleSheet.create({
-  wrapper: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-    pointerEvents: 'box-none',
+  // Full-width bar attached to the bottom edge with a subtle top divider.
+  bar: {
+    backgroundColor: theme.components.bottomNavBackground,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.colors.borderSubtle,
     zIndex: theme.zIndex.bottomNavigation,
   },
-  container: {
+  row: {
     flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: theme.components.bottomNavBackground,
-    borderRadius: theme.radius.xl, // formerly 32 is higher than xl but it's rounded
-    maxWidth: 520,
-    width: '92%', // Slight margin on edges for mobile
-    height: 72,
-    paddingHorizontal: theme.spacing.space3, // 12
-    shadowColor: theme.shadow.floating.shadowColor,
-    shadowOffset: theme.shadow.floating.shadowOffset,
-    shadowOpacity: theme.shadow.floating.shadowOpacity,
-    shadowRadius: theme.shadow.floating.shadowRadius,
-    elevation: theme.shadow.floating.elevation,
-    borderWidth: 1,
-    borderColor: theme.colors.borderDefault,
+    alignItems: 'stretch',
+    height: 60,
+    paddingHorizontal: theme.spacing.space2, // 8
   },
 });

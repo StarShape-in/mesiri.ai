@@ -1,0 +1,10 @@
+{
+  "version": "v2",
+  "event_id": "evt_ce_bad",
+  "correlation_id": "cor_ce_bad",
+  "source_message_id": "msg_ce_bad",
+  "event_type": "MaterialReceiptRequested",
+  "completeness": "actionable",
+  "organization_id": "org_not_uuid",
+  "user_id": "22222222-2222-4222-8222-222222222222"
+}

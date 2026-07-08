@@ -110,7 +110,7 @@ def upgrade() -> None:
             organization_id,
             name,
             MAX(unit),
-            MIN(created_by)
+            (MIN(created_by::text))::uuid
         FROM (
             SELECT organization_id, material_name AS name, unit, created_by FROM material_receipts
             UNION ALL

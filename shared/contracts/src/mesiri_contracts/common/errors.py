@@ -70,6 +70,7 @@ class ErrorCode(str, Enum):
     ACTIVE_CONTEXT_INVALID = "ACTIVE_CONTEXT_INVALID"
     ACTIVE_CONTEXT_EXPIRED = "ACTIVE_CONTEXT_EXPIRED"
     CONTEXT_UNRESOLVED = "CONTEXT_UNRESOLVED"
+    CANONICAL_IDENTITY_NOT_MAPPED = "CANONICAL_IDENTITY_NOT_MAPPED"
 
 
 # Generic, non-leaking message safe to surface to end users / health endpoints.

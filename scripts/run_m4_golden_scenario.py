@@ -8,7 +8,7 @@ CI without docker or AI credentials):
     Simulate application restart (new store, same Redis backend; Redis NOT cleared)
     "JCB used for 4 hours" (no explicit project)
       -> resolve identity -> load active context from Redis
-      -> revalidate authorization against Postgres -> ResolvedContext.v1
+      -> revalidate authorization against Postgres -> ResolvedContext.v2
       -> context_source = ACTIVE_CONTEXT, correlation_id preserved
     Attempt to select an out-of-tenant project -> rejected, Redis unchanged
 
@@ -33,6 +33,7 @@ for _p in (
     sys.path.insert(0, os.path.join(_ROOT, _p))
 
 from context import seed  # noqa: E402
+from context.identity_bridge import deterministic_canonical_uuid as canon  # noqa: E402
 from context.active_context import RedisActiveContextStore  # noqa: E402
 from context.resolver import ContextDependencies, ContextResolver  # noqa: E402
 from context.service import ContextSwitchService  # noqa: E402
@@ -109,7 +110,7 @@ async def run() -> _Check:
     check.record("Identity + membership + roles resolved", step1.is_ok)
     check.record(
         "Explicit project 'Marina Tower' authorized",
-        step1.is_ok and step1.unwrap().project_id == seed.PROJ_MARINA,
+        step1.is_ok and step1.unwrap().context_project_id == seed.PROJ_MARINA,
     )
     sw = await switch.select_active_context(
         organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR, project_id=seed.PROJ_MARINA
@@ -138,18 +139,19 @@ async def run() -> _Check:
         ),
     )
     ctx = step3.unwrap() if step3.is_ok else None
-    check.record("ResolvedContext.v1 produced from active context", ctx is not None)
+    check.record("ResolvedContext.v2 produced from active context", ctx is not None)
     if ctx is not None:
-        check.record("organization_id = ABC", ctx.organization_id == seed.ABC_ORG)
-        check.record("user_id = director", ctx.user_id == seed.ABC_DIRECTOR)
-        check.record("project_id = Marina Tower", ctx.project_id == seed.PROJ_MARINA)
+        check.record("context_organization_id = ABC", ctx.context_organization_id == seed.ABC_ORG)
+        check.record("canonical organization_id", ctx.organization_id == canon(seed.ABC_ORG))
+        check.record("context_user_id = director", ctx.context_user_id == seed.ABC_DIRECTOR)
+        check.record("context_project_id = Marina Tower", ctx.context_project_id == seed.PROJ_MARINA)
         check.record(
             "context_source = ACTIVE_CONTEXT",
             ctx.context_source == ContextSource.ACTIVE_CONTEXT,
         )
         check.record(
             "Redis context revalidated against Postgres authorization",
-            ctx.project_id == seed.PROJ_MARINA,
+            ctx.context_project_id == seed.PROJ_MARINA,
         )
         check.record("correlation_id preserved", ctx.correlation_id == correlation_id)
 

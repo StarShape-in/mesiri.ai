@@ -37,6 +37,8 @@ from mesiri_contracts.assistant.workflow_state import (
 )
 from mesiri_contracts.assistant.workflow_state import WorkflowState
 
+from mesiri_contracts.assistant import v2 as assistant_v2
+
 __all__ = [
     "MediaReference",
     "NormalizedMessage",
@@ -60,4 +62,5 @@ __all__ = [
     "DRAFT_ACTION_VERSION",
     "WorkflowState",
     "WORKFLOW_STATE_VERSION",
+    "assistant_v2",
 ]

@@ -31,9 +31,10 @@ export function MesiriNavItem({ label, icon: Icon, isActive, onPress }: MesiriNa
     }).start();
   };
 
-  const strokeColor = isActive ? theme.components.bottomNavActiveIconStroke : theme.components.bottomNavInactiveIconStroke;
-  const fillColor = isActive ? theme.components.bottomNavActiveIconFill : theme.components.bottomNavInactiveIconFill;
-  const textColor = isActive ? theme.components.bottomNavActiveIconStroke : theme.components.bottomNavInactiveIconStroke;
+  // Active state renders in the theme's primary color; inactive stays muted.
+  const activeColor = theme.colors.actionPrimary;
+  const strokeColor = isActive ? activeColor : theme.components.bottomNavInactiveIconStroke;
+  const textColor = isActive ? activeColor : theme.components.bottomNavInactiveIconStroke;
   const fontWeight = isActive ? theme.typography.weightSemiBold : theme.typography.weightMedium;
 
   return (
@@ -48,13 +49,19 @@ export function MesiriNavItem({ label, icon: Icon, isActive, onPress }: MesiriNa
       aria-current={isActive ? 'page' : undefined}
     >
       <Animated.View style={[styles.content, { transform: [{ scale }] }]}>
-        <Icon 
-          size={24} 
+        <View
+          style={[
+            styles.indicator,
+            { backgroundColor: isActive ? activeColor : 'transparent' },
+          ]}
+        />
+        <Icon
+          size={22}
           stroke={strokeColor}
           strokeWidth={isActive ? 2.5 : 2}
-          fill={fillColor}
+          fill="transparent"
         />
-        <Text style={[styles.label, { color: textColor, fontWeight }]}>
+        <Text style={[styles.label, { color: textColor, fontWeight }]} numberOfLines={1}>
           {label}
         </Text>
       </Animated.View>
@@ -73,6 +80,13 @@ const createStyles = (theme: any) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: theme.spacing.space1, // formerly 4
+  },
+  // Small rounded indicator line sitting above the icon on the active tab.
+  indicator: {
+    width: 18,
+    height: 3,
+    borderRadius: theme.radius.full,
+    marginBottom: theme.spacing.space1,
   },
   label: {
     fontSize: theme.typography.sizeXs, // roughly 12 or 11

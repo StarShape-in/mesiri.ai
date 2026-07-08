@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from context import seed
+from context.identity_bridge import deterministic_canonical_uuid as canon
 from context.active_context import RedisActiveContextStore
 from context.fakes import FakeActiveContextStore
 from context.resolver import ContextResolver
@@ -96,8 +97,10 @@ async def test_identity_resolves_authoritative_org_and_permissions():
     res = await resolve(seed.WA_ENGINEER)
     assert res.is_ok
     ctx = res.unwrap()
-    assert ctx.organization_id == seed.ORG_A
-    assert ctx.user_id == seed.USER_ENGINEER
+    assert ctx.context_organization_id == seed.ORG_A
+    assert ctx.organization_id == canon(seed.ORG_A)
+    assert ctx.context_user_id == seed.USER_ENGINEER
+    assert ctx.user_id == canon(seed.USER_ENGINEER)
     assert ctx.membership_id == "mem_eng"
     assert "expense.create" in ctx.permissions
     assert seed.ROLE_ENGINEER in ctx.role_ids
@@ -108,14 +111,14 @@ async def test_identity_resolves_authoritative_org_and_permissions():
 async def test_engineer_single_project_auto_resolves():
     res = await resolve(seed.WA_ENGINEER)
     ctx = res.unwrap()
-    assert ctx.project_id == seed.PROJ_ALPHA
+    assert ctx.context_project_id == seed.PROJ_ALPHA
     assert ctx.context_source == ContextSource.USER_DEFAULT
 
 
 async def test_director_multiple_projects_uses_default():
     res = await resolve(seed.WA_DIRECTOR)
     ctx = res.unwrap()
-    assert ctx.project_id == seed.PROJ_ALPHA  # default assignment
+    assert ctx.context_project_id == seed.PROJ_ALPHA  # default assignment
     assert ctx.context_source == ContextSource.USER_DEFAULT
 
 
@@ -125,7 +128,7 @@ async def test_explicit_project_name_resolves_high_confidence():
         msg(seed.WA_DIRECTOR), understanding(fields={"project_name": "Project Beta"})
     )
     ctx = res.unwrap()
-    assert ctx.project_id == seed.PROJ_BETA
+    assert ctx.context_project_id == seed.PROJ_BETA
     assert ctx.context_source == ContextSource.MESSAGE_EXPLICIT
     assert ctx.context_confidence == ContextConfidence.HIGH
 
@@ -136,7 +139,7 @@ async def test_explicit_project_id_resolves_very_high_confidence():
         msg(seed.WA_DIRECTOR), understanding(fields={"project_id": seed.PROJ_BETA})
     )
     ctx = res.unwrap()
-    assert ctx.project_id == seed.PROJ_BETA
+    assert ctx.context_project_id == seed.PROJ_BETA
     assert ctx.context_confidence == ContextConfidence.VERY_HIGH
 
 
@@ -146,8 +149,8 @@ async def test_explicit_site_resolves_and_infers_project():
         msg(seed.WA_ENGINEER), understanding(fields={"site_name": "Site A2"})
     )
     ctx = res.unwrap()
-    assert ctx.site_id == seed.SITE_A2
-    assert ctx.project_id == seed.PROJ_ALPHA
+    assert ctx.context_site_id == seed.SITE_A2
+    assert ctx.context_project_id == seed.PROJ_ALPHA
 
 
 async def test_unauthorized_project_denied():
@@ -204,8 +207,9 @@ async def test_cross_org_same_name_isolated():
         msg(seed.WA_ORGB), understanding(fields={"project_name": "Project Alpha"})
     )
     ctx = res.unwrap()
-    assert ctx.organization_id == seed.ORG_B
-    assert ctx.project_id == seed.PROJ_ALPHA_B
+    assert ctx.context_organization_id == seed.ORG_B
+    assert ctx.organization_id == canon(seed.ORG_B)
+    assert ctx.context_project_id == seed.PROJ_ALPHA_B
 
 
 async def test_cross_org_project_id_denied_as_not_found():
@@ -229,7 +233,7 @@ async def test_active_context_precedence_over_default():
     r = ContextResolver(seed.build_dependencies(active_store=active))
     res = await r.resolve(msg(seed.WA_ABC_DIRECTOR), understanding())
     ctx = res.unwrap()
-    assert ctx.project_id == seed.PROJ_MARINA  # active beats default (Airport)
+    assert ctx.context_project_id == seed.PROJ_MARINA  # active beats default (Airport)
     assert ctx.context_source == ContextSource.ACTIVE_CONTEXT
 
 
@@ -244,7 +248,7 @@ async def test_explicit_precedence_over_active():
         msg(seed.WA_ABC_DIRECTOR), understanding(fields={"project_name": "Airport Expansion"})
     )
     ctx = res.unwrap()
-    assert ctx.project_id == seed.PROJ_AIRPORT
+    assert ctx.context_project_id == seed.PROJ_AIRPORT
     assert ctx.context_source == ContextSource.MESSAGE_EXPLICIT
 
 
@@ -264,7 +268,7 @@ async def test_reply_context_precedence_over_active():
         msg(seed.WA_ABC_DIRECTOR, reply_to="orig_msg"), understanding()
     )
     ctx = res.unwrap()
-    assert ctx.project_id == seed.PROJ_AIRPORT
+    assert ctx.context_project_id == seed.PROJ_AIRPORT
     assert ctx.context_source == ContextSource.REPLY_CONTEXT
 
 
@@ -282,7 +286,7 @@ async def test_workflow_context_precedence_over_active():
     )
     res = await r.resolve(msg(seed.WA_ABC_DIRECTOR), understanding())
     ctx = res.unwrap()
-    assert ctx.project_id == seed.PROJ_AIRPORT
+    assert ctx.context_project_id == seed.PROJ_AIRPORT
     assert ctx.context_source == ContextSource.WORKFLOW_CONTEXT
 
 
@@ -299,7 +303,7 @@ async def test_stale_active_context_rejected_falls_to_default():
     res = await r.resolve(msg(seed.WA_ABC_DIRECTOR), understanding())
     ctx = res.unwrap()
     # Stale active dropped -> default (Airport) wins.
-    assert ctx.project_id == seed.PROJ_AIRPORT
+    assert ctx.context_project_id == seed.PROJ_AIRPORT
     assert ctx.context_source == ContextSource.USER_DEFAULT
 
 
@@ -427,8 +431,9 @@ async def test_no_context_returns_unresolved_source_not_error():
     r = ContextResolver(seed.build_dependencies(world))
     res = await r.resolve(msg(seed.WA_DIRECTOR), understanding())
     ctx = res.unwrap()
-    assert ctx.project_id is None
+    assert ctx.context_project_id is None
     assert ctx.context_source == ContextSource.UNRESOLVED
     assert ctx.context_confidence == ContextConfidence.UNRESOLVED
     # Identity still authoritative.
-    assert ctx.organization_id == seed.ORG_A
+    assert ctx.context_organization_id == seed.ORG_A
+    assert ctx.organization_id == canon(seed.ORG_A)

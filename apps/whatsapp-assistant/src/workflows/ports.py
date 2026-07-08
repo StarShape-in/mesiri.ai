@@ -10,11 +10,11 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from mesiri_contracts.assistant.workflow_state import WorkflowState
+from mesiri_contracts.assistant.v2.workflow_state import WorkflowStateV2
 
 
 class WorkflowInstanceRepository(Protocol):
     """Persists a WorkflowState snapshot. The only place that may touch SQL for
     workflow_instances is the concrete adapter implementing this port."""
 
-    async def save(self, state: WorkflowState) -> None: ...
+    async def save(self, state: WorkflowStateV2) -> None: ...

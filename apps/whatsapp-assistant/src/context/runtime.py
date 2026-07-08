@@ -14,6 +14,7 @@ import logging
 import os
 
 from context.active_context import RedisActiveContextStore
+from context.identity_bridge import PostgresIdentityBridgeRepository
 from context.postgres_repositories import (
     PostgresContextPreferenceRepository,
     PostgresExternalIdentityRepository,
@@ -24,7 +25,7 @@ from context.postgres_repositories import (
 )
 from context.resolver import ContextDependencies, ContextResolver
 from context.workflow_context import NullReplyContextProvider, NullWorkflowContextProvider
-from mesiri_contracts.assistant.resolved_context import ResolvedContext
+from mesiri_contracts.assistant.v2.resolved_context import ResolvedContextV2
 
 logger = logging.getLogger(__name__)
 
@@ -90,16 +91,19 @@ def build_context_resolver(redis=None) -> ContextResolver:
         active_context=RedisActiveContextStore(redis),
         reply_context=NullReplyContextProvider(),
         workflow_context=NullWorkflowContextProvider(),
+        bridge=PostgresIdentityBridgeRepository(engine),
     )
     return ContextResolver(deps)
 
 
-def log_resolved_context(context: ResolvedContext) -> None:
-    """Log the M4 ResolvedContext for development visibility (not user-facing)."""
+def log_resolved_context(context: ResolvedContextV2) -> None:
+    """Log the M4 ResolvedContext v2 for development visibility (not user-facing)."""
     logger.info(
-        "ResolvedContext correlation_id=%s user=%s org=%s project=%s site=%s "
-        "source=%s confidence=%s",
+        "ResolvedContext correlation_id=%s context_user=%s context_org=%s "
+        "canonical_user=%s canonical_org=%s project=%s site=%s source=%s confidence=%s",
         context.correlation_id,
+        context.context_user_id or "unknown",
+        context.context_organization_id or "unknown",
         context.user_id or "unknown",
         context.organization_id or "unknown",
         context.project_id or "unknown",

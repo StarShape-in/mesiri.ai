@@ -173,6 +173,27 @@ async def list_projects(payload: dict = Depends(get_current_user)):
     return [_to_response(r) for r in rows]
 
 
+@router.get("/{project_id}", response_model=ProjectResponse)
+async def get_project(project_id: uuid.UUID, payload: dict = Depends(get_current_user)):
+    org_id = payload.get("org")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="User has no organization")
+
+    engine = get_engine()
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            sa.select(projects_table).where(
+                projects_table.c.id == project_id,
+                projects_table.c.organization_id == org_id,
+            )
+        )
+        row = result.first()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return _to_response(row)
+
+
 @router.get("/{project_id}/sites", response_model=list[SiteResponse])
 async def list_project_sites(project_id: uuid.UUID, payload: dict = Depends(get_current_user)):
     org_id = payload.get("org")

@@ -191,3 +191,13 @@ def context_unresolved(internal: str = "no context candidate resolved") -> Mesir
         user_message="I couldn't tell which project this belongs to. Please specify.",
         internal=internal,
     )
+
+
+def canonical_identity_not_mapped(entity: str, context_id: str) -> MesiriError:
+    return _err(
+        code=ErrorCode.CANONICAL_IDENTITY_NOT_MAPPED,
+        category=ErrorCategory.NOT_FOUND,
+        user_message="Your account is not fully set up yet. Please contact an admin.",
+        internal=f"no canonical mapping for {entity} context_id={context_id!r}",
+        details={"entity": entity, "context_id": context_id},
+    )

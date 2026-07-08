@@ -1,0 +1,9 @@
+{
+  "version": "v2",
+  "correlation_id": "cor_ctx_bad",
+  "source_message_id": "msg_ctx_bad",
+  "context_organization_id": "org_a",
+  "context_user_id": "usr_a",
+  "organization_id": "not-a-uuid",
+  "user_id": "22222222-2222-4222-8222-222222222222"
+}

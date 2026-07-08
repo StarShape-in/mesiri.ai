@@ -1,0 +1,20 @@
+{
+  "version": "v2",
+  "correlation_id": "cor_ctx_1",
+  "source_message_id": "msg_ctx_1",
+  "context_organization_id": "ctx_org_11111111-1111-4111-8111-111111111111",
+  "context_user_id": "ctx_user_22222222-2222-4222-8222-222222222222",
+  "membership_id": "mbr_001",
+  "role_ids": ["site_engineer"],
+  "permissions": ["material.record", "material.view"],
+  "context_project_id": "ctx_proj_33333333-3333-4333-8333-333333333333",
+  "context_site_id": "ctx_site_44444444-4444-4444-8444-444444444444",
+  "organization_id": "11111111-1111-4111-8111-111111111111",
+  "user_id": "22222222-2222-4222-8222-222222222222",
+  "project_id": "33333333-3333-4333-8333-333333333333",
+  "site_id": "44444444-4444-4444-8444-444444444444",
+  "context_source": "user_default",
+  "context_confidence": "high",
+  "locale": "en",
+  "timezone": "Asia/Kolkata"
+}

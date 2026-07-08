@@ -18,6 +18,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from context import seed
+from context.identity_bridge import build_fake_bridge_from_seed, deterministic_canonical_uuid as canon
 from context.active_context import RedisActiveContextStore
 from context.postgres_repositories import (
     PostgresContextPreferenceRepository,
@@ -171,6 +172,7 @@ def _deps(engine, active_store) -> ContextDependencies:
         active_context=active_store,
         reply_context=NullReplyContextProvider(),
         workflow_context=NullWorkflowContextProvider(),
+        bridge=build_fake_bridge_from_seed(),
     )
 
 
@@ -202,7 +204,8 @@ async def test_identity_and_membership_lookup(engine, redis):
     store = RedisActiveContextStore(redis)
     r = ContextResolver(_deps(engine, store))
     ctx = (await r.resolve(_msg(seed.WA_ENGINEER), _und())).unwrap()
-    assert ctx.organization_id == seed.ORG_A
+    assert ctx.context_organization_id == seed.ORG_A
+    assert ctx.organization_id == canon(seed.ORG_A)
     assert "expense.create" in ctx.permissions
 
 
@@ -213,8 +216,8 @@ async def test_project_authorization_and_isolation(engine, redis):
     ctx = (await r.resolve(
         _msg(seed.WA_ORGB), _und({"project_name": "Project Alpha"})
     )).unwrap()
-    assert ctx.organization_id == seed.ORG_B
-    assert ctx.project_id == seed.PROJ_ALPHA_B
+    assert ctx.context_organization_id == seed.ORG_B
+    assert ctx.context_project_id == seed.PROJ_ALPHA_B
 
 
 async def test_cross_org_project_id_not_found(engine, redis):
@@ -234,7 +237,7 @@ async def test_active_context_persists_and_survives_restart(engine, redis):
     store2 = RedisActiveContextStore(redis)
     r = ContextResolver(_deps(engine, store2))
     ctx = (await r.resolve(_msg(seed.WA_ABC_DIRECTOR), _und())).unwrap()
-    assert ctx.project_id == seed.PROJ_MARINA
+    assert ctx.context_project_id == seed.PROJ_MARINA
     assert ctx.context_source == ContextSource.ACTIVE_CONTEXT
     await store2.clear_active_context(organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR)
 
@@ -258,8 +261,8 @@ async def test_full_resolution_produces_resolved_context(engine, redis):
     ctx = (await r.resolve(
         _msg(seed.WA_ABC_DIRECTOR), _und({"project_name": "Marina Tower"})
     )).unwrap()
-    assert ctx.version == "v1"
-    assert ctx.project_id == seed.PROJ_MARINA
+    assert ctx.version == "v2"
+    assert ctx.context_project_id == seed.PROJ_MARINA
     assert ctx.context_source == ContextSource.MESSAGE_EXPLICIT
 
 

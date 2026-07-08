@@ -20,17 +20,20 @@ from unittest.mock import AsyncMock
 import httpx
 
 from context import seed
+from context.identity_bridge import deterministic_canonical_uuid as canon
 from context.resolver import ContextResolver
 from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
 from mesiri_ai import fixtures
 from mesiri_ai.fakes import FakeExtractionProvider, FakeSpeechProvider, FakeVisionProvider
 from mesiri_ai.models import ExtractionResult
-from mesiri_contracts.assistant.canonical_event import CanonicalEvent
-from mesiri_contracts.assistant.draft_action import DraftAction, DraftActionType
+from mesiri_contracts.assistant.draft_action import DraftActionType
 from mesiri_contracts.assistant.enums import InputModality
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage, SenderInfo
-from mesiri_contracts.assistant.planner_decision import PlannerDecision, WorkflowKey
-from mesiri_contracts.assistant.resolved_context import ResolvedContext
+from mesiri_contracts.assistant.planner_decision import WorkflowKey
+from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
+from mesiri_contracts.assistant.v2.draft_action import DraftActionV2
+from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
+from mesiri_contracts.assistant.v2.resolved_context import ResolvedContextV2
 from mesiri_contracts.assistant.understanding_result import UnderstandingResult
 from planner import Planner
 from runtime.dependencies import Settings, build_container
@@ -102,25 +105,27 @@ async def test_inbound_journey_produces_resolved_context():
 
     assert isinstance(result.understanding, UnderstandingResult)
     # seed.WA_ENGINEER is registered in seed fakes → resolution succeeds
-    assert isinstance(result.resolved_context, ResolvedContext)
+    assert isinstance(result.resolved_context, ResolvedContextV2)
     assert result.resolved_context.correlation_id == message.correlation_id
     assert result.resolved_context.source_message_id == message.message_id
-    assert result.resolved_context.user_id == seed.USER_ENGINEER
-    assert result.resolved_context.organization_id == seed.ORG_A
+    assert result.resolved_context.context_user_id == seed.USER_ENGINEER
+    assert result.resolved_context.context_organization_id == seed.ORG_A
+    assert result.resolved_context.user_id == canon(seed.USER_ENGINEER)
+    assert result.resolved_context.organization_id == canon(seed.ORG_A)
     # No graph registered for expense.submit in this fake registry -> falls
     # back to the understanding reply, same as before workflows existed.
     assert len(sent_replies) == 1
 
     # Context resolved successfully → canonicalization and planning run too.
-    assert isinstance(result.canonical_event, CanonicalEvent)
+    assert isinstance(result.canonical_event, CanonicalEventV2)
     assert result.canonical_event.correlation_id == message.correlation_id
-    assert result.canonical_event.organization_id == seed.ORG_A
-    assert result.canonical_event.user_id == seed.USER_ENGINEER
+    assert result.canonical_event.organization_id == canon(seed.ORG_A)
+    assert result.canonical_event.user_id == canon(seed.USER_ENGINEER)
 
-    assert isinstance(result.planner_decision, PlannerDecision)
+    assert isinstance(result.planner_decision, PlannerDecisionV2)
     assert result.planner_decision.correlation_id == message.correlation_id
-    assert result.planner_decision.organization_id == seed.ORG_A
-    assert result.planner_decision.user_id == seed.USER_ENGINEER
+    assert result.planner_decision.organization_id == canon(seed.ORG_A)
+    assert result.planner_decision.user_id == canon(seed.USER_ENGINEER)
 
 
 async def test_inbound_journey_reply_unchanged_by_context():
@@ -214,13 +219,13 @@ async def test_inbound_journey_starts_workflow_and_replies_with_confirmation_pro
     )
     context_resolver = _resolver()
 
-    draft = DraftAction(
+    draft = DraftActionV2(
         draft_id="draft_test",
         correlation_id="cor_context_1",
         workflow_instance_id="placeholder",
         action_type=DraftActionType.RECORD_MATERIAL_RECEIPT,
-        organization_id=seed.ORG_A,
-        user_id=seed.USER_ENGINEER,
+        organization_id=canon(seed.ORG_A),
+        user_id=canon(seed.USER_ENGINEER),
         fields={"material_name": "cement", "quantity": 20, "unit": "bags"},
     )
     fake_graph = FakeCompiledGraph(

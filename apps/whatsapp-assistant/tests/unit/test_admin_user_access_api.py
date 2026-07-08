@@ -92,6 +92,47 @@ async def test_list_project_sites_rejects_project_outside_org(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_get_project_returns_org_scoped_project(monkeypatch):
+    project_id = uuid.uuid4()
+    conn = _Conn(
+        [
+            [
+                SimpleNamespace(
+                    id=project_id,
+                    name="Marina Tower",
+                    location="Dubai Marina",
+                    code="MT-01",
+                    client="Acme",
+                    description="Residential tower",
+                    status="on_track",
+                    progress=40,
+                    open_issues=2,
+                )
+            ]
+        ]
+    )
+    monkeypatch.setattr(projects_router, "get_engine", lambda: _Engine(conn))
+
+    project = await projects_router.get_project(project_id, {"org": str(uuid.uuid4())})
+
+    assert project.id == project_id
+    assert project.name == "Marina Tower"
+    assert project.status == "success"
+    assert project.openIssues == 2
+
+
+@pytest.mark.asyncio
+async def test_get_project_rejects_project_outside_org(monkeypatch):
+    conn = _Conn([[]])
+    monkeypatch.setattr(projects_router, "get_engine", lambda: _Engine(conn))
+
+    with pytest.raises(HTTPException) as exc:
+        await projects_router.get_project(uuid.uuid4(), {"org": str(uuid.uuid4())})
+
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_create_project_site_inserts_org_scoped_site(monkeypatch):
     project_id = uuid.uuid4()
     conn = _Conn([[SimpleNamespace(id=project_id)], []])

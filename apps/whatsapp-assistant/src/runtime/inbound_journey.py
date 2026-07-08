@@ -1,4 +1,4 @@
-"""Post-M3 inbound journey: understanding → context → canonicalize → plan → workflow → reply."""
+"""Post-M3 inbound journey — v2 contracts with canonical UUID scope."""
 
 from __future__ import annotations
 
@@ -10,11 +10,12 @@ from typing import Any
 from canonicalization import build_canonical_event, log_canonical_event
 from context.resolver import ContextResolver
 from context.runtime import log_resolved_context
-from mesiri_contracts.assistant.canonical_event import CanonicalEvent
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage
-from mesiri_contracts.assistant.planner_decision import PlannerDecision, PlannerDecisionType
-from mesiri_contracts.assistant.resolved_context import ResolvedContext
+from mesiri_contracts.assistant.planner_decision import PlannerDecisionType
 from mesiri_contracts.assistant.understanding_result import UnderstandingResult
+from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
+from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
+from mesiri_contracts.assistant.v2.resolved_context import ResolvedContextV2
 from planner import Planner, log_planner_decision
 from understanding.pipeline import UnderstandingPipeline
 from workflows import WorkflowRunResult, WorkflowRunStatus, WorkflowRuntime, log_workflow_run
@@ -24,12 +25,10 @@ _log = logging.getLogger("mesiri.inbound_journey")
 
 @dataclass(slots=True)
 class JourneyResult:
-    """The full set of artifacts produced by one inbound-message journey."""
-
     understanding: UnderstandingResult
-    resolved_context: ResolvedContext | None
-    canonical_event: CanonicalEvent | None
-    planner_decision: PlannerDecision | None
+    resolved_context: ResolvedContextV2 | None
+    canonical_event: CanonicalEventV2 | None
+    planner_decision: PlannerDecisionV2 | None
     workflow_run: WorkflowRunResult | None
 
 
@@ -44,26 +43,12 @@ async def process_inbound_message(
     send_text: Callable[[str, str], Awaitable[Any]],
     context_debug: bool = False,
 ) -> JourneyResult:
-    """Run understanding, resolve context, canonicalize, plan, maybe start a workflow, then reply.
-
-    Context resolution failures are logged and do not block the reply.
-    ``resolved_context``, ``canonical_event``, ``planner_decision``, and
-    ``workflow_run`` are all ``None`` if context resolution fails —
-    canonicalization requires a resolved organization_id/user_id, so
-    everything downstream of it is skipped rather than guessed.
-
-    When the Planner decides ``START_WORKFLOW`` and the workflow actually
-    starts, the reply is the workflow's confirmation prompt — the first time
-    context/planner output changes what the user sees. Every other outcome
-    (CLARIFY, DIRECT_REPLY, a failed workflow run, or failed context
-    resolution) falls back to the existing understanding-summary reply.
-    """
     understanding = await pipeline.understand(message)
 
     result = await context_resolver.resolve(message, understanding)
-    resolved: ResolvedContext | None = None
-    canonical_event: CanonicalEvent | None = None
-    planner_decision: PlannerDecision | None = None
+    resolved: ResolvedContextV2 | None = None
+    canonical_event: CanonicalEventV2 | None = None
+    planner_decision: PlannerDecisionV2 | None = None
     workflow_run: WorkflowRunResult | None = None
 
     if result.is_ok:

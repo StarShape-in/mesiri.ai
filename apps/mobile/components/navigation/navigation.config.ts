@@ -1,4 +1,4 @@
-import { House, GitCommitVertical, Sparkles, ChartNoAxesColumnIncreasing, HardHat } from 'lucide-react-native';
+import { House, FolderKanban, Sparkles, GitCommitVertical, HardHat } from 'lucide-react-native';
 
 export type NavItemConfig = {
   id: string;
@@ -16,23 +16,23 @@ export const NAVIGATION_CONFIG: NavItemConfig[] = [
     icon: House,
   },
   {
-    id: 'timeline',
-    label: 'Timeline',
-    href: '/timeline',
-    icon: GitCommitVertical,
+    id: 'projects',
+    label: 'Projects',
+    href: '/projects',
+    icon: FolderKanban,
   },
   {
     id: 'ai',
-    label: 'Mesiri AI',
+    label: 'Ask Mesiri',
     href: '#ai', // Not a real route, triggers action
     icon: Sparkles,
     isAction: true,
   },
   {
-    id: 'analytics',
-    label: 'Analytics',
-    href: '/analytics',
-    icon: ChartNoAxesColumnIncreasing,
+    id: 'timeline',
+    label: 'Timeline',
+    href: '/timeline',
+    icon: GitCommitVertical,
   },
   {
     id: 'field',

@@ -1,25 +1,16 @@
-"""Planner (M5) — reads a CanonicalEvent, returns a PlannerDecision.
-
-Pure, deterministic router — no LLM, no I/O, no knowledge of LangGraph or any
-specific graph (architecture rule #10: "Planner never imports a workflow
-engine or a specific graph"). Mirrors how the canonicalization builder and
-M3's ConfidencePolicy are pure functions over their inputs.
-"""
+"""Planner (M5) — reads CanonicalEvent v2, returns PlannerDecision v2."""
 
 from __future__ import annotations
 
 import logging
 
 from mesiri_contracts.assistant.canonical_event import (
-    CanonicalEvent,
     CanonicalEventType,
     IntentCompleteness,
 )
-from mesiri_contracts.assistant.planner_decision import (
-    PlannerDecision,
-    PlannerDecisionType,
-    PlannerPriority,
-)
+from mesiri_contracts.assistant.planner_decision import PlannerDecisionType, PlannerPriority
+from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
+from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
 
 from .routing import WORKFLOW_KEY_BY_EVENT
 
@@ -27,13 +18,10 @@ logger = logging.getLogger(__name__)
 
 
 class Planner:
-    """Routes a CanonicalEvent to a PlannerDecision. Stateless — safe to share."""
+    """Routes a CanonicalEvent v2 to a PlannerDecision v2."""
 
-    def decide(self, event: CanonicalEvent) -> PlannerDecision:
+    def decide(self, event: CanonicalEventV2) -> PlannerDecisionV2:
         if event.completeness is IntentCompleteness.ACTIONABLE:
-            # .get(), never direct indexing: a future actionable CanonicalEventType
-            # added without a matching routing-table entry must degrade safely
-            # rather than crash the journey with an uncontrolled KeyError.
             workflow_key = WORKFLOW_KEY_BY_EVENT.get(event.event_type)
             if workflow_key is not None:
                 decision_type = PlannerDecisionType.START_WORKFLOW
@@ -47,7 +35,7 @@ class Planner:
             decision_type = PlannerDecisionType.DIRECT_REPLY
             workflow_key = None
 
-        return PlannerDecision(
+        return PlannerDecisionV2(
             correlation_id=event.correlation_id,
             source_message_id=event.source_message_id,
             causation_event_id=event.event_id,
@@ -63,8 +51,7 @@ class Planner:
         )
 
 
-def log_planner_decision(decision: PlannerDecision) -> None:
-    """Log the PlannerDecision for development visibility (not user-facing)."""
+def log_planner_decision(decision: PlannerDecisionV2) -> None:
     logger.info(
         "PlannerDecision correlation_id=%s decision_type=%s workflow_key=%s reason=%s "
         "organization=%s user=%s project=%s site=%s",

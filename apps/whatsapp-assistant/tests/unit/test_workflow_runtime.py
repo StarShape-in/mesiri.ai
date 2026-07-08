@@ -5,17 +5,18 @@ from __future__ import annotations
 import pytest
 
 from mesiri_contracts.assistant.canonical_event import (
-    CanonicalEvent,
     CanonicalEventType,
     IntentCompleteness,
 )
-from mesiri_contracts.assistant.draft_action import DraftAction, DraftActionType
+from mesiri_contracts.assistant.draft_action import DraftActionType
 from mesiri_contracts.assistant.planner_decision import (
-    PlannerDecision,
     PlannerDecisionType,
     PlannerPriority,
     WorkflowKey,
 )
+from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
+from mesiri_contracts.assistant.v2.draft_action import DraftActionV2
+from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
 from mesiri_contracts.context.enums import WorkflowPhase
 from workflows.fakes import FakeWorkflowInstanceRepository
 from workflows.runtime import WorkflowRunStatus, WorkflowRuntime
@@ -48,46 +49,52 @@ class _FakeRegistry:
         return self._graphs.get(key)
 
 
+ORG = "11111111-1111-4111-8111-111111111111"
+USR = "22222222-2222-4222-8222-222222222222"
+PRJ = "33333333-3333-4333-8333-333333333333"
+SITE = "44444444-4444-4444-8444-444444444444"
+
+
 def _decision(
     *, decision_type: PlannerDecisionType, workflow_key: WorkflowKey | None = None
-) -> PlannerDecision:
-    return PlannerDecision(
+) -> PlannerDecisionV2:
+    return PlannerDecisionV2(
         correlation_id="cor_1",
         source_message_id="msg_1",
         decision_type=decision_type,
         workflow_key=workflow_key,
         reason=CanonicalEventType.MATERIAL_RECEIPT_REQUESTED,
         priority=PlannerPriority.NORMAL,
-        organization_id="org_1",
-        user_id="usr_1",
-        project_id="prj_1",
-        site_id="site_1",
+        organization_id=ORG,
+        user_id=USR,
+        project_id=PRJ,
+        site_id=SITE,
     )
 
 
-def _event(fields: dict | None = None) -> CanonicalEvent:
-    return CanonicalEvent(
+def _event(fields: dict | None = None) -> CanonicalEventV2:
+    return CanonicalEventV2(
         event_id="evt_1",
         correlation_id="cor_1",
         source_message_id="msg_1",
         event_type=CanonicalEventType.MATERIAL_RECEIPT_REQUESTED,
         completeness=IntentCompleteness.ACTIONABLE,
-        organization_id="org_1",
-        user_id="usr_1",
-        project_id="prj_1",
-        site_id="site_1",
+        organization_id=ORG,
+        user_id=USR,
+        project_id=PRJ,
+        site_id=SITE,
         fields=fields or {"material_name": "cement", "quantity": 20, "unit": "bags"},
     )
 
 
-def _draft() -> DraftAction:
-    return DraftAction(
+def _draft() -> DraftActionV2:
+    return DraftActionV2(
         draft_id="draft_1",
         correlation_id="cor_1",
         workflow_instance_id="placeholder",
         action_type=DraftActionType.RECORD_MATERIAL_RECEIPT,
-        organization_id="org_1",
-        user_id="usr_1",
+        organization_id=ORG,
+        user_id=USR,
         fields={"material_name": "cement", "quantity": 20, "unit": "bags"},
     )
 

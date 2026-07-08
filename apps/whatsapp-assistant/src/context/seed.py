@@ -37,6 +37,7 @@ from .fakes import (
     FakeWorkflowContextProvider,
     _AuthorizedStore,
 )
+from .identity_bridge import build_fake_bridge_from_seed
 from .models import (
     ContextPreferences,
     ExternalIdentity,
@@ -209,4 +210,5 @@ def build_dependencies(
         active_context=active_store,
         reply_context=FakeReplyContextProvider(reply_mapping),
         workflow_context=FakeWorkflowContextProvider(workflow_mapping),
+        bridge=build_fake_bridge_from_seed(),
     )

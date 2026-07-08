@@ -13,14 +13,11 @@ import uuid
 from dataclasses import dataclass
 from enum import Enum
 
-from mesiri_contracts.assistant.canonical_event import CanonicalEvent
-from mesiri_contracts.assistant.draft_action import DraftAction
-from mesiri_contracts.assistant.planner_decision import (
-    PlannerDecision,
-    PlannerDecisionType,
-    WorkflowKey,
-)
-from mesiri_contracts.assistant.workflow_state import WorkflowState
+from mesiri_contracts.assistant.planner_decision import PlannerDecisionType, WorkflowKey
+from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
+from mesiri_contracts.assistant.v2.draft_action import DraftActionV2
+from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
+from mesiri_contracts.assistant.v2.workflow_state import WorkflowStateV2
 from mesiri_contracts.context.enums import WorkflowPhase
 
 from .ports import WorkflowInstanceRepository
@@ -45,7 +42,7 @@ class WorkflowRunResult:
     workflow_key: WorkflowKey
     correlation_id: str
     workflow_instance_id: str | None = None
-    draft_action: DraftAction | None = None
+    draft_action: DraftActionV2 | None = None
     pending_prompt: str | None = None
 
     def __post_init__(self) -> None:
@@ -71,7 +68,7 @@ class WorkflowRunResult:
         workflow_key: WorkflowKey,
         correlation_id: str,
         workflow_instance_id: str,
-        draft_action: DraftAction,
+        draft_action: DraftActionV2,
         pending_prompt: str,
     ) -> WorkflowRunResult:
         return cls(
@@ -99,7 +96,7 @@ class WorkflowRuntime:
         self._registry = registry
         self._repo = repo
 
-    async def start(self, decision: PlannerDecision, event: CanonicalEvent) -> WorkflowRunResult:
+    async def start(self, decision: PlannerDecisionV2, event: CanonicalEventV2) -> WorkflowRunResult:
         # Defensive precondition: the runtime is a boundary and enforces this
         # itself rather than relying exclusively on the caller (inbound_journey
         # already only calls start() for START_WORKFLOW, but must not be the
@@ -140,7 +137,7 @@ class WorkflowRuntime:
             )
             return WorkflowRunResult.failed(workflow_key=workflow_key, correlation_id=event.correlation_id)
 
-        draft_action: DraftAction | None = result_state.get("draft_action")
+        draft_action: DraftActionV2 | None = result_state.get("draft_action")
         pending_prompt: str | None = result_state.get("pending_prompt")
         if draft_action is None or pending_prompt is None:
             logger.error(
@@ -150,7 +147,7 @@ class WorkflowRuntime:
             )
             return WorkflowRunResult.failed(workflow_key=workflow_key, correlation_id=event.correlation_id)
 
-        state = WorkflowState(
+        state = WorkflowStateV2(
             workflow_instance_id=workflow_instance_id,
             workflow_key=workflow_key,
             correlation_id=event.correlation_id,

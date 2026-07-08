@@ -19,7 +19,7 @@ from mesiri.observability import tracing
 from mesiri.observability.logging import get_logger
 from mesiri_contracts.assistant.context_enums import ContextConfidence, ContextSource
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage
-from mesiri_contracts.assistant.resolved_context import ResolvedContext
+from mesiri_contracts.assistant.v2.resolved_context import ResolvedContextV2
 from mesiri_contracts.assistant.understanding_result import UnderstandingResult
 from mesiri_contracts.common.errors import MesiriError
 from mesiri_contracts.common.result import Result
@@ -32,6 +32,7 @@ from .ports import (
     ActiveContextStore,
     ContextPreferenceRepository,
     ExternalIdentityRepository,
+    IdentityBridgeRepository,
     OrganizationMembershipRepository,
     ProjectRepository,
     ReplyContextProvider,
@@ -58,6 +59,7 @@ class ContextDependencies:
     active_context: ActiveContextStore
     reply_context: ReplyContextProvider
     workflow_context: WorkflowContextProvider
+    bridge: IdentityBridgeRepository
 
 
 class ContextResolver:
@@ -66,7 +68,7 @@ class ContextResolver:
 
     async def resolve(
         self, message: NormalizedMessage, understanding: UnderstandingResult
-    ) -> Result[ResolvedContext]:
+    ) -> Result[ResolvedContextV2]:
         # Propagate the journey's correlation id (never mint a new one here).
         with tracing.correlation_scope(
             correlation_id=message.correlation_id, message_id=message.message_id
@@ -93,7 +95,7 @@ class ContextResolver:
 
     async def _resolve(
         self, message: NormalizedMessage, understanding: UnderstandingResult
-    ) -> ResolvedContext:
+    ) -> ResolvedContextV2:
         principal = await resolve_principal(
             provider=WHATSAPP_PROVIDER,
             external_subject=message.sender.wa_id,
@@ -130,8 +132,34 @@ class ContextResolver:
         )
 
         if winner is None:
-            return self._build(principal, None, message)
-        return self._build(principal, winner, message)
+            return await self._build(principal, None, message)
+        return await self._build(principal, winner, message)
+
+    async def _canonical_scope(
+        self,
+        *,
+        context_organization_id: str,
+        context_user_id: str,
+        context_project_id: str | None,
+        context_site_id: str | None,
+    ) -> tuple[str, str, str | None, str | None]:
+        org = await self._d.bridge.canonical_organization_id(context_organization_id)
+        if org is None:
+            raise errors.canonical_identity_not_mapped("organization", context_organization_id)
+        user = await self._d.bridge.canonical_user_id(context_user_id)
+        if user is None:
+            raise errors.canonical_identity_not_mapped("user", context_user_id)
+        project: str | None = None
+        site: str | None = None
+        if context_project_id is not None:
+            project = await self._d.bridge.canonical_project_id(context_project_id)
+            if project is None:
+                raise errors.canonical_identity_not_mapped("project", context_project_id)
+        if context_site_id is not None:
+            site = await self._d.bridge.canonical_site_id(context_site_id)
+            if site is None:
+                raise errors.canonical_identity_not_mapped("site", context_site_id)
+        return org, user, project, site
 
     # -- Candidate collection -------------------------------------------------
 
@@ -367,12 +395,12 @@ class ContextResolver:
 
     # -- Build ----------------------------------------------------------------
 
-    def _build(
+    async def _build(
         self,
         principal: Principal,
         winner: ContextCandidate | None,
         message: NormalizedMessage,
-    ) -> ResolvedContext:
+    ) -> ResolvedContextV2:
         if winner is None:
             source = ContextSource.UNRESOLVED
             confidence = ContextConfidence.UNRESOLVED
@@ -383,18 +411,29 @@ class ContextResolver:
             project_id = winner.project_id
             site_id = winner.site_id
 
-        return ResolvedContext(
+        canonical_org, canonical_user, canonical_project, canonical_site = await self._canonical_scope(
+            context_organization_id=principal.organization_id,
+            context_user_id=principal.user_id,
+            context_project_id=project_id,
+            context_site_id=site_id,
+        )
+
+        return ResolvedContextV2(
             correlation_id=message.correlation_id,
             source_message_id=message.message_id,
             causation_id=message.message_id,
             conversation_id=message.sender.wa_id,
-            organization_id=principal.organization_id,
-            user_id=principal.user_id,
+            context_organization_id=principal.organization_id,
+            context_user_id=principal.user_id,
+            context_project_id=project_id,
+            context_site_id=site_id,
+            organization_id=canonical_org,
+            user_id=canonical_user,
+            project_id=canonical_project,
+            site_id=canonical_site,
             membership_id=principal.membership_id,
             role_ids=principal.role_ids,
             permissions=principal.permissions,
-            project_id=project_id,
-            site_id=site_id,
             context_source=source,
             context_confidence=confidence,
             locale=principal.locale,

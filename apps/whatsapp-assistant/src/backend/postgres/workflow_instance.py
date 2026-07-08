@@ -3,9 +3,7 @@
 Implements the abstraction owned by the workflow layer (workflows/ports.py) —
 this is the only file permitted to hold SQL for workflow_instances (same
 capability-boundary pattern as backend/postgres/actor.py). organization_id and
-user_id are plain strings here (matching migration 0170_workflows_fix_instance_id_types) because
-ContextResolver resolves them against context_organizations/context_users,
-which use arbitrary string ids, not the control-plane UUID tables.
+user_id are canonical Control Plane UUIDs (migration 0195).
 """
 
 from __future__ import annotations
@@ -13,7 +11,7 @@ from __future__ import annotations
 import os
 import uuid
 
-from mesiri_contracts.assistant.workflow_state import WorkflowState
+from mesiri_contracts.assistant.v2.workflow_state import WorkflowStateV2
 
 
 def _build_engine():
@@ -46,7 +44,7 @@ class PostgresWorkflowInstanceRepository:
             self._engine = _build_engine()
         return self._engine
 
-    async def save(self, state: WorkflowState) -> None:
+    async def save(self, state: WorkflowStateV2) -> None:
         from sqlalchemy import text
 
         async with self._get_engine().begin() as conn:
@@ -54,13 +52,13 @@ class PostgresWorkflowInstanceRepository:
                 text(
                     "INSERT INTO workflow_instances "
                     "(id, organization_id, user_id, workflow_key, phase, state, correlation_id, status) "
-                    "VALUES (:id, :organization_id, :user_id, :workflow_key, :phase, :state::jsonb, "
-                    ":correlation_id, :status)"
+                    "VALUES (:id, :organization_id, :user_id, :workflow_key, :phase, "
+                    "CAST(:state AS jsonb), :correlation_id, :status)"
                 ),
                 {
                     "id": uuid.UUID(state.workflow_instance_id),
-                    "organization_id": state.organization_id,
-                    "user_id": state.user_id,
+                    "organization_id": uuid.UUID(state.organization_id),
+                    "user_id": uuid.UUID(state.user_id),
                     "workflow_key": state.workflow_key.value,
                     "phase": state.phase.value,
                     "state": state.model_dump_json(),

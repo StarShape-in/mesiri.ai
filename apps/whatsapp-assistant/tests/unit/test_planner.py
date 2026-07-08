@@ -10,13 +10,19 @@ from __future__ import annotations
 import pytest
 
 from mesiri_contracts.assistant.canonical_event import (
-    CanonicalEvent,
     CanonicalEventType,
     IntentCompleteness,
 )
 from mesiri_contracts.assistant.planner_decision import PlannerDecisionType, WorkflowKey
+from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
 from planner import Planner
 from planner.routing import WORKFLOW_KEY_BY_EVENT
+
+
+ORG = "11111111-1111-4111-8111-111111111111"
+USR = "22222222-2222-4222-8222-222222222222"
+PRJ = "33333333-3333-4333-8333-333333333333"
+SITE = "44444444-4444-4444-8444-444444444444"
 
 
 def _event(
@@ -24,17 +30,17 @@ def _event(
     event_type: CanonicalEventType,
     completeness: IntentCompleteness,
     missing_fields: list[str] | None = None,
-) -> CanonicalEvent:
-    return CanonicalEvent(
+) -> CanonicalEventV2:
+    return CanonicalEventV2(
         event_id="evt_1",
         correlation_id="cor_1",
         source_message_id="msg_1",
         event_type=event_type,
         completeness=completeness,
-        organization_id="org_1",
-        user_id="usr_1",
-        project_id="prj_1",
-        site_id="site_1",
+        organization_id=ORG,
+        user_id=USR,
+        project_id=PRJ,
+        site_id=SITE,
         missing_fields=missing_fields or [],
     )
 

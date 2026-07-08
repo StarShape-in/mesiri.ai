@@ -38,7 +38,7 @@ export function MesiriAIButton({ onPress }: MesiriAIButtonProps) {
       aria-label="Open Mesiri AI"
     >
       <Animated.View style={[styles.button, { transform: [{ scale }] }]}>
-        <Sparkles size={26} color={theme.components.aiButtonForeground} strokeWidth={2.5} fill={theme.components.aiButtonForeground} />
+        <Sparkles size={22} color={theme.components.aiButtonForeground} strokeWidth={2.5} fill={theme.components.aiButtonForeground} />
       </Animated.View>
     </Pressable>
   );
@@ -49,18 +49,15 @@ const createStyles = (theme: any) => StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: theme.zIndex.stickyHeader, // Use token if appropriate, but raw value 10 is fine if not mapped
   },
+  // Compact rounded-square signature action, contained within the nav bar.
   button: {
-    width: 60,
-    height: 60,
-    borderRadius: theme.radius.full, // formerly 30
+    width: 46,
+    height: 46,
+    borderRadius: theme.radius.lg, // 12
     backgroundColor: theme.components.aiButtonBackground,
-    borderWidth: 3,
-    borderColor: theme.components.aiButtonBorder,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: theme.spacing.space5, // formerly 20
     shadowColor: theme.components.aiButtonShadow,
     shadowOffset: theme.shadow.action.shadowOffset,
     shadowOpacity: theme.shadow.action.shadowOpacity,

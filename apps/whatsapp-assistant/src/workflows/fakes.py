@@ -5,16 +5,16 @@ from __future__ import annotations
 from typing import Any
 
 from mesiri_contracts.assistant.planner_decision import WorkflowKey
-from mesiri_contracts.assistant.workflow_state import WorkflowState
+from mesiri_contracts.assistant.v2.workflow_state import WorkflowStateV2
 
 
 class FakeWorkflowInstanceRepository:
     """Deterministic in-memory WorkflowInstanceRepository for tests."""
 
     def __init__(self) -> None:
-        self.saved: list[WorkflowState] = []
+        self.saved: list[WorkflowStateV2] = []
 
-    async def save(self, state: WorkflowState) -> None:
+    async def save(self, state: WorkflowStateV2) -> None:
         self.saved.append(state)
 
 
