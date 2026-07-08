@@ -2,7 +2,6 @@ import React, { useCallback } from 'react';
 import { View, StyleSheet, ScrollView, RefreshControl } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '../../app/_layout';
-import { useScope } from '../../state/ScopeProvider';
 import { useTheme, useStyles } from '../../src/theme';
 import { SectionHeader } from '../ui/SectionHeader';
 import { EmptyState } from '../ui/EmptyState';
@@ -11,7 +10,6 @@ import { useProjects } from '../../hooks/useProjects';
 
 export function ProjectsManagementScreen() {
   const { user } = useAuth();
-  const { setProjectScope } = useScope();
   const router = useRouter();
   const { theme } = useTheme();
   const styles = useStyles(createStyles);
@@ -28,14 +26,8 @@ export function ProjectsManagementScreen() {
     }, [refetch])
   );
 
-  const handleProjectSelect = (project: { id: string; name: string }) => {
-    // 1. Update Global Scope Architecture (Project Mode / All Sites)
-    setProjectScope({ id: project.id, name: project.name });
-    
-    // 2. Navigate to Project Home
-    // Note: Since index is our unified home, and it responds to scope,
-    // navigating back to index will automatically show the Project Dashboard!
-    router.replace('/');
+  const handleProjectSelect = (project: { id: string }) => {
+    router.push(`/projects/${project.id}`);
   };
 
   return (

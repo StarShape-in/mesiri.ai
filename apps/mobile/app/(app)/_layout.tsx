@@ -62,6 +62,7 @@ export default function AppLayout() {
       <Tabs.Screen name="reports" options={{ title: 'Reports', href: null }} />
       <Tabs.Screen name="projects/index" options={{ title: 'Projects', href: null }} />
       <Tabs.Screen name="projects/new" options={{ title: 'New Project', href: null }} />
+      <Tabs.Screen name="projects/[id]" options={{ title: 'Project Details', href: null }} />
       <Tabs.Screen name="settings/theme" options={{ title: 'Theme', href: null }} />
       <Tabs.Screen name="users/[id]" options={{ title: 'User Details', href: null }} />
     </Tabs>

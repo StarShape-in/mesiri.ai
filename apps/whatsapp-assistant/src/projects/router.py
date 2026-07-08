@@ -114,6 +114,11 @@ class SiteResponse(BaseModel):
     status: str
 
 
+class SiteCreate(BaseModel):
+    name: str
+    status: str = "active"
+
+
 def _to_response(row) -> ProjectResponse:
     status = row.status if row.status in _VALID_STATUS else "on_track"
     ui_status, label = _STATUS_DISPLAY[status]
@@ -204,6 +209,48 @@ async def list_project_sites(project_id: uuid.UUID, payload: dict = Depends(get_
         )
         for row in rows
     ]
+
+
+@router.post("/{project_id}/sites", response_model=SiteResponse)
+async def create_project_site(
+    project_id: uuid.UUID,
+    site_in: SiteCreate,
+    payload: dict = Depends(get_current_user),
+):
+    org_id = payload.get("org")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="User has no organization")
+    if payload.get("role") not in _CREATE_ROLES:
+        raise HTTPException(status_code=403, detail="Not authorized to create sites")
+
+    name = site_in.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Site name is required")
+
+    engine = get_engine()
+    async with engine.begin() as conn:
+        project_result = await conn.execute(
+            sa.select(projects_table.c.id).where(
+                projects_table.c.id == project_id,
+                projects_table.c.organization_id == org_id,
+            )
+        )
+        if project_result.first() is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        site_id = uuid.uuid4()
+        status = site_in.status.strip() or "active"
+        await conn.execute(
+            sites_table.insert().values(
+                id=site_id,
+                project_id=project_id,
+                organization_id=org_id,
+                name=name,
+                status=status,
+            )
+        )
+
+    return SiteResponse(id=site_id, project_id=project_id, name=name, status=status)
 
 
 @router.post("", response_model=ProjectResponse)

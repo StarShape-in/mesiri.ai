@@ -24,8 +24,10 @@ class _Result:
 class _Conn:
     def __init__(self, results):
         self._results = list(results)
+        self.executed = []
 
-    async def execute(self, _statement):
+    async def execute(self, statement):
+        self.executed.append(statement)
         return _Result(self._results.pop(0))
 
 
@@ -45,6 +47,9 @@ class _Engine:
         self._conn = conn
 
     def connect(self):
+        return _ConnectContext(self._conn)
+
+    def begin(self):
         return _ConnectContext(self._conn)
 
 
@@ -84,6 +89,51 @@ async def test_list_project_sites_rejects_project_outside_org(monkeypatch):
         await projects_router.list_project_sites(uuid.uuid4(), {"org": str(uuid.uuid4())})
 
     assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_create_project_site_inserts_org_scoped_site(monkeypatch):
+    project_id = uuid.uuid4()
+    conn = _Conn([[SimpleNamespace(id=project_id)], []])
+    monkeypatch.setattr(projects_router, "get_engine", lambda: _Engine(conn))
+
+    site = await projects_router.create_project_site(
+        project_id,
+        projects_router.SiteCreate(name="  Tower B  "),
+        {"org": str(uuid.uuid4()), "role": "ADMIN"},
+    )
+
+    assert site.project_id == project_id
+    assert site.name == "Tower B"
+    assert site.status == "active"
+    assert len(conn.executed) == 2
+
+
+@pytest.mark.asyncio
+async def test_create_project_site_rejects_project_outside_org(monkeypatch):
+    conn = _Conn([[]])
+    monkeypatch.setattr(projects_router, "get_engine", lambda: _Engine(conn))
+
+    with pytest.raises(HTTPException) as exc:
+        await projects_router.create_project_site(
+            uuid.uuid4(),
+            projects_router.SiteCreate(name="Tower B"),
+            {"org": str(uuid.uuid4()), "role": "ADMIN"},
+        )
+
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_create_project_site_rejects_unauthorized_role(monkeypatch):
+    with pytest.raises(HTTPException) as exc:
+        await projects_router.create_project_site(
+            uuid.uuid4(),
+            projects_router.SiteCreate(name="Tower B"),
+            {"org": str(uuid.uuid4()), "role": "SITE_ENGINEER"},
+        )
+
+    assert exc.value.status_code == 403
 
 
 @pytest.mark.asyncio
