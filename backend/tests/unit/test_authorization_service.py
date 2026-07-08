@@ -62,7 +62,7 @@ async def test_resolve_from_jwt_success(mock_conn, sample_user_row):
 async def test_resolve_from_jwt_user_not_found(mock_conn):
     """Test 401 when user not found in database."""
     # Setup mock to return no user
-    result_mock = AsyncMock()
+    result_mock = MagicMock()
     result_mock.fetchall.return_value = []
     mock_conn.execute.return_value = result_mock
     
@@ -81,7 +81,7 @@ async def test_resolve_from_jwt_user_not_found(mock_conn):
 
 async def test_resolve_from_jwt_org_mismatch(mock_conn, sample_user_row):
     """Test 401 when JWT org doesn't match user's org in database."""
-    result_mock = AsyncMock()
+    result_mock = MagicMock()
     result_mock.fetchall.return_value = [sample_user_row]
     mock_conn.execute.return_value = result_mock
     
@@ -103,7 +103,7 @@ async def test_resolve_from_jwt_suspended_user(mock_conn, sample_user_row):
     """Test 401 when user status is suspended."""
     sample_user_row.status = "suspended"
     
-    result_mock = AsyncMock()
+    result_mock = MagicMock()
     result_mock.fetchall.return_value = [sample_user_row]
     mock_conn.execute.return_value = result_mock
     
@@ -124,7 +124,7 @@ async def test_resolve_from_jwt_inactive_user(mock_conn, sample_user_row):
     """Test 401 when user status is inactive."""
     sample_user_row.status = "inactive"
     
-    result_mock = AsyncMock()
+    result_mock = MagicMock()
     result_mock.fetchall.return_value = [sample_user_row]
     mock_conn.execute.return_value = result_mock
     
@@ -153,7 +153,7 @@ async def test_resolve_from_jwt_custom_projects_scope(mock_conn, sample_user_row
         ]
     }
     
-    result_mock = AsyncMock()
+    result_mock = MagicMock()
     result_mock.fetchall.return_value = [sample_user_row]
     mock_conn.execute.return_value = result_mock
     
@@ -177,7 +177,7 @@ async def test_resolve_from_jwt_empty_custom_projects(mock_conn, sample_user_row
         "projects": []
     }
     
-    result_mock = AsyncMock()
+    result_mock = MagicMock()
     result_mock.fetchall.return_value = [sample_user_row]
     mock_conn.execute.return_value = result_mock
     
@@ -197,7 +197,7 @@ async def test_resolve_from_jwt_null_policy_denies_by_default(mock_conn, sample_
     """Test null access policy defaults to empty custom (deny by default)."""
     sample_user_row.access_policy = None
     
-    result_mock = AsyncMock()
+    result_mock = MagicMock()
     result_mock.fetchall.return_value = [sample_user_row]
     mock_conn.execute.return_value = result_mock
     
@@ -218,7 +218,7 @@ async def test_resolve_from_jwt_malformed_policy_denies_by_default(mock_conn, sa
         "projects": []
     }
     
-    result_mock = AsyncMock()
+    result_mock = MagicMock()
     result_mock.fetchall.return_value = [sample_user_row]
     mock_conn.execute.return_value = result_mock
     

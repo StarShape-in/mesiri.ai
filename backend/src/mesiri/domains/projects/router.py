@@ -178,9 +178,11 @@ async def create_project(
         location=body.location,
         client=body.client,
         description=body.description,
-        status="on_track",
+        status="success",
+        statusLabel="On Track",
         progress=0,
-        open_issues=0,
+        openIssues=0,
+        reportingRatio=None,
     )
 
 

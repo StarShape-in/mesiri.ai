@@ -13,7 +13,6 @@ from mesiri.application.projects.dtos import ProjectDTO
 
 from .responses import ProjectResponse
 
-
 # Canonical status mapping from WhatsApp Assistant
 _STATUS_DISPLAY = {
     "on_track": ("success", "On Track"),
