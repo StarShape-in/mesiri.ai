@@ -82,9 +82,9 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     # M4 identity gate, then M2 -> M3 -> M4 Context resolver -> reply.
     import logging as _logging
 
+    from backend.postgres.actor import PostgresActorReader
     from backend.postgres.message_logger import PostgresMessageLogger
     from backend.postgres.trace_logger import PostgresTraceLogger
-    from backend.postgres.actor import PostgresActorReader
     from backend.postgres.workflow_instance import PostgresWorkflowInstanceRepository
     from channel.whatsapp.outbound import WhatsAppSender
     from context.live_identity import (

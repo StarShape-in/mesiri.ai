@@ -14,9 +14,9 @@ _log = logging.getLogger("mesiri.trace_logger")
 
 
 def _build_engine():
-    from sqlalchemy.ext.asyncio import create_async_engine
-
     import os
+
+    from sqlalchemy.ext.asyncio import create_async_engine
 
     host = os.environ.get("MESIRI_POSTGRES__HOST", "localhost")
     port = os.environ.get("MESIRI_POSTGRES__PORT", "5432")
