@@ -7,7 +7,6 @@ in the callers.
 """
 
 from __future__ import annotations
-
 from workflows import WorkflowResumeResult, WorkflowResumeStatus, WorkflowRunResult, WorkflowRunStatus
 
 
