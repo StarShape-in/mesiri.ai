@@ -355,6 +355,10 @@ async def test_build_container_wires_context_resolver(tmp_path):
     assert isinstance(container.workflow_runtime, WorkflowRuntime)
     assert container.interaction_handler is not None
     assert isinstance(container.interaction_handler, InteractionHandler)
+    # M8: the interaction handler must be wired with an execution dispatcher,
+    # not left running M7-only (which would silently skip domain execution).
+    assert container.interaction_handler._dispatcher is not None
+    assert container.material_db is not None
 
 
 async def test_context_debug_logs_resolved_context(caplog):

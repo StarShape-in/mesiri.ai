@@ -5,6 +5,11 @@ has an AWAITING_CONFIRMATION workflow and the reply is a confirmation
 intent, it resumes the workflow and returns the reply — the AI pipeline is
 never touched (a plain "yes" costs no tokens). Otherwise returns None and the
 caller runs the normal understanding journey.
+
+When a CONFIRM resolves to WorkflowResumeStatus.CONFIRMED and a dispatcher is
+wired (M8), the confirmed action is executed synchronously in the same
+request and the reply reflects the real domain outcome (SUCCEEDED/REJECTED/
+FAILED) rather than optimistically assuming the domain write happened.
 """
 
 from __future__ import annotations
@@ -12,12 +17,14 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from mesiri_contracts.application.results.execution_result import ExecutionResult
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage
-from workflows import WorkflowResumeResult, WorkflowRuntime
+from workflows import WorkflowResumeResult, WorkflowResumeStatus, WorkflowRuntime
 
 from .classifier import classify_reply
 from .policy import InteractionRoute, decide
-from .response_handler import render_resume_reply
+from .ports import ExecutionDispatcher
+from .response_handler import render_execution_reply, render_resume_reply
 
 logger = logging.getLogger(__name__)
 
@@ -28,14 +35,16 @@ class InteractionHandled:
 
     result: WorkflowResumeResult
     reply_text: str
-
-
-
-
+    execution_result: ExecutionResult | None = None
 
 class InteractionHandler:
-    def __init__(self, workflow_runtime: WorkflowRuntime) -> None:
+    def __init__(
+        self,
+        workflow_runtime: WorkflowRuntime,
+        dispatcher: ExecutionDispatcher | None = None,
+    ) -> None:
         self._runtime = workflow_runtime
+        self._dispatcher = dispatcher
 
     async def handle(
         self, user_id: str, message: NormalizedMessage
@@ -65,4 +74,21 @@ class InteractionHandler:
             result.status.value,
             result.workflow_instance_id,
         )
-        return InteractionHandled(result=result, reply_text=render_resume_reply(result))
+
+        execution_result: ExecutionResult | None = None
+        if result.status is WorkflowResumeStatus.CONFIRMED and self._dispatcher is not None:
+            assert result.confirmed_action is not None
+            execution_result = await self._dispatcher.dispatch(result.confirmed_action)
+            logger.info(
+                "interaction.executed user=%s status=%s instance=%s",
+                user_id,
+                execution_result.status.value,
+                result.workflow_instance_id,
+            )
+            reply_text = render_execution_reply(execution_result)
+        else:
+            reply_text = render_resume_reply(result)
+
+        return InteractionHandled(
+            result=result, reply_text=reply_text, execution_result=execution_result
+        )

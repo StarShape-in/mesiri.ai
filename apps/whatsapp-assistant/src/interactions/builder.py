@@ -10,8 +10,13 @@ from __future__ import annotations
 from workflows import WorkflowRuntime
 
 from .handler import InteractionHandler
+from .ports import ExecutionDispatcher
 
 
-def build_interaction_handler(workflow_runtime: WorkflowRuntime) -> InteractionHandler:
-    """Construct an ``InteractionHandler`` wired to ``workflow_runtime``."""
-    return InteractionHandler(workflow_runtime)
+def build_interaction_handler(
+    workflow_runtime: WorkflowRuntime, dispatcher: ExecutionDispatcher | None = None
+) -> InteractionHandler:
+    """Construct an ``InteractionHandler`` wired to ``workflow_runtime`` and,
+    once M8 is wired, an ``ExecutionDispatcher`` that executes confirmed
+    Material actions synchronously in the same request."""
+    return InteractionHandler(workflow_runtime, dispatcher)

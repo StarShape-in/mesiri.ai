@@ -1,0 +1,76 @@
+"""Material Application Commands (M8) — the typed handoff from ConfirmedActionV2.
+
+Two distinct commands, not one with a direction flag — mirrors the existing
+"two tables, not one" decision for material_receipts/material_usage (they
+carry genuinely different optional fields: supplier/cost vs work_item).
+
+`project_id` is deliberately nullable here even though material_receipts/
+material_usage require it NOT NULL — Domain validation rejects a missing
+project_id (a real, routine outcome of unresolved M4 context), the mapper
+must never invent one.
+
+Ownership: SHARED ARCHITECTURE — part of the M0 contract surface. Version: v2.
+"""
+
+from __future__ import annotations
+
+from datetime import date
+from decimal import Decimal
+
+from pydantic import BaseModel
+
+from mesiri_contracts.assistant.v2.uuid_scope import CanonicalUuid
+
+CONTRACT_VERSION = "v2"
+
+
+class RecordMaterialReceiptCommand(BaseModel):
+    """Record that material arrived on site."""
+
+    version: str = CONTRACT_VERSION
+
+    command_id: str
+    idempotency_key: str
+    correlation_id: str
+
+    organization_id: CanonicalUuid
+    project_id: CanonicalUuid | None
+    site_id: CanonicalUuid | None
+
+    material_name: str
+    quantity: Decimal
+    unit: str
+    supplier: str | None = None
+
+    occurred_date: date
+    occurred_date_source: str = "inferred_at_confirmation"
+
+    created_by: CanonicalUuid
+
+    model_config = {"extra": "forbid"}
+
+
+class RecordMaterialUsageCommand(BaseModel):
+    """Record that material was used/consumed on site."""
+
+    version: str = CONTRACT_VERSION
+
+    command_id: str
+    idempotency_key: str
+    correlation_id: str
+
+    organization_id: CanonicalUuid
+    project_id: CanonicalUuid | None
+    site_id: CanonicalUuid | None
+
+    material_name: str
+    quantity: Decimal
+    unit: str
+    work_item: str | None = None
+
+    occurred_date: date
+    occurred_date_source: str = "inferred_at_confirmation"
+
+    created_by: CanonicalUuid
+
+    model_config = {"extra": "forbid"}

@@ -8,6 +8,7 @@ in the callers.
 
 from __future__ import annotations
 
+from mesiri_contracts.application.results.execution_result import ExecutionResult, ExecutionStatus
 from workflows import (
     WorkflowResumeResult,
     WorkflowResumeStatus,
@@ -21,6 +22,11 @@ def render_resume_reply(result: WorkflowResumeResult) -> str:
 
     Localisation and rich WhatsApp templates are future work; string constants
     live here so the migration touches exactly one file.
+
+    Note: the CONFIRMED branch here is only reached when no ExecutionDispatcher
+    is wired (e.g. M7-only tests). When M8 execution runs, CONFIRMED replies go
+    through render_execution_reply() instead, which reflects the real domain
+    outcome rather than optimistically assuming a domain write happened.
     """
     if result.status is WorkflowResumeStatus.CONFIRMED:
         return "✅ Recorded. Thank you."
@@ -30,6 +36,18 @@ def render_resume_reply(result: WorkflowResumeResult) -> str:
         return "Cancelled. Nothing was recorded."
     # ALREADY_RESOLVED (duplicate delivery / double reply) or NOT_RESUMABLE.
     return "That request was already handled."
+
+
+def render_execution_reply(result: ExecutionResult) -> str:
+    """Reply after M8 execution actually runs — reflects the real domain outcome,
+    not just "the user confirmed" (fixes the M7 always-optimistic reply bug)."""
+    if result.status in (ExecutionStatus.SUCCEEDED, ExecutionStatus.ALREADY_EXECUTED):
+        return "✅ Recorded. Thank you."
+    if result.status is ExecutionStatus.REJECTED:
+        reasons = "; ".join(result.rejection_reasons)
+        return f"⚠️ Couldn't record this: {reasons}"
+    # FAILED
+    return "⚠️ Something went wrong — we'll retry automatically."
 
 
 def render_workflow_run_reply(result: WorkflowRunResult, *, pending_prompt: str) -> str:

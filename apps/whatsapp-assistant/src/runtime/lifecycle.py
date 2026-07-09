@@ -35,10 +35,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # Connect the Redis client (no-op for FakeRedis; real connection
             # for RedisClient when MESIRI_REDIS__HOST is configured).
             await app.state.container.redis_client.connect()
+            # M8: connect the Material execution transaction owner.
+            await app.state.container.material_db.connect()
             logger.info("WhatsApp assistant runtime initialized")
             try:
                 yield
             finally:
+                await app.state.container.material_db.disconnect()
                 await app.state.container.redis_client.disconnect()
 
     app = FastAPI(title="Mesiri WhatsApp Assistant", lifespan=lifespan)

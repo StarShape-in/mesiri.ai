@@ -101,27 +101,98 @@ class PostgresWorkflowInstanceRepository:
     async def transition(
         self, workflow_instance_id: str, expected_version: int, new_state: WorkflowStateV2
     ) -> bool:
-        from sqlalchemy import text
-
-        terminal = new_state.phase.value  # confirmed | rejected | cancelled
-        status = "completed" if terminal == "confirmed" else terminal
+        """Transition in this repository's own transaction (the normal M7 path)."""
         async with self._get_engine().begin() as conn:
-            result = await conn.execute(
-                text(
-                    "UPDATE workflow_instances "
-                    "SET phase = :phase, status = :status, state = CAST(:state AS jsonb), "
-                    "version = version + 1, updated_at = now() "
-                    "WHERE id = :id AND version = :expected_version"
-                ),
-                {
-                    "id": uuid.UUID(workflow_instance_id),
-                    "expected_version": expected_version,
-                    "phase": new_state.phase.value,
-                    "status": status,
-                    "state": new_state.model_dump_json(),
-                },
+            return await transition_on_connection(
+                conn, workflow_instance_id, expected_version, new_state
             )
-        return result.rowcount == 1
+
+
+async def transition_on_connection(
+    conn, workflow_instance_id: str, expected_version: int, new_state: WorkflowStateV2
+) -> bool:
+    """The phase-transition UPDATE, against an externally-supplied connection.
+
+    Extracted so the M8 Material execution transaction can complete/reject a
+    workflow (phase -> COMPLETED/EXECUTION_REJECTED) atomically alongside the
+    domain write — that requires running on the *same* open connection as the
+    material/outbox/idempotency inserts, not a second, independent transaction.
+    `PostgresWorkflowInstanceRepository.transition()` (the normal M7 confirm/
+    reject/cancel path) is a thin wrapper that opens its own transaction and
+    calls this same function — no SQL is duplicated between the two call sites.
+    """
+    from sqlalchemy import text
+
+    terminal = new_state.phase.value  # confirmed | rejected | cancelled | completed | execution_rejected
+    status = "completed" if terminal == "confirmed" else terminal
+    result = await conn.execute(
+        text(
+            "UPDATE workflow_instances "
+            "SET phase = :phase, status = :status, state = CAST(:state AS jsonb), "
+            "version = version + 1, updated_at = now() "
+            "WHERE id = :id AND version = :expected_version"
+        ),
+        {
+            "id": uuid.UUID(workflow_instance_id),
+            "expected_version": expected_version,
+            "phase": new_state.phase.value,
+            "status": status,
+            "state": new_state.model_dump_json(),
+        },
+    )
+    return result.rowcount == 1
+
+
+async def get_by_id_on_connection(conn, workflow_instance_id: str) -> LoadedWorkflowInstance | None:
+    """Read current state+version for one instance, against a supplied connection,
+    regardless of phase. Used by the M8 Application Handler to learn the current
+    version before transitioning CONFIRMED -> COMPLETED/EXECUTION_REJECTED (the
+    version was already bumped once by M7's own CONFIRMED transition)."""
+    from sqlalchemy import text
+
+    row = (
+        await conn.execute(
+            text("SELECT state, version FROM workflow_instances WHERE id = :id"),
+            {"id": uuid.UUID(workflow_instance_id)},
+        )
+    ).mappings().first()
+    if row is None:
+        return None
+    state = WorkflowStateV2.model_validate_json(_as_json_text(row["state"]))
+    return LoadedWorkflowInstance(state=state, version=int(row["version"]))
+
+
+async def list_confirmed_by_workflow_keys(
+    db, workflow_keys: list[str]
+) -> list[LoadedWorkflowInstance]:
+    """All CONFIRMED instances matching the given workflow_key values — the
+    recovery sweep's read. Scoped by workflow_key deliberately: workflow_instances
+    is generic, and a future Expense/Equipment/Labour executor must never have
+    its confirmed rows swept up and deserialized by the Material recovery path.
+
+    `db` is a PostgresDatabase (or anything exposing the same `.transaction()`
+    async context manager) — matches how every other M8 read/write obtains its
+    connection, rather than reaching for a raw engine.
+    """
+    from sqlalchemy import text
+
+    async with db.transaction() as conn:
+        rows = (
+            await conn.execute(
+                text(
+                    "SELECT state, version FROM workflow_instances "
+                    "WHERE phase = 'confirmed' AND workflow_key = ANY(:workflow_keys::text[])"
+                ),
+                {"workflow_keys": workflow_keys},
+            )
+        ).mappings().all()
+    return [
+        LoadedWorkflowInstance(
+            state=WorkflowStateV2.model_validate_json(_as_json_text(row["state"])),
+            version=int(row["version"]),
+        )
+        for row in rows
+    ]
 
 
 def _as_json_text(value) -> str:

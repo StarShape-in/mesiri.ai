@@ -20,6 +20,7 @@ from runtime.logging_ports import MessageLogger, TraceLogger
 if TYPE_CHECKING:
     from context.resolver import ContextResolver
     from interactions import InteractionHandler
+    from mesiri.infrastructure.postgres.database import PostgresDatabase
     from planner import Planner
     from workflows import WorkflowRuntime
 
@@ -63,6 +64,9 @@ class AppContainer:
     redis_client: Any
     message_logger: MessageLogger
     trace_logger: TraceLogger
+    # M8: owns the one transaction Material command execution runs in. connect()/
+    # disconnect() are called by the lifespan handler, same as redis_client.
+    material_db: PostgresDatabase
 
 
 def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppContainer:
@@ -95,8 +99,14 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     )
     from context.runtime import build_context_resolver
     from interactions import build_interaction_handler
+    from mesiri.application.materials.dispatcher import MaterialExecutionDispatcher
+    from mesiri.application.materials.handlers import ExecuteConfirmedMaterialActionHandler
     from mesiri.bootstrap.settings import get_settings as _get_backend_settings
     from mesiri.infrastructure.objectstorage import build_object_storage
+    from mesiri.infrastructure.postgres.database import PostgresDatabase
+    from mesiri.infrastructure.postgres.repositories.material_execution import (
+        PostgresMaterialExecutionRepository,
+    )
     from planner import Planner
     from runtime.inbound_journey import process_inbound_message
     from understanding.runtime import build_pipeline, format_reply
@@ -129,9 +139,19 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     workflow_runtime = WorkflowRuntime(
         registry=workflow_registry, repo=PostgresWorkflowInstanceRepository()
     )
+    # M8: the one transaction Material command execution runs in. connect()/
+    # disconnect() happen in the lifespan handler (runtime/lifecycle.py), same
+    # lifecycle pattern as redis_client.
+    material_db = PostgresDatabase(_backend_settings.postgres)
+    material_execution_handler = ExecuteConfirmedMaterialActionHandler(
+        db=material_db, repo=PostgresMaterialExecutionRepository()
+    )
+    material_dispatcher = MaterialExecutionDispatcher(material_execution_handler)
     # M7: resolves a confirmation reply into the pending workflow, or None
-    # (fall through to the normal understanding journey).
-    interaction_handler = build_interaction_handler(workflow_runtime)
+    # (fall through to the normal understanding journey). M8: when a CONFIRM
+    # resolves to CONFIRMED, the dispatcher executes the domain write
+    # synchronously in the same request and the reply reflects the real outcome.
+    interaction_handler = build_interaction_handler(workflow_runtime, material_dispatcher)
     sender = WhatsAppSender(
         client=http_client,
         access_token=settings.access_token,
@@ -237,6 +257,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         redis_client=redis_client,
         message_logger=message_logger,
         trace_logger=trace_logger,
+        material_db=material_db,
     )
 
 

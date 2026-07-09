@@ -53,6 +53,12 @@ class WorkflowPhase(str, Enum):
     REJECTED = "rejected"
     CANCELLED = "cancelled"
     COMPLETED = "completed"
+    # Domain validation rejected a confirmed draft (M8) — distinct from REJECTED,
+    # which means the *user* rejected the draft before execution ever ran.
+    # Terminal: the recovery sweep only ever selects phase='confirmed', so this
+    # must never be reachable again once set, or a business-rejected workflow
+    # would be replayed forever with the same cached rejection.
+    EXECUTION_REJECTED = "execution_rejected"
     FAILED = "failed"
     UNKNOWN = "unknown"
 

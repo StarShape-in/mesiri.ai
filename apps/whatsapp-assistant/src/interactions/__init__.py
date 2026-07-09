@@ -14,7 +14,8 @@ from .confirmation import format_confirmation_message
 from .handler import InteractionHandled, InteractionHandler
 from .intent import InteractionIntent
 from .policy import InteractionDecision, InteractionRoute, decide
-from .response_handler import render_resume_reply, render_workflow_run_reply
+from .ports import ExecutionDispatcher
+from .response_handler import render_execution_reply, render_resume_reply, render_workflow_run_reply
 
 __all__ = [
     "InteractionIntent",
@@ -24,9 +25,11 @@ __all__ = [
     "decide",
     "InteractionHandler",
     "InteractionHandled",
+    "ExecutionDispatcher",
     "build_interaction_handler",
     "format_confirmation_message",
     "render_resume_reply",
+    "render_execution_reply",
     "render_workflow_run_reply",
 ]
 
