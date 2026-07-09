@@ -56,7 +56,10 @@ G5_SQL = """CREATE TABLE IF NOT EXISTS journey_traces (
 
 def exec_sql(client, sql):
     # Use single-quoted heredoc to avoid shell escaping issues
-    cmd = f"docker exec mesiri-postgres psql -U mesiri -d mesiri -c \"{sql.replace(chr(34), chr(39))}\""
+    cmd = (
+        f"docker exec mesiri-postgres psql -U mesiri -d mesiri "
+        f"-c \"{sql.replace(chr(34), chr(39))}\""
+    )
     _, stdout, stderr = client.exec_command(cmd, timeout=15)
     out = stdout.read().decode().strip()
     err = stderr.read().decode().strip()
@@ -98,7 +101,19 @@ def main():
     print("\n-- G4 inbound_messages --")
     out, err = exec_sql(client, G4_SQL.replace("\n", " ").replace("'", "'\"'\"'"))
     # Try a simpler approach
-    cmd = f"""docker exec mesiri-postgres psql -U mesiri -d mesiri -c 'CREATE TABLE IF NOT EXISTS inbound_messages (id uuid PRIMARY KEY, correlation_id varchar NOT NULL, sender_wa_id varchar NOT NULL, message_type varchar NOT NULL, raw_payload jsonb NOT NULL, normalized_message jsonb, body_text text, media_object_key varchar, dedup_key varchar NOT NULL UNIQUE, received_at timestamptz NOT NULL DEFAULT now(), processed_at timestamptz, processing_status varchar NOT NULL DEFAULT \'pending\', error_code varchar);'"""
+    cmd = (
+        "docker exec mesiri-postgres psql -U mesiri -d mesiri -c "
+        "'CREATE TABLE IF NOT EXISTS inbound_messages ("
+        "id uuid PRIMARY KEY, correlation_id varchar NOT NULL, "
+        "sender_wa_id varchar NOT NULL, message_type varchar NOT NULL, "
+        "raw_payload jsonb NOT NULL, normalized_message jsonb, "
+        "body_text text, media_object_key varchar, "
+        "dedup_key varchar NOT NULL UNIQUE, "
+        "received_at timestamptz NOT NULL DEFAULT now(), "
+        "processed_at timestamptz, "
+        "processing_status varchar NOT NULL DEFAULT '\'pending\'', "
+        "error_code varchar);'"
+    )
     _, stdout, stderr = client.exec_command(cmd, timeout=15)
     print(f"  {stdout.read().decode().strip()[:80]}")
     err = stderr.read().decode().strip()
@@ -115,7 +130,15 @@ def main():
 
     # G5: journey_traces
     print("\n-- G5 journey_traces --")
-    cmd = f"""docker exec mesiri-postgres psql -U mesiri -d mesiri -c 'CREATE TABLE IF NOT EXISTS journey_traces (id uuid PRIMARY KEY, correlation_id varchar NOT NULL, stage varchar NOT NULL, stage_payload jsonb, duration_ms integer, succeeded boolean NOT NULL, error_code varchar, error_message text, created_at timestamptz NOT NULL DEFAULT now());'"""
+    cmd = (
+        "docker exec mesiri-postgres psql -U mesiri -d mesiri -c "
+        "'CREATE TABLE IF NOT EXISTS journey_traces ("
+        "id uuid PRIMARY KEY, correlation_id varchar NOT NULL, "
+        "stage varchar NOT NULL, stage_payload jsonb, "
+        "duration_ms integer, succeeded boolean NOT NULL, "
+        "error_code varchar, error_message text, "
+        "created_at timestamptz NOT NULL DEFAULT now());'"
+    )
     _, stdout, stderr = client.exec_command(cmd, timeout=15)
     print(f"  {stdout.read().decode().strip()[:80]}")
 
