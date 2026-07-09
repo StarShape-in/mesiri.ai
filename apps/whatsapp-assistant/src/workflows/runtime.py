@@ -17,6 +17,7 @@ from mesiri_contracts.assistant.planner_decision import PlannerDecisionType, Wor
 from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
 from mesiri_contracts.assistant.v2.confirmed_action import ConfirmedActionV2
 from mesiri_contracts.assistant.v2.draft_action import DraftActionV2
+from mesiri_contracts.assistant.v2.interaction_spec import FieldCorrection
 from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
 from mesiri_contracts.assistant.v2.workflow_state import WorkflowStateV2
 from mesiri_contracts.common.ids import new_id
@@ -351,6 +352,94 @@ class WorkflowRuntime:
             status=status,
             workflow_instance_id=instance_id,
             correlation_id=state.correlation_id,
+        )
+
+
+    async def correct(
+        self, loaded: LoadedWorkflowInstance, corrections: list[FieldCorrection]
+    ) -> WorkflowRunResult:
+        """Apply field corrections to an AWAITING_CONFIRMATION workflow.
+
+        Merges *corrections* into the existing ``collected_fields``, re-runs the
+        graph so the workflow can produce a fresh draft and prompt, then saves the
+        updated state via an OCC ``transition()``.  Returns FAILED (not an
+        exception) when the transition loses to a concurrent write.
+        """
+        state = loaded.state
+        workflow_key = state.workflow_key
+        instance_id = state.workflow_instance_id
+
+        # Merge corrections into collected_fields.
+        updated_fields = dict(state.collected_fields)
+        for correction in corrections:
+            updated_fields[correction.field_name] = correction.new_value
+
+        graph = self._registry.get_graph(workflow_key)
+        if graph is None:
+            logger.warning("workflow.correct.no_graph workflow_key=%s", workflow_key.value)
+            return WorkflowRunResult.failed(
+                workflow_key=workflow_key, correlation_id=state.correlation_id
+            )
+
+        graph_state: WorkflowGraphState = {
+            "workflow_instance_id": instance_id,
+            "workflow_key": workflow_key.value,
+            "correlation_id": state.correlation_id,
+            "organization_id": state.organization_id,
+            "user_id": state.user_id,
+            "project_id": state.project_id,
+            "site_id": state.site_id,
+            "collected_fields": updated_fields,
+        }
+
+        try:
+            result_state = await graph.ainvoke(graph_state)
+        except Exception:
+            logger.exception(
+                "workflow.correct.run_failed workflow_key=%s workflow_instance_id=%s",
+                workflow_key.value,
+                instance_id,
+            )
+            return WorkflowRunResult.failed(
+                workflow_key=workflow_key, correlation_id=state.correlation_id
+            )
+
+        new_draft: DraftActionV2 | None = result_state.get("draft_action")
+        new_prompt: str | None = result_state.get("pending_prompt")
+        if new_draft is None or new_prompt is None:
+            logger.error(
+                "workflow.correct.incomplete_result workflow_key=%s workflow_instance_id=%s",
+                workflow_key.value,
+                instance_id,
+            )
+            return WorkflowRunResult.failed(
+                workflow_key=workflow_key, correlation_id=state.correlation_id
+            )
+
+        new_state = state.model_copy(
+            update={
+                "collected_fields": updated_fields,
+                "draft_action": new_draft,
+                "pending_prompt": new_prompt,
+            }
+        )
+
+        applied = await self._repo.transition(instance_id, loaded.version, new_state)
+        if not applied:
+            # OCC conflict: a concurrent correction already moved this version.
+            logger.info(
+                "workflow.correct.occ_conflict workflow_instance_id=%s", instance_id
+            )
+            return WorkflowRunResult.failed(
+                workflow_key=workflow_key, correlation_id=state.correlation_id
+            )
+
+        return WorkflowRunResult.started(
+            workflow_key=workflow_key,
+            correlation_id=state.correlation_id,
+            workflow_instance_id=instance_id,
+            draft_action=new_draft,
+            pending_prompt=new_prompt,
         )
 
 
