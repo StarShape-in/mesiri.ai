@@ -8,7 +8,12 @@ in the callers.
 
 from __future__ import annotations
 
-from workflows import WorkflowResumeResult, WorkflowResumeStatus, WorkflowRunResult, WorkflowRunStatus
+from workflows import (
+    WorkflowResumeResult,
+    WorkflowResumeStatus,
+    WorkflowRunResult,
+    WorkflowRunStatus,
+)
 
 
 def render_resume_reply(result: WorkflowResumeResult) -> str:
