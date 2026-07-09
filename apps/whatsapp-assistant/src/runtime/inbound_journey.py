@@ -10,6 +10,7 @@ from typing import Any
 from canonicalization import build_canonical_event, log_canonical_event
 from context.resolver import ContextResolver
 from context.runtime import log_resolved_context
+from interactions.response_handler import render_workflow_run_reply
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage
 from mesiri_contracts.assistant.planner_decision import PlannerDecisionType
 from mesiri_contracts.assistant.understanding_result import UnderstandingResult
@@ -19,7 +20,6 @@ from mesiri_contracts.assistant.v2.resolved_context import ResolvedContextV2
 from planner import Planner, log_planner_decision
 from understanding.pipeline import UnderstandingPipeline
 from workflows import WorkflowRunResult, WorkflowRunStatus, WorkflowRuntime, log_workflow_run
-from interactions.response_handler import render_workflow_run_reply
 
 _log = logging.getLogger("mesiri.inbound_journey")
 
