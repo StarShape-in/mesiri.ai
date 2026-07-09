@@ -13,9 +13,15 @@ from datetime import UTC, datetime
 
 from context import seed
 from context.resolver import ContextResolver
+from interactions.handler import InteractionHandler
 from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
 from mesiri_ai import fixtures
-from mesiri_ai.fakes import FakeExtractionProvider, FakeSpeechProvider, FakeVisionProvider
+from mesiri_ai.fakes import (
+    FakeExtractionProvider,
+    FakeSpeechProvider,
+    FakeTranslationProvider,
+    FakeVisionProvider,
+)
 from mesiri_contracts.assistant.enums import InputModality
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage, SenderInfo
 from mesiri_contracts.assistant.understanding_result import UnderstandingResult
@@ -46,8 +52,13 @@ def _pipeline() -> UnderstandingPipeline:
         speech=FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
         vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
         extraction=FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION),
+        translation=FakeTranslationProvider(),
         object_storage=FakeObjectStorage(),
     )
+
+
+def _interaction_handler() -> InteractionHandler:
+    return InteractionHandler(workflow_runtime=_workflow_runtime())
 
 
 def _resolver() -> ContextResolver:
@@ -76,10 +87,12 @@ async def test_trace_logger_captures_all_stages_on_success():
 
     await process_inbound_message(
         message,
+        seed.WA_ENGINEER,
         pipeline=_pipeline(),
         context_resolver=_resolver(),
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
+        interaction_handler=_interaction_handler(),
         reply_sender=reply,
         send_text=_noop_send_text,
         message_logger=mlog,
@@ -113,10 +126,12 @@ async def test_trace_logger_captures_context_failure():
 
     await process_inbound_message(
         message,
+        seed.WA_ENGINEER,
         pipeline=_pipeline(),
         context_resolver=_resolver(),
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
+        interaction_handler=_interaction_handler(),
         reply_sender=reply,
         send_text=_noop_send_text,
         message_logger=mlog,
@@ -157,10 +172,12 @@ async def test_trace_logger_captures_workflow_stage():
 
     await process_inbound_message(
         message,
+        seed.WA_ENGINEER,
         pipeline=_pipeline(),
         context_resolver=_resolver(),
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
+        interaction_handler=_interaction_handler(),
         reply_sender=reply,
         send_text=_noop_send_text,
         message_logger=mlog,
@@ -199,10 +216,12 @@ async def test_logger_failure_does_not_break_pipeline():
     # Must not raise
     result = await process_inbound_message(
         message,
+        seed.WA_ENGINEER,
         pipeline=_pipeline(),
         context_resolver=_resolver(),
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
+        interaction_handler=_interaction_handler(),
         reply_sender=capture_reply,
         send_text=_noop_send_text,
         message_logger=ExplosiveMessageLogger(),
@@ -222,10 +241,12 @@ async def test_no_loggers_does_not_break():
 
     result = await process_inbound_message(
         message,
+        seed.WA_ENGINEER,
         pipeline=_pipeline(),
         context_resolver=_resolver(),
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
+        interaction_handler=_interaction_handler(),
         reply_sender=reply,
         send_text=_noop_send_text,
     )

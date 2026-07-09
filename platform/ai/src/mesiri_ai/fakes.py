@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 
-from .models import ExtractionResult, SpeechResult, VisionResult
+from .models import ExtractionResult, SpeechResult, TranslationResult, VisionResult
 
 
 class FakeSpeechProvider:
@@ -90,3 +90,36 @@ class FakeExtractionProvider:
             raise self._error
         assert self._result is not None, "FakeExtractionProvider needs a result or an error"
         return self._result
+
+
+class FakeTranslationProvider:
+    def __init__(
+        self,
+        result: TranslationResult | None = None,
+        *,
+        error: BaseException | None = None,
+        delay_seconds: float = 0.0,
+    ) -> None:
+        self._result = result
+        self._error = error
+        self._delay = delay_seconds
+        self.calls = 0
+
+    async def translate_to_english(
+        self, text: str, *, correlation_id: str | None = None
+    ) -> TranslationResult:
+        self.calls += 1
+        if self._delay:
+            import asyncio
+
+            await asyncio.sleep(self._delay)
+        if self._error is not None:
+            raise self._error
+        if self._result is not None:
+            return self._result
+        return TranslationResult(
+            translated_text=text,
+            detected_language="FakeLang",
+            model="fake",
+            latency_ms=10.0,
+        )
