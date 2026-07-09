@@ -18,8 +18,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from context import seed
-from context.identity_bridge import build_fake_bridge_from_seed, deterministic_canonical_uuid as canon
 from context.active_context import RedisActiveContextStore
+from context.identity_bridge import build_fake_bridge_from_seed
+from context.identity_bridge import deterministic_canonical_uuid as canon
 from context.postgres_repositories import (
     PostgresContextPreferenceRepository,
     PostgresExternalIdentityRepository,

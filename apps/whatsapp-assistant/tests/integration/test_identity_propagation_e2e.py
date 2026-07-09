@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 import pytest
 
 from canonicalization import build_canonical_event
+from context.active_context import RedisActiveContextStore
 from context.identity_bridge import (
     PostgresIdentityBridgeRepository,
     context_organization_id,
@@ -15,21 +16,19 @@ from context.identity_bridge import (
 )
 from context.identity_projection import IdentityProjectionService
 from context.postgres_repositories import (
+    PostgresContextPreferenceRepository,
     PostgresExternalIdentityRepository,
     PostgresMembershipRepository,
     PostgresProjectRepository,
     PostgresRolePermissionRepository,
     PostgresSiteRepository,
-    PostgresContextPreferenceRepository,
 )
 from context.reply_context import NullReplyContextProvider
 from context.resolver import ContextDependencies, ContextResolver
 from context.workflow_context import NullWorkflowContextProvider
-from context.active_context import RedisActiveContextStore
 from mesiri.bootstrap.settings import Settings
 from mesiri.infrastructure.redis.client import RedisClient
 from mesiri_contracts.assistant.candidates import MaterialUpdateCandidate
-from mesiri_contracts.assistant.canonical_event import IntentCompleteness
 from mesiri_contracts.assistant.enums import InputModality, SemanticType
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage, SenderInfo
 from mesiri_contracts.assistant.planner_decision import PlannerDecisionType, WorkflowKey
@@ -156,8 +155,8 @@ async def test_v2_identity_propagates_to_workflow_state(identity_world) -> None:
     assert decision.decision_type is PlannerDecisionType.START_WORKFLOW
     assert decision.workflow_key is WorkflowKey.MATERIAL_RECEIPT
 
-    from mesiri_contracts.assistant.v2.draft_action import DraftActionV2
     from mesiri_contracts.assistant.draft_action import DraftActionType
+    from mesiri_contracts.assistant.v2.draft_action import DraftActionV2
 
     draft = DraftActionV2(
         draft_id="draft_e2e",

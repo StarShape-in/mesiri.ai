@@ -18,7 +18,6 @@ from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
 from planner import Planner
 from planner.routing import WORKFLOW_KEY_BY_EVENT
 
-
 ORG = "11111111-1111-4111-8111-111111111111"
 USR = "22222222-2222-4222-8222-222222222222"
 PRJ = "33333333-3333-4333-8333-333333333333"
