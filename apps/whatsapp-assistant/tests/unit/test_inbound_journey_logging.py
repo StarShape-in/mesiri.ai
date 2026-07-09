@@ -10,9 +10,6 @@ Verifies that:
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock
-
-import pytest
 
 from context import seed
 from context.resolver import ContextResolver

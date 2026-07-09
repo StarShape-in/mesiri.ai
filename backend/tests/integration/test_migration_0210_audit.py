@@ -87,7 +87,6 @@ async def test_0210_inbound_messages_table_exists(engine) -> None:
     """G4: inbound_messages table is created."""
     if await _db_rev(engine) < "0210":
         pytest.skip("database below 0210")
-    from sqlalchemy import text
 
     expected_cols = {
         "id", "correlation_id", "sender_wa_id", "message_type",
