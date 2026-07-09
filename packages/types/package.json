@@ -4,7 +4,7 @@
   "private": true,
   "main": "src/index.ts",
   "scripts": {
-    "lint": "eslint src/",
+    "lint": "eslint --no-error-on-unmatched-pattern src/",
     "typecheck": "tsc --noEmit"
   }
 }
