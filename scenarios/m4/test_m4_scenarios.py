@@ -15,6 +15,7 @@ import pytest
 
 from context import seed
 from context.fakes import FakeActiveContextStore
+from context.identity_bridge import deterministic_canonical_uuid as canon
 from context.resolver import ContextResolver
 from context.service import ContextSwitchService
 from mesiri_contracts.assistant.candidates import EquipmentUsageCandidate
@@ -67,7 +68,8 @@ async def test_scenario_m4_002_engineer_single_project():
     """Given a single-project engineer, Then project auto-resolves via USER_DEFAULT."""
     r = ContextResolver(seed.build_dependencies())
     ctx = (await r.resolve(_msg(seed.WA_ENGINEER), _und())).unwrap()
-    assert ctx.project_id == seed.PROJ_ALPHA
+    assert ctx.context_project_id == seed.PROJ_ALPHA
+    assert ctx.project_id == canon(seed.PROJ_ALPHA)
     assert ctx.context_source == ContextSource.USER_DEFAULT
 
 
@@ -85,7 +87,8 @@ async def test_scenario_m4_004_director_multiple_projects_default():
     """Given a director with a default assignment, Then default project resolves."""
     r = ContextResolver(seed.build_dependencies())
     ctx = (await r.resolve(_msg(seed.WA_DIRECTOR), _und())).unwrap()
-    assert ctx.project_id == seed.PROJ_ALPHA
+    assert ctx.context_project_id == seed.PROJ_ALPHA
+    assert ctx.project_id == canon(seed.PROJ_ALPHA)
     assert ctx.context_source == ContextSource.USER_DEFAULT
 
 
@@ -93,7 +96,8 @@ async def test_scenario_m4_005_default_project_resolution():
     """Given the ABC director default = Airport, Then it resolves with MEDIUM confidence."""
     r = ContextResolver(seed.build_dependencies())
     ctx = (await r.resolve(_msg(seed.WA_ABC_DIRECTOR), _und())).unwrap()
-    assert ctx.project_id == seed.PROJ_AIRPORT
+    assert ctx.context_project_id == seed.PROJ_AIRPORT
+    assert ctx.project_id == canon(seed.PROJ_AIRPORT)
     assert ctx.context_confidence == ContextConfidence.MEDIUM
 
 
@@ -103,7 +107,8 @@ async def test_scenario_m4_006_explicit_project_resolution():
     ctx = (await r.resolve(
         _msg(seed.WA_DIRECTOR), _und({"project_name": "Project Beta"})
     )).unwrap()
-    assert ctx.project_id == seed.PROJ_BETA
+    assert ctx.context_project_id == seed.PROJ_BETA
+    assert ctx.project_id == canon(seed.PROJ_BETA)
     assert ctx.context_source == ContextSource.MESSAGE_EXPLICIT
     assert ctx.context_confidence == ContextConfidence.HIGH
 
@@ -114,8 +119,10 @@ async def test_scenario_m4_007_explicit_site_resolution():
     ctx = (await r.resolve(
         _msg(seed.WA_ABC_DIRECTOR), _und({"site_name": "Block A"})
     )).unwrap()
-    assert ctx.site_id == seed.SITE_BLOCK_A
-    assert ctx.project_id == seed.PROJ_MARINA
+    assert ctx.context_site_id == seed.SITE_BLOCK_A
+    assert ctx.site_id == canon(seed.SITE_BLOCK_A)
+    assert ctx.context_project_id == seed.PROJ_MARINA
+    assert ctx.project_id == canon(seed.PROJ_MARINA)
 
 
 async def test_scenario_m4_008_unauthorized_project():
@@ -165,7 +172,8 @@ async def test_scenario_m4_011_next_message_uses_active_context():
     ctx = (await r.resolve(
         _msg(seed.WA_ABC_DIRECTOR), _und({"equipment_name": "JCB", "duration_hours": 4})
     )).unwrap()
-    assert ctx.project_id == seed.PROJ_MARINA
+    assert ctx.context_project_id == seed.PROJ_MARINA
+    assert ctx.project_id == canon(seed.PROJ_MARINA)
     assert ctx.context_source == ContextSource.ACTIVE_CONTEXT
 
 
@@ -179,7 +187,8 @@ async def test_scenario_m4_012_reply_context_overrides_active_context():
         active_store=active, reply_mapping={"orig": (seed.PROJ_AIRPORT, None)}
     ))
     ctx = (await r.resolve(_msg(seed.WA_ABC_DIRECTOR, reply_to="orig"), _und())).unwrap()
-    assert ctx.project_id == seed.PROJ_AIRPORT
+    assert ctx.context_project_id == seed.PROJ_AIRPORT
+    assert ctx.project_id == canon(seed.PROJ_AIRPORT)
     assert ctx.context_source == ContextSource.REPLY_CONTEXT
 
 
@@ -194,7 +203,8 @@ async def test_scenario_m4_013_workflow_context_overrides_active_context():
         workflow_mapping={(seed.ABC_ORG, seed.ABC_DIRECTOR): (seed.PROJ_AIRPORT, None)},
     ))
     ctx = (await r.resolve(_msg(seed.WA_ABC_DIRECTOR), _und())).unwrap()
-    assert ctx.project_id == seed.PROJ_AIRPORT
+    assert ctx.context_project_id == seed.PROJ_AIRPORT
+    assert ctx.project_id == canon(seed.PROJ_AIRPORT)
     assert ctx.context_source == ContextSource.WORKFLOW_CONTEXT
 
 
@@ -230,7 +240,8 @@ async def test_scenario_m4_015_active_context_expires():
     r = ContextResolver(seed.build_dependencies(active_store=active))
     ctx = (await r.resolve(_msg(seed.WA_ABC_DIRECTOR), _und())).unwrap()
     # Expired active context ignored -> default (Airport) resolves.
-    assert ctx.project_id == seed.PROJ_AIRPORT
+    assert ctx.context_project_id == seed.PROJ_AIRPORT
+    assert ctx.project_id == canon(seed.PROJ_AIRPORT)
     assert ctx.context_source == ContextSource.USER_DEFAULT
 
 
@@ -267,7 +278,8 @@ async def test_scenario_m4_019_context_correction():
     ctx = (await r.resolve(
         _msg(seed.WA_ABC_DIRECTOR), _und({"project_name": "Airport Expansion"})
     )).unwrap()
-    assert ctx.project_id == seed.PROJ_AIRPORT
+    assert ctx.context_project_id == seed.PROJ_AIRPORT
+    assert ctx.project_id == canon(seed.PROJ_AIRPORT)
     assert ctx.context_source == ContextSource.MESSAGE_EXPLICIT
 
 

@@ -22,13 +22,13 @@ async def test_material_receipt_graph_runs_end_to_end():
     graph = build_material_graph()
 
     initial_state = {
-        "workflow_instance_id": "wf_test_1",
+        "workflow_instance_id": "11111111-1111-4111-8111-1111111111a1",
         "workflow_key": WorkflowKey.MATERIAL_RECEIPT.value,
         "correlation_id": "cor_test_1",
-        "organization_id": "org_1",
-        "user_id": "usr_1",
-        "project_id": "prj_1",
-        "site_id": "site_1",
+        "organization_id": "11111111-1111-4111-8111-111111111111",
+        "user_id": "22222222-2222-4222-8222-222222222222",
+        "project_id": "33333333-3333-4333-8333-333333333333",
+        "site_id": "44444444-4444-4444-8444-444444444444",
         "collected_fields": {"material_name": "cement", "quantity": 20, "unit": "bags"},
     }
 
@@ -47,11 +47,11 @@ async def test_material_usage_graph_runs_end_to_end():
     graph = build_material_graph()
 
     initial_state = {
-        "workflow_instance_id": "wf_test_2",
+        "workflow_instance_id": "11111111-1111-4111-8111-1111111111a2",
         "workflow_key": WorkflowKey.MATERIAL_USAGE.value,
         "correlation_id": "cor_test_2",
-        "organization_id": "org_1",
-        "user_id": "usr_1",
+        "organization_id": "11111111-1111-4111-8111-111111111111",
+        "user_id": "22222222-2222-4222-8222-222222222222",
         "collected_fields": {"material_name": "sand", "quantity": 5, "unit": "tons"},
     }
 
