@@ -4,11 +4,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-import pytest
-
+from context import seed
 from context.identity_bridge import FakeIdentityBridgeRepository
 from context.resolver import ContextResolver
-from context import seed
 from mesiri_contracts.assistant.enums import InputModality
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage, SenderInfo
 from mesiri_contracts.assistant.understanding_result import UnderstandingResult

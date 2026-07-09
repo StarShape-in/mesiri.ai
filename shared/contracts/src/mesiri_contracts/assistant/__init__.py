@@ -1,5 +1,6 @@
 """Assistant-facing shared contracts."""
 
+from mesiri_contracts.assistant import v2 as assistant_v2
 from mesiri_contracts.assistant.canonical_event import (
     CONTRACT_VERSION as CANONICAL_EVENT_VERSION,
 )
@@ -36,8 +37,6 @@ from mesiri_contracts.assistant.workflow_state import (
     CONTRACT_VERSION as WORKFLOW_STATE_VERSION,
 )
 from mesiri_contracts.assistant.workflow_state import WorkflowState
-
-from mesiri_contracts.assistant import v2 as assistant_v2
 
 __all__ = [
     "MediaReference",

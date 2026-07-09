@@ -17,7 +17,6 @@ Usage:
 from __future__ import annotations
 
 import os
-import sys
 import time
 
 import paramiko
@@ -150,7 +149,7 @@ def deploy() -> int:
         client,
         "cd /opt/mesiri/apps/whatsapp-assistant/src && "
         f"nohup {VENV}/uvicorn main:app --host 127.0.0.1 --port 8000 "
-        f"--env-file {ROOT}/.env > /tmp/mesiri_uvicorn.log 2>&1 &",
+        f"--env-file {REMOTE_ROOT}/.env > /tmp/mesiri_uvicorn.log 2>&1 &",
         label="Start uvicorn",
     )
     time.sleep(3)

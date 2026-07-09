@@ -5,9 +5,9 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from context import seed
-from context.identity_bridge import deterministic_canonical_uuid as canon
 from context.active_context import RedisActiveContextStore
 from context.fakes import FakeActiveContextStore
+from context.identity_bridge import deterministic_canonical_uuid as canon
 from context.resolver import ContextResolver
 from context.service import ContextSwitchService
 from mesiri_contracts.assistant.candidates import ExpenseCandidate
