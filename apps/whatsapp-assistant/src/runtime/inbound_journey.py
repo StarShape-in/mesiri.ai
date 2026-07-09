@@ -19,6 +19,7 @@ from mesiri_contracts.assistant.v2.resolved_context import ResolvedContextV2
 from planner import Planner, log_planner_decision
 from understanding.pipeline import UnderstandingPipeline
 from workflows import WorkflowRunResult, WorkflowRunStatus, WorkflowRuntime, log_workflow_run
+from interactions.response_handler import render_workflow_run_reply
 
 _log = logging.getLogger("mesiri.inbound_journey")
 
@@ -73,18 +74,13 @@ async def process_inbound_message(
             result.error.error_code if result.error else "unknown",
         )
 
-    if workflow_run is not None and workflow_run.status is WorkflowRunStatus.STARTED:
-        await send_text(message.sender.wa_id, workflow_run.pending_prompt)
-    elif (
-        workflow_run is not None
-        and workflow_run.status is WorkflowRunStatus.BLOCKED_PENDING_CONFIRMATION
+    if workflow_run is not None and workflow_run.status in (
+        WorkflowRunStatus.STARTED,
+        WorkflowRunStatus.BLOCKED_PENDING_CONFIRMATION,
     ):
-        # A new actionable intent arrived while a confirmation is still pending
-        # (single-active invariant). Ask the user to resolve that first, re-showing it.
         await send_text(
             message.sender.wa_id,
-            "⏳ Please finish the pending confirmation first:\n\n"
-            f"{workflow_run.pending_prompt}",
+            render_workflow_run_reply(workflow_run, pending_prompt=workflow_run.pending_prompt),
         )
     else:
         await reply_sender(message, understanding)

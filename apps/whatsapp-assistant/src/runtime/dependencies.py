@@ -89,7 +89,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         resolve_sender,
     )
     from context.runtime import build_context_resolver
-    from interactions import InteractionHandler
+    from interactions import InteractionHandler, build_interaction_handler
     from mesiri.bootstrap.settings import get_settings as _get_backend_settings
     from mesiri.infrastructure.objectstorage import build_object_storage
     from planner import Planner
@@ -126,7 +126,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     )
     # M7: resolves a confirmation reply into the pending workflow, or None
     # (fall through to the normal understanding journey).
-    interaction_handler = InteractionHandler(workflow_runtime)
+    interaction_handler = build_interaction_handler(workflow_runtime)
     sender = WhatsAppSender(
         client=http_client,
         access_token=settings.access_token,

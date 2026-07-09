@@ -17,6 +17,7 @@ from workflows import WorkflowResumeResult, WorkflowResumeStatus, WorkflowRuntim
 
 from .classifier import classify_reply
 from .policy import InteractionRoute, decide
+from .response_handler import render_resume_reply
 
 logger = logging.getLogger(__name__)
 
@@ -29,17 +30,7 @@ class InteractionHandled:
     reply_text: str
 
 
-def _render_reply(result: WorkflowResumeResult) -> str:
-    """Deterministic reply text. (Localization / templates move to a rendering
-    boundary later — kept minimal here, same as the M6 confirmation prompt.)"""
-    if result.status is WorkflowResumeStatus.CONFIRMED:
-        return "✅ Recorded. Thank you."
-    if result.status is WorkflowResumeStatus.REJECTED:
-        return "❌ Discarded. Nothing was recorded."
-    if result.status is WorkflowResumeStatus.CANCELLED:
-        return "Cancelled. Nothing was recorded."
-    # ALREADY_RESOLVED (duplicate delivery / double reply) or NOT_RESUMABLE.
-    return "That request was already handled."
+
 
 
 class InteractionHandler:
@@ -74,4 +65,4 @@ class InteractionHandler:
             result.status.value,
             result.workflow_instance_id,
         )
-        return InteractionHandled(result=result, reply_text=_render_reply(result))
+        return InteractionHandled(result=result, reply_text=render_resume_reply(result))
