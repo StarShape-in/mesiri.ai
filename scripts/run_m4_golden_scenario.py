@@ -33,8 +33,8 @@ for _p in (
     sys.path.insert(0, os.path.join(_ROOT, _p))
 
 from context import seed  # noqa: E402
-from context.identity_bridge import deterministic_canonical_uuid as canon  # noqa: E402
 from context.active_context import RedisActiveContextStore  # noqa: E402
+from context.identity_bridge import deterministic_canonical_uuid as canon  # noqa: E402
 from context.resolver import ContextDependencies, ContextResolver  # noqa: E402
 from context.service import ContextSwitchService  # noqa: E402
 from mesiri.infrastructure.redis.client import FakeRedis  # noqa: E402
