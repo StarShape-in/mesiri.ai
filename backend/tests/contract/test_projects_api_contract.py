@@ -135,10 +135,10 @@ async def auth_token(test_user: uuid.UUID, test_org: uuid.UUID) -> str:
 async def test_get_projects_returns_canonical_contract(
     client: AsyncClient,
     test_engine: AsyncEngine,
-    test_org: uuid.UUID,
-    auth_token: str,
     clean_db,
+    test_org: uuid.UUID,
     test_user: uuid.UUID,
+    auth_token: str,
 ):
     """Verify response matches canonical contract with all fields."""
     # Create a project with all fields populated
@@ -215,10 +215,10 @@ async def test_get_projects_returns_canonical_contract(
 async def test_status_mapping_on_track_to_success(
     client: AsyncClient,
     test_engine: AsyncEngine,
-    test_org: uuid.UUID,
-    auth_token: str,
     clean_db,
+    test_org: uuid.UUID,
     test_user: uuid.UUID,
+    auth_token: str,
 ):
     """Verify on_track database status maps to success StatusType."""
     async with test_engine.begin() as conn:
@@ -247,10 +247,10 @@ async def test_status_mapping_on_track_to_success(
 async def test_status_mapping_critical_to_critical(
     client: AsyncClient,
     test_engine: AsyncEngine,
-    test_org: uuid.UUID,
-    auth_token: str,
     clean_db,
+    test_org: uuid.UUID,
     test_user: uuid.UUID,
+    auth_token: str,
 ):
     """Verify critical database status maps to critical StatusType."""
     async with test_engine.begin() as conn:
@@ -279,10 +279,10 @@ async def test_status_mapping_critical_to_critical(
 async def test_projects_ordered_by_name(
     client: AsyncClient,
     test_engine: AsyncEngine,
-    test_org: uuid.UUID,
-    auth_token: str,
     clean_db,
+    test_org: uuid.UUID,
     test_user: uuid.UUID,
+    auth_token: str,
 ):
     """Verify projects are returned ordered by name (ascending)."""
     async with test_engine.begin() as conn:
@@ -306,9 +306,9 @@ async def test_projects_ordered_by_name(
 @pytest.mark.integration
 async def test_empty_projects_returns_empty_list(
     client: AsyncClient,
-    auth_token: str,
     clean_db,
     test_user: uuid.UUID,
+    auth_token: str,
 ):
     """Verify empty result returns empty array, not error."""
     response = await client.get("/projects", headers={"Authorization": f"Bearer {auth_token}"})
@@ -321,10 +321,10 @@ async def test_empty_projects_returns_empty_list(
 async def test_null_optional_fields(
     client: AsyncClient,
     test_engine: AsyncEngine,
-    test_org: uuid.UUID,
-    auth_token: str,
     clean_db,
+    test_org: uuid.UUID,
     test_user: uuid.UUID,
+    auth_token: str,
 ):
     """Verify optional fields can be null."""
     async with test_engine.begin() as conn:
@@ -366,9 +366,9 @@ async def test_invalid_token_returns_401(client: AsyncClient):
 async def test_organization_isolation(
     client: AsyncClient,
     test_engine: AsyncEngine,
-    auth_token: str,
     clean_db,
     test_user: uuid.UUID,
+    auth_token: str,
 ):
     """Verify users only see projects in their organization."""
     # Create another organization with a project
