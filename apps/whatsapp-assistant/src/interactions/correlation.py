@@ -16,7 +16,6 @@ matching logic.
 from __future__ import annotations
 
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage
-
 from workflows.ports import LoadedWorkflowInstance
 
 

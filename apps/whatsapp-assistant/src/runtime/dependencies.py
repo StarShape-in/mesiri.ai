@@ -89,7 +89,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         resolve_sender,
     )
     from context.runtime import build_context_resolver
-    from interactions import InteractionHandler, build_interaction_handler
+    from interactions import build_interaction_handler
     from mesiri.bootstrap.settings import get_settings as _get_backend_settings
     from mesiri.infrastructure.objectstorage import build_object_storage
     from planner import Planner

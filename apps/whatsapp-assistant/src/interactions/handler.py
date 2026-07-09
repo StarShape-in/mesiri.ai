@@ -13,7 +13,7 @@ import logging
 from dataclasses import dataclass
 
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage
-from workflows import WorkflowResumeResult, WorkflowResumeStatus, WorkflowRuntime
+from workflows import WorkflowResumeResult, WorkflowRuntime
 
 from .classifier import classify_reply
 from .policy import InteractionRoute, decide
