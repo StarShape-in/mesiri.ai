@@ -1,6 +1,7 @@
 """Dump full schema (all columns) for every table on prod, plus any indexes."""
 
 from __future__ import annotations
+
 import paramiko
 
 HOST = "187.127.180.98"

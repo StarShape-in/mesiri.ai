@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import paramiko
 import time
+
+import paramiko
 
 HOST = "187.127.180.98"
 USER = "root"

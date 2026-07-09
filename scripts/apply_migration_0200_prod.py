@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import paramiko
 import time
+
+import paramiko
 
 HOST = "187.127.180.98"
 USER = "root"
@@ -40,7 +41,7 @@ def main() -> None:
 
     # 4. Run alembic upgrade to 0200 (try common config locations)
     # First try: alembic.ini at repo root or backend/
-    result = run(
+    run(
         client,
         "cd /opt/mesiri && /opt/mesiri/.venv/bin/alembic -c backend/alembic.ini upgrade 0200 2>&1 || "
         "/opt/mesiri/.venv/bin/alembic -c alembic.ini upgrade 0200 2>&1 || "

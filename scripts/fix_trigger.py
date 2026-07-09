@@ -1,8 +1,10 @@
 """Fix the set_updated_at trigger function + verify all triggers on prod."""
 
 from __future__ import annotations
-import paramiko
+
 import sys
+
+import paramiko
 
 HOST = "187.127.180.98"
 USER = "root"

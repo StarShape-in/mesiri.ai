@@ -1,9 +1,11 @@
 """Apply migration 0210 SQL directly to prod via paramiko with timeouts."""
 
 from __future__ import annotations
-import paramiko
+
 import sys
 import time
+
+import paramiko
 
 HOST = "187.127.180.98"
 USER = "root"
@@ -92,10 +94,12 @@ def main():
     print("\n-- G3 context updated_at + triggers --")
     for table in CONTEXT_TABLES:
         out, err = exec_sql(client, f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();")
-        if out: print(f"  {table}: {out[:60]}")
+        if out:
+            print(f"  {table}: {out[:60]}")
         out, err = exec_sql(client, f"DROP TRIGGER IF EXISTS trg_{table}_updated ON {table};")
         out, err = exec_sql(client, f"CREATE TRIGGER trg_{table}_updated BEFORE UPDATE ON {table} FOR EACH ROW EXECUTE FUNCTION set_updated_at();")
-        if out: print(f"  {table} trigger: {out[:60]}")
+        if out:
+            print(f"  {table} trigger: {out[:60]}")
 
     # G4: inbound_messages
     print("\n-- G4 inbound_messages --")
@@ -126,7 +130,8 @@ def main():
         "CREATE INDEX IF NOT EXISTS ix_inbound_messages_received_at ON inbound_messages (received_at);",
     ]:
         out, err = exec_sql(client, idx_sql)
-        if out: print(f"  {out[:60]}")
+        if out:
+            print(f"  {out[:60]}")
 
     # G5: journey_traces
     print("\n-- G5 journey_traces --")
@@ -147,7 +152,8 @@ def main():
         "CREATE INDEX IF NOT EXISTS ix_journey_traces_correlation_stage ON journey_traces (correlation_id, stage);",
     ]:
         out, err = exec_sql(client, idx_sql)
-        if out: print(f"  {out[:60]}")
+        if out:
+            print(f"  {out[:60]}")
 
     # Update alembic version
     print("\n-- Update alembic_version to 0210 --")

@@ -1,6 +1,7 @@
 """Fetch the prod postgres password from the .env file on the VPS."""
 
 from __future__ import annotations
+
 import paramiko
 
 HOST = "187.127.180.98"
