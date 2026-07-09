@@ -15,6 +15,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from ingress.deduplication import InMemoryDeduplicationStore
 from ingress.media_ingestion import MetaMediaDownloader
 from ingress.receiver import InMemoryNormalizedMessageStore, WhatsAppReceiver
+from runtime.logging_ports import MessageLogger, TraceLogger
 
 if TYPE_CHECKING:
     from context.resolver import ContextResolver
@@ -60,6 +61,8 @@ class AppContainer:
     # or FakeRedis for local/test.  Both expose connect() / disconnect() so the
     # lifespan handler can manage the lifecycle without special-casing.
     redis_client: Any
+    message_logger: MessageLogger
+    trace_logger: TraceLogger
 
 
 def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppContainer:
@@ -79,6 +82,8 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     # M4 identity gate, then M2 -> M3 -> M4 Context resolver -> reply.
     import logging as _logging
 
+    from backend.postgres.message_logger import PostgresMessageLogger
+    from backend.postgres.trace_logger import PostgresTraceLogger
     from backend.postgres.actor import PostgresActorReader
     from backend.postgres.workflow_instance import PostgresWorkflowInstanceRepository
     from channel.whatsapp.outbound import WhatsAppSender
@@ -137,12 +142,26 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
 
     # Backend capability boundary: create once, reuse the connection pool.
     actor_reader = PostgresActorReader()
+    message_logger: MessageLogger = PostgresMessageLogger()
+    trace_logger: TraceLogger = PostgresTraceLogger()
 
     async def _send_understanding_reply(message, understanding) -> None:  # type: ignore[no-untyped-def]
         await sender.send_text(message.sender.wa_id, format_reply(understanding))
 
     async def _on_normalized(message) -> None:  # type: ignore[no-untyped-def]
         wa_id = message.sender.wa_id
+
+        # Best-effort inbound message log (for debugging/replay).
+        await message_logger.log_received(
+            correlation_id=message.correlation_id,
+            sender_wa_id=wa_id,
+            message_type=message.message_type.value if hasattr(message.message_type, "value") else str(message.message_type),
+            raw_payload=getattr(message, "raw_payload", {}),
+            normalized_message=message.model_dump(mode="json") if hasattr(message, "model_dump") else None,
+            body_text=getattr(message, "body_text", None),
+            media_object_key=getattr(message, "media_object_key", None),
+            dedup_key=getattr(message, "message_id", message.correlation_id),
+        )
 
         # M4: resolve the sender before spending on understanding.
         try:
@@ -194,6 +213,8 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             reply_sender=_send_understanding_reply,
             send_text=sender.send_text,
             context_debug=settings.context_debug,
+            message_logger=message_logger,
+            trace_logger=trace_logger,
         )
 
     receiver = WhatsAppReceiver(
@@ -214,6 +235,8 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         workflow_runtime=workflow_runtime,
         interaction_handler=interaction_handler,
         redis_client=redis_client,
+        message_logger=message_logger,
+        trace_logger=trace_logger,
     )
 
 
