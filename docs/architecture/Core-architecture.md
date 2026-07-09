@@ -130,6 +130,9 @@ Timeline / Analytics / Notifications / Dashboard
 
 ```
 
+> **See ADR-002:** identity resolution runs as a lightweight pre-check before
+> Understanding in the live implementation (`resolve_sender` in `dependencies.py`).
+
 ## Contract flow (what travels between layers)
 
 ```
@@ -295,13 +298,15 @@ no event is ever lost, even on a crash between write and publish.
 
 - `NormalizedMessage.v1`
 - `UnderstandingResult.v1`
-- `ResolvedContext.v1`
-- `CanonicalEvent.v1`
-- `PlannerDecision.v1`
-- `ApplicationCommand.v1`
-- `DomainEvent.v1`
+- `ResolvedContext.v2`      (v1 deprecated — see ADR-001)
+- `CanonicalEvent.v2`       (v1 deprecated — see ADR-001)
+- `PlannerDecision.v2`      (v1 deprecated — see ADR-001)
+- `ApplicationCommand.v1`   (not yet implemented)
+- `DomainEvent.v1`          (not yet implemented)
 
-These evolve only through versioning (`.v2`, etc.), never breaking changes in place.
+These evolve only through versioning (`.v2`, `.v3`, ...), never breaking
+changes in place. Deprecated versions are documented, not silently
+deleted, until confirmed unused in production.
 
 ---
 
@@ -340,6 +345,68 @@ then Expense, Labour, Equipment
 Phase 3 — Multi-tenancy hardening, observability, production readiness
 
 ```
+
+## ADR-001: v2 contracts superseded v1 before v1 ever shipped
+
+**Status:** Accepted
+
+**Context:** This document originally named `ResolvedContext.v1`,
+`CanonicalEvent.v1`, and `PlannerDecision.v1` as frozen. During
+implementation, all three were revised to v2 shapes. The v1 classes
+still exist in `shared/contracts` and are largely unused in the
+runtime path (`context/service.py` retains a v1 import that should be
+cleaned up in a future pass).
+
+**Decision:** v2 is the canonical, in-use version of each contract.
+v1 classes are kept as dead code for now and should be deleted in a
+future cleanup pass. This document now reflects v2 as canonical.
+
+**Consequence:** Anyone extending these contracts branches from the
+v2 shape, not v1.
+
+---
+
+## ADR-002: Identity gate runs before Understanding
+
+**Status:** Accepted
+
+**Context:** The canonical pipeline as originally documented runs
+Ingress → Understanding → Context. The actual runtime resolves sender
+identity (`resolve_sender` in `dependencies.py`) before Understanding
+executes, so unregistered senders never trigger the AI pipeline.
+
+**Decision:** This ordering is intentional and correct — it avoids
+spending AI provider calls on unauthenticated/unregistered senders.
+The canonical pipeline diagram is updated to show identity resolution
+as a lightweight pre-check before Understanding, distinct from the
+full Context resolution step that still happens after Understanding.
+
+**Consequence:** Future contributors should not "fix" this back to the
+original documented order.
+
+---
+
+## ADR-003: LangGraph runs without a checkpointer in v1
+
+**Status:** Accepted (revisit in Phase 3)
+
+**Context:** The architecture states LangGraph owns state, transitions,
+and pause/resume. The current Material graph is compiled without a
+checkpointer and runs start-to-end in a single invocation
+(`build_draft` → `request_confirmation`). All state durability is
+handled by `PostgresWorkflowInstanceRepository` outside LangGraph.
+
+**Decision:** Acceptable for v1 because Material's confirmation flow
+is single-turn (confirm/reject only, no mid-graph clarification
+questions). Do not add a checkpointer until a workflow genuinely
+requires multi-turn, mid-graph state.
+
+**Consequence:** Any future workflow needing branching or follow-up
+questions mid-conversation will need a checkpointer added at that
+point — flag this explicitly when designing Equipment, Labour, or
+Expense if they need that pattern.
+
+---
 
 ## Change policy
 
