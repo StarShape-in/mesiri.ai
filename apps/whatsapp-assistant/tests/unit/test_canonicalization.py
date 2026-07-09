@@ -7,10 +7,8 @@ import pytest
 from canonicalization import build_canonical_event
 from mesiri_contracts.assistant.candidates import (
     Candidate,
-    EquipmentUsageCandidate,
     ExpenseCandidate,
     GeneralQuestionCandidate,
-    LabourUpdateCandidate,
     MaterialUpdateCandidate,
 )
 from mesiri_contracts.assistant.canonical_event import CanonicalEventType, IntentCompleteness

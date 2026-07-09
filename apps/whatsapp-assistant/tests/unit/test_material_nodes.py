@@ -8,7 +8,6 @@ from mesiri_contracts.assistant.draft_action import DraftActionType
 from mesiri_contracts.assistant.planner_decision import WorkflowKey
 from workflows.material.nodes import build_draft, request_confirmation
 
-
 ORG = "11111111-1111-4111-8111-111111111111"
 USR = "22222222-2222-4222-8222-222222222222"
 PRJ = "33333333-3333-4333-8333-333333333333"

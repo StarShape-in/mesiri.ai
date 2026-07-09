@@ -19,8 +19,8 @@ from mesiri.observability import tracing
 from mesiri.observability.logging import get_logger
 from mesiri_contracts.assistant.context_enums import ContextConfidence, ContextSource
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage
-from mesiri_contracts.assistant.v2.resolved_context import ResolvedContextV2
 from mesiri_contracts.assistant.understanding_result import UnderstandingResult
+from mesiri_contracts.assistant.v2.resolved_context import ResolvedContextV2
 from mesiri_contracts.common.errors import MesiriError
 from mesiri_contracts.common.result import Result
 
