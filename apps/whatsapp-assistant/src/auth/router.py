@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 import bcrypt as _bcrypt
 import jwt
 import sqlalchemy as sa
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -87,6 +87,15 @@ class Token(BaseModel):
     token_type: str = "bearer"
 
 
+class Me(BaseModel):
+    user_id: str
+    org_id: str
+    role: str
+    name: str
+    org_name: str
+    is_platform_admin: bool
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -153,6 +162,26 @@ async def login(creds: UserLogin):
         org_name=row.org_name or "Independent",
     )
     return Token(access_token=token)
+
+
+@router.get("/me", response_model=Me)
+async def me(authorization: str = Header(None)) -> Me:
+    """Confirms a stored token is still valid and returns the server-verified
+    identity — the frontend must never authorize UI behavior off a
+    client-decoded JWT, only off this response."""
+    from mesiri.domains.shared.auth import get_current_user
+
+    payload = await get_current_user(authorization)
+    org = payload.get("org") or ""
+    role = (payload.get("role") or "").upper()
+    return Me(
+        user_id=payload.get("sub", ""),
+        org_id=org,
+        role=role,
+        name=payload.get("name", ""),
+        org_name=payload.get("org_name", ""),
+        is_platform_admin=role == "ADMIN" and not org,
+    )
 
 
 @router.post("/register", response_model=Token)

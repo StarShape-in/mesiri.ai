@@ -1,17 +1,21 @@
 import { useEffect, useState } from 'react';
-import axios from 'axios';
 import { Routes, Route, NavLink } from 'react-router-dom';
-import { 
-  Building2, 
-  LayoutDashboard, 
-  Users, 
-  Settings, 
+import {
+  Building2,
+  LayoutDashboard,
+  Users,
+  Settings,
   Plus,
   Server,
   Cloud,
   TrendingUp,
-  Activity
+  Activity,
+  ScrollText
 } from 'lucide-react';
+import { api } from './api';
+import { RequireAuth } from './AuthContext';
+import Login from './Login';
+import Logs from './Logs';
 
 const Sidebar = () => (
   <div className="sidebar">
@@ -30,6 +34,10 @@ const Sidebar = () => (
       <NavLink to="/organizations" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
         <Building2 size={16} />
         Organizations
+      </NavLink>
+      <NavLink to="/logs" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+        <ScrollText size={16} />
+        Assistant Logs
       </NavLink>
       <NavLink to="/users" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
         <Users size={16} />
@@ -127,7 +135,7 @@ const Organizations = () => {
 
   const fetchOrgs = () => {
     setLoading(true);
-    axios.get('https://mercon.tech/admin/organizations')
+    api.get('/admin/organizations')
       .then(res => setOrgs(res.data))
       .catch(err => console.error("Failed to fetch organizations", err))
       .finally(() => setLoading(false));
@@ -140,7 +148,7 @@ const Organizations = () => {
   const handleProvision = (e: React.FormEvent) => {
     e.preventDefault();
     setProvisioning(true);
-    axios.post('https://mercon.tech/admin/organizations/provision', formData)
+    api.post('/admin/organizations/provision', formData)
       .then(() => {
         setIsModalOpen(false);
         setFormData({
@@ -262,18 +270,30 @@ const Organizations = () => {
   );
 };
 
+function AppLayout() {
+  return (
+    <RequireAuth>
+      <div className="app-container">
+        <Sidebar />
+        <main className="main-content">
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/organizations" element={<Organizations />} />
+            <Route path="/logs" element={<Logs />} />
+            <Route path="*" element={<Dashboard />} />
+          </Routes>
+        </main>
+      </div>
+    </RequireAuth>
+  );
+}
+
 function App() {
   return (
-    <div className="app-container">
-      <Sidebar />
-      <main className="main-content">
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/organizations" element={<Organizations />} />
-          <Route path="*" element={<Dashboard />} />
-        </Routes>
-      </main>
-    </div>
+    <Routes>
+      <Route path="/login" element={<Login />} />
+      <Route path="/*" element={<AppLayout />} />
+    </Routes>
   );
 }
 

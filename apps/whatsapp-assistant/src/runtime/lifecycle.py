@@ -73,6 +73,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         logging.getLogger(__name__).warning("Admin router not loaded: %s", exc)
 
+    # WhatsApp assistant log viewer (platform-admin only)
+    try:
+        from admin.logs_router import router as logs_router
+
+        app.include_router(logs_router)
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("Logs router not loaded: %s", exc)
+
     # Auth routes (mobile app login/register)
     try:
         from auth.router import router as auth_router

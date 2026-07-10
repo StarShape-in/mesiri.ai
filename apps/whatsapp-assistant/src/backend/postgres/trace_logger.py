@@ -79,3 +79,24 @@ class PostgresTraceLogger:
                 )
         except Exception:  # noqa: BLE001
             _log.exception("trace_logger.log_stage failed correlation_id=%s stage=%s", correlation_id, stage)
+
+    async def get_by_correlation_id(self, correlation_id: str) -> list[dict[str, Any]]:
+        """Read path for the control-panel logs viewer's per-message trace
+        drawer. `stage_payload` is deliberately excluded from the SELECT list
+        (not just hidden client-side) — it can carry arbitrary AI/provider
+        output and potentially sensitive context. A query failure here is NOT
+        swallowed, unlike the write methods above."""
+        from sqlalchemy import text
+
+        async with self._get_engine().connect() as conn:
+            rows = (
+                await conn.execute(
+                    text(
+                        "SELECT stage, succeeded, duration_ms, error_code, error_message, created_at "
+                        "FROM journey_traces WHERE correlation_id = :correlation_id "
+                        "ORDER BY created_at ASC"
+                    ),
+                    {"correlation_id": correlation_id},
+                )
+            ).mappings().all()
+        return [dict(row) for row in rows]

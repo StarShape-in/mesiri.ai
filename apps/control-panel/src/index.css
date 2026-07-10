@@ -309,6 +309,11 @@ tr:hover td {
   color: var(--info);
 }
 
+.badge-error {
+  background-color: var(--error-soft);
+  color: var(--error);
+}
+
 /* Logo */
 .logo-container {
   display: flex;

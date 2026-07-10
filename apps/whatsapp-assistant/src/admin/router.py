@@ -7,9 +7,11 @@ import uuid
 from datetime import datetime
 
 import sqlalchemy as sa
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import create_async_engine
+
+from mesiri.domains.shared.auth import require_platform_admin
 
 router = APIRouter(prefix="/admin/organizations", tags=["admin"])
 
@@ -104,7 +106,7 @@ def _hash_password(plain: str) -> str:
 # Routes
 # ---------------------------------------------------------------------------
 @router.get("", response_model=list[OrganizationResponse])
-async def list_organizations():
+async def list_organizations(_admin: dict = Depends(require_platform_admin)):
     engine = get_engine()
     async with engine.connect() as conn:
         result = await conn.execute(sa.select(organizations_table))
@@ -124,7 +126,9 @@ async def list_organizations():
 
 
 @router.post("/provision", response_model=OrganizationResponse)
-async def provision_tenant(prov_in: OrganizationProvision):
+async def provision_tenant(
+    prov_in: OrganizationProvision, _admin: dict = Depends(require_platform_admin)
+):
     engine = get_engine()
     org_id = uuid.uuid4()
     user_id = uuid.uuid4()

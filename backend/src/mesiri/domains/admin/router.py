@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from mesiri.domains.shared.auth import require_platform_admin
 from mesiri.infrastructure.postgres.dependency import get_db_conn
 from mesiri.infrastructure.postgres.models.organization import (
     DeploymentType,
@@ -38,7 +39,9 @@ class OrganizationResponse(BaseModel):
 
 @router.post("", response_model=OrganizationResponse)
 async def create_organization(
-    org_in: OrganizationCreate, conn: AsyncConnection = Depends(get_db_conn)
+    org_in: OrganizationCreate,
+    conn: AsyncConnection = Depends(get_db_conn),
+    _admin: dict = Depends(require_platform_admin),
 ):
     stmt = (
         insert(OrganizationModel)
@@ -62,7 +65,10 @@ async def create_organization(
 
 
 @router.get("", response_model=list[OrganizationResponse])
-async def list_organizations(conn: AsyncConnection = Depends(get_db_conn)):
+async def list_organizations(
+    conn: AsyncConnection = Depends(get_db_conn),
+    _admin: dict = Depends(require_platform_admin),
+):
     result = await conn.execute(select(OrganizationModel))
     orgs = result.scalars().all()
     return orgs
@@ -79,7 +85,9 @@ class OrganizationProvision(BaseModel):
 
 @router.post("/provision", response_model=OrganizationResponse)
 async def provision_tenant(
-    prov_in: OrganizationProvision, conn: AsyncConnection = Depends(get_db_conn)
+    prov_in: OrganizationProvision,
+    conn: AsyncConnection = Depends(get_db_conn),
+    _admin: dict = Depends(require_platform_admin),
 ):
     # 1. Create Organization
     stmt_org = (

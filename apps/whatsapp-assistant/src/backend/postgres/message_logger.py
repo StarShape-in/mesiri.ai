@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime
 from typing import Any
 
 _log = logging.getLogger("mesiri.message_logger")
+
+_BODY_PREVIEW_LEN = 200
 
 
 def _build_engine():
@@ -115,3 +118,53 @@ class PostgresMessageLogger:
                 )
         except Exception:  # noqa: BLE001
             _log.exception("message_logger.mark_failed failed correlation_id=%s", correlation_id)
+
+    async def list_recent(
+        self,
+        *,
+        wa_id: str | None = None,
+        status: str | None = None,
+        since_received_at: datetime | None = None,
+        since_id: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Read path for the control-panel logs viewer.
+
+        Two shapes: with no cursor, the most recent `limit` messages (history/
+        first page, newest first). With `since_received_at` (+`since_id` as a
+        tiebreaker), only messages strictly after that point, oldest first —
+        a proper cursor for live polling that's immune to new inserts shifting
+        an OFFSET out from under the caller. `body_text` is truncated to a
+        preview server-side; full message content is never returned here.
+        Unlike the write methods above, a query failure here is NOT swallowed
+        — the caller (an authenticated API endpoint) should see a real error.
+        """
+        from sqlalchemy import text
+
+        where = ["(:wa_id IS NULL OR sender_wa_id = :wa_id)", "(:status IS NULL OR processing_status = :status)"]
+        params: dict[str, Any] = {"wa_id": wa_id, "status": status, "limit": limit}
+
+        if since_received_at is not None:
+            where.append(
+                "(received_at > :since_received_at "
+                "OR (received_at = :since_received_at AND id > :since_id))"
+            )
+            params["since_received_at"] = since_received_at
+            params["since_id"] = uuid.UUID(since_id) if since_id else uuid.UUID(int=0)
+            order_by = "received_at ASC, id ASC"
+        else:
+            order_by = "received_at DESC, id DESC"
+
+        query = (
+            "SELECT id, correlation_id, sender_wa_id, message_type, "
+            f"LEFT(COALESCE(body_text, ''), {_BODY_PREVIEW_LEN}) AS body_preview, "
+            "processing_status, error_code, received_at, processed_at "
+            "FROM inbound_messages "
+            f"WHERE {' AND '.join(where)} "
+            f"ORDER BY {order_by} "
+            "LIMIT :limit"
+        )
+
+        async with self._get_engine().connect() as conn:
+            rows = (await conn.execute(text(query), params)).mappings().all()
+        return [dict(row) for row in rows]

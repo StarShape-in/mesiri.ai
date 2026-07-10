@@ -23,3 +23,18 @@ async def require_admin(payload: dict = Depends(get_current_user)) -> dict:
     if role != "ADMIN":
         raise HTTPException(status_code=403, detail="Admin access required")
     return payload
+
+
+async def require_platform_admin(payload: dict = Depends(get_current_user)) -> dict:
+    """Platform-wide operator, distinct from a tenant's own org ADMIN.
+
+    A platform admin is a user with role=ADMIN and no organization_id — the
+    JWT encodes an empty `org` claim in that case (see auth/router.py's
+    _create_token). Tenant org admins must not be able to provision other
+    tenants or read another organization's WhatsApp message content.
+    """
+    role = (payload.get("role") or "").upper()
+    org = payload.get("org")
+    if role != "ADMIN" or org:
+        raise HTTPException(status_code=403, detail="Platform admin access required")
+    return payload
