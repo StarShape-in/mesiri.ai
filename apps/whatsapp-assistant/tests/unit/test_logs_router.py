@@ -25,11 +25,12 @@ MSG_ID = "11111111-1111-4111-8111-111111111111"
 @dataclass
 class FakeMessageLogger:
     rows: list[dict[str, Any]] = field(default_factory=list)
+    total: int | None = None
     last_call_kwargs: dict[str, Any] | None = None
 
-    async def list_recent(self, **kwargs: Any) -> list[dict[str, Any]]:
+    async def list_recent(self, **kwargs: Any) -> tuple[list[dict[str, Any]], int | None]:
         self.last_call_kwargs = kwargs
-        return self.rows
+        return self.rows, self.total
 
 
 @dataclass
@@ -106,10 +107,10 @@ async def test_list_messages_accepts_platform_admin_and_returns_body_preview_onl
 
     assert resp.status_code == 200
     body = resp.json()
-    assert len(body) == 1
-    assert body[0]["body_preview"] == "20 bags of cement arrived"
-    assert "body_text" not in body[0]
-    assert "raw_payload" not in body[0]
+    assert len(body["items"]) == 1
+    assert body["items"][0]["body_preview"] == "20 bags of cement arrived"
+    assert "body_text" not in body["items"][0]
+    assert "raw_payload" not in body["items"][0]
 
 
 async def test_list_messages_passes_filters_and_cursor_through():

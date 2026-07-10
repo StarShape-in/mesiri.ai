@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Literal
 from uuid import UUID
@@ -179,8 +180,12 @@ class IdentityProjectionService:
                 {"id": membership_id, "org_id": org_ctx, "user_id": ctx_id},
             )
         wa = row["whatsapp_number"]
-        if wa:
-            ext_id = f"ext_{WHATSAPP_PROVIDER}_{wa}"
+        # The Meta webhook delivers wa_id as digits only (no "+", no spaces),
+        # so the stored external_subject must match that exact shape or
+        # every lookup silently fails with UNKNOWN_EXTERNAL_IDENTITY.
+        digits = re.sub(r"\D", "", wa) if wa else ""
+        if digits:
+            ext_id = f"ext_{WHATSAPP_PROVIDER}_{digits}"
             conn.execute(
                 text(
                     """
@@ -192,7 +197,7 @@ class IdentityProjectionService:
                 {
                     "id": ext_id,
                     "provider": WHATSAPP_PROVIDER,
-                    "subject": wa,
+                    "subject": digits,
                     "user_id": ctx_id,
                 },
             )

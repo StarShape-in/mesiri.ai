@@ -48,10 +48,16 @@ class PostgresTraceLogger:
         succeeded: bool,
         error_code: str | None = None,
         error_message: str | None = None,
+        severity: str = "info",
+        event_source: str = "pipeline_stage",
     ) -> None:
         import json
 
         from sqlalchemy import text
+
+        # A caller that doesn't say otherwise gets "info" on success and
+        # "error" on failure; an explicit severity (e.g. "warning") always wins.
+        resolved_severity = severity if severity != "info" or succeeded else "error"
 
         try:
             async with self._get_engine().begin() as conn:
@@ -59,10 +65,10 @@ class PostgresTraceLogger:
                     text(
                         "INSERT INTO journey_traces "
                         "(id, correlation_id, stage, stage_payload, duration_ms, "
-                        "succeeded, error_code, error_message) "
+                        "succeeded, error_code, error_message, severity, event_source) "
                         "VALUES (:id, :correlation_id, :stage, "
                         "CAST(:stage_payload AS jsonb), :duration_ms, :succeeded, "
-                        ":error_code, :error_message)"
+                        ":error_code, :error_message, :severity, :event_source)"
                     ),
                     {
                         "id": str(uuid.uuid4()),
@@ -75,25 +81,92 @@ class PostgresTraceLogger:
                         "succeeded": succeeded,
                         "error_code": error_code,
                         "error_message": error_message,
+                        "severity": resolved_severity,
+                        "event_source": event_source,
                     },
                 )
         except Exception:  # noqa: BLE001
             _log.exception("trace_logger.log_stage failed correlation_id=%s stage=%s", correlation_id, stage)
 
+    async def log_provider_execution(
+        self,
+        *,
+        correlation_id: str,
+        stage: str,
+        provider: str,
+        operation: str,
+        model: str | None,
+        latency_ms: float | None,
+        succeeded: bool,
+        error_code: str | None = None,
+    ) -> None:
+        from sqlalchemy import text
+
+        try:
+            async with self._get_engine().begin() as conn:
+                await conn.execute(
+                    text(
+                        "INSERT INTO provider_executions "
+                        "(id, correlation_id, stage, provider, operation, model, "
+                        "latency_ms, succeeded, error_code) "
+                        "VALUES (:id, :correlation_id, :stage, :provider, :operation, "
+                        ":model, :latency_ms, :succeeded, :error_code)"
+                    ),
+                    {
+                        "id": str(uuid.uuid4()),
+                        "correlation_id": correlation_id,
+                        "stage": stage,
+                        "provider": provider,
+                        "operation": operation,
+                        "model": model,
+                        "latency_ms": latency_ms,
+                        "succeeded": succeeded,
+                        "error_code": error_code,
+                    },
+                )
+        except Exception:  # noqa: BLE001
+            _log.exception(
+                "trace_logger.log_provider_execution failed correlation_id=%s provider=%s",
+                correlation_id,
+                provider,
+            )
+
     async def get_by_correlation_id(self, correlation_id: str) -> list[dict[str, Any]]:
         """Read path for the control-panel logs viewer's per-message trace
         drawer. `stage_payload` is deliberately excluded from the SELECT list
         (not just hidden client-side) — it can carry arbitrary AI/provider
-        output and potentially sensitive context. A query failure here is NOT
-        swallowed, unlike the write methods above."""
+        output and potentially sensitive context; provider/model attribution
+        is exposed separately and safely via ``get_provider_executions``. A
+        query failure here is NOT swallowed, unlike the write methods above."""
         from sqlalchemy import text
 
         async with self._get_engine().connect() as conn:
             rows = (
                 await conn.execute(
                     text(
-                        "SELECT stage, succeeded, duration_ms, error_code, error_message, created_at "
+                        "SELECT stage, succeeded, duration_ms, error_code, error_message, "
+                        "severity, event_source, created_at "
                         "FROM journey_traces WHERE correlation_id = :correlation_id "
+                        "ORDER BY created_at ASC"
+                    ),
+                    {"correlation_id": correlation_id},
+                )
+            ).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def get_provider_executions(self, correlation_id: str) -> list[dict[str, Any]]:
+        """Read path for the control-panel logs viewer's provider breakdown —
+        the safe, structured answer to "which LLM/API handled this message",
+        without ever needing to expose raw stage_payload contents."""
+        from sqlalchemy import text
+
+        async with self._get_engine().connect() as conn:
+            rows = (
+                await conn.execute(
+                    text(
+                        "SELECT stage, provider, operation, model, latency_ms, "
+                        "succeeded, error_code, created_at "
+                        "FROM provider_executions WHERE correlation_id = :correlation_id "
                         "ORDER BY created_at ASC"
                     ),
                     {"correlation_id": correlation_id},

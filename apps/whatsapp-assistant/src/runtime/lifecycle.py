@@ -83,6 +83,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         logging.getLogger(__name__).warning("Logs router not loaded: %s", exc)
 
+    # AI Providers visibility (platform-admin only)
+    try:
+        from mesiri.domains.admin.providers_router import router as providers_router
+
+        app.include_router(providers_router)
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("Providers router not loaded: %s", exc)
+
     # Platform-admin account management (platform-admin only)
     try:
         from admin.platform_users_router import router as platform_users_router

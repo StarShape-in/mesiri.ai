@@ -85,7 +85,7 @@ async def test_trace_logger_captures_all_stages_on_success():
     async def reply(msg, understanding):  # noqa: ANN001
         pass
 
-    await process_inbound_message(
+    result = await process_inbound_message(
         message,
         seed.WA_ENGINEER,
         pipeline=_pipeline(),
@@ -112,6 +112,10 @@ async def test_trace_logger_captures_all_stages_on_success():
 
     # Message should be marked completed
     assert "cor_logging_1" in mlog.completed
+
+    # Reply should be logged
+    assert len(mlog.replies) == 1
+    assert mlog.replies[0] == ("cor_logging_1", format_reply(result.understanding))
 
 
 async def test_trace_logger_captures_context_failure():
@@ -197,6 +201,9 @@ async def test_logger_failure_does_not_break_pipeline():
         async def log_stage(self, **kwargs):  # noqa: ANN001
             raise RuntimeError("log DB is down")
 
+        async def log_provider_execution(self, **kwargs):  # noqa: ANN001
+            raise RuntimeError("log DB is down")
+
     class ExplosiveMessageLogger:
         async def log_received(self, **kwargs):  # noqa: ANN001
             raise RuntimeError("log DB is down")
@@ -205,6 +212,9 @@ async def test_logger_failure_does_not_break_pipeline():
             raise RuntimeError("log DB is down")
 
         async def mark_failed(self, **kwargs):  # noqa: ANN001
+            raise RuntimeError("log DB is down")
+
+        async def log_reply(self, **kwargs):  # noqa: ANN001
             raise RuntimeError("log DB is down")
 
     message = _message()

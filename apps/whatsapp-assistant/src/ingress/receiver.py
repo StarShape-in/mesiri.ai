@@ -15,6 +15,8 @@ from ingress.media_ingestion import DownloadedMedia, MediaDownloader
 from ingress.normalization import MessageNormalizer
 from mesiri_contracts.assistant import NormalizedMessage
 from mesiri_contracts.common.storage import ObjectStoragePort
+from runtime.logging_ports import TraceLogger
+from runtime.noop_loggers import NoopTraceLogger
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +67,10 @@ class WhatsAppReceiver:
         message_store: NormalizedMessageStore,
         object_storage: ObjectStoragePort,
         normalizer: MessageNormalizer | None = None,
-        on_normalized: Callable[[NormalizedMessage], Awaitable[None]] | None = None,
+        on_normalized: (
+            Callable[[NormalizedMessage, Mapping[str, Any], str | None], Awaitable[None]] | None
+        ) = None,
+        trace_logger: TraceLogger | None = None,
     ) -> None:
         self._deduplication_store = deduplication_store
         self._media_downloader = media_downloader
@@ -73,7 +78,14 @@ class WhatsAppReceiver:
         self._object_storage = object_storage
         self._normalizer = normalizer or MessageNormalizer()
         # Optional M3 handoff: invoked after a message is normalized+stored.
+        # Takes a replayable envelope of the raw Meta payload alongside the
+        # normalized message (see _envelope) so it can be persisted for
+        # debugging, and replayed later via `replay()` if processing failed.
         self._on_normalized = on_normalized
+        # Best-effort: records ingestion-time failures (media download,
+        # normalization, or anything the on_normalized callback lets escape)
+        # that would otherwise vanish into stdout with no persisted row.
+        self._trace_logger: TraceLogger = trace_logger or NoopTraceLogger()
         self._background_tasks: set[asyncio.Task[None]] = set()
 
     async def handle_payload(self, payload: Mapping[str, Any]) -> int:
@@ -98,7 +110,41 @@ class WhatsAppReceiver:
             return
         await asyncio.gather(*self._background_tasks, return_exceptions=True)
 
-    async def _process_message(self, context: MessageIngressContext) -> None:
+    async def replay(self, envelope: Mapping[str, Any], *, retry_of_id: str) -> str | None:
+        """Re-run ingress for a previously captured envelope (see `_envelope`).
+
+        Used by the admin "retry" action on a failed message. Bypasses the
+        webhook-time dedup claim (this is an explicit, one-off admin action,
+        not inbound traffic that needs deduping against Meta's at-least-once
+        delivery) and threads `retry_of_id` through so the write path can
+        record the new attempt as a retry of the original, with a dedup key
+        that can't collide with it. Returns the new correlation_id, or None
+        if the retry itself failed before a message could even be normalized.
+        """
+        context = MessageIngressContext(
+            message=envelope["message"],
+            contacts=tuple(envelope.get("contacts") or ()),
+            phone_number_id=envelope.get("phone_number_id"),
+            display_phone_number=envelope.get("display_phone_number"),
+        )
+        normalized = await self._process_message(context, retry_of_id=retry_of_id)
+        return normalized.correlation_id if normalized is not None else None
+
+    @staticmethod
+    def _envelope(context: MessageIngressContext) -> dict[str, Any]:
+        """A self-contained, replayable snapshot of one inbound message —
+        everything `MessageNormalizer.normalize` needs, so a failed message
+        can be replayed later without re-fetching anything from Meta."""
+        return {
+            "message": dict(context.message),
+            "contacts": [dict(c) for c in context.contacts],
+            "phone_number_id": context.phone_number_id,
+            "display_phone_number": context.display_phone_number,
+        }
+
+    async def _process_message(
+        self, context: MessageIngressContext, *, retry_of_id: str | None = None
+    ) -> NormalizedMessage | None:
         message_id = str(context.message["id"])
         try:
             downloaded_media = await self._download_media_if_required(context.message)
@@ -119,9 +165,28 @@ class WhatsAppReceiver:
 
             await self._message_store.save(normalized)
             if self._on_normalized is not None:
-                await self._on_normalized(normalized)
-        except Exception:
+                await self._on_normalized(normalized, self._envelope(context), retry_of_id)
+            return normalized
+        except Exception as exc:
             logger.exception("Failed to process WhatsApp message %s", message_id)
+            # This is the last line of defence: process_inbound_message already
+            # persists a trace row for failures in its own stages, so this only
+            # fires for failures upstream of it (media download, normalization)
+            # or a stage exception that somehow still escaped unlogged.
+            try:
+                await self._trace_logger.log_stage(
+                    correlation_id=f"unrouted:{message_id}",
+                    stage="ingress",
+                    stage_payload=None,
+                    duration_ms=None,
+                    succeeded=False,
+                    error_code=type(exc).__name__,
+                    error_message=str(exc),
+                    severity="error",
+                    event_source="unhandled_exception",
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("Failed to record ingress failure trace for message %s", message_id)
 
     async def _download_media_if_required(
         self,

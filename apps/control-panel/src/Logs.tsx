@@ -12,6 +12,7 @@ interface InboundMessageSummary {
   error_code: string | null;
   received_at: string;
   processed_at: string | null;
+  assistant_reply: string | null;
 }
 
 interface JourneyTraceEntry {
@@ -250,7 +251,20 @@ export default function Logs() {
                   </tr>
                   {expandedId === m.correlation_id && (
                     <tr>
-                      <td colSpan={6} style={{ padding: 0 }}>
+                      <td colSpan={6} style={{ padding: 'var(--space-4)', backgroundColor: 'var(--neutral-50)' }}>
+                        {m.assistant_reply && (
+                          <div style={{ marginBottom: 'var(--space-4)', padding: 'var(--space-4)', backgroundColor: '#ffffff', borderRadius: 'var(--radius-sm)', border: '1px solid var(--neutral-200)' }}>
+                            <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--neutral-500)', marginBottom: 'var(--space-2)' }}>
+                              Assistant Reply
+                            </div>
+                            <div style={{ fontSize: '13px', whiteSpace: 'pre-wrap', color: 'var(--neutral-800)', fontFamily: 'var(--font-sans)' }}>
+                              {m.assistant_reply}
+                            </div>
+                          </div>
+                        )}
+                        <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--neutral-500)', marginBottom: 'var(--space-2)' }}>
+                          Pipeline Trace
+                        </div>
                         <TracePanel correlationId={m.correlation_id} />
                       </td>
                     </tr>
