@@ -1,8 +1,9 @@
 import paramiko
 
-HOST = '187.127.180.98'
-USER = 'root'
-PASS = 'Mercondatabase1234@'
+HOST = "187.127.180.98"
+USER = "root"
+PASS = "Mercondatabase1234@"
+
 
 def inspect():
     client = paramiko.SSHClient()
@@ -18,10 +19,13 @@ def inspect():
     print(stdout.read().decode())
 
     print("=== Systemd unit ===")
-    stdin, stdout, stderr = client.exec_command("cat /etc/systemd/system/mesiri.service 2>/dev/null || cat /etc/systemd/system/mesiri-assistant.service 2>/dev/null || systemctl status mesiri --no-pager 2>&1 | head -30")
+    stdin, stdout, stderr = client.exec_command(
+        "cat /etc/systemd/system/mesiri.service 2>/dev/null || cat /etc/systemd/system/mesiri-assistant.service 2>/dev/null || systemctl status mesiri --no-pager 2>&1 | head -30"
+    )
     print(stdout.read().decode())
 
     client.close()
+
 
 if __name__ == "__main__":
     inspect()

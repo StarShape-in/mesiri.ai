@@ -21,7 +21,7 @@ _MEDIUM_MIN = 0.45
 class ConfidenceSignals:
     provider_succeeded: bool = True
     schema_valid: bool = True
-    is_empty: bool = False              # e.g. empty transcript / no content
+    is_empty: bool = False  # e.g. empty transcript / no content
     required_fields: tuple[str, ...] = ()
     present_fields: tuple[str, ...] = ()
     missing_fields: tuple[str, ...] = ()

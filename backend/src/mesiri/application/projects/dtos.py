@@ -13,10 +13,11 @@ from uuid import UUID
 @dataclass(frozen=True)
 class ProjectDTO:
     """Internal project data transfer object.
-    
+
     Represents a project as returned from the repository layer.
     Contains database-native status values (on_track, at_risk, critical).
     """
+
     id: UUID
     organization_id: UUID
     name: str

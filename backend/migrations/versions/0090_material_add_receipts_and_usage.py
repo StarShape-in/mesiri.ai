@@ -10,6 +10,7 @@ Revision ID: 0090
 Revises: 0080
 Create Date: 2026-07-08
 """
+
 from __future__ import annotations
 
 import sqlalchemy as sa
@@ -50,7 +51,9 @@ def upgrade() -> None:
             sa.ForeignKey("organizations.id"),
             nullable=False,
         ),
-        sa.Column("project_id", sa.UUID(as_uuid=True), sa.ForeignKey("projects.id"), nullable=False),
+        sa.Column(
+            "project_id", sa.UUID(as_uuid=True), sa.ForeignKey("projects.id"), nullable=False
+        ),
         sa.Column("site_id", sa.UUID(as_uuid=True), sa.ForeignKey("sites.id"), nullable=True),
         sa.Column("material_name", sa.String(), nullable=False),
         sa.Column("quantity", sa.Numeric(14, 2), nullable=False),
@@ -64,7 +67,9 @@ def upgrade() -> None:
         sa.Column("source", sa.String(), nullable=False, server_default="whatsapp"),
         *_audit_columns(),
     )
-    op.create_index("ix_material_receipts_org_project", "material_receipts", ["organization_id", "project_id"])
+    op.create_index(
+        "ix_material_receipts_org_project", "material_receipts", ["organization_id", "project_id"]
+    )
     op.create_index("ix_material_receipts_site_id", "material_receipts", ["site_id"])
     op.create_index("ix_material_receipts_occurred_date", "material_receipts", ["occurred_date"])
     op.create_index("ix_material_receipts_correlation_id", "material_receipts", ["correlation_id"])
@@ -78,7 +83,9 @@ def upgrade() -> None:
             sa.ForeignKey("organizations.id"),
             nullable=False,
         ),
-        sa.Column("project_id", sa.UUID(as_uuid=True), sa.ForeignKey("projects.id"), nullable=False),
+        sa.Column(
+            "project_id", sa.UUID(as_uuid=True), sa.ForeignKey("projects.id"), nullable=False
+        ),
         sa.Column("site_id", sa.UUID(as_uuid=True), sa.ForeignKey("sites.id"), nullable=True),
         sa.Column("material_name", sa.String(), nullable=False),
         sa.Column("quantity", sa.Numeric(14, 2), nullable=False),
@@ -90,7 +97,9 @@ def upgrade() -> None:
         sa.Column("source", sa.String(), nullable=False, server_default="whatsapp"),
         *_audit_columns(),
     )
-    op.create_index("ix_material_usage_org_project", "material_usage", ["organization_id", "project_id"])
+    op.create_index(
+        "ix_material_usage_org_project", "material_usage", ["organization_id", "project_id"]
+    )
     op.create_index("ix_material_usage_site_id", "material_usage", ["site_id"])
     op.create_index("ix_material_usage_occurred_date", "material_usage", ["occurred_date"])
     op.create_index("ix_material_usage_correlation_id", "material_usage", ["correlation_id"])

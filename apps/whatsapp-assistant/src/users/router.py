@@ -20,8 +20,10 @@ router = APIRouter(prefix="/users", tags=["users"])
 SECRET_KEY = "mesiri-temp-secret-key-change-in-production"
 ALGORITHM = "HS256"
 
+
 def _hash_pw(plain: str) -> str:
     return _bcrypt.hashpw(plain.encode(), _bcrypt.gensalt()).decode()
+
 
 def _get_engine():
     host = os.environ.get("MESIRI_POSTGRES__HOST", "localhost")
@@ -32,12 +34,16 @@ def _get_engine():
     dsn = f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{database}"
     return create_async_engine(dsn, echo=False, pool_pre_ping=True)
 
+
 _engine = None
+
+
 def get_engine():
     global _engine
     if _engine is None:
         _engine = _get_engine()
     return _engine
+
 
 # Raw table reference
 users_table = sa.Table(
@@ -71,6 +77,7 @@ sites_table = sa.Table(
 
 _DEFAULT_ACCESS_POLICY: dict = {"mode": "custom_projects", "projects": []}
 
+
 # ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
@@ -83,6 +90,7 @@ class UserResponse(BaseModel):
     status: str
     access_policy: dict | None = None
 
+
 class UserCreate(BaseModel):
     email: str
     password: str
@@ -90,15 +98,19 @@ class UserCreate(BaseModel):
     role: str
     whatsapp_number: str | None = None
 
+
 class UserUpdate(BaseModel):
     """Partial update — only provided fields are changed. Email is immutable."""
+
     full_name: str | None = None
     role: str | None = None
     whatsapp_number: str | None = None
     password: str | None = None
 
+
 class StatusUpdate(BaseModel):
     status: str
+
 
 class AccessPolicy(BaseModel):
     mode: str
@@ -146,9 +158,7 @@ async def _validate_access_policy(conn, org_id: str, policy: AccessPolicy) -> No
             site_ids = site_access.get("siteIds") or []
             if not isinstance(site_ids, list):
                 raise HTTPException(status_code=400, detail="siteIds must be a list")
-            site_ids_by_project[project_id] = {
-                _as_uuid(site_id, "siteId") for site_id in site_ids
-            }
+            site_ids_by_project[project_id] = {_as_uuid(site_id, "siteId") for site_id in site_ids}
 
     if not project_ids:
         return
@@ -184,6 +194,7 @@ async def _validate_access_policy(conn, org_id: str, policy: AccessPolicy) -> No
                     status_code=400, detail="Site access contains site outside project"
                 )
 
+
 def _row_to_response(row) -> UserResponse:
     return UserResponse(
         id=row.id,
@@ -195,13 +206,14 @@ def _row_to_response(row) -> UserResponse:
         access_policy=row.access_policy or _DEFAULT_ACCESS_POLICY,
     )
 
+
 # ---------------------------------------------------------------------------
 # Dependencies
 # ---------------------------------------------------------------------------
 async def get_current_admin(authorization: str = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid token")
-    
+
     token = authorization.split(" ")[1]
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
@@ -210,6 +222,7 @@ async def get_current_admin(authorization: str = Header(None)):
         return payload
     except jwt.PyJWTError as exc:
         raise HTTPException(status_code=401, detail="Invalid token") from exc
+
 
 # ---------------------------------------------------------------------------
 # Routes
@@ -226,14 +239,12 @@ async def list_users(admin_payload: dict = Depends(get_current_admin)):
             sa.select(users_table).where(users_table.c.organization_id == org_id)
         )
         rows = result.fetchall()
-        
+
     return [_row_to_response(row) for row in rows]
 
+
 @router.get("/{user_id}", response_model=UserResponse)
-async def get_user(
-    user_id: uuid.UUID,
-    admin_payload: dict = Depends(get_current_admin)
-):
+async def get_user(user_id: uuid.UUID, admin_payload: dict = Depends(get_current_admin)):
     engine = get_engine()
     org_id = admin_payload.get("org")
     if not org_id:
@@ -247,7 +258,7 @@ async def get_user(
             )
         )
         row = result.first()
-        
+
     if row is None:
         raise HTTPException(status_code=404, detail="User not found")
     return _row_to_response(row)
@@ -361,9 +372,11 @@ async def update_user_status(
     engine = get_engine()
     org_id = admin_payload.get("org")
     valid_statuses = {"active", "inactive", "suspended", "invited"}
-    
+
     if body.status not in valid_statuses:
-        raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of {sorted(valid_statuses)}")
+        raise HTTPException(
+            status_code=400, detail=f"Invalid status. Must be one of {sorted(valid_statuses)}"
+        )
 
     async with engine.begin() as conn:
         result = await conn.execute(
@@ -420,7 +433,7 @@ async def update_user_access(
 ):
     engine = get_engine()
     org_id = admin_payload.get("org")
-    
+
     async with engine.begin() as conn:
         result = await conn.execute(
             sa.select(users_table.c.id).where(

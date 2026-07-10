@@ -6,13 +6,6 @@ classification of a reply while a workflow awaits confirmation.
 
 from __future__ import annotations
 
-from enum import Enum
+from mesiri_contracts.assistant.v2.interaction_spec import InteractionIntent
 
-
-class InteractionIntent(str, Enum):
-    CONFIRM = "confirm"
-    REJECT = "reject"
-    CANCEL = "cancel"
-    CORRECTION = "correction"  # deferred in M7 — routed to a new journey
-    UNRELATED = "unrelated"    # a new intent, not a reply to the pending workflow
-    AMBIGUOUS = "ambiguous"    # conflicting signals (e.g. "yes no")
+__all__ = ["InteractionIntent"]

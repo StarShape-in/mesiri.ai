@@ -27,6 +27,17 @@ class SpeechResult(BaseModel):
     latency_ms: float | None = None
 
 
+class TranslationResult(BaseModel):
+    """Output of a text-to-text translation call."""
+
+    translated_text: str
+    source_language: str | None = None
+    detected_language: str | None = None
+    target_language: str = "en"
+    model: str | None = None
+    latency_ms: float | None = None
+
+
 class VisionResult(BaseModel):
     """Output of an image-understanding call."""
 
@@ -54,16 +65,3 @@ class ExtractionResult(BaseModel):
     model: str | None = None
     latency_ms: float | None = None
 
-
-class TranslationResult(BaseModel):
-    """Output of a text-translation call.
-
-    Carries the translated text alongside metadata so callers can decide
-    whether to surface the translation or fall back to the original.
-    """
-
-    translated_text: str
-    source_language: str | None = None
-    target_language: str = "en"
-    model: str | None = None
-    latency_ms: float | None = None

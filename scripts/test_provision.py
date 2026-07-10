@@ -1,8 +1,9 @@
 import paramiko
 
-HOST = '187.127.180.98'
-USER = 'root'
-PASS = 'Mercondatabase1234@'
+HOST = "187.127.180.98"
+USER = "root"
+PASS = "Mercondatabase1234@"
+
 
 def check():
     client = paramiko.SSHClient()
@@ -14,18 +15,21 @@ def check():
     stdin, stdout, stderr = client.exec_command(
         "curl -s -X POST http://127.0.0.1:8000/admin/organizations/provision "
         "-H 'Content-Type: application/json' "
-        "-d '{\"name\":\"Test Co\",\"deployment_type\":\"SaaS\",\"db_route\":\"shared-cluster-01\","
-        "\"admin_name\":\"Test Admin\",\"admin_email\":\"testadmin@test.com\",\"admin_password\":\"Test1234!\"}'"
+        '-d \'{"name":"Test Co","deployment_type":"SaaS","db_route":"shared-cluster-01",'
+        '"admin_name":"Test Admin","admin_email":"testadmin@test.com","admin_password":"Test1234!"}\''
     )
     print(stdout.read().decode())
     print(stderr.read().decode())
 
     # Check env vars for DB
     print("\n=== Env vars set for uvicorn process ===")
-    stdin, stdout, stderr = client.exec_command("cat /proc/$(pgrep -f 'uvicorn main:app' | head -1)/environ | tr '\\0' '\\n' | grep -Ei 'MESIRI_POSTGRES|POSTGRES|DATABASE'")
+    stdin, stdout, stderr = client.exec_command(
+        "cat /proc/$(pgrep -f 'uvicorn main:app' | head -1)/environ | tr '\\0' '\\n' | grep -Ei 'MESIRI_POSTGRES|POSTGRES|DATABASE'"
+    )
     print(stdout.read().decode())
 
     client.close()
+
 
 if __name__ == "__main__":
     check()

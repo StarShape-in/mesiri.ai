@@ -36,7 +36,7 @@ def upload(client: paramiko.SSHClient, local: str, remote: str) -> None:
     write_script = (
         f"import binascii; open('{remote}', 'wb').write(binascii.unhexlify('{hex_content}'))"
     )
-    _, _, stderr = client.exec_command(f"python3 -c \"{write_script}\"")
+    _, _, stderr = client.exec_command(f'python3 -c "{write_script}"')
     err = stderr.read().decode()
     if err:
         raise RuntimeError(f"upload failed: {err}")

@@ -48,7 +48,9 @@ def map_provider_error(
     )
 
 
-def provider_unavailable(provider: str, reason: str, *, correlation_id: str | None = None) -> MesiriError:
+def provider_unavailable(
+    provider: str, reason: str, *, correlation_id: str | None = None
+) -> MesiriError:
     return MesiriError(
         error_code=ErrorCode.PROVIDER_UNAVAILABLE.value,
         category=ErrorCategory.PROVIDER,
@@ -60,7 +62,9 @@ def provider_unavailable(provider: str, reason: str, *, correlation_id: str | No
     )
 
 
-def malformed_output(provider: str, reason: str, *, correlation_id: str | None = None) -> MesiriError:
+def malformed_output(
+    provider: str, reason: str, *, correlation_id: str | None = None
+) -> MesiriError:
     return MesiriError(
         error_code=ErrorCode.PROVIDER_MALFORMED_OUTPUT.value,
         category=ErrorCategory.SERIALIZATION,

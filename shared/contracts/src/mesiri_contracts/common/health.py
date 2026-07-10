@@ -16,9 +16,9 @@ from pydantic import BaseModel, Field
 
 class DependencyState(str, Enum):
     HEALTHY = "healthy"
-    DEGRADED = "degraded"       # reachable but impaired / optional dependency down
-    UNHEALTHY = "unhealthy"     # required dependency unreachable
-    UNKNOWN = "unknown"         # not checked (e.g. provider represented by config)
+    DEGRADED = "degraded"  # reachable but impaired / optional dependency down
+    UNHEALTHY = "unhealthy"  # required dependency unreachable
+    UNKNOWN = "unknown"  # not checked (e.g. provider represented by config)
 
 
 class DependencyStatus(BaseModel):
@@ -26,7 +26,7 @@ class DependencyStatus(BaseModel):
     state: DependencyState
     required: bool = True
     latency_ms: float | None = None
-    detail: str | None = None      # user-safe only — never credentials
+    detail: str | None = None  # user-safe only — never credentials
     error_code: str | None = None
 
 

@@ -32,12 +32,14 @@ _DEMO_PROJECTS = [
 
 _metadata = sa.MetaData()
 organizations_table = sa.Table(
-    "organizations", _metadata,
+    "organizations",
+    _metadata,
     sa.Column("id", sa.UUID, primary_key=True),
     sa.Column("name", sa.String),
 )
 projects_table = sa.Table(
-    "projects", _metadata,
+    "projects",
+    _metadata,
     sa.Column("id", sa.UUID, primary_key=True),
     sa.Column("organization_id", sa.UUID),
     sa.Column("name", sa.String),

@@ -25,7 +25,12 @@ from context.resolver import ContextResolver
 from interactions import InteractionHandler
 from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
 from mesiri_ai import fixtures
-from mesiri_ai.fakes import FakeExtractionProvider, FakeSpeechProvider, FakeVisionProvider
+from mesiri_ai.fakes import (
+    FakeExtractionProvider,
+    FakeSpeechProvider,
+    FakeTranslationProvider,
+    FakeVisionProvider,
+)
 from mesiri_ai.models import ExtractionResult
 from mesiri_contracts.assistant.draft_action import DraftActionType
 from mesiri_contracts.assistant.enums import InputModality
@@ -66,6 +71,7 @@ def _pipeline() -> UnderstandingPipeline:
         speech=FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
         vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
         extraction=FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION),
+        translation=FakeTranslationProvider(),
         object_storage=FakeObjectStorage(),
     )
 
@@ -75,7 +81,9 @@ def _resolver() -> ContextResolver:
     return ContextResolver(seed.build_dependencies())
 
 
-def _workflow_runtime(graphs: dict[WorkflowKey, FakeCompiledGraph] | None = None) -> WorkflowRuntime:
+def _workflow_runtime(
+    graphs: dict[WorkflowKey, FakeCompiledGraph] | None = None,
+) -> WorkflowRuntime:
     """A WorkflowRuntime backed entirely by fakes — no LangGraph, no DB."""
     return WorkflowRuntime(
         registry=FakeWorkflowRegistry(graphs),
@@ -98,12 +106,12 @@ async def test_inbound_journey_produces_resolved_context():
 
     result = await process_inbound_message(
         message,
-        seed.WA_ENGINEER,
+actor_user_id=canon(seed.USER_ENGINEER),
         pipeline=pipeline,
         context_resolver=context_resolver,
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
-        interaction_handler=InteractionHandler(workflow_runtime=_workflow_runtime()),
+interaction_handler=InteractionHandler(_workflow_runtime()),
         reply_sender=capture_reply,
         send_text=_noop_send_text,
     )
@@ -149,12 +157,12 @@ async def test_inbound_journey_reply_unchanged_by_context():
 
     await process_inbound_message(
         message,
-        seed.WA_ENGINEER,
+actor_user_id=canon(seed.USER_ENGINEER),
         pipeline=pipeline,
         context_resolver=context_resolver,
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
-        interaction_handler=InteractionHandler(workflow_runtime=_workflow_runtime()),
+interaction_handler=InteractionHandler(_workflow_runtime()),
         reply_sender=capture_reply,
         send_text=_noop_send_text,
     )
@@ -179,12 +187,12 @@ async def test_inbound_journey_unknown_user_still_sends_reply():
 
     result = await process_inbound_message(
         message,
-        seed.WA_ENGINEER,
+actor_user_id="wa_unregistered_999",
         pipeline=pipeline,
         context_resolver=context_resolver,
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
-        interaction_handler=InteractionHandler(workflow_runtime=_workflow_runtime()),
+interaction_handler=InteractionHandler(_workflow_runtime()),
         reply_sender=capture_reply,
         send_text=_noop_send_text,
     )
@@ -224,6 +232,7 @@ async def test_inbound_journey_starts_workflow_and_replies_with_confirmation_pro
                 latency_ms=180.0,
             )
         ),
+        translation=FakeTranslationProvider(),
         object_storage=FakeObjectStorage(),
     )
     context_resolver = _resolver()
@@ -252,12 +261,12 @@ async def test_inbound_journey_starts_workflow_and_replies_with_confirmation_pro
 
     result = await process_inbound_message(
         message,
-        seed.WA_ENGINEER,
+actor_user_id=canon(seed.USER_ENGINEER),
         pipeline=pipeline,
         context_resolver=context_resolver,
         planner=Planner(),
         workflow_runtime=workflow_runtime,
-        interaction_handler=InteractionHandler(workflow_runtime=_workflow_runtime()),
+interaction_handler=InteractionHandler(workflow_runtime),
         reply_sender=unexpected_reply,
         send_text=capture_send_text,
     )
@@ -277,12 +286,23 @@ def _material_pipeline() -> UnderstandingPipeline:
         extraction=FakeExtractionProvider(
             ExtractionResult(
                 semantic_type="material_update",
-                fields={"material_name": "cement", "quantity": 20, "unit": "bags", "direction": "received"},
-                field_confidences={"material_name": 0.98, "quantity": 0.97, "unit": 0.95, "direction": 0.9},
+                fields={
+                    "material_name": "cement",
+                    "quantity": 20,
+                    "unit": "bags",
+                    "direction": "received",
+                },
+                field_confidences={
+                    "material_name": 0.98,
+                    "quantity": 0.97,
+                    "unit": 0.95,
+                    "direction": 0.9,
+                },
                 model="fake-gemini",
                 latency_ms=180.0,
             )
         ),
+        translation=FakeTranslationProvider(),
         object_storage=FakeObjectStorage(),
     )
 
@@ -329,12 +349,12 @@ async def test_inbound_journey_blocks_new_workflow_while_confirmation_pending():
 
     result = await process_inbound_message(
         message,
-        seed.WA_ENGINEER,
+actor_user_id=canon(seed.USER_ENGINEER),
         pipeline=_material_pipeline(),
         context_resolver=context_resolver,
         planner=Planner(),
         workflow_runtime=workflow_runtime,
-        interaction_handler=InteractionHandler(workflow_runtime=_workflow_runtime()),
+interaction_handler=InteractionHandler(workflow_runtime),
         reply_sender=unexpected_reply,
         send_text=capture_send_text,
     )
@@ -378,12 +398,12 @@ async def test_context_debug_logs_resolved_context(caplog):
 
     await process_inbound_message(
         message,
-        seed.WA_ENGINEER,
+actor_user_id=canon(seed.USER_ENGINEER),
         pipeline=_pipeline(),
         context_resolver=_resolver(),
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
-        interaction_handler=InteractionHandler(workflow_runtime=_workflow_runtime()),
+interaction_handler=InteractionHandler(_workflow_runtime()),
         reply_sender=noop_reply,
         send_text=_noop_send_text,
         context_debug=True,
@@ -406,20 +426,19 @@ async def test_context_debug_logs_canonical_event(caplog):
 
     await process_inbound_message(
         message,
-        seed.WA_ENGINEER,
+actor_user_id=canon(seed.USER_ENGINEER),
         pipeline=_pipeline(),
         context_resolver=_resolver(),
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
-        interaction_handler=InteractionHandler(workflow_runtime=_workflow_runtime()),
+interaction_handler=InteractionHandler(_workflow_runtime()),
         reply_sender=noop_reply,
         send_text=_noop_send_text,
         context_debug=True,
     )
 
     assert any(
-        "CanonicalEvent correlation_id=cor_context_1" in record.message
-        for record in caplog.records
+        "CanonicalEvent correlation_id=cor_context_1" in record.message for record in caplog.records
     )
 
 
@@ -434,12 +453,12 @@ async def test_context_debug_logs_planner_decision(caplog):
 
     await process_inbound_message(
         message,
-        seed.WA_ENGINEER,
+actor_user_id=canon(seed.USER_ENGINEER),
         pipeline=_pipeline(),
         context_resolver=_resolver(),
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
-        interaction_handler=InteractionHandler(workflow_runtime=_workflow_runtime()),
+interaction_handler=InteractionHandler(_workflow_runtime()),
         reply_sender=noop_reply,
         send_text=_noop_send_text,
         context_debug=True,
@@ -462,12 +481,12 @@ async def test_context_debug_logs_workflow_run(caplog):
 
     await process_inbound_message(
         message,
-        seed.WA_ENGINEER,
+actor_user_id=canon(seed.USER_ENGINEER),
         pipeline=_pipeline(),
         context_resolver=_resolver(),
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
-        interaction_handler=InteractionHandler(workflow_runtime=_workflow_runtime()),
+interaction_handler=InteractionHandler(_workflow_runtime()),
         reply_sender=noop_reply,
         send_text=_noop_send_text,
         context_debug=True,
@@ -491,12 +510,12 @@ async def test_reply_sender_receives_same_understanding_as_format_reply():
 
     await process_inbound_message(
         message,
-        seed.WA_ENGINEER,
+actor_user_id=canon(seed.USER_ENGINEER),
         pipeline=pipeline,
         context_resolver=_resolver(),
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
-        interaction_handler=InteractionHandler(workflow_runtime=_workflow_runtime()),
+interaction_handler=InteractionHandler(_workflow_runtime()),
         reply_sender=_send_understanding_reply,
         send_text=_noop_send_text,
     )

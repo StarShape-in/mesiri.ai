@@ -106,9 +106,7 @@ async def list_users(
     if not org_id:
         raise HTTPException(status_code=400, detail="Token missing org claim")
 
-    result = await conn.execute(
-        sa.select(_users).where(_users.c.organization_id == org_id)
-    )
+    result = await conn.execute(sa.select(_users).where(_users.c.organization_id == org_id))
     return [_row_to_response(r) for r in result.fetchall()]
 
 
@@ -178,9 +176,7 @@ async def update_user(
             .values(**values)
         )
 
-    result2 = await conn.execute(
-        sa.select(_users).where(_users.c.id == user_id)
-    )
+    result2 = await conn.execute(sa.select(_users).where(_users.c.id == user_id))
     return _row_to_response(result2.first())
 
 
@@ -216,9 +212,7 @@ async def update_user_status(
         .values(status=body.status)
     )
 
-    result2 = await conn.execute(
-        sa.select(_users).where(_users.c.id == user_id)
-    )
+    result2 = await conn.execute(sa.select(_users).where(_users.c.id == user_id))
     return _row_to_response(result2.first())
 
 

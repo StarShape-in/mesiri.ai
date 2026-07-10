@@ -11,8 +11,9 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class ListProjects:
     """Query to list all projects accessible to the current user.
-    
+
     This is a marker query with no parameters. The authorization context
     (provided by the handler) determines which projects are accessible.
     """
+
     pass

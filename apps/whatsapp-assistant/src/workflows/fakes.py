@@ -45,10 +45,7 @@ class FakeWorkflowInstanceRepository:
 
     async def get_awaiting_confirmation(self, user_id: str) -> LoadedWorkflowInstance | None:
         for state, version in self._rows.values():
-            if (
-                state.user_id == user_id
-                and state.phase is WorkflowPhase.AWAITING_CONFIRMATION
-            ):
+            if state.user_id == user_id and state.phase is WorkflowPhase.AWAITING_CONFIRMATION:
                 return LoadedWorkflowInstance(state=state, version=version)
         return None
 

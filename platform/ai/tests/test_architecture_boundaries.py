@@ -14,7 +14,13 @@ REPO = pathlib.Path(__file__).resolve().parents[3]
 UNDERSTANDING = REPO / "apps" / "whatsapp-assistant" / "src" / "understanding"
 MESIRI_AI = REPO / "platform" / "ai" / "src" / "mesiri_ai"
 
-_PERSISTENCE_SDKS = ("import sqlalchemy", "import psycopg", "import asyncpg", "import boto3", "import redis")
+_PERSISTENCE_SDKS = (
+    "import sqlalchemy",
+    "import psycopg",
+    "import asyncpg",
+    "import boto3",
+    "import redis",
+)
 _PROVIDER_SDKS = ("from google", "import google", "from sarvamai", "import sarvamai")
 _BUSINESS_WRITES = ("expense_repository", "_repository.insert", "infrastructure.postgres")
 

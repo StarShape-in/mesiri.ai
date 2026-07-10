@@ -101,7 +101,12 @@ class RedisActiveContextStore:
         # interfaces (no delete primitive exposed by the M1 client / fake).
         await self._redis.set_json(
             self._key(organization_id, user_id),
-            {"project_id": None, "site_id": None, "selected_at": self._clock().isoformat(),
-             "expires_at": self._clock().isoformat(), "context_version": CONTEXT_VERSION},
+            {
+                "project_id": None,
+                "site_id": None,
+                "selected_at": self._clock().isoformat(),
+                "expires_at": self._clock().isoformat(),
+                "context_version": CONTEXT_VERSION,
+            },
             ttl_seconds=1,
         )

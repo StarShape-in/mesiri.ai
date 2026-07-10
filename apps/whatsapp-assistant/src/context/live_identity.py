@@ -17,6 +17,7 @@ from backend.ports import ActorIdentity, ActorReader, ProjectSummary
 # Utility (pure, no I/O)
 # ---------------------------------------------------------------------------
 
+
 def _digits(s: str | None) -> str:
     """Strip all non-digit characters, normalising phone / WhatsApp IDs."""
     if s is None:
@@ -27,6 +28,7 @@ def _digits(s: str | None) -> str:
 # ---------------------------------------------------------------------------
 # Resolve sender (pure orchestration — no SQL)
 # ---------------------------------------------------------------------------
+
 
 async def resolve_sender(reader: ActorReader, wa_id: str) -> ActorIdentity | None:
     """Resolve the WhatsApp sender to their ActorIdentity, or None if unknown.
@@ -43,9 +45,7 @@ async def resolve_sender(reader: ActorReader, wa_id: str) -> ActorIdentity | Non
 _PROJECT_KEYS = ("project", "project_name", "project_reference")
 
 
-def pick_project(
-    understanding, projects: list[ProjectSummary]
-) -> ProjectSummary | None:
+def pick_project(understanding, projects: list[ProjectSummary]) -> ProjectSummary | None:
     """Deterministically choose the sender's project for this message.
 
     Precedence: an explicit project *named in the message* that matches an
@@ -151,5 +151,8 @@ def whoami_reply(actor: ActorIdentity) -> str:
         for s in actor.sites:
             lines.append(f"   • {s.name}")
 
-    lines += ["", "_(this is a test whoami reply — will be replaced by real understanding replies)_"]
+    lines += [
+        "",
+        "_(this is a test whoami reply — will be replaced by real understanding replies)_",
+    ]
     return "\n".join(lines)

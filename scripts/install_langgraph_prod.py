@@ -21,6 +21,8 @@ for cmd in cmds:
     if err:
         print(err)
 
-c.exec_command("cd /opt/mesiri && /opt/mesiri/.venv/bin/python scripts/restart_whatsapp_assistant.py")
+c.exec_command(
+    "cd /opt/mesiri && /opt/mesiri/.venv/bin/python scripts/restart_whatsapp_assistant.py"
+)
 time.sleep(5)
 c.close()

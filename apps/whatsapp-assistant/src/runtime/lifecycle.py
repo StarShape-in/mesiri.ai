@@ -51,6 +51,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # CORS for Control Plane dashboard
     from fastapi.middleware.cors import CORSMiddleware
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -62,33 +63,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Admin / Control Plane routes
     try:
         from admin.router import router as admin_router
+
         app.include_router(admin_router)
     except Exception as exc:
         import logging
+
         logging.getLogger(__name__).warning("Admin router not loaded: %s", exc)
 
     # Auth routes (mobile app login/register)
     try:
         from auth.router import router as auth_router
+
         app.include_router(auth_router)
     except Exception as exc:
         import logging
+
         logging.getLogger(__name__).warning("Auth router not loaded: %s", exc)
 
     # Users routes (tenant management)
     try:
         from users.router import router as users_router
+
         app.include_router(users_router)
     except Exception as exc:
         import logging
+
         logging.getLogger(__name__).warning("Users router not loaded: %s", exc)
 
     # Projects routes (tenant-scoped project management)
     try:
         from projects.router import router as projects_router
+
         app.include_router(projects_router)
     except Exception as exc:
         import logging
+
         logging.getLogger(__name__).warning("Projects router not loaded: %s", exc)
 
     return app

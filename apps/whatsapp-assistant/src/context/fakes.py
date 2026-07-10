@@ -163,9 +163,7 @@ class FakeProjectRepository:
         ]
         return sorted(out, key=lambda p: p.project_id)
 
-    async def get_project_in_org(
-        self, *, organization_id: str, project_id: str
-    ) -> Project | None:
+    async def get_project_in_org(self, *, organization_id: str, project_id: str) -> Project | None:
         p = self._store.projects.get(project_id)
         if p is not None and p.is_active and p.organization_id == organization_id:
             return p
@@ -198,9 +196,7 @@ class FakeSiteRepository:
                 out.append(site)
         return sorted(out, key=lambda s: s.site_id)
 
-    async def get_site_in_org(
-        self, *, organization_id: str, site_id: str
-    ) -> Site | None:
+    async def get_site_in_org(self, *, organization_id: str, site_id: str) -> Site | None:
         s = self._store.sites.get(site_id)
         if s is not None and s.is_active and s.organization_id == organization_id:
             return s
@@ -276,7 +272,9 @@ class FakeReplyContextProvider:
 class FakeWorkflowContextProvider:
     """Stand-in for the M5 workflow runtime (not implemented in M4)."""
 
-    def __init__(self, mapping: dict[tuple[str, str], tuple[str | None, str | None]] | None = None) -> None:
+    def __init__(
+        self, mapping: dict[tuple[str, str], tuple[str | None, str | None]] | None = None
+    ) -> None:
         self._mapping = mapping or {}
 
     async def active_workflow_context(

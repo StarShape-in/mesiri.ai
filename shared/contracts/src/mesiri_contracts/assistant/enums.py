@@ -16,7 +16,7 @@ class InputModality(str, Enum):
     VOICE = "voice"
     IMAGE = "image"
     DOCUMENT = "document"
-    INTERACTIVE = "interactive"   # button / list reply
+    INTERACTIVE = "interactive"  # button / list reply
     UNKNOWN = "unknown"
 
 

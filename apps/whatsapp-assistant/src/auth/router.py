@@ -22,8 +22,10 @@ SECRET_KEY = "mesiri-temp-secret-key-change-in-production"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 1 week
 
+
 def _hash_pw(plain: str) -> str:
     return _bcrypt.hashpw(plain.encode(), _bcrypt.gensalt()).decode()
+
 
 def _verify_pw(plain: str, hashed: str) -> bool:
     return _bcrypt.checkpw(plain.encode(), hashed.encode())
@@ -38,12 +40,16 @@ def _get_engine():
     dsn = f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{database}"
     return create_async_engine(dsn, echo=False, pool_pre_ping=True)
 
+
 _engine = None
+
+
 def get_engine():
     global _engine
     if _engine is None:
         _engine = _get_engine()
     return _engine
+
 
 # Raw table reference
 users_table = sa.Table(
@@ -66,6 +72,7 @@ class UserLogin(BaseModel):
     email: str
     password: str
 
+
 class UserRegister(BaseModel):
     organization_id: str | None = None
     email: str
@@ -73,6 +80,7 @@ class UserRegister(BaseModel):
     full_name: str
     role: str = "USER"
     whatsapp_number: str | None = None
+
 
 class Token(BaseModel):
     access_token: str
@@ -84,7 +92,14 @@ class Token(BaseModel):
 # ---------------------------------------------------------------------------
 def _create_token(user_id: str, org_id: str, role: str, name: str = "", org_name: str = "") -> str:
     expire = datetime.now(UTC) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    payload = {"sub": user_id, "org": org_id, "role": role, "name": name, "org_name": org_name, "exp": expire}
+    payload = {
+        "sub": user_id,
+        "org": org_id,
+        "role": role,
+        "name": name,
+        "org_name": org_name,
+        "exp": expire,
+    }
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
@@ -94,29 +109,33 @@ def _create_token(user_id: str, org_id: str, role: str, name: str = "", org_name
 @router.post("/login", response_model=Token)
 async def login(creds: UserLogin):
     engine = get_engine()
-    
+
     # We need the organizations table for the join
     metadata = sa.MetaData()
     organizations_table = sa.Table(
         "organizations",
         metadata,
         sa.Column("id", sa.UUID, primary_key=True),
-        sa.Column("name", sa.String)
+        sa.Column("name", sa.String),
     )
 
     async with engine.connect() as conn:
         # Join users with organizations to get the org name
-        query = sa.select(
-            users_table.c.id,
-            users_table.c.organization_id,
-            users_table.c.hashed_password,
-            users_table.c.role,
-            users_table.c.full_name,
-            organizations_table.c.name.label("org_name")
-        ).outerjoin(
-            organizations_table, users_table.c.organization_id == organizations_table.c.id
-        ).where(users_table.c.email == creds.email)
-        
+        query = (
+            sa.select(
+                users_table.c.id,
+                users_table.c.organization_id,
+                users_table.c.hashed_password,
+                users_table.c.role,
+                users_table.c.full_name,
+                organizations_table.c.name.label("org_name"),
+            )
+            .outerjoin(
+                organizations_table, users_table.c.organization_id == organizations_table.c.id
+            )
+            .where(users_table.c.email == creds.email)
+        )
+
         result = await conn.execute(query)
         row = result.first()
 

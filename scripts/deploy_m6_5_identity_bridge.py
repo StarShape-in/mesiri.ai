@@ -40,7 +40,7 @@ def _upload_file(client: paramiko.SSHClient, local: str, remote: str) -> None:
     write_script = (
         f"import binascii; open('{remote}', 'wb').write(binascii.unhexlify('{hex_content}'))"
     )
-    _, stdout, stderr = client.exec_command(f"python3 -c \"{write_script}\"")
+    _, stdout, stderr = client.exec_command(f'python3 -c "{write_script}"')
     err = stderr.read().decode()
     if err:
         raise RuntimeError(f"upload failed {local} -> {remote}: {err}")
@@ -86,7 +86,9 @@ def deploy() -> int:
 
     print("\n=== Upload shared contracts v2 ===")
     contracts_local = os.path.join(REPO, "shared", "contracts", "src", "mesiri_contracts")
-    _sync_tree(client, contracts_local, f"{REMOTE_ROOT}/shared/contracts/src/mesiri_contracts", ".py")
+    _sync_tree(
+        client, contracts_local, f"{REMOTE_ROOT}/shared/contracts/src/mesiri_contracts", ".py"
+    )
 
     print("\n=== Upload whatsapp-assistant M6.5 code ===")
     wa_local = os.path.join(REPO, "apps", "whatsapp-assistant", "src")

@@ -13,15 +13,15 @@ from mesiri.application.projects.repository import ProjectRepository
 
 class PostgresProjectRepository(ProjectRepository):
     """PostgreSQL implementation of project repository.
-    
+
     Queries the projects table according to provided access scope.
     Does not make authorization decisions.
     """
-    
+
     def __init__(self, conn: AsyncConnection):
         """Initialize with database connection."""
         self._conn = conn
-        
+
         # Define projects table structure
         self._projects = sa.Table(
             "projects",
@@ -37,7 +37,7 @@ class PostgresProjectRepository(ProjectRepository):
             sa.Column("progress", sa.Integer),
             sa.Column("open_issues", sa.Integer),
         )
-    
+
     async def list_projects_by_scope(
         self,
         organization_id: UUID,
@@ -46,10 +46,10 @@ class PostgresProjectRepository(ProjectRepository):
         project_ids: set[UUID] | None = None,
     ) -> list[ProjectDTO]:
         """List projects according to access scope.
-        
+
         Always filters by organization_id for tenant isolation.
         If all_projects=False, additionally filters by project_ids.
-        
+
         CRITICAL EMPTY-SCOPE SAFETY:
         If all_projects=False and project_ids is empty, returns empty list
         immediately without querying database. This prevents empty custom
@@ -58,7 +58,7 @@ class PostgresProjectRepository(ProjectRepository):
         # Safety check: empty custom scope returns zero projects
         if not all_projects and (project_ids is None or len(project_ids) == 0):
             return []
-        
+
         # Build query with organization filter
         query = sa.select(
             self._projects.c.id,
@@ -71,21 +71,19 @@ class PostgresProjectRepository(ProjectRepository):
             self._projects.c.status,
             self._projects.c.progress,
             self._projects.c.open_issues,
-        ).where(
-            self._projects.c.organization_id == organization_id
-        )
-        
+        ).where(self._projects.c.organization_id == organization_id)
+
         # Add project ID filter for custom access scope
         if not all_projects and project_ids:
             query = query.where(self._projects.c.id.in_(project_ids))
-        
+
         # Order by name for deterministic results
         query = query.order_by(self._projects.c.name)
-        
+
         # Execute query
         result = await self._conn.execute(query)
         rows = result.fetchall()
-        
+
         # Map to DTOs
         return [
             ProjectDTO(

@@ -71,10 +71,7 @@ class IdentityProjectionService:
                     report.errors.append(f"organization {row['id']}: {exc}")
 
             user_rows = conn.execute(
-                text(
-                    "SELECT id, full_name, organization_id, whatsapp_number, status "
-                    "FROM users"
-                )
+                text("SELECT id, full_name, organization_id, whatsapp_number, status FROM users")
             ).mappings()
             for row in user_rows:
                 try:
@@ -106,10 +103,14 @@ class IdentityProjectionService:
         return report
 
     def _project_organization(self, conn, canonical_id: UUID) -> None:
-        row = conn.execute(
-            text("SELECT id, name, status FROM organizations WHERE id = :id"),
-            {"id": canonical_id},
-        ).mappings().one()
+        row = (
+            conn.execute(
+                text("SELECT id, name, status FROM organizations WHERE id = :id"),
+                {"id": canonical_id},
+            )
+            .mappings()
+            .one()
+        )
         ctx_id = context_organization_id(canonical_id)
         is_active = row["status"] == "Active"
         conn.execute(
@@ -132,13 +133,17 @@ class IdentityProjectionService:
         )
 
     def _project_user(self, conn, canonical_id: UUID) -> None:
-        row = conn.execute(
-            text(
-                "SELECT id, full_name, organization_id, whatsapp_number, status "
-                "FROM users WHERE id = :id"
-            ),
-            {"id": canonical_id},
-        ).mappings().one()
+        row = (
+            conn.execute(
+                text(
+                    "SELECT id, full_name, organization_id, whatsapp_number, status "
+                    "FROM users WHERE id = :id"
+                ),
+                {"id": canonical_id},
+            )
+            .mappings()
+            .one()
+        )
         ctx_id = context_user_id(canonical_id)
         is_active = row["status"] == "active"
         conn.execute(
@@ -193,10 +198,14 @@ class IdentityProjectionService:
             )
 
     def _project_project(self, conn, canonical_id: UUID) -> None:
-        row = conn.execute(
-            text("SELECT id, organization_id, name, status FROM projects WHERE id = :id"),
-            {"id": canonical_id},
-        ).mappings().one()
+        row = (
+            conn.execute(
+                text("SELECT id, organization_id, name, status FROM projects WHERE id = :id"),
+                {"id": canonical_id},
+            )
+            .mappings()
+            .one()
+        )
         ctx_id = context_project_id(canonical_id)
         org_ctx = context_organization_id(row["organization_id"])
         is_active = row["status"] == "on_track"
@@ -223,12 +232,16 @@ class IdentityProjectionService:
         )
 
     def _project_site(self, conn, canonical_id: UUID) -> None:
-        row = conn.execute(
-            text(
-                "SELECT id, organization_id, project_id, name, status FROM sites WHERE id = :id"
-            ),
-            {"id": canonical_id},
-        ).mappings().one()
+        row = (
+            conn.execute(
+                text(
+                    "SELECT id, organization_id, project_id, name, status FROM sites WHERE id = :id"
+                ),
+                {"id": canonical_id},
+            )
+            .mappings()
+            .one()
+        )
         ctx_id = context_site_id(canonical_id)
         org_ctx = context_organization_id(row["organization_id"])
         proj_ctx = context_project_id(row["project_id"])

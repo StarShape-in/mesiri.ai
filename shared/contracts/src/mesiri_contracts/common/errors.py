@@ -18,15 +18,15 @@ class ErrorCategory(str, Enum):
     """Coarse classification used for handling / observability decisions."""
 
     CONFIGURATION = "configuration"
-    DEPENDENCY = "dependency"          # a required dependency is unavailable
-    TIMEOUT = "timeout"               # connect / operation deadline exceeded
-    VALIDATION = "validation"         # input failed contract validation
-    SERIALIZATION = "serialization"   # (de)serialization failure
-    PROVIDER = "provider"             # external provider returned an error
+    DEPENDENCY = "dependency"  # a required dependency is unavailable
+    TIMEOUT = "timeout"  # connect / operation deadline exceeded
+    VALIDATION = "validation"  # input failed contract validation
+    SERIALIZATION = "serialization"  # (de)serialization failure
+    PROVIDER = "provider"  # external provider returned an error
     NOT_FOUND = "not_found"
     CONFLICT = "conflict"
-    UNAVAILABLE = "unavailable"       # service intentionally not ready
-    INTERNAL = "internal"             # unexpected / unclassified
+    UNAVAILABLE = "unavailable"  # service intentionally not ready
+    INTERNAL = "internal"  # unexpected / unclassified
 
 
 class ErrorCode(str, Enum):

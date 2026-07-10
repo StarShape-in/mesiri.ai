@@ -20,5 +20,4 @@ class SpeechUnderstandingProvider(Protocol):
         *,
         language_hint: str | None = None,
         correlation_id: str | None = None,
-    ) -> SpeechResult:
-        ...
+    ) -> SpeechResult: ...

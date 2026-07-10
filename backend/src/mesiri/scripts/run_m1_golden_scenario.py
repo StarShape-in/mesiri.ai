@@ -91,8 +91,9 @@ async def run() -> _Check:
             f"state={report.state.value}",
         )
         for dep in report.dependencies:
-            check.record(f"  {dep.name} = {dep.state.value.upper()}",
-                         dep.state == DependencyState.HEALTHY)
+            check.record(
+                f"  {dep.name} = {dep.state.value.upper()}", dep.state == DependencyState.HEALTHY
+            )
     finally:
         await lc.shutdown()
         check.record("Clean shutdown verified", not lc.started)

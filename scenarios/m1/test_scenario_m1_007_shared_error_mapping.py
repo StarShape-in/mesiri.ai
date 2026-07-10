@@ -11,7 +11,6 @@ Expected Error Result    POSTGRES_UNAVAILABLE / OPERATION_TIMEOUT etc.
 Forbidden Side Effects   raw exception types never cross the boundary
 """
 
-
 import pytest
 
 from mesiri.infrastructure.errors import (

@@ -23,6 +23,7 @@ from mesiri_contracts.common.errors import ErrorCode
 
 # -- Builders ----------------------------------------------------------------
 
+
 def msg(
     wa_id: str,
     *,
@@ -68,6 +69,7 @@ async def resolve(wa_id: str, *, fields: dict | None = None, **dep_kwargs):
 
 # -- Identity resolution -----------------------------------------------------
 
+
 async def test_unknown_identity_rejected():
     res = await resolve(seed.WA_UNKNOWN)
     assert res.is_err
@@ -108,6 +110,7 @@ async def test_identity_resolves_authoritative_org_and_permissions():
 
 # -- Project resolution ------------------------------------------------------
 
+
 async def test_engineer_single_project_auto_resolves():
     res = await resolve(seed.WA_ENGINEER)
     ctx = res.unwrap()
@@ -145,9 +148,7 @@ async def test_explicit_project_id_resolves_very_high_confidence():
 
 async def test_explicit_site_resolves_and_infers_project():
     r = resolver()
-    res = await r.resolve(
-        msg(seed.WA_ENGINEER), understanding(fields={"site_name": "Site A2"})
-    )
+    res = await r.resolve(msg(seed.WA_ENGINEER), understanding(fields={"site_name": "Site A2"}))
     ctx = res.unwrap()
     assert ctx.context_site_id == seed.SITE_A2
     assert ctx.context_project_id == seed.PROJ_ALPHA
@@ -184,6 +185,7 @@ async def test_project_site_mismatch():
 
 # -- Ambiguity ---------------------------------------------------------------
 
+
 async def test_ambiguous_project_across_authorized_matches():
     # Give the director two authorized projects both named "Marina Tower".
     world = seed.build_world()
@@ -200,6 +202,7 @@ async def test_ambiguous_project_across_authorized_matches():
 
 # -- Cross-organization isolation --------------------------------------------
 
+
 async def test_cross_org_same_name_isolated():
     # Org B user asks for "Project Alpha" -> resolves ORG B project, never ORG A.
     r = resolver()
@@ -215,20 +218,22 @@ async def test_cross_org_same_name_isolated():
 async def test_cross_org_project_id_denied_as_not_found():
     # Org B user names ORG A's project id -> must NOT resolve (tenant isolation).
     r = resolver()
-    res = await r.resolve(
-        msg(seed.WA_ORGB), understanding(fields={"project_id": seed.PROJ_ALPHA})
-    )
+    res = await r.resolve(msg(seed.WA_ORGB), understanding(fields={"project_id": seed.PROJ_ALPHA}))
     assert res.is_err
     assert res.error.error_code == ErrorCode.PROJECT_NOT_FOUND.value
 
 
 # -- Precedence --------------------------------------------------------------
 
+
 async def test_active_context_precedence_over_default():
     active = FakeActiveContextStore()
     await active.set_active_context(
-        organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR,
-        project_id=seed.PROJ_MARINA, site_id=None, ttl_seconds=3600,
+        organization_id=seed.ABC_ORG,
+        user_id=seed.ABC_DIRECTOR,
+        project_id=seed.PROJ_MARINA,
+        site_id=None,
+        ttl_seconds=3600,
     )
     r = ContextResolver(seed.build_dependencies(active_store=active))
     res = await r.resolve(msg(seed.WA_ABC_DIRECTOR), understanding())
@@ -240,8 +245,11 @@ async def test_active_context_precedence_over_default():
 async def test_explicit_precedence_over_active():
     active = FakeActiveContextStore()
     await active.set_active_context(
-        organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR,
-        project_id=seed.PROJ_MARINA, site_id=None, ttl_seconds=3600,
+        organization_id=seed.ABC_ORG,
+        user_id=seed.ABC_DIRECTOR,
+        project_id=seed.PROJ_MARINA,
+        site_id=None,
+        ttl_seconds=3600,
     )
     r = ContextResolver(seed.build_dependencies(active_store=active))
     res = await r.resolve(
@@ -255,8 +263,11 @@ async def test_explicit_precedence_over_active():
 async def test_reply_context_precedence_over_active():
     active = FakeActiveContextStore()
     await active.set_active_context(
-        organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR,
-        project_id=seed.PROJ_MARINA, site_id=None, ttl_seconds=3600,
+        organization_id=seed.ABC_ORG,
+        user_id=seed.ABC_DIRECTOR,
+        project_id=seed.PROJ_MARINA,
+        site_id=None,
+        ttl_seconds=3600,
     )
     r = ContextResolver(
         seed.build_dependencies(
@@ -264,9 +275,7 @@ async def test_reply_context_precedence_over_active():
             reply_mapping={"orig_msg": (seed.PROJ_AIRPORT, None)},
         )
     )
-    res = await r.resolve(
-        msg(seed.WA_ABC_DIRECTOR, reply_to="orig_msg"), understanding()
-    )
+    res = await r.resolve(msg(seed.WA_ABC_DIRECTOR, reply_to="orig_msg"), understanding())
     ctx = res.unwrap()
     assert ctx.context_project_id == seed.PROJ_AIRPORT
     assert ctx.context_source == ContextSource.REPLY_CONTEXT
@@ -275,8 +284,11 @@ async def test_reply_context_precedence_over_active():
 async def test_workflow_context_precedence_over_active():
     active = FakeActiveContextStore()
     await active.set_active_context(
-        organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR,
-        project_id=seed.PROJ_MARINA, site_id=None, ttl_seconds=3600,
+        organization_id=seed.ABC_ORG,
+        user_id=seed.ABC_DIRECTOR,
+        project_id=seed.PROJ_MARINA,
+        site_id=None,
+        ttl_seconds=3600,
     )
     r = ContextResolver(
         seed.build_dependencies(
@@ -292,12 +304,16 @@ async def test_workflow_context_precedence_over_active():
 
 # -- Stale / expiry ----------------------------------------------------------
 
+
 async def test_stale_active_context_rejected_falls_to_default():
     active = FakeActiveContextStore()
     # Store a project the director is NOT authorized for (Org A's Alpha).
     await active.set_active_context(
-        organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR,
-        project_id=seed.PROJ_ALPHA, site_id=None, ttl_seconds=3600,
+        organization_id=seed.ABC_ORG,
+        user_id=seed.ABC_DIRECTOR,
+        project_id=seed.PROJ_ALPHA,
+        site_id=None,
+        ttl_seconds=3600,
     )
     r = ContextResolver(seed.build_dependencies(active_store=active))
     res = await r.resolve(msg(seed.WA_ABC_DIRECTOR), understanding())
@@ -311,21 +327,21 @@ async def test_active_context_expiry_via_clock():
     clock_time = {"now": datetime(2026, 1, 1, tzinfo=UTC)}
     active = FakeActiveContextStore(clock=lambda: clock_time["now"])
     await active.set_active_context(
-        organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR,
-        project_id=seed.PROJ_MARINA, site_id=None, ttl_seconds=60,
+        organization_id=seed.ABC_ORG,
+        user_id=seed.ABC_DIRECTOR,
+        project_id=seed.PROJ_MARINA,
+        site_id=None,
+        ttl_seconds=60,
     )
-    got = await active.get_active_context(
-        organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR
-    )
+    got = await active.get_active_context(organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR)
     assert got is not None
     clock_time["now"] += timedelta(seconds=61)
-    got = await active.get_active_context(
-        organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR
-    )
+    got = await active.get_active_context(organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR)
     assert got is None
 
 
 # -- Active context switch service -------------------------------------------
+
 
 async def test_switch_service_authorizes_and_persists():
     deps = seed.build_dependencies()
@@ -353,9 +369,12 @@ async def test_switch_service_rejects_unauthorized_project():
     assert res.is_err
     assert res.error.error_code == ErrorCode.PROJECT_NOT_FOUND.value
     # Nothing persisted.
-    assert await deps.active_context.get_active_context(
-        organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR
-    ) is None
+    assert (
+        await deps.active_context.get_active_context(
+            organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR
+        )
+        is None
+    )
 
 
 async def test_switch_service_clear():
@@ -367,12 +386,16 @@ async def test_switch_service_clear():
         organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR, project_id=seed.PROJ_MARINA
     )
     await svc.clear_active_context(organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR)
-    assert await deps.active_context.get_active_context(
-        organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR
-    ) is None
+    assert (
+        await deps.active_context.get_active_context(
+            organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR
+        )
+        is None
+    )
 
 
 # -- Redis active context store (against FakeRedis) --------------------------
+
 
 async def test_redis_active_context_roundtrip_and_expiry():
     from mesiri.infrastructure.redis.client import FakeRedis
@@ -382,22 +405,25 @@ async def test_redis_active_context_roundtrip_and_expiry():
     await redis.connect()
     store = RedisActiveContextStore(redis, clock=lambda: clock_time["now"])
     await store.set_active_context(
-        organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR,
-        project_id=seed.PROJ_MARINA, site_id=seed.SITE_BLOCK_A, ttl_seconds=60,
+        organization_id=seed.ABC_ORG,
+        user_id=seed.ABC_DIRECTOR,
+        project_id=seed.PROJ_MARINA,
+        site_id=seed.SITE_BLOCK_A,
+        ttl_seconds=60,
     )
-    got = await store.get_active_context(
-        organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR
-    )
+    got = await store.get_active_context(organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR)
     assert got.project_id == seed.PROJ_MARINA
     assert got.site_id == seed.SITE_BLOCK_A
     # Expiry enforced explicitly even though FakeRedis has no TTL eviction.
     clock_time["now"] += timedelta(seconds=61)
-    assert await store.get_active_context(
-        organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR
-    ) is None
+    assert (
+        await store.get_active_context(organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR)
+        is None
+    )
 
 
 # -- Correlation propagation -------------------------------------------------
+
 
 async def test_correlation_preserved_end_to_end():
     r = resolver()
@@ -422,12 +448,11 @@ async def test_error_carries_correlation():
 
 # -- No location resolvable --------------------------------------------------
 
+
 async def test_no_context_returns_unresolved_source_not_error():
     # A director-like user with multiple projects, no default, no explicit/active.
     world = seed.build_world()
-    world.preferences = [
-        p for p in world.preferences if p.user_id != seed.USER_DIRECTOR
-    ]
+    world.preferences = [p for p in world.preferences if p.user_id != seed.USER_DIRECTOR]
     r = ContextResolver(seed.build_dependencies(world))
     res = await r.resolve(msg(seed.WA_DIRECTOR), understanding())
     ctx = res.unwrap()

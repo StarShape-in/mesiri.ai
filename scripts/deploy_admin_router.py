@@ -1,17 +1,18 @@
 import paramiko
 
-HOST = '187.127.180.98'
-USER = 'root'
-PASS = 'Mercondatabase1234@'
+HOST = "187.127.180.98"
+USER = "root"
+PASS = "Mercondatabase1234@"
 
-REMOTE_SRC = '/opt/mesiri/apps/whatsapp-assistant/src'
+REMOTE_SRC = "/opt/mesiri/apps/whatsapp-assistant/src"
 
 # Files to deploy — local path -> remote path
 files_to_deploy = {
-    r'E:\Mesiri.AI\apps\whatsapp-assistant\src\admin\__init__.py': f'{REMOTE_SRC}/admin/__init__.py',
-    r'E:\Mesiri.AI\apps\whatsapp-assistant\src\admin\router.py': f'{REMOTE_SRC}/admin/router.py',
-    r'E:\Mesiri.AI\apps\whatsapp-assistant\src\runtime\lifecycle.py': f'{REMOTE_SRC}/runtime/lifecycle.py',
+    r"E:\Mesiri.AI\apps\whatsapp-assistant\src\admin\__init__.py": f"{REMOTE_SRC}/admin/__init__.py",
+    r"E:\Mesiri.AI\apps\whatsapp-assistant\src\admin\router.py": f"{REMOTE_SRC}/admin/router.py",
+    r"E:\Mesiri.AI\apps\whatsapp-assistant\src\runtime\lifecycle.py": f"{REMOTE_SRC}/runtime/lifecycle.py",
 }
+
 
 def deploy():
     print(f"Connecting to {HOST}...")
@@ -20,16 +21,16 @@ def deploy():
     client.connect(HOST, username=USER, password=PASS)
 
     for local_path, remote_path in files_to_deploy.items():
-        remote_dir = remote_path.rsplit('/', 1)[0]
+        remote_dir = remote_path.rsplit("/", 1)[0]
         client.exec_command(f"mkdir -p {remote_dir}")
 
         print(f"Uploading {local_path} -> {remote_path}")
         try:
-            with open(local_path, encoding='utf-8') as f:
+            with open(local_path, encoding="utf-8") as f:
                 content = f.read()
-            hex_content = content.encode('utf-8').hex()
+            hex_content = content.encode("utf-8").hex()
             write_script = f"import binascii; open('{remote_path}', 'wb').write(binascii.unhexlify('{hex_content}'))"
-            stdin, stdout, stderr = client.exec_command(f"python3 -c \"{write_script}\"")
+            stdin, stdout, stderr = client.exec_command(f'python3 -c "{write_script}"')
             err = stderr.read().decode()
             if err:
                 print(f"  ERROR: {err}")
@@ -40,18 +41,18 @@ def deploy():
 
     # Also deploy the alembic migration files
     migration_files = {
-        r'E:\Mesiri.AI\backend\migrations\versions\0020_identity_add_users.py': '/opt/mesiri/backend/migrations/versions/0020_identity_add_users.py',
-        r'E:\Mesiri.AI\backend\migrations\versions\0030_orgs_add_organizations.py': '/opt/mesiri/backend/migrations/versions/0030_orgs_add_organizations.py',
+        r"E:\Mesiri.AI\backend\migrations\versions\0020_identity_add_users.py": "/opt/mesiri/backend/migrations/versions/0020_identity_add_users.py",
+        r"E:\Mesiri.AI\backend\migrations\versions\0030_orgs_add_organizations.py": "/opt/mesiri/backend/migrations/versions/0030_orgs_add_organizations.py",
     }
     for local_path, remote_path in migration_files.items():
-        remote_dir = remote_path.rsplit('/', 1)[0]
+        remote_dir = remote_path.rsplit("/", 1)[0]
         client.exec_command(f"mkdir -p {remote_dir}")
         try:
-            with open(local_path, encoding='utf-8') as f:
+            with open(local_path, encoding="utf-8") as f:
                 content = f.read()
-            hex_content = content.encode('utf-8').hex()
+            hex_content = content.encode("utf-8").hex()
             write_script = f"import binascii; open('{remote_path}', 'wb').write(binascii.unhexlify('{hex_content}'))"
-            client.exec_command(f"python3 -c \"{write_script}\"")
+            client.exec_command(f'python3 -c "{write_script}"')
         except Exception as e:
             print(f"  Migration upload failed: {e}")
 
@@ -73,6 +74,7 @@ def deploy():
     stdin, stdout, stderr = client.exec_command("pkill -f 'uvicorn main:app'")
     stdout.read()  # wait
     import time
+
     time.sleep(2)
     # Re-launch
     stdin, stdout, stderr = client.exec_command(
@@ -99,6 +101,7 @@ def deploy():
 
     client.close()
     print("\nDone!")
+
 
 if __name__ == "__main__":
     deploy()

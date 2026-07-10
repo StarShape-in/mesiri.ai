@@ -40,9 +40,7 @@ class InMemoryDeduplicationStore(DeduplicationStore):
     def _evict_expired(self) -> None:
         cutoff = datetime.now(tz=UTC) - self._ttl
         expired_keys = [
-            message_id
-            for message_id, seen_at in self._seen.items()
-            if seen_at < cutoff
+            message_id for message_id, seen_at in self._seen.items() if seen_at < cutoff
         ]
         for message_id in expired_keys:
             del self._seen[message_id]

@@ -1,13 +1,14 @@
-
 import paramiko
 
-HOST = '187.127.180.98'
-USER = 'root'
-PASS = 'Mercondatabase1234@'
+HOST = "187.127.180.98"
+USER = "root"
+PASS = "Mercondatabase1234@"
+
 
 def run(client, cmd):
     stdin, stdout, stderr = client.exec_command(cmd)
     return stdout.read().decode(), stderr.read().decode()
+
 
 client = paramiko.SSHClient()
 client.set_missing_host_key_policy(paramiko.AutoAddPolicy())

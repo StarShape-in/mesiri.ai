@@ -90,7 +90,7 @@ class ProjectResponse(BaseModel):
     code: str | None = None
     client: str | None = None
     description: str | None = None
-    status: str            # StatusType: success | warning | critical
+    status: str  # StatusType: success | warning | critical
     statusLabel: str
     progress: int
     openIssues: int

@@ -1,8 +1,8 @@
 import paramiko
 
-HOST = '187.127.180.98'
-USER = 'root'
-PASS = 'Mercondatabase1234@'
+HOST = "187.127.180.98"
+USER = "root"
+PASS = "Mercondatabase1234@"
 
 client = paramiko.SSHClient()
 client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -30,13 +30,13 @@ asyncio.run(fix())
 
 # Write to a temp file on VPS
 sftp = client.open_sftp()
-with sftp.open('/tmp/fix_password.py', 'w') as f:
+with sftp.open("/tmp/fix_password.py", "w") as f:
     f.write(fix_script)
 sftp.close()
 
 stdin, stdout, stderr = client.exec_command("/opt/mesiri/.venv/bin/python3 /tmp/fix_password.py")
-out = stdout.read().decode('utf-8', errors='replace')
-err = stderr.read().decode('utf-8', errors='replace')
+out = stdout.read().decode("utf-8", errors="replace")
+err = stderr.read().decode("utf-8", errors="replace")
 print("OUT:", out)
 if err:
     print("ERR:", err[:500])
@@ -45,8 +45,8 @@ if err:
 stdin, stdout, stderr = client.exec_command(
     "curl -s -X POST http://127.0.0.1:8000/auth/login "
     "-H 'Content-Type: application/json' "
-    "-d '{\"email\":\"admin@acmeconstruct.com\",\"password\":\"Acme1234!\"}'"
+    '-d \'{"email":"admin@acmeconstruct.com","password":"Acme1234!"}\''
 )
-print("\nLogin response:", stdout.read().decode('utf-8', errors='replace'))
+print("\nLogin response:", stdout.read().decode("utf-8", errors="replace"))
 
 client.close()

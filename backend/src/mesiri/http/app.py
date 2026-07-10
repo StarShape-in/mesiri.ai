@@ -63,6 +63,7 @@ def create_app(lifecycle: AppLifecycle | None = None) -> FastAPI:
 
     # CORS Configuration
     from fastapi.middleware.cors import CORSMiddleware
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -73,28 +74,33 @@ def create_app(lifecycle: AppLifecycle | None = None) -> FastAPI:
 
     # Register Routers
     import logging
+
     _log = logging.getLogger("mesiri.http")
 
     try:
         from mesiri.domains.identity.router import router as identity_router
+
         app.include_router(identity_router)
     except Exception as exc:  # noqa: BLE001 — surface every router failure, not just ImportError
         _log.exception("identity router not loaded: %s", exc)
 
     try:
         from mesiri.domains.admin.router import router as admin_router
+
         app.include_router(admin_router)
     except Exception as exc:  # noqa: BLE001
         _log.exception("admin router not loaded: %s", exc)
 
     try:
         from mesiri.domains.users.router import router as users_router
+
         app.include_router(users_router)
     except Exception as exc:  # noqa: BLE001
         _log.exception("users router not loaded: %s", exc)
 
     try:
         from mesiri.domains.projects.router import router as projects_router
+
         app.include_router(projects_router)
     except Exception as exc:  # noqa: BLE001
         _log.exception("projects router not loaded: %s", exc)

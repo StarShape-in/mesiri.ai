@@ -105,7 +105,9 @@ async def test_start_saves_workflow_state_and_returns_started():
     repo = FakeWorkflowInstanceRepository()
     runtime = WorkflowRuntime(registry=registry, repo=repo)
 
-    decision = _decision(decision_type=PlannerDecisionType.START_WORKFLOW, workflow_key=WorkflowKey.MATERIAL_RECEIPT)
+    decision = _decision(
+        decision_type=PlannerDecisionType.START_WORKFLOW, workflow_key=WorkflowKey.MATERIAL_RECEIPT
+    )
     result = await runtime.start(decision, _event())
 
     assert result.status is WorkflowRunStatus.STARTED
@@ -125,7 +127,9 @@ async def test_unmapped_workflow_key_returns_no_graph_and_saves_nothing():
     repo = FakeWorkflowInstanceRepository()
     runtime = WorkflowRuntime(registry=registry, repo=repo)
 
-    decision = _decision(decision_type=PlannerDecisionType.START_WORKFLOW, workflow_key=WorkflowKey.MATERIAL_RECEIPT)
+    decision = _decision(
+        decision_type=PlannerDecisionType.START_WORKFLOW, workflow_key=WorkflowKey.MATERIAL_RECEIPT
+    )
     result = await runtime.start(decision, _event())
 
     assert result.status is WorkflowRunStatus.NO_GRAPH
@@ -139,7 +143,9 @@ async def test_graph_exception_returns_failed_and_saves_nothing():
     repo = FakeWorkflowInstanceRepository()
     runtime = WorkflowRuntime(registry=registry, repo=repo)
 
-    decision = _decision(decision_type=PlannerDecisionType.START_WORKFLOW, workflow_key=WorkflowKey.MATERIAL_RECEIPT)
+    decision = _decision(
+        decision_type=PlannerDecisionType.START_WORKFLOW, workflow_key=WorkflowKey.MATERIAL_RECEIPT
+    )
     result = await runtime.start(decision, _event())
 
     assert result.status is WorkflowRunStatus.FAILED
@@ -154,7 +160,9 @@ async def test_incomplete_graph_result_returns_failed():
     repo = FakeWorkflowInstanceRepository()
     runtime = WorkflowRuntime(registry=registry, repo=repo)
 
-    decision = _decision(decision_type=PlannerDecisionType.START_WORKFLOW, workflow_key=WorkflowKey.MATERIAL_RECEIPT)
+    decision = _decision(
+        decision_type=PlannerDecisionType.START_WORKFLOW, workflow_key=WorkflowKey.MATERIAL_RECEIPT
+    )
     result = await runtime.start(decision, _event())
 
     assert result.status is WorkflowRunStatus.FAILED
@@ -162,9 +170,12 @@ async def test_incomplete_graph_result_returns_failed():
 
 
 @pytest.mark.parametrize(
-    "decision_type", [PlannerDecisionType.CLARIFY, PlannerDecisionType.DIRECT_REPLY, PlannerDecisionType.IGNORE]
+    "decision_type",
+    [PlannerDecisionType.CLARIFY, PlannerDecisionType.DIRECT_REPLY, PlannerDecisionType.IGNORE],
 )
-async def test_start_rejects_non_start_workflow_decisions(decision_type: PlannerDecisionType) -> None:
+async def test_start_rejects_non_start_workflow_decisions(
+    decision_type: PlannerDecisionType,
+) -> None:
     """The runtime enforces its own precondition rather than trusting the caller."""
     registry = _FakeRegistry({WorkflowKey.MATERIAL_RECEIPT: _FakeGraph()})
     repo = FakeWorkflowInstanceRepository()
@@ -184,7 +195,9 @@ async def test_no_graph_does_not_mint_a_workflow_instance_id():
     repo = FakeWorkflowInstanceRepository()
     runtime = WorkflowRuntime(registry=registry, repo=repo)
 
-    decision = _decision(decision_type=PlannerDecisionType.START_WORKFLOW, workflow_key=WorkflowKey.MATERIAL_RECEIPT)
+    decision = _decision(
+        decision_type=PlannerDecisionType.START_WORKFLOW, workflow_key=WorkflowKey.MATERIAL_RECEIPT
+    )
     result = await runtime.start(decision, _event())
 
     assert result.workflow_instance_id is None

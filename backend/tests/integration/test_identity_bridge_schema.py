@@ -35,6 +35,7 @@ async def test_bridge_columns_present(engine) -> None:
     assert revision >= "0190", f"expected migration >= 0190, got {revision}"
 
     async with engine.connect() as conn:
+
         def _check(sync_conn):
             inspector = inspect(sync_conn)
             for table, column in _BRIDGE_COLUMNS:

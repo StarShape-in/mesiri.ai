@@ -10,7 +10,12 @@ from __future__ import annotations
 
 from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
 from mesiri_ai import fixtures
-from mesiri_ai.fakes import FakeExtractionProvider, FakeSpeechProvider, FakeVisionProvider
+from mesiri_ai.fakes import (
+    FakeExtractionProvider,
+    FakeSpeechProvider,
+    FakeTranslationProvider,
+    FakeVisionProvider,
+)
 from mesiri_contracts.assistant import MediaReference, NormalizedMessage
 from mesiri_contracts.assistant.confidence import ConfidenceLevel
 from mesiri_contracts.assistant.enums import InputModality, SemanticType
@@ -29,11 +34,14 @@ def _msg(**kwargs) -> NormalizedMessage:
     return NormalizedMessage.model_validate(base)
 
 
-async def _build(*, speech=None, vision=None, extraction=None, storage=None) -> UnderstandingPipeline:
+async def _build(
+    *, speech=None, vision=None, extraction=None, translation=None, storage=None
+) -> UnderstandingPipeline:
     return UnderstandingPipeline(
         speech=speech or FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
         vision=vision or FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
         extraction=extraction or FakeExtractionProvider(fixtures.JCB_EQUIPMENT_EXTRACTION),
+        translation=translation or FakeTranslationProvider(),
         object_storage=storage or FakeObjectStorage(),
     )
 
@@ -46,7 +54,10 @@ async def test_malayalam_jcb_voice_yields_equipment_facts():
         extraction=FakeExtractionProvider(fixtures.JCB_EQUIPMENT_EXTRACTION),
         storage=storage,
     )
-    msg = _msg(modality=InputModality.VOICE, media=MediaReference(object_key="voice/1.ogg", mime_type="audio/ogg"))
+    msg = _msg(
+        modality=InputModality.VOICE,
+        media=MediaReference(object_key="voice/1.ogg", mime_type="audio/ogg"),
+    )
 
     result = await pipeline.understand(msg)
 
@@ -69,7 +80,10 @@ async def test_receipt_image_yields_expense():
         extraction=FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION),
         storage=storage,
     )
-    msg = _msg(modality=InputModality.IMAGE, media=MediaReference(object_key="img/1.jpg", mime_type="image/jpeg"))
+    msg = _msg(
+        modality=InputModality.IMAGE,
+        media=MediaReference(object_key="img/1.jpg", mime_type="image/jpeg"),
+    )
 
     result = await pipeline.understand(msg)
     assert result.semantic_type == SemanticType.EXPENSE
@@ -95,7 +109,9 @@ async def test_partial_receipt_keeps_missing_fields_and_lowers_confidence():
 async def test_unreadable_image_is_unusable():
     storage = FakeObjectStorage()
     await storage.put_object("img/3.jpg", b"<image>")
-    pipeline = await _build(vision=FakeVisionProvider(fixtures.UNREADABLE_IMAGE_VISION), storage=storage)
+    pipeline = await _build(
+        vision=FakeVisionProvider(fixtures.UNREADABLE_IMAGE_VISION), storage=storage
+    )
     msg = _msg(modality=InputModality.IMAGE, media=MediaReference(object_key="img/3.jpg"))
     result = await pipeline.understand(msg)
     assert result.overall_confidence == ConfidenceLevel.UNUSABLE
@@ -104,7 +120,9 @@ async def test_unreadable_image_is_unusable():
 async def test_empty_transcript_is_unusable():
     storage = FakeObjectStorage()
     await storage.put_object("voice/2.ogg", b"<audio>")
-    pipeline = await _build(speech=FakeSpeechProvider(fixtures.EMPTY_TRANSCRIPT_SPEECH), storage=storage)
+    pipeline = await _build(
+        speech=FakeSpeechProvider(fixtures.EMPTY_TRANSCRIPT_SPEECH), storage=storage
+    )
     msg = _msg(modality=InputModality.VOICE, media=MediaReference(object_key="voice/2.ogg"))
     result = await pipeline.understand(msg)
     assert result.overall_confidence == ConfidenceLevel.UNUSABLE

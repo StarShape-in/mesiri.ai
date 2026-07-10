@@ -13,10 +13,11 @@ from pydantic import BaseModel, Field
 
 class ProjectResponse(BaseModel):
     """External API response for a project.
-    
+
     Canonical contract matching WhatsApp Assistant projects router.
     Uses camelCase field names and mapped status values.
     """
+
     id: UUID
     name: str
     location: str | None = None
@@ -28,6 +29,6 @@ class ProjectResponse(BaseModel):
     progress: int
     openIssues: int = Field(..., alias="openIssues")  # camelCase, not snake_case
     reportingRatio: str | None = Field(None, alias="reportingRatio")
-    
+
     class Config:
         populate_by_name = True  # Allow both alias and field name

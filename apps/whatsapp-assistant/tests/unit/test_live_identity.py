@@ -51,33 +51,65 @@ def test_pick_project_ignores_unauthorized_name():
 
 
 def test_context_header_variants():
-    ctx = SenderContext("u1", "Ravi", "SITE_ENGINEER", "o1", "Superman Company", True,
-                        [ProjectRef("p1", "Skyline Towers")])
+    ctx = SenderContext(
+        "u1",
+        "Ravi",
+        "SITE_ENGINEER",
+        "o1",
+        "Superman Company",
+        True,
+        [ProjectRef("p1", "Skyline Towers")],
+    )
     assert "Ravi" in context_header(ctx, ctx.projects[0])
     assert "Skyline Towers" in context_header(ctx, ctx.projects[0])
-    multi = SenderContext("u1", "Ravi", "ADMIN", "o1", "Superman Company", True,
-                          [ProjectRef("p1", "A"), ProjectRef("p2", "B")])
+    multi = SenderContext(
+        "u1",
+        "Ravi",
+        "ADMIN",
+        "o1",
+        "Superman Company",
+        True,
+        [ProjectRef("p1", "A"), ProjectRef("p2", "B")],
+    )
     assert "project unspecified" in context_header(multi, None)
 
 
 def test_whoami_reply_includes_role_org_projects():
     ctx = SenderContext(
-        "u1", "Alan", "ADMIN", "o1", "superman company", True,
+        "u1",
+        "Alan",
+        "ADMIN",
+        "o1",
+        "superman company",
+        True,
         [
-            ProjectRef("p1", "Skyline Towers", location="North Zone",
-                       code="SKY-01", status="critical", progress=68, open_issues=3),
-            ProjectRef("p2", "Green Valley", location="East Zone",
-                       status="at_risk", progress=42, open_issues=1),
+            ProjectRef(
+                "p1",
+                "Skyline Towers",
+                location="North Zone",
+                code="SKY-01",
+                status="critical",
+                progress=68,
+                open_issues=3,
+            ),
+            ProjectRef(
+                "p2",
+                "Green Valley",
+                location="East Zone",
+                status="at_risk",
+                progress=42,
+                open_issues=1,
+            ),
         ],
     )
     reply = whoami_reply(ctx)
     assert "Alan" in reply
-    assert "Admin" in reply           # role pretty-printed
+    assert "Admin" in reply  # role pretty-printed
     assert "superman company" in reply
     assert "Skyline Towers" in reply
     assert "North Zone" in reply
     assert "Green Valley" in reply
-    assert "(2)" in reply             # project count
+    assert "(2)" in reply  # project count
 
 
 def test_whoami_reply_handles_no_projects():
@@ -88,6 +120,11 @@ def test_whoami_reply_handles_no_projects():
 
 def test_no_org_message_is_distinct_from_unregistered():
     # The two cases must read differently so the recipient understands the gap.
-    assert "isn't registered" in __import__("context.live_identity", fromlist=["UNREGISTERED_MESSAGE"]).UNREGISTERED_MESSAGE.lower()
+    assert (
+        "isn't registered"
+        in __import__(
+            "context.live_identity", fromlist=["UNREGISTERED_MESSAGE"]
+        ).UNREGISTERED_MESSAGE.lower()
+    )
     assert "not part of any organization" in NO_ORG_MESSAGE.format(name="Alan").lower()
     assert "Alan" in NO_ORG_MESSAGE.format(name="Alan")

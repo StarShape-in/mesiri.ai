@@ -12,24 +12,24 @@ import time
 
 import paramiko
 
-HOST = '187.127.180.98'
-USER = 'root'
-PASS = 'Mercondatabase1234@'
+HOST = "187.127.180.98"
+USER = "root"
+PASS = "Mercondatabase1234@"
 
-LOCAL_ROOT = r'E:\Mesiri.AI\apps\whatsapp-assistant\src'
-REMOTE_SRC = '/opt/mesiri/apps/whatsapp-assistant/src'
+LOCAL_ROOT = r"E:\Mesiri.AI\apps\whatsapp-assistant\src"
+REMOTE_SRC = "/opt/mesiri/apps/whatsapp-assistant/src"
 
 # (local relative path, remote relative path)
 FILES = [
-    (r'context\live_identity.py', f'{REMOTE_SRC}/context/live_identity.py'),
-    (r'runtime\dependencies.py', f'{REMOTE_SRC}/runtime/dependencies.py'),
+    (r"context\live_identity.py", f"{REMOTE_SRC}/context/live_identity.py"),
+    (r"runtime\dependencies.py", f"{REMOTE_SRC}/runtime/dependencies.py"),
 ]
 
 
 def run(client, cmd, block=True):
     stdin, stdout, stderr = client.exec_command(cmd)
-    out = stdout.read().decode('utf-8', errors='replace')
-    err = stderr.read().decode('utf-8', errors='replace')
+    out = stdout.read().decode("utf-8", errors="replace")
+    err = stderr.read().decode("utf-8", errors="replace")
     if block:
         return out, err
     return "", ""
@@ -37,12 +37,11 @@ def run(client, cmd, block=True):
 
 def upload(client, local_path, remote_path):
     """Upload a file by writing its bytes as hex (avoids SFTP/quoting pain)."""
-    with open(local_path, 'rb') as f:
+    with open(local_path, "rb") as f:
         data = f.read()
     hex_content = data.hex()
     write_script = (
-        f"import binascii; "
-        f"open('{remote_path}', 'wb').write(binascii.unhexlify('{hex_content}'))"
+        f"import binascii; open('{remote_path}', 'wb').write(binascii.unhexlify('{hex_content}'))"
     )
     # Use a heredoc to avoid argument-length / quoting issues for bigger files
     heredoc = f"python3 <<'PYEOF'\n{write_script}\nPYEOF"

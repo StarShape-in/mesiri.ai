@@ -22,6 +22,7 @@ Revision ID: 0180
 Revises: 0170
 Create Date: 2026-07-08
 """
+
 from __future__ import annotations
 
 import sqlalchemy as sa
@@ -83,11 +84,21 @@ def upgrade() -> None:
     # free-text flows keep working during the transition.
     op.add_column(
         "material_receipts",
-        sa.Column("material_id", sa.UUID(as_uuid=True), sa.ForeignKey("materials_catalog.id"), nullable=True),
+        sa.Column(
+            "material_id",
+            sa.UUID(as_uuid=True),
+            sa.ForeignKey("materials_catalog.id"),
+            nullable=True,
+        ),
     )
     op.add_column(
         "material_usage",
-        sa.Column("material_id", sa.UUID(as_uuid=True), sa.ForeignKey("materials_catalog.id"), nullable=True),
+        sa.Column(
+            "material_id",
+            sa.UUID(as_uuid=True),
+            sa.ForeignKey("materials_catalog.id"),
+            nullable=True,
+        ),
     )
     op.create_index(
         "ix_material_receipts_material_id",

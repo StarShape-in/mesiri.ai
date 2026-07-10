@@ -167,9 +167,7 @@ class PostgresProjectRepository(_EngineMixin):
         )
         return [_project(r) for r in rows]
 
-    async def get_project_in_org(
-        self, *, organization_id: str, project_id: str
-    ) -> Project | None:
+    async def get_project_in_org(self, *, organization_id: str, project_id: str) -> Project | None:
         row = await self._row(
             "SELECT id, organization_id, name, is_active FROM context_projects "
             "WHERE id = :pid AND organization_id = :org AND is_active = true",

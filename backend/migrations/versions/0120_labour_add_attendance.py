@@ -14,6 +14,7 @@ Revision ID: 0120
 Revises: 0110
 Create Date: 2026-07-08
 """
+
 from __future__ import annotations
 
 import sqlalchemy as sa
@@ -36,7 +37,9 @@ def upgrade() -> None:
             sa.ForeignKey("organizations.id"),
             nullable=False,
         ),
-        sa.Column("project_id", sa.UUID(as_uuid=True), sa.ForeignKey("projects.id"), nullable=False),
+        sa.Column(
+            "project_id", sa.UUID(as_uuid=True), sa.ForeignKey("projects.id"), nullable=False
+        ),
         sa.Column("site_id", sa.UUID(as_uuid=True), sa.ForeignKey("sites.id"), nullable=True),
         sa.Column("occurred_date", sa.Date(), nullable=False),
         sa.Column("headcount_total", sa.Integer(), nullable=False),
@@ -59,7 +62,9 @@ def upgrade() -> None:
         sa.Column("updated_by", sa.UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=True),
         sa.UniqueConstraint("site_id", "occurred_date", name="uq_labour_attendance_site_date"),
     )
-    op.create_index("ix_labour_attendance_org_project", "labour_attendance", ["organization_id", "project_id"])
+    op.create_index(
+        "ix_labour_attendance_org_project", "labour_attendance", ["organization_id", "project_id"]
+    )
     op.create_index("ix_labour_attendance_occurred_date", "labour_attendance", ["occurred_date"])
     op.create_index("ix_labour_attendance_correlation_id", "labour_attendance", ["correlation_id"])
 

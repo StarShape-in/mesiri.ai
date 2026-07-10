@@ -151,7 +151,8 @@ def test_start_workflow_requires_workflow_key():
 
 
 @pytest.mark.parametrize(
-    "decision_type", [PlannerDecisionType.CLARIFY, PlannerDecisionType.DIRECT_REPLY, PlannerDecisionType.IGNORE]
+    "decision_type",
+    [PlannerDecisionType.CLARIFY, PlannerDecisionType.DIRECT_REPLY, PlannerDecisionType.IGNORE],
 )
 def test_non_start_workflow_forbids_workflow_key(decision_type: PlannerDecisionType) -> None:
     with pytest.raises(ValidationError):

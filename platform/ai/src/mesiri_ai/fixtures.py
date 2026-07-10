@@ -102,6 +102,7 @@ LOW_CONFIDENCE_EXTRACTION = ExtractionResult(
 
 # --- Failure injectors ------------------------------------------------------
 
+
 def timeout_error() -> MesiriError:
     # Providers raise the already-mapped MesiriError at the port boundary
     # (the adapter maps the raw SDK timeout via the resilience helper).

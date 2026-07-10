@@ -17,7 +17,7 @@ from typing import Any
 
 from ...core.errors import malformed_output
 from ...core.fallback import call_with_resilience
-from ...models import ExtractionResult, VisionResult
+from ...models import ExtractionResult, TranslationResult, VisionResult
 
 try:
     from mesiri.bootstrap.settings import GeminiSettings
@@ -40,6 +40,13 @@ _EXTRACTION_PROMPT = (
 )
 
 
+_TRANSLATION_PROMPT = (
+    "Translate the following text to English. Also identify the source language if possible. "
+    'Return strict JSON with keys: "translated_text" and "detected_language". '
+    "If it is already English, just return the text as translated_text and 'English' as detected_language."
+)
+
+
 class GeminiProvider:
     provider = "gemini"
 
@@ -55,7 +62,9 @@ class GeminiProvider:
             self._client = genai.Client(api_key=api_key)
         return self._client
 
-    async def _generate(self, contents: Any, correlation_id: str | None, operation: str) -> tuple[str, float]:
+    async def _generate(
+        self, contents: Any, correlation_id: str | None, operation: str
+    ) -> tuple[str, float]:
         client = self._get_client()
 
         async def _raw() -> Any:
@@ -82,14 +91,17 @@ class GeminiProvider:
 
     @staticmethod
     def _parse_json(text: str, correlation_id: str | None) -> dict[str, Any]:
-        cleaned = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        cleaned = (
+            text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        )
         try:
             data = json.loads(cleaned)
         except (ValueError, TypeError) as exc:
             raise malformed_output("gemini", str(exc), correlation_id=correlation_id) from exc
         if not isinstance(data, dict):
-            raise malformed_output("gemini", "top-level JSON is not an object",
-                                   correlation_id=correlation_id)
+            raise malformed_output(
+                "gemini", "top-level JSON is not an object", correlation_id=correlation_id
+            )
         return data
 
     async def analyze_image(
@@ -103,7 +115,9 @@ class GeminiProvider:
         from google.genai import types  # lazy
 
         part = types.Part.from_bytes(data=image, mime_type=mime_type or "image/jpeg")
-        text, latency_ms = await self._generate([_VISION_PROMPT, part], correlation_id, "analyze_image")
+        text, latency_ms = await self._generate(
+            [_VISION_PROMPT, part], correlation_id, "analyze_image"
+        )
         data = self._parse_json(text, correlation_id)
         return VisionResult(
             document_classification=data.get("document_classification"),
@@ -123,7 +137,35 @@ class GeminiProvider:
             semantic_type=data.get("semantic_type", "unknown"),
             fields=data.get("fields", {}) or {},
             missing_fields=list(data.get("missing_fields", []) or []),
-            field_confidences={k: float(v) for k, v in (data.get("field_confidences", {}) or {}).items()},
+            field_confidences={
+                k: float(v) for k, v in (data.get("field_confidences", {}) or {}).items()
+            },
+            model=self._settings.model,
+            latency_ms=latency_ms,
+        )
+
+    async def generate_json(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        correlation_id: str | None = None,
+    ) -> str:
+        prompt = f"{system_prompt}\n\n{user_prompt}"
+        raw_text, _latency_ms = await self._generate(prompt, correlation_id, "generate_json")
+        return (
+            raw_text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        )
+
+    async def translate_to_english(
+        self, text: str, *, correlation_id: str | None = None
+    ) -> TranslationResult:
+        prompt = f"{_TRANSLATION_PROMPT}\n\nText:\n{text}"
+        raw_text, latency_ms = await self._generate(prompt, correlation_id, "translate")
+        data = self._parse_json(raw_text, correlation_id)
+        return TranslationResult(
+            translated_text=data.get("translated_text", text),
+            detected_language=data.get("detected_language"),
             model=self._settings.model,
             latency_ms=latency_ms,
         )

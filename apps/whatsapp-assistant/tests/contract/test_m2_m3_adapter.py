@@ -8,7 +8,12 @@ from ingress.media_handoff import upload_downloaded_media
 from ingress.media_ingestion import DownloadedMedia
 from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
 from mesiri_ai import fixtures
-from mesiri_ai.fakes import FakeExtractionProvider, FakeSpeechProvider, FakeVisionProvider
+from mesiri_ai.fakes import (
+    FakeExtractionProvider,
+    FakeSpeechProvider,
+    FakeTranslationProvider,
+    FakeVisionProvider,
+)
 from mesiri_contracts.assistant.enums import InputModality
 from mesiri_contracts.assistant.normalized_message import (
     NormalizedMessage,
@@ -23,6 +28,7 @@ def _pipeline(storage: FakeObjectStorage) -> UnderstandingPipeline:
         speech=FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
         vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
         extraction=FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION),
+        translation=FakeTranslationProvider(),
         object_storage=storage,
     )
 

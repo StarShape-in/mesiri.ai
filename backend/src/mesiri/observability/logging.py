@@ -96,7 +96,9 @@ class _ConsoleFormatter(logging.Formatter):
         fields = {**tracing.current_context(), **(getattr(record, "mesiri_fields", {}) or {})}
         cid = fields.get("correlation_id", "-")
         extras = " ".join(
-            f"{k}={_redact(v, k)}" for k, v in fields.items() if k not in _STANDARD_FIELDS and v is not None
+            f"{k}={_redact(v, k)}"
+            for k, v in fields.items()
+            if k not in _STANDARD_FIELDS and v is not None
         )
         base = f"{record.levelname:<7} [{cid}] {record.getMessage()}"
         return f"{base} {extras}".rstrip()
@@ -108,7 +110,9 @@ class StructuredLogger:
     def __init__(self, logger: logging.Logger) -> None:
         self._logger = logger
 
-    def _emit(self, level: int, event: str, error: MesiriError | None, fields: dict[str, Any]) -> None:
+    def _emit(
+        self, level: int, event: str, error: MesiriError | None, fields: dict[str, Any]
+    ) -> None:
         clean = {k: v for k, v in fields.items() if v is not None}
         if error is not None:
             clean.setdefault("error_code", error.error_code)

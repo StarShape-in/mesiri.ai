@@ -49,9 +49,7 @@ class PostgresIdentityBridgeRepository:
         sql = f"SELECT {column}::text AS cid FROM {table} WHERE id = :id"
         try:
             async with self._engine.connect() as conn:
-                row = (
-                    await conn.execute(text(sql), {"id": context_id})
-                ).mappings().first()
+                row = (await conn.execute(text(sql), {"id": context_id})).mappings().first()
         except Exception as exc:  # noqa: BLE001
             raise map_postgres_error(exc) from exc
         if row is None or row["cid"] is None:

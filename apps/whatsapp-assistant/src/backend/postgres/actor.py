@@ -71,19 +71,23 @@ class PostgresActorReader:
             # 1. Resolve the user + organization in one query.
             # ----------------------------------------------------------------
             row = (
-                await conn.execute(
-                    text(
-                        "SELECT u.id, u.full_name, u.role, u.organization_id,"
-                        "       o.name AS org_name, o.status AS org_status "
-                        "FROM users u "
-                        "LEFT JOIN organizations o ON o.id = u.organization_id "
-                        "WHERE u.whatsapp_number IS NOT NULL "
-                        "  AND regexp_replace(u.whatsapp_number, '\\D', '', 'g') = :d "
-                        "LIMIT 1"
-                    ),
-                    {"d": digits},
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT u.id, u.full_name, u.role, u.organization_id,"
+                            "       o.name AS org_name, o.status AS org_status "
+                            "FROM users u "
+                            "LEFT JOIN organizations o ON o.id = u.organization_id "
+                            "WHERE u.whatsapp_number IS NOT NULL "
+                            "  AND regexp_replace(u.whatsapp_number, '\\D', '', 'g') = :d "
+                            "LIMIT 1"
+                        ),
+                        {"d": digits},
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
 
             if row is None:
                 return None
@@ -98,17 +102,21 @@ class PostgresActorReader:
 
             if org_id is not None:
                 project_rows = (
-                    await conn.execute(
-                        text(
-                            "SELECT id, name, location, code, status,"
-                            "       progress, open_issues "
-                            "FROM projects "
-                            "WHERE organization_id = :org "
-                            "ORDER BY name"
-                        ),
-                        {"org": str(org_id)},
+                    (
+                        await conn.execute(
+                            text(
+                                "SELECT id, name, location, code, status,"
+                                "       progress, open_issues "
+                                "FROM projects "
+                                "WHERE organization_id = :org "
+                                "ORDER BY name"
+                            ),
+                            {"org": str(org_id)},
+                        )
                     )
-                ).mappings().all()
+                    .mappings()
+                    .all()
+                )
 
                 # ------------------------------------------------------------
                 # 3. Sites from the control-plane sites table.
@@ -116,17 +124,21 @@ class PostgresActorReader:
                 # ------------------------------------------------------------
                 try:
                     site_rows = (
-                        await conn.execute(
-                            text(
-                                "SELECT id, name, project_id "
-                                "FROM sites "
-                                "WHERE organization_id = :org "
-                                "  AND status = 'active' "
-                                "ORDER BY name"
-                            ),
-                            {"org": str(org_id)},
+                        (
+                            await conn.execute(
+                                text(
+                                    "SELECT id, name, project_id "
+                                    "FROM sites "
+                                    "WHERE organization_id = :org "
+                                    "  AND status = 'active' "
+                                    "ORDER BY name"
+                                ),
+                                {"org": str(org_id)},
+                            )
                         )
-                    ).mappings().all()
+                        .mappings()
+                        .all()
+                    )
                 except Exception:  # noqa: BLE001 — table may not exist yet
                     site_rows = []
 

@@ -9,6 +9,7 @@ Revision ID: 0050
 Revises: 0040
 Create Date: 2026-07-05
 """
+
 from __future__ import annotations
 
 import sqlalchemy as sa
@@ -34,8 +35,18 @@ def upgrade() -> None:
         sa.Column("status", sa.String(), nullable=False, server_default="on_track"),
         sa.Column("progress", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("open_issues", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
     )
     op.create_index("ix_projects_organization_id", "projects", ["organization_id"])
 

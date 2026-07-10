@@ -13,9 +13,9 @@ from enum import Enum
 
 
 class ConfidenceLevel(str, Enum):
-    HIGH = "high"          # ready for downstream use as-is
-    MEDIUM = "medium"      # usable but some required fields uncertain/missing
-    LOW = "low"            # significant ambiguity or missing required fields
+    HIGH = "high"  # ready for downstream use as-is
+    MEDIUM = "medium"  # usable but some required fields uncertain/missing
+    LOW = "low"  # significant ambiguity or missing required fields
     UNUSABLE = "unusable"  # cannot be acted upon (empty / malformed / failed)
 
     @property

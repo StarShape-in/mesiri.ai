@@ -1,6 +1,5 @@
 """Confidence policy is deterministic and independently testable (M3)."""
 
-
 from mesiri_ai.confidence import ConfidencePolicy, ConfidenceSignals
 from mesiri_contracts.assistant.confidence import ConfidenceLevel
 

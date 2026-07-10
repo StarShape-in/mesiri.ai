@@ -1,15 +1,16 @@
-
 import paramiko
 
-HOST = '187.127.180.98'
-USER = 'root'
-PASS = 'Mercondatabase1234@'
+HOST = "187.127.180.98"
+USER = "root"
+PASS = "Mercondatabase1234@"
+
 
 def run(client, cmd, block=True):
     stdin, stdout, stderr = client.exec_command(cmd)
     if block:
         return stdout.read().decode(), stderr.read().decode()
     return "", ""
+
 
 client = paramiko.SSHClient()
 client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -25,7 +26,10 @@ out, _ = run(client, "ls /opt/mesiri/.venv/lib/python3.12/site-packages/ | grep 
 print(out)
 
 print("=== Check editable installs ===")
-out, _ = run(client, "cat /opt/mesiri/.venv/lib/python3.12/site-packages/__editable__.mesiri_runtime-0.1.0.pth")
+out, _ = run(
+    client,
+    "cat /opt/mesiri/.venv/lib/python3.12/site-packages/__editable__.mesiri_runtime-0.1.0.pth",
+)
 print(out)
 
 print("=== Check if mesiri_contracts is in the monorepo ===")

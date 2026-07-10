@@ -67,8 +67,7 @@ class IdentityLookupPort(Protocol):
         wa_id: str,
         *,
         correlation_id: str,
-    ) -> IdentityRecord | None:
-        ...
+    ) -> IdentityRecord | None: ...
 
 
 @runtime_checkable
@@ -81,16 +80,14 @@ class ScopeLookupPort(Protocol):
         organization_id: str,
         *,
         correlation_id: str,
-    ) -> ScopeRecord | None:
-        ...
+    ) -> ScopeRecord | None: ...
 
     async def resolve_by_reply(
         self,
         replied_to_message_id: str,
         *,
         correlation_id: str,
-    ) -> ScopeRecord | None:
-        ...
+    ) -> ScopeRecord | None: ...
 
 
 @runtime_checkable
@@ -106,13 +103,11 @@ class WorkflowStateReadPort(Protocol):
         user_id: str,
         *,
         correlation_id: str,
-    ) -> ActiveWorkflowSnapshot | None:
-        ...
+    ) -> ActiveWorkflowSnapshot | None: ...
 
     async def get_pending_interaction(
         self,
         user_id: str,
         *,
         correlation_id: str,
-    ) -> PendingInteractionSnapshot | None:
-        ...
+    ) -> PendingInteractionSnapshot | None: ...

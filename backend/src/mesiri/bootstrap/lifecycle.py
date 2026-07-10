@@ -24,10 +24,12 @@ class AppLifecycle:
         self._started = False
 
     @classmethod
-    def create(cls, settings: Settings | None = None, *, use_fakes: bool | None = None) -> AppLifecycle:
+    def create(
+        cls, settings: Settings | None = None, *, use_fakes: bool | None = None
+    ) -> AppLifecycle:
         settings = settings or get_settings()
-        settings.validate_runtime()          # fail fast before touching anything
-        configure_logging(settings)          # logging ready before adapters emit
+        settings.validate_runtime()  # fail fast before touching anything
+        configure_logging(settings)  # logging ready before adapters emit
         container = build_container(settings, use_fakes=use_fakes)
         return cls(container)
 
@@ -47,8 +49,9 @@ class AppLifecycle:
 
             # Object storage adapters connect lazily; verify reachability now.
             await c.object_storage.check_health()  # type: ignore[attr-defined]
-            log.info("lifecycle.object_storage.ready",
-                     provider=c.settings.object_storage.provider.value)
+            log.info(
+                "lifecycle.object_storage.ready", provider=c.settings.object_storage.provider.value
+            )
 
             self._started = True
             log.info("lifecycle.startup.complete")
