@@ -193,7 +193,7 @@ class WhatsAppReceiver:
         message: Mapping[str, Any],
     ) -> DownloadedMedia | None:
         message_type = message.get("type")
-        if message_type == "text":
+        if message_type in ("text", "interactive"):
             return None
 
         if message_type == "image":

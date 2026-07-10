@@ -244,6 +244,38 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             await message_logger.log_reply(correlation_id=message.correlation_id, reply=handled.reply_text)
             return
 
+        # Category-menu tap (from render_direct_reply's greeting list): a
+        # deterministic reply, no AI call, no workflow state touched. Runs
+        # after the confirmation fast path so a pending confirmation still
+        # wins over a stale menu tap from an earlier message. See
+        # InteractionHandler.handle_category_tap for why this lives there.
+        category_prompt = interaction_handler.handle_category_tap(message)
+        if category_prompt is not None:
+            await sender.send_text(wa_id, category_prompt)
+            await message_logger.log_reply(correlation_id=message.correlation_id, reply=category_prompt)
+            return
+
+        # Bare "hi"/"menu"/"help"/etc (see greeting_phrases.json): the AI
+        # pipeline is never touched, same principle as the two fast paths
+        # above. Text only -- voice can't be checked until Sarvam
+        # transcribes it, so the identical check runs again inside
+        # understanding/pipeline.py post-transcription instead.
+        greeting_reply = interaction_handler.handle_greeting_trigger(message)
+        if greeting_reply is not None:
+            if greeting_reply.list_rows:
+                await sender.send_list(
+                    wa_id,
+                    body=greeting_reply.text,
+                    button_label=greeting_reply.list_button_label or "Choose one",
+                    rows=list(greeting_reply.list_rows),
+                )
+            else:
+                await sender.send_text(wa_id, greeting_reply.text)
+            await message_logger.log_reply(
+                correlation_id=message.correlation_id, reply=greeting_reply.text
+            )
+            return
+
         await process_inbound_message(
             message,
             actor_user_id=ctx.user_id,
@@ -253,6 +285,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             workflow_runtime=workflow_runtime,
             interaction_handler=interaction_handler,
             send_text=sender.send_text,
+            send_list=sender.send_list,
             context_debug=settings.context_debug,
             message_logger=message_logger,
             trace_logger=trace_logger,

@@ -115,3 +115,32 @@ async def test_receiver_downloads_media_for_image_and_voice(tmp_path) -> None:
     assert voice_message.media is not None
     assert voice_message.media.object_key == "media/wamid.voice-1/media-audio-1"
     assert media_downloader.download.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_receiver_normalizes_interactive_reply_without_downloading_media() -> None:
+    """The media-download step has the same 'only text/image/audio' history as
+    modality resolution did -- an interactive reply has no media at all, and
+    must not be routed into a download attempt."""
+    from tests.fixtures.meta_payloads import list_reply_webhook_payload
+
+    deduplication_store = InMemoryDeduplicationStore()
+    message_store = InMemoryNormalizedMessageStore()
+    media_downloader = AsyncMock()
+    receiver = WhatsAppReceiver(
+        deduplication_store=deduplication_store,
+        media_downloader=media_downloader,
+        message_store=message_store,
+        object_storage=FakeObjectStorage(),
+    )
+
+    scheduled = await receiver.handle_payload(list_reply_webhook_payload())
+    await receiver.wait_until_idle()
+
+    assert scheduled == 1
+    media_downloader.download.assert_not_called()
+    normalized = await message_store.get("wamid.interactive")
+    assert normalized is not None
+    assert normalized.modality is InputModality.INTERACTIVE
+    assert normalized.text == "Material"
+    assert normalized.metadata["interactive_reply_id"] == "cat_material"

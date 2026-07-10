@@ -266,3 +266,72 @@ async def test_slow_path_sibling_segments():
     # Verify the workflow was actually updated
     updated_state = repo._rows[WF][0]
     assert updated_state.draft_action.fields["quantity"] == 60
+
+
+def _interactive_message(row_id: str, title: str = "Material") -> NormalizedMessage:
+    return NormalizedMessage(
+        message_id="wamid.tap",
+        correlation_id="cor_tap_1",
+        sender=SenderInfo(wa_id="919000000000", profile_name="Engineer"),
+        timestamp=datetime(2026, 7, 8, 10, 0, tzinfo=UTC),
+        modality=InputModality.INTERACTIVE,
+        text=title,
+        metadata={"interactive_reply_id": row_id, "interactive_reply_type": "list_reply"},
+    )
+
+
+def test_category_tap_returns_the_matching_prompt():
+    handler = _handler(FakeWorkflowInstanceRepository())
+    prompt = handler.handle_category_tap(_interactive_message("cat_material"))
+    assert prompt is not None
+    assert "material" in prompt.lower()
+
+
+def test_category_tap_is_none_for_plain_text():
+    """A regular text message must never be mistaken for a menu tap, even if
+    someone happens to type a row id verbatim."""
+    handler = _handler(FakeWorkflowInstanceRepository())
+    assert handler.handle_category_tap(_message("cat_material")) is None
+
+
+def test_category_tap_is_none_for_an_unrecognized_row_id():
+    handler = _handler(FakeWorkflowInstanceRepository())
+    assert handler.handle_category_tap(_interactive_message("cat_does_not_exist")) is None
+
+
+def test_category_tap_does_not_touch_workflow_state():
+    """A category tap is pure UI navigation -- it must never create, resume,
+    or otherwise touch a workflow instance."""
+    repo = FakeWorkflowInstanceRepository()
+    handler = _handler(repo)
+    handler.handle_category_tap(_interactive_message("cat_expense"))
+    assert repo._rows == {}
+
+
+def test_greeting_trigger_returns_the_menu_for_a_bare_hi():
+    handler = _handler(FakeWorkflowInstanceRepository())
+    spec = handler.handle_greeting_trigger(_message("hi"))
+    assert spec is not None
+    assert spec.list_rows is not None
+    assert len(spec.list_rows) == 4
+
+
+def test_greeting_trigger_is_none_for_a_real_report():
+    handler = _handler(FakeWorkflowInstanceRepository())
+    assert handler.handle_greeting_trigger(_message("50 bags of cement arrived")) is None
+
+
+def test_greeting_trigger_is_none_for_voice_even_with_greeting_text():
+    """There's no text at normalization time for voice -- this fast path
+    only ever applies to TEXT modality (see understanding/pipeline.py for
+    the post-transcription check that covers voice instead)."""
+    handler = _handler(FakeWorkflowInstanceRepository())
+    voice_message = NormalizedMessage(
+        message_id="wamid.voice",
+        correlation_id="cor_voice_1",
+        sender=SenderInfo(wa_id="919000000000", profile_name="Engineer"),
+        timestamp=datetime(2026, 7, 8, 10, 0, tzinfo=UTC),
+        modality=InputModality.VOICE,
+        text="hi",  # even if somehow populated, modality gates this off
+    )
+    assert handler.handle_greeting_trigger(voice_message) is None
