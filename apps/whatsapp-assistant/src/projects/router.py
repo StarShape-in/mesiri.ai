@@ -17,6 +17,8 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from context.projection_hooks import project_entity
+
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 SECRET_KEY = "mesiri-temp-secret-key-change-in-production"
@@ -271,6 +273,7 @@ async def create_project_site(
             )
         )
 
+    await project_entity("site", site_id)
     return SiteResponse(id=site_id, project_id=project_id, name=name, status=status)
 
 

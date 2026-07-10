@@ -12,6 +12,8 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from context.projection_hooks import project_entity
+
 router = APIRouter(prefix="/users", tags=["users"])
 
 # ---------------------------------------------------------------------------
@@ -304,6 +306,8 @@ async def create_user(user_in: UserCreate, admin_payload: dict = Depends(get_cur
     async with engine.connect() as conn:
         result = await conn.execute(sa.select(users_table).where(users_table.c.id == user_id))
         row = result.first()
+
+    await project_entity("user", user_id)
     return _row_to_response(row)
 
 
@@ -362,6 +366,9 @@ async def update_user(
     async with engine.connect() as conn:
         result = await conn.execute(sa.select(users_table).where(users_table.c.id == user_id))
         row = result.first()
+
+    if values:
+        await project_entity("user", user_id)
     return _row_to_response(row)
 
 
@@ -402,6 +409,8 @@ async def update_user_status(
     async with engine.connect() as conn:
         result = await conn.execute(sa.select(users_table).where(users_table.c.id == user_id))
         row = result.first()
+
+    await project_entity("user", user_id)
     return _row_to_response(row)
 
 

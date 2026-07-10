@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from mesiri.domains.shared.auth import require_platform_admin
 
+from context.projection_hooks import project_entity
+
 router = APIRouter(prefix="/admin/organizations", tags=["admin"])
 
 
@@ -168,6 +170,9 @@ async def provision_tenant(
                     status_code=400, detail="Admin email is already registered"
                 ) from e
             raise HTTPException(status_code=500, detail=f"User creation failed: {e}") from e
+
+    await project_entity("organization", org_id)
+    await project_entity("user", user_id)
 
     return OrganizationResponse(
         id=org_id,

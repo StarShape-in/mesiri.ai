@@ -13,6 +13,8 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from context.projection_hooks import project_entity
+
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 # ---------------------------------------------------------------------------
@@ -243,6 +245,8 @@ async def register(user_in: UserRegister):
                 whatsapp_number=user_in.whatsapp_number,
             )
         )
+
+    await project_entity("user", user_id)
 
     token = _create_token(
         user_id=str(user_id),
