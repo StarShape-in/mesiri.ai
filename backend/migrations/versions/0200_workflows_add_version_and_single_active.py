@@ -11,6 +11,7 @@ Revision ID: 0200
 Revises: 0195
 Create Date: 2026-07-08
 """
+
 from __future__ import annotations
 
 import sqlalchemy as sa
@@ -37,7 +38,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index(
-        "uq_workflow_instances_one_awaiting_per_user", table_name="workflow_instances"
-    )
+    op.drop_index("uq_workflow_instances_one_awaiting_per_user", table_name="workflow_instances")
     op.drop_column("workflow_instances", "version")

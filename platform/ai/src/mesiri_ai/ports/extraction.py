@@ -20,5 +20,4 @@ class StructuredExtractionProvider(Protocol):
         *,
         semantic_hint: str | None = None,
         correlation_id: str | None = None,
-    ) -> ExtractionResult:
-        ...
+    ) -> ExtractionResult: ...

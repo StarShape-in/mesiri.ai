@@ -42,8 +42,12 @@ def build_pipeline(object_storage: ObjectStoragePort) -> UnderstandingPipeline:
         from mesiri_ai.adapters.gemini.adapter import GeminiProvider
 
         vision: object = GeminiProvider(settings.gemini)
+        translation: object = GeminiProvider(settings.gemini)
     else:
+        from mesiri_ai.fakes import FakeTranslationProvider
+
         vision = FakeVisionProvider(fixtures.VALID_RECEIPT_VISION)
+        translation = FakeTranslationProvider()
 
     logger.info(
         "Understanding pipeline: speech=%s extraction=%s vision=%s",
@@ -55,6 +59,7 @@ def build_pipeline(object_storage: ObjectStoragePort) -> UnderstandingPipeline:
         speech=speech,  # type: ignore[arg-type]
         vision=vision,  # type: ignore[arg-type]
         extraction=extraction,  # type: ignore[arg-type]
+        translation=translation,  # type: ignore[arg-type]
         object_storage=object_storage,
         confidence_policy=ConfidencePolicy(),
     )

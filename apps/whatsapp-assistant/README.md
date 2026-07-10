@@ -96,7 +96,8 @@ The assistant is the **front door for field workers**. The backend is the **sour
 | Planner (M5) | 🔲 0% | Folder declared; all files empty; contract not defined |
 | Workflow Runtime (M6) | 🔲 0% | LangGraph not installed; contracts not defined |
 | Interaction (M7) | 🔲 0% | Folder declared; all files empty |
-| Memory (M8) | 🔲 0% | Not started |
+| Application & Domain Execution (M8) | 🔲 0% | Not started |
+| Memory (M19) | 🔲 0% | Not started |
 | Reply | ✅ | M3-based plain text only; no templates yet |
 
 ### Known gaps to fix before Planner
@@ -119,7 +120,7 @@ src/
 ├── planner/          M5 — stub (empty)
 ├── workflows/        M6 — stub (empty)
 ├── interactions/     M7 — stub (empty)
-├── memory/           M8 — stub (empty)
+├── memory/           M19 — stub (empty)
 ├── backend/          Capability boundary — ports + one Postgres adapter
 ├── channel/          Outbound WhatsApp rendering
 ├── runtime/          DI container, lifecycle, inbound journey orchestration
@@ -243,7 +244,7 @@ These decisions are non-negotiable and explain why the codebase looks the way it
 - Implement Interaction layer — human-in-the-loop confirmations
 
 ### Long term
-- Conversation memory (pgvector semantic retrieval)
+- Conversation memory (M19 - pgvector semantic retrieval)
 - Rules engine (configurable approval thresholds, quantity limits)
 - Tool executor (external service calls from workflows)
 - Rich WhatsApp reply templates (buttons, lists, confirmation cards)

@@ -17,6 +17,7 @@ from mesiri_contracts.assistant.planner_decision import PlannerDecisionType, Wor
 from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
 from mesiri_contracts.assistant.v2.confirmed_action import ConfirmedActionV2
 from mesiri_contracts.assistant.v2.draft_action import DraftActionV2
+from mesiri_contracts.assistant.v2.interaction_spec import FieldCorrection
 from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
 from mesiri_contracts.assistant.v2.workflow_state import WorkflowStateV2
 from mesiri_contracts.common.ids import new_id
@@ -60,9 +61,7 @@ class WorkflowRunResult:
             if not self.pending_prompt:
                 raise ValueError("BLOCKED_PENDING_CONFIRMATION requires the pending prompt")
             if self.workflow_instance_id is not None or self.draft_action is not None:
-                raise ValueError(
-                    "BLOCKED_PENDING_CONFIRMATION must carry only pending_prompt"
-                )
+                raise ValueError("BLOCKED_PENDING_CONFIRMATION must carry only pending_prompt")
         elif (
             self.workflow_instance_id is not None
             or self.draft_action is not None
@@ -93,11 +92,19 @@ class WorkflowRunResult:
 
     @classmethod
     def no_graph(cls, *, workflow_key: WorkflowKey, correlation_id: str) -> WorkflowRunResult:
-        return cls(status=WorkflowRunStatus.NO_GRAPH, workflow_key=workflow_key, correlation_id=correlation_id)
+        return cls(
+            status=WorkflowRunStatus.NO_GRAPH,
+            workflow_key=workflow_key,
+            correlation_id=correlation_id,
+        )
 
     @classmethod
     def failed(cls, *, workflow_key: WorkflowKey, correlation_id: str) -> WorkflowRunResult:
-        return cls(status=WorkflowRunStatus.FAILED, workflow_key=workflow_key, correlation_id=correlation_id)
+        return cls(
+            status=WorkflowRunStatus.FAILED,
+            workflow_key=workflow_key,
+            correlation_id=correlation_id,
+        )
 
     @classmethod
     def blocked_pending_confirmation(
@@ -163,12 +170,17 @@ class WorkflowRuntime:
         self._registry = registry
         self._repo = repo
 
-    async def start(self, decision: PlannerDecisionV2, event: CanonicalEventV2) -> WorkflowRunResult:
+    async def start(
+        self, decision: PlannerDecisionV2, event: CanonicalEventV2
+    ) -> WorkflowRunResult:
         # Defensive precondition: the runtime is a boundary and enforces this
         # itself rather than relying exclusively on the caller (inbound_journey
         # already only calls start() for START_WORKFLOW, but must not be the
         # only thing standing between a bad decision and a broken graph run).
-        if decision.decision_type is not PlannerDecisionType.START_WORKFLOW or decision.workflow_key is None:
+        if (
+            decision.decision_type is not PlannerDecisionType.START_WORKFLOW
+            or decision.workflow_key is None
+        ):
             raise ValueError(
                 "WorkflowRuntime.start() requires a START_WORKFLOW decision with a workflow_key, "
                 f"got decision_type={decision.decision_type!r} workflow_key={decision.workflow_key!r}"
@@ -197,7 +209,9 @@ class WorkflowRuntime:
         graph = self._registry.get_graph(workflow_key)
         if graph is None:
             logger.warning("workflow.no_graph workflow_key=%s", workflow_key.value)
-            return WorkflowRunResult.no_graph(workflow_key=workflow_key, correlation_id=event.correlation_id)
+            return WorkflowRunResult.no_graph(
+                workflow_key=workflow_key, correlation_id=event.correlation_id
+            )
 
         workflow_instance_id = str(uuid.uuid4())
         graph_state: WorkflowGraphState = {
@@ -219,7 +233,9 @@ class WorkflowRuntime:
                 workflow_key.value,
                 workflow_instance_id,
             )
-            return WorkflowRunResult.failed(workflow_key=workflow_key, correlation_id=event.correlation_id)
+            return WorkflowRunResult.failed(
+                workflow_key=workflow_key, correlation_id=event.correlation_id
+            )
 
         draft_action: DraftActionV2 | None = result_state.get("draft_action")
         pending_prompt: str | None = result_state.get("pending_prompt")
@@ -229,7 +245,9 @@ class WorkflowRuntime:
                 workflow_key.value,
                 workflow_instance_id,
             )
-            return WorkflowRunResult.failed(workflow_key=workflow_key, correlation_id=event.correlation_id)
+            return WorkflowRunResult.failed(
+                workflow_key=workflow_key, correlation_id=event.correlation_id
+            )
 
         state = WorkflowStateV2(
             workflow_instance_id=workflow_instance_id,
@@ -256,9 +274,7 @@ class WorkflowRuntime:
                 if existing is not None and existing.state.pending_prompt
                 else "You have a pending confirmation. Please reply YES or NO to it first."
             )
-            logger.info(
-                "workflow.blocked_pending_confirmation_on_insert user=%s", event.user_id
-            )
+            logger.info("workflow.blocked_pending_confirmation_on_insert user=%s", event.user_id)
             return WorkflowRunResult.blocked_pending_confirmation(
                 workflow_key=workflow_key,
                 correlation_id=event.correlation_id,
@@ -266,12 +282,86 @@ class WorkflowRuntime:
             )
         except Exception:
             logger.exception("workflow.save_failed workflow_instance_id=%s", workflow_instance_id)
-            return WorkflowRunResult.failed(workflow_key=workflow_key, correlation_id=event.correlation_id)
+            return WorkflowRunResult.failed(
+                workflow_key=workflow_key, correlation_id=event.correlation_id
+            )
 
         return WorkflowRunResult.started(
             workflow_key=workflow_key,
             correlation_id=event.correlation_id,
             workflow_instance_id=workflow_instance_id,
+            draft_action=draft_action,
+            pending_prompt=pending_prompt,
+        )
+
+    async def correct(
+        self, loaded: LoadedWorkflowInstance, corrections: list[FieldCorrection]
+    ) -> WorkflowRunResult:
+        """Applies field corrections and re-runs the workflow graph to generate a new draft."""
+        state = loaded.state
+        instance_id = state.workflow_instance_id
+
+        if state.phase is not WorkflowPhase.AWAITING_CONFIRMATION:
+            return WorkflowRunResult.failed(
+                workflow_key=state.workflow_key, correlation_id=state.correlation_id
+            )
+
+        new_fields = dict(state.collected_fields)
+        for corr in corrections:
+            new_fields[corr.field_name] = corr.new_value
+
+        graph = self._registry.get_graph(state.workflow_key)
+        if graph is None:
+            return WorkflowRunResult.failed(
+                workflow_key=state.workflow_key, correlation_id=state.correlation_id
+            )
+
+        graph_state: WorkflowGraphState = {
+            "workflow_instance_id": instance_id,
+            "workflow_key": state.workflow_key.value,
+            "correlation_id": state.correlation_id,
+            "organization_id": state.organization_id,
+            "user_id": state.user_id,
+            "project_id": state.project_id,
+            "site_id": state.site_id,
+            "collected_fields": new_fields,
+        }
+
+        try:
+            result_state = await graph.ainvoke(graph_state)
+        except Exception:
+            logger.exception("workflow.correct_failed workflow_instance_id=%s", instance_id)
+            return WorkflowRunResult.failed(
+                workflow_key=state.workflow_key, correlation_id=state.correlation_id
+            )
+
+        draft_action: DraftActionV2 | None = result_state.get("draft_action")
+        pending_prompt: str | None = result_state.get("pending_prompt")
+
+        if draft_action is None or pending_prompt is None:
+            return WorkflowRunResult.failed(
+                workflow_key=state.workflow_key, correlation_id=state.correlation_id
+            )
+
+        new_state = state.model_copy(
+            update={
+                "collected_fields": new_fields,
+                "draft_action": draft_action,
+                "pending_prompt": pending_prompt,
+            }
+        )
+
+        applied = await self._repo.transition(instance_id, loaded.version, new_state)
+        if not applied:
+            # Another event won the race (e.g. duplicate webhook)
+            return WorkflowRunResult.failed(
+                workflow_key=state.workflow_key, correlation_id=state.correlation_id
+            )
+
+        return WorkflowRunResult.started(
+            workflow_key=state.workflow_key,
+            correlation_id=state.correlation_id,
+            workflow_instance_id=instance_id,
             draft_action=draft_action,
             pending_prompt=pending_prompt,
         )
@@ -304,9 +394,7 @@ class WorkflowRuntime:
         # An awaiting instance should always carry a draft, but never half-
         # transition if it somehow doesn't.
         if action is ResumeAction.CONFIRM and state.draft_action is None:
-            logger.error(
-                "workflow.confirm_without_draft workflow_instance_id=%s", instance_id
-            )
+            logger.error("workflow.confirm_without_draft workflow_instance_id=%s", instance_id)
             return WorkflowResumeResult(
                 status=WorkflowResumeStatus.NOT_RESUMABLE,
                 workflow_instance_id=instance_id,
@@ -352,7 +440,6 @@ class WorkflowRuntime:
             workflow_instance_id=instance_id,
             correlation_id=state.correlation_id,
         )
-
 
 def log_workflow_run(result: WorkflowRunResult) -> None:
     """Log the WorkflowRunResult for development visibility (not user-facing)."""

@@ -124,7 +124,9 @@ def test_scope_and_correlation_propagate_onto_the_decision():
     assert decision.site_id == event.site_id
 
 
-def test_routing_table_gap_falls_back_to_direct_reply_not_a_crash(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_routing_table_gap_falls_back_to_direct_reply_not_a_crash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A future actionable CanonicalEventType added without a matching
     WorkflowKey entry must degrade to DIRECT_REPLY, never raise a KeyError."""
     monkeypatch.delitem(WORKFLOW_KEY_BY_EVENT, CanonicalEventType.MATERIAL_RECEIPT_REQUESTED)

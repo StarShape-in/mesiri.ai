@@ -18,9 +18,7 @@ HOST = "187.127.180.98"
 USER = "root"
 PASS = "Mercondatabase1234@"
 ROOT = "/opt/mesiri"
-MESSAGE = (
-    "50 bags of UltraTech cement arrived at site today from ABC Suppliers."
-)
+MESSAGE = "50 bags of UltraTech cement arrived at site today from ABC Suppliers."
 
 # Remote runner script (executed on VPS with prod .env + PYTHONPATH).
 REMOTE_RUNNER = r'''
@@ -230,7 +228,9 @@ def main() -> int:
     client.connect(HOST, username=USER, password=PASS)
 
     # Ensure assistant is running
-    client.exec_command(f"cd {ROOT} && /opt/mesiri/.venv/bin/python scripts/restart_whatsapp_assistant.py")
+    client.exec_command(
+        f"cd {ROOT} && /opt/mesiri/.venv/bin/python scripts/restart_whatsapp_assistant.py"
+    )
     time.sleep(6)
 
     hex_content = runner.encode("utf-8").hex()

@@ -42,7 +42,12 @@ async def test_retries_then_succeeds():
         return "ok"
 
     result, _ = await call_with_resilience(
-        flaky, provider="fake", operation="op", timeout_seconds=1.0, max_retries=2, backoff_seconds=0.0
+        flaky,
+        provider="fake",
+        operation="op",
+        timeout_seconds=1.0,
+        max_retries=2,
+        backoff_seconds=0.0,
     )
     assert result == "ok"
     assert attempts["n"] == 2

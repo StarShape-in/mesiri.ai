@@ -102,14 +102,14 @@ async def get_auth_context(
     conn: AsyncConnection = Depends(get_db_conn),
 ) -> AuthorizationContext:
     """Resolve authorization context for the current request.
-    
+
     Validates JWT, loads current user from database, verifies status,
     and resolves project access scope.
     """
     user_id = uuid.UUID(jwt_payload["sub"])
     org_id = uuid.UUID(jwt_payload["org"])
     role = jwt_payload.get("role", "user")
-    
+
     auth_service = AuthorizationService(conn)
     return await auth_service.resolve_from_jwt(user_id, org_id, role)
 
@@ -125,12 +125,12 @@ async def list_projects(
     conn: AsyncConnection = Depends(get_db_conn),
 ):
     """List all projects accessible to the authenticated user.
-    
+
     Returns projects according to the user's access policy:
     - all_projects mode: all projects in user's organization
     - custom_projects mode: only explicitly granted projects
     - Empty custom scope: returns empty list
-    
+
     Projects are ordered by name (ascending).
     Status values are mapped from database (on_track, at_risk, critical)
     to external API (success, warning, critical).
@@ -138,11 +138,11 @@ async def list_projects(
     # Create repository and handler
     repository = PostgresProjectRepository(conn)
     handler = ListProjectsHandler(repository)
-    
+
     # Execute query
     query = ListProjects()
     projects = await handler.handle(query, auth_context)
-    
+
     # Transform to HTTP response
     return ProjectPresenter.to_response_list(projects)
 
@@ -203,9 +203,7 @@ async def list_sites(
     if proj_result.first() is None:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    result = await conn.execute(
-        sa.select(_sites).where(_sites.c.project_id == project_id)
-    )
+    result = await conn.execute(sa.select(_sites).where(_sites.c.project_id == project_id))
     return [
         SiteResponse(
             id=r.id,

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 router = APIRouter(prefix="/admin/organizations", tags=["admin"])
 
+
 # ---------------------------------------------------------------------------
 # DB Connection (standalone for the admin router)
 # ---------------------------------------------------------------------------
@@ -26,7 +27,9 @@ def _get_engine():
     dsn = f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{database}"
     return create_async_engine(dsn, echo=False, pool_pre_ping=True)
 
+
 _engine = None
+
 
 def get_engine():
     global _engine
@@ -93,6 +96,7 @@ class OrganizationProvision(BaseModel):
 def _hash_password(plain: str) -> str:
     """Hash password using bcrypt directly (avoids passlib/bcrypt 5.0 incompatibility)."""
     import bcrypt as _bcrypt
+
     return _bcrypt.hashpw(plain.encode(), _bcrypt.gensalt()).decode()
 
 
@@ -156,7 +160,9 @@ async def provision_tenant(prov_in: OrganizationProvision):
             )
         except Exception as e:
             if "unique" in str(e).lower() or "duplicate" in str(e).lower():
-                raise HTTPException(status_code=400, detail="Admin email is already registered") from e
+                raise HTTPException(
+                    status_code=400, detail="Admin email is already registered"
+                ) from e
             raise HTTPException(status_code=500, detail=f"User creation failed: {e}") from e
 
     return OrganizationResponse(

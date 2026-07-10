@@ -45,9 +45,9 @@ This folder is the **AI conversation layer** of Mesiri. It owns everything from 
 | Canonicalization — normalizes AI output into business intent | ✅ |
 | Planner — routes to the correct workflow | ✅ (not yet consumed downstream) |
 | Workflow runtime — LangGraph state machines | 🔲 stub only |
-| Human-in-the-loop interaction layer | 🔲 stub only |
-| Conversation memory | 🔲 stub only |
-| Business record creation (via backend application layer) | 🔲 not started |
+| Human-in-the-loop interaction layer (M7) | 🔲 stub only |
+| Application & Domain Execution (M8) | 🔲 not started |
+| Conversation memory (M19) | 🔲 stub only |
 | WhatsApp reply rendering | ✅ (M3-based only) |
 | HTTP control-plane APIs (auth, users, projects, admin) | ✅ |
 
@@ -137,7 +137,7 @@ All SDK imports, retry logic, model selection, fallback, and credential manageme
 # WRONG — creating a record inside the assistant
 await db.execute("INSERT INTO material_receipts ...")
 
-# CORRECT — call the application layer (future M8+)
+# CORRECT — call the application layer (M8)
 await material_service.record_receipt(command)
 ```
 
@@ -219,7 +219,7 @@ apps/whatsapp-assistant/
 │   ├── context/            ← M4 context resolution (single ContextResolver — see §6)
 │   ├── ingress/            ← M2 inbound pipeline
 │   ├── interactions/       ← M7 human-in-the-loop (all files 0 bytes)
-│   ├── memory/             ← M8 conversation memory (all files 0 bytes)
+│   ├── memory/             ← M19 conversation memory (all files 0 bytes)
 │   ├── planner/            ← M5 routing planner (implemented — routing.py, planner.py)
 │   ├── projects/           ← HTTP API for project management
 │   ├── runtime/            ← dependency injection, lifecycle, journey orchestration
@@ -612,7 +612,8 @@ skipped entirely if context resolution fails.
 | Planner (M5) | ✅ Implemented | 100% | `PlannerDecision.v1` wired (2026-07-08); pure router, no LangGraph knowledge. Not yet consumed by anything (Workflow Runtime is the first real consumer) |
 | Workflow Runtime (M6) | 🔲 Not started | 0% | LangGraph not installed; `WorkflowState`/`DraftAction` contracts not defined |
 | Interaction (M7) | 🔲 Not started | 0% | Contracts not defined |
-| Memory (M8) | 🔲 Not started | 0% | `platform/memory/` entirely empty |
+| Application & Domain Execution (M8) | 🔲 Not started | 0% | Application and domain missing for material |
+| Memory (M19) | 🔲 Not started | 0% | `platform/memory/` entirely empty |
 | Rules | 🔲 Not started | 0% | `rules/result.py` is 0 bytes |
 | Tools | 🔲 Not started | 0% | All tool contracts 0 bytes |
 | Authorization (RBAC) | ⚠️ Gate only | 30% | Identity gate works; field-level RBAC not enforced — Context resolves `permissions` now, but nothing downstream consumes them yet |

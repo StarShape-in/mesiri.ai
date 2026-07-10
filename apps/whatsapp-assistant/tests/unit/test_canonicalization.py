@@ -84,7 +84,12 @@ def test_material_received_maps_to_receipt_requested_actionable():
         semantic_type=SemanticType.MATERIAL_UPDATE,
         candidates=[
             MaterialUpdateCandidate(
-                fields={"material_name": "cement", "quantity": 20, "unit": "bags", "direction": "received"}
+                fields={
+                    "material_name": "cement",
+                    "quantity": 20,
+                    "unit": "bags",
+                    "direction": "received",
+                }
             )
         ],
     )
@@ -125,7 +130,11 @@ def test_material_missing_quantity_needs_clarification():
 def test_material_missing_direction_is_unrecognized():
     understanding = _understanding(
         semantic_type=SemanticType.MATERIAL_UPDATE,
-        candidates=[MaterialUpdateCandidate(fields={"material_name": "cement", "quantity": 20, "unit": "bags"})],
+        candidates=[
+            MaterialUpdateCandidate(
+                fields={"material_name": "cement", "quantity": 20, "unit": "bags"}
+            )
+        ],
     )
     event = build_canonical_event(understanding, _context())
     assert event.event_type is CanonicalEventType.UNRECOGNIZED

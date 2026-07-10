@@ -21,7 +21,7 @@ def upload(client: paramiko.SSHClient, local: str, remote: str) -> None:
     write_script = (
         f"import binascii; open('{remote}', 'wb').write(binascii.unhexlify('{hex_content}'))"
     )
-    client.exec_command(f"python3 -c \"{write_script}\"")
+    client.exec_command(f'python3 -c "{write_script}"')
 
 
 def main() -> None:
@@ -41,7 +41,9 @@ def main() -> None:
     )
     print("Uploaded builder.py")
 
-    client.exec_command("cd /opt/mesiri && /opt/mesiri/.venv/bin/python scripts/restart_whatsapp_assistant.py")
+    client.exec_command(
+        "cd /opt/mesiri && /opt/mesiri/.venv/bin/python scripts/restart_whatsapp_assistant.py"
+    )
     client.close()
 
 

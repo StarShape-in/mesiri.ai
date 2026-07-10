@@ -23,6 +23,7 @@ from mesiri_ai.confidence import ConfidencePolicy, ConfidenceSignals
 from mesiri_ai.models import ExtractionResult
 from mesiri_ai.ports.extraction import StructuredExtractionProvider
 from mesiri_ai.ports.speech import SpeechUnderstandingProvider
+from mesiri_ai.ports.translation import TranslationProvider
 from mesiri_ai.ports.vision import VisionUnderstandingProvider
 from mesiri_contracts.assistant.candidates import CANDIDATE_TYPES, Candidate, FieldConfidence
 from mesiri_contracts.assistant.confidence import ConfidenceLevel
@@ -51,12 +52,14 @@ class UnderstandingPipeline:
         speech: SpeechUnderstandingProvider,
         vision: VisionUnderstandingProvider,
         extraction: StructuredExtractionProvider,
+        translation: TranslationProvider,
         object_storage: ObjectStoragePort,
         confidence_policy: ConfidencePolicy | None = None,
     ) -> None:
         self._speech = speech
         self._vision = vision
         self._extraction = extraction
+        self._translation = translation
         self._storage = object_storage
         self._confidence = confidence_policy or ConfidencePolicy()
 
@@ -92,12 +95,32 @@ class UnderstandingPipeline:
 
     async def _handle_text(self, message: NormalizedMessage, result: UnderstandingResult) -> None:
         text = (message.text or "").strip()
-        result.normalized_text = text
         if not text:
             result.overall_confidence = ConfidenceLevel.UNUSABLE
             result.warnings.append("empty text")
             return
-        extraction = await self._extraction.extract(text, correlation_id=result.correlation_id)
+
+        result.transcript = text
+
+        translation = await self._translation.translate_to_english(
+            text, correlation_id=result.correlation_id
+        )
+        result.translated_text = translation.translated_text
+        result.detected_language = translation.detected_language
+        result.normalized_text = translation.translated_text or text
+
+        result.provider_executions.append(
+            ProviderExecution(
+                provider="gemini",
+                operation="translate",
+                model=translation.model,
+                latency_ms=translation.latency_ms,
+            )
+        )
+
+        extraction = await self._extraction.extract(
+            result.normalized_text, correlation_id=result.correlation_id
+        )
         self._apply_extraction(result, extraction, is_empty=False)
 
     async def _handle_voice(self, message: NormalizedMessage, result: UnderstandingResult) -> None:
@@ -127,7 +150,9 @@ class UnderstandingPipeline:
     async def _handle_image(self, message: NormalizedMessage, result: UnderstandingResult) -> None:
         image = await self._read_media(message)
         mime = message.media.mime_type if message.media else None
-        vision = await self._vision.analyze_image(image, mime_type=mime, correlation_id=result.correlation_id)
+        vision = await self._vision.analyze_image(
+            image, mime_type=mime, correlation_id=result.correlation_id
+        )
         result.document_classification = vision.document_classification
         result.normalized_text = vision.description
         result.provider_executions.append(
@@ -138,7 +163,9 @@ class UnderstandingPipeline:
                 latency_ms=vision.latency_ms,
             )
         )
-        unreadable = (vision.document_classification or "").lower() == "unknown" and not vision.raw_fields
+        unreadable = (
+            vision.document_classification or ""
+        ).lower() == "unknown" and not vision.raw_fields
         if unreadable:
             result.overall_confidence = ConfidenceLevel.UNUSABLE
             result.warnings.append("image not interpretable")

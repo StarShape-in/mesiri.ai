@@ -98,9 +98,7 @@ async def run() -> _Check:
 
     # -- STEP 1: "switch to Marina Tower" ------------------------------------
     deps, store = _deps_over_redis(redis)
-    switch = ContextSwitchService(
-        projects=deps.projects, sites=deps.sites, active_context=store
-    )
+    switch = ContextSwitchService(projects=deps.projects, sites=deps.sites, active_context=store)
     # Identity + authorization happen inside the resolver/switch (authoritative).
     r1 = ContextResolver(deps)
     step1 = await r1.resolve(
@@ -144,7 +142,9 @@ async def run() -> _Check:
         check.record("context_organization_id = ABC", ctx.context_organization_id == seed.ABC_ORG)
         check.record("canonical organization_id", ctx.organization_id == canon(seed.ABC_ORG))
         check.record("context_user_id = director", ctx.context_user_id == seed.ABC_DIRECTOR)
-        check.record("context_project_id = Marina Tower", ctx.context_project_id == seed.PROJ_MARINA)
+        check.record(
+            "context_project_id = Marina Tower", ctx.context_project_id == seed.PROJ_MARINA
+        )
         check.record(
             "context_source = ACTIVE_CONTEXT",
             ctx.context_source == ContextSource.ACTIVE_CONTEXT,
@@ -160,9 +160,7 @@ async def run() -> _Check:
         organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR, project_id=seed.PROJ_ALPHA_B
     )
     check.record("Out-of-tenant project rejected", denied.is_err)
-    still = await store2.get_active_context(
-        organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR
-    )
+    still = await store2.get_active_context(organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR)
     check.record(
         "Redis active context unchanged after rejection",
         still is not None and still.project_id == seed.PROJ_MARINA,

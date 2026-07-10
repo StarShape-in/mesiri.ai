@@ -22,7 +22,9 @@ USR = "22222222-2222-4222-8222-222222222222"
 WF = "11111111-1111-4111-8111-1111111111aa"
 
 
-def _awaiting_state(*, phase: WorkflowPhase = WorkflowPhase.AWAITING_CONFIRMATION) -> WorkflowStateV2:
+def _awaiting_state(
+    *, phase: WorkflowPhase = WorkflowPhase.AWAITING_CONFIRMATION
+) -> WorkflowStateV2:
     draft = DraftActionV2(
         draft_id="d1",
         correlation_id="c1",

@@ -54,7 +54,9 @@ class R2ObjectStorage:
     ) -> ObjectMetadata:
         client = self._get_client()
         extra = {"ContentType": content_type} if content_type else {}
-        await self._call(client.put_object, Bucket=self._settings.bucket, Key=key, Body=data, **extra)
+        await self._call(
+            client.put_object, Bucket=self._settings.bucket, Key=key, Body=data, **extra
+        )
         return ObjectMetadata(key=key, size_bytes=len(data), content_type=content_type)
 
     async def get_object(self, key: str) -> StoredObject:

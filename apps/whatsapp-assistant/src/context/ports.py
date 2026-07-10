@@ -59,9 +59,7 @@ class ProjectRepository(Protocol):
         self, *, organization_id: str, user_id: str
     ) -> list[Project]: ...
 
-    async def get_project_in_org(
-        self, *, organization_id: str, project_id: str
-    ) -> Project | None:
+    async def get_project_in_org(self, *, organization_id: str, project_id: str) -> Project | None:
         """Org-scoped existence check (ignores user authorization).
 
         Tenant-safe: a project belonging to another organization returns None.
@@ -80,9 +78,7 @@ class SiteRepository(Protocol):
         self, *, organization_id: str, user_id: str, name: str, project_id: str | None = None
     ) -> list[Site]: ...
 
-    async def get_site_in_org(
-        self, *, organization_id: str, site_id: str
-    ) -> Site | None:
+    async def get_site_in_org(self, *, organization_id: str, site_id: str) -> Site | None:
         """Org-scoped existence check (ignores user authorization). Tenant-safe."""
         ...
 

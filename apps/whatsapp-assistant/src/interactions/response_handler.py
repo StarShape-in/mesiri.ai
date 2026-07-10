@@ -50,14 +50,16 @@ def render_execution_reply(result: ExecutionResult) -> str:
     return "⚠️ Something went wrong — we'll retry automatically."
 
 
-def render_workflow_run_reply(result: WorkflowRunResult, *, pending_prompt: str) -> str:
-    """Reply to send after a workflow *starts* (STARTED or BLOCKED_PENDING_CONFIRMATION).
+def render_workflow_run_reply(result: WorkflowRunResult, *, pending_prompt: str | None = None) -> str:
+    """Reply to send after a workflow run.
 
     ``pending_prompt`` is the text produced by the workflow graph — passed in
     rather than read from ``result`` so the caller controls which prompt is used
     (e.g. the *existing* workflow's prompt when blocked).
     """
+    if result.status is WorkflowRunStatus.FAILED:
+        return "Sorry, I couldn't apply that update — please try again."
     if result.status is WorkflowRunStatus.BLOCKED_PENDING_CONFIRMATION:
         return f"⏳ Please finish the pending confirmation first:\n\n{pending_prompt}"
     # STARTED — show the workflow's confirmation request directly.
-    return pending_prompt
+    return pending_prompt or ""

@@ -15,7 +15,12 @@ from pydantic import ValidationError
 
 from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
 from mesiri_ai import fixtures
-from mesiri_ai.fakes import FakeExtractionProvider, FakeSpeechProvider, FakeVisionProvider
+from mesiri_ai.fakes import (
+    FakeExtractionProvider,
+    FakeSpeechProvider,
+    FakeTranslationProvider,
+    FakeVisionProvider,
+)
 from mesiri_contracts.assistant.enums import InputModality
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage
 from mesiri_contracts.assistant.understanding_result import UnderstandingResult
@@ -39,6 +44,7 @@ async def _pipeline_with_media_for(msg: NormalizedMessage) -> UnderstandingPipel
         speech=FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
         vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
         extraction=FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION),
+        translation=FakeTranslationProvider(),
         object_storage=storage,
     )
 

@@ -124,6 +124,32 @@ ignore = [
     "E402",   # module-level imports not at top — intentional in migration env.py and scripts that manipulate sys.path
 ]
 
+[tool.ruff.lint.isort]
+# Explicitly declare every internal top-level package as first-party so that
+# ruff classifies them consistently whether they are installed into the venv
+# (CI path, where mesiri_contracts appears as an installed dist) or only
+# reachable via the `src` paths above (local dev path).  Without this the CI
+# ruff and the local ruff disagree on the import grouping and I001 fires.
+known-first-party = [
+    "mesiri_contracts",
+    "mesiri_ai",
+    "mesiri",
+    "interactions",
+    "workflows",
+    "auth",
+    "backend",
+    "canonicalization",
+    "channel",
+    "context",
+    "ingress",
+    "memory",
+    "planner",
+    "projects",
+    "runtime",
+    "understanding",
+    "users",
+]
+
 [tool.mypy]
 python_version = "3.11"
 warn_unused_ignores = true

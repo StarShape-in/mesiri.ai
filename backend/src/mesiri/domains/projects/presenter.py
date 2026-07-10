@@ -25,24 +25,24 @@ _VALID_STATUS = {"on_track", "at_risk", "critical"}
 
 class ProjectPresenter:
     """Presenter for transforming project DTOs to HTTP responses.
-    
+
     Applies canonical status mapping and field transformations.
     """
-    
+
     @staticmethod
     def to_response(dto: ProjectDTO) -> ProjectResponse:
         """Transform project DTO to HTTP response.
-        
+
         Args:
             dto: Internal project DTO with database status values
-            
+
         Returns:
             ProjectResponse with mapped status and canonical field names
         """
         # Map database status to external StatusType + label
         db_status = dto.status if dto.status in _VALID_STATUS else "on_track"
         status_type, status_label = _STATUS_DISPLAY[db_status]
-        
+
         return ProjectResponse(
             id=dto.id,
             name=dto.name,
@@ -56,14 +56,14 @@ class ProjectPresenter:
             openIssues=dto.open_issues,  # Transform snake_case to camelCase
             reportingRatio=None,  # Not yet implemented
         )
-    
+
     @staticmethod
     def to_response_list(dtos: list[ProjectDTO]) -> list[ProjectResponse]:
         """Transform list of DTOs to list of responses.
-        
+
         Args:
             dtos: List of project DTOs
-            
+
         Returns:
             List of HTTP responses
         """

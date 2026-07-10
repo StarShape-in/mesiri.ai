@@ -2,10 +2,11 @@ import time
 
 import paramiko
 
-HOST = '187.127.180.98'
-USER = 'root'
-PASS = 'Mercondatabase1234@'
-REMOTE_SRC = '/opt/mesiri/apps/whatsapp-assistant/src'
+HOST = "187.127.180.98"
+USER = "root"
+PASS = "Mercondatabase1234@"
+REMOTE_SRC = "/opt/mesiri/apps/whatsapp-assistant/src"
+
 
 def deploy():
     print("Connecting...")
@@ -14,13 +15,15 @@ def deploy():
     client.connect(HOST, username=USER, password=PASS)
 
     # Upload fixed router
-    local_path = r'E:\Mesiri.AI\apps\whatsapp-assistant\src\admin\router.py'
-    remote_path = f'{REMOTE_SRC}/admin/router.py'
-    with open(local_path, encoding='utf-8') as f:
+    local_path = r"E:\Mesiri.AI\apps\whatsapp-assistant\src\admin\router.py"
+    remote_path = f"{REMOTE_SRC}/admin/router.py"
+    with open(local_path, encoding="utf-8") as f:
         content = f.read()
-    hex_content = content.encode('utf-8').hex()
-    write_script = f"import binascii; open('{remote_path}', 'wb').write(binascii.unhexlify('{hex_content}'))"
-    stdin, stdout, stderr = client.exec_command(f"python3 -c \"{write_script}\"")
+    hex_content = content.encode("utf-8").hex()
+    write_script = (
+        f"import binascii; open('{remote_path}', 'wb').write(binascii.unhexlify('{hex_content}'))"
+    )
+    stdin, stdout, stderr = client.exec_command(f'python3 -c "{write_script}"')
     stdout.read()
     print("Uploaded router.py")
 
@@ -59,13 +62,14 @@ def deploy():
     stdin, stdout, stderr = client.exec_command(
         "curl -s -X POST http://127.0.0.1:8000/admin/organizations/provision "
         "-H 'Content-Type: application/json' "
-        "-d '{\"name\":\"Acme Construction\",\"deployment_type\":\"SaaS\",\"db_route\":\"shared-cluster-01\","
-        "\"admin_name\":\"Acme Admin\",\"admin_email\":\"admin@acmeconstruct.com\",\"admin_password\":\"Acme1234!\"}'"
+        '-d \'{"name":"Acme Construction","deployment_type":"SaaS","db_route":"shared-cluster-01",'
+        '"admin_name":"Acme Admin","admin_email":"admin@acmeconstruct.com","admin_password":"Acme1234!"}\''
     )
     print(stdout.read().decode())
 
     client.close()
     print("Done!")
+
 
 if __name__ == "__main__":
     deploy()

@@ -56,9 +56,7 @@ async def identity_world():
 
     with sync_engine.begin() as conn:
         conn.execute(
-            text(
-                "INSERT INTO organizations (id, name, status) VALUES (:id, :name, 'Active')"
-            ),
+            text("INSERT INTO organizations (id, name, status) VALUES (:id, :name, 'Active')"),
             {"id": org_id, "name": "E2E Org"},
         )
         conn.execute(
@@ -135,7 +133,12 @@ async def test_v2_identity_propagates_to_workflow_state(identity_world) -> None:
         semantic_type=SemanticType.MATERIAL_UPDATE,
         candidates=[
             MaterialUpdateCandidate(
-                fields={"material_name": "cement", "quantity": 20, "unit": "bags", "direction": "received"}
+                fields={
+                    "material_name": "cement",
+                    "quantity": 20,
+                    "unit": "bags",
+                    "direction": "received",
+                }
             )
         ],
     )

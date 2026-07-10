@@ -10,6 +10,7 @@ Revision ID: 0110
 Revises: 0100
 Create Date: 2026-07-08
 """
+
 from __future__ import annotations
 
 import sqlalchemy as sa
@@ -31,7 +32,9 @@ def upgrade() -> None:
             sa.ForeignKey("organizations.id"),
             nullable=False,
         ),
-        sa.Column("project_id", sa.UUID(as_uuid=True), sa.ForeignKey("projects.id"), nullable=False),
+        sa.Column(
+            "project_id", sa.UUID(as_uuid=True), sa.ForeignKey("projects.id"), nullable=False
+        ),
         sa.Column("site_id", sa.UUID(as_uuid=True), sa.ForeignKey("sites.id"), nullable=True),
         sa.Column("equipment_name", sa.String(), nullable=False),
         sa.Column("equipment_type", sa.String(), nullable=True),
@@ -70,12 +73,16 @@ def upgrade() -> None:
         ),
         sa.Column("updated_by", sa.UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=True),
     )
-    op.create_index("ix_equipment_events_org_project", "equipment_events", ["organization_id", "project_id"])
+    op.create_index(
+        "ix_equipment_events_org_project", "equipment_events", ["organization_id", "project_id"]
+    )
     op.create_index("ix_equipment_events_site_id", "equipment_events", ["site_id"])
     op.create_index("ix_equipment_events_occurred_date", "equipment_events", ["occurred_date"])
     op.create_index("ix_equipment_events_correlation_id", "equipment_events", ["correlation_id"])
     op.create_index(
-        "ix_equipment_events_equipment_name", "equipment_events", ["organization_id", "equipment_name"]
+        "ix_equipment_events_equipment_name",
+        "equipment_events",
+        ["organization_id", "equipment_name"],
     )
 
 

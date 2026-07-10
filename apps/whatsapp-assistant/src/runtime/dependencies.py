@@ -71,9 +71,7 @@ class AppContainer:
 
 def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppContainer:
     """Construct the application dependency container."""
-    deduplication_store = InMemoryDeduplicationStore(
-        ttl=timedelta(hours=settings.dedup_ttl_hours)
-    )
+    deduplication_store = InMemoryDeduplicationStore(ttl=timedelta(hours=settings.dedup_ttl_hours))
     message_store = InMemoryNormalizedMessageStore()
     media_downloader = MetaMediaDownloader(
         client=http_client,
@@ -216,7 +214,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         # is a confirmation reply, resume it and stop — the AI pipeline (and its
         # token cost) is never touched. A plain "yes" ends here.
         try:
-            handled = await interaction_handler.handle(ctx.user_id, message)
+            handled = await interaction_handler.handle_fast_path(ctx.user_id, message)
         except Exception:  # noqa: BLE001 — a resume error must not drop the message
             _log.exception("interaction.handle_failed user=%s", ctx.user_id)
             handled = None
@@ -226,10 +224,12 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
 
         await process_inbound_message(
             message,
+            actor_user_id=ctx.user_id,
             pipeline=pipeline,
             context_resolver=context_resolver,
             planner=planner,
             workflow_runtime=workflow_runtime,
+            interaction_handler=interaction_handler,
             reply_sender=_send_understanding_reply,
             send_text=sender.send_text,
             context_debug=settings.context_debug,

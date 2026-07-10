@@ -21,5 +21,4 @@ class VisionUnderstandingProvider(Protocol):
         mime_type: str | None = None,
         hint: str | None = None,
         correlation_id: str | None = None,
-    ) -> VisionResult:
-        ...
+    ) -> VisionResult: ...

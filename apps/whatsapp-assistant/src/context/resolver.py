@@ -78,9 +78,7 @@ class ContextResolver:
                 ctx = await self._resolve(message, understanding)
             except MesiriError as err:
                 err.with_correlation(message.correlation_id)
-                _log.error(
-                    "context.resolution_failed", error=err, message_id=message.message_id
-                )
+                _log.error("context.resolution_failed", error=err, message_id=message.message_id)
                 return Result.err(err)
             _log.info(
                 "context.resolution_completed",
@@ -184,7 +182,8 @@ class ContextResolver:
         # 2. Reply context.
         if message.reply_context:
             pair = await self._d.reply_context.context_for_reply(
-                organization_id=org, replied_to_message_id=message.reply_context.replied_to_message_id
+                organization_id=org,
+                replied_to_message_id=message.reply_context.replied_to_message_id,
             )
             cand = await self._validated_candidate(org, user, ContextSource.REPLY_CONTEXT, pair)
             if cand is not None:
@@ -201,9 +200,7 @@ class ContextResolver:
         _log.info("context.workflow_context_evaluated", resolved=cand is not None)
 
         # 4. Active context (Redis) — revalidated against Postgres authorization.
-        active = await self._d.active_context.get_active_context(
-            organization_id=org, user_id=user
-        )
+        active = await self._d.active_context.get_active_context(organization_id=org, user_id=user)
         cand = None
         if active is not None:
             cand = await self._validated_candidate(
@@ -372,7 +369,9 @@ class ContextResolver:
         prefs = await self._d.preferences.get_preferences(organization_id=org, user_id=user)
         if prefs is not None and prefs.default_project_id is not None:
             cand = await self._validated_candidate(
-                org, user, ContextSource.USER_DEFAULT,
+                org,
+                user,
+                ContextSource.USER_DEFAULT,
                 (prefs.default_project_id, prefs.default_site_id),
             )
             if cand is not None:
@@ -411,7 +410,12 @@ class ContextResolver:
             project_id = winner.project_id
             site_id = winner.site_id
 
-        canonical_org, canonical_user, canonical_project, canonical_site = await self._canonical_scope(
+        (
+            canonical_org,
+            canonical_user,
+            canonical_project,
+            canonical_site,
+        ) = await self._canonical_scope(
             context_organization_id=principal.organization_id,
             context_user_id=principal.user_id,
             context_project_id=project_id,

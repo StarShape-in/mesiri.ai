@@ -9,6 +9,7 @@ Revision ID: 0150
 Revises: 0140
 Create Date: 2026-07-08
 """
+
 from __future__ import annotations
 
 import sqlalchemy as sa
@@ -48,11 +49,15 @@ def upgrade() -> None:
             nullable=False,
         ),
     )
-    op.create_index("ix_timeline_entries_org_project", "timeline_entries", ["organization_id", "project_id"])
+    op.create_index(
+        "ix_timeline_entries_org_project", "timeline_entries", ["organization_id", "project_id"]
+    )
     op.create_index("ix_timeline_entries_site_id", "timeline_entries", ["site_id"])
     op.create_index("ix_timeline_entries_occurred_at", "timeline_entries", ["occurred_at"])
     op.create_index(
-        "ix_timeline_entries_source", "timeline_entries", ["source_aggregate_type", "source_aggregate_id"]
+        "ix_timeline_entries_source",
+        "timeline_entries",
+        ["source_aggregate_type", "source_aggregate_id"],
     )
 
 

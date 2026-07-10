@@ -57,6 +57,7 @@ def _und(fields=None, *, correlation_id="cor_s", message_id="msg_s"):
 
 # --------------------------------------------------------------------------- #
 
+
 async def test_scenario_m4_001_unknown_whatsapp_user():
     """Given an unregistered wa_id, When resolved, Then UNKNOWN_EXTERNAL_IDENTITY."""
     r = ContextResolver(seed.build_dependencies())
@@ -104,9 +105,7 @@ async def test_scenario_m4_005_default_project_resolution():
 async def test_scenario_m4_006_explicit_project_resolution():
     """Given "Project Beta" named, Then MESSAGE_EXPLICIT / HIGH confidence."""
     r = ContextResolver(seed.build_dependencies())
-    ctx = (await r.resolve(
-        _msg(seed.WA_DIRECTOR), _und({"project_name": "Project Beta"})
-    )).unwrap()
+    ctx = (await r.resolve(_msg(seed.WA_DIRECTOR), _und({"project_name": "Project Beta"}))).unwrap()
     assert ctx.context_project_id == seed.PROJ_BETA
     assert ctx.project_id == canon(seed.PROJ_BETA)
     assert ctx.context_source == ContextSource.MESSAGE_EXPLICIT
@@ -116,9 +115,7 @@ async def test_scenario_m4_006_explicit_project_resolution():
 async def test_scenario_m4_007_explicit_site_resolution():
     """Given "Block A" named by the ABC director, Then site + inferred project resolve."""
     r = ContextResolver(seed.build_dependencies())
-    ctx = (await r.resolve(
-        _msg(seed.WA_ABC_DIRECTOR), _und({"site_name": "Block A"})
-    )).unwrap()
+    ctx = (await r.resolve(_msg(seed.WA_ABC_DIRECTOR), _und({"site_name": "Block A"}))).unwrap()
     assert ctx.context_site_id == seed.SITE_BLOCK_A
     assert ctx.site_id == canon(seed.SITE_BLOCK_A)
     assert ctx.context_project_id == seed.PROJ_MARINA
@@ -162,16 +159,16 @@ async def test_scenario_m4_011_next_message_uses_active_context():
     """Given an active Marina context, When a later message arrives, Then ACTIVE_CONTEXT wins."""
     active = FakeActiveContextStore()
     deps = seed.build_dependencies(active_store=active)
-    svc = ContextSwitchService(
-        projects=deps.projects, sites=deps.sites, active_context=active
-    )
+    svc = ContextSwitchService(projects=deps.projects, sites=deps.sites, active_context=active)
     await svc.select_active_context(
         organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR, project_id=seed.PROJ_MARINA
     )
     r = ContextResolver(deps)
-    ctx = (await r.resolve(
-        _msg(seed.WA_ABC_DIRECTOR), _und({"equipment_name": "JCB", "duration_hours": 4})
-    )).unwrap()
+    ctx = (
+        await r.resolve(
+            _msg(seed.WA_ABC_DIRECTOR), _und({"equipment_name": "JCB", "duration_hours": 4})
+        )
+    ).unwrap()
     assert ctx.context_project_id == seed.PROJ_MARINA
     assert ctx.project_id == canon(seed.PROJ_MARINA)
     assert ctx.context_source == ContextSource.ACTIVE_CONTEXT
@@ -180,12 +177,17 @@ async def test_scenario_m4_011_next_message_uses_active_context():
 async def test_scenario_m4_012_reply_context_overrides_active_context():
     active = FakeActiveContextStore()
     await active.set_active_context(
-        organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR,
-        project_id=seed.PROJ_MARINA, site_id=None, ttl_seconds=3600,
+        organization_id=seed.ABC_ORG,
+        user_id=seed.ABC_DIRECTOR,
+        project_id=seed.PROJ_MARINA,
+        site_id=None,
+        ttl_seconds=3600,
     )
-    r = ContextResolver(seed.build_dependencies(
-        active_store=active, reply_mapping={"orig": (seed.PROJ_AIRPORT, None)}
-    ))
+    r = ContextResolver(
+        seed.build_dependencies(
+            active_store=active, reply_mapping={"orig": (seed.PROJ_AIRPORT, None)}
+        )
+    )
     ctx = (await r.resolve(_msg(seed.WA_ABC_DIRECTOR, reply_to="orig"), _und())).unwrap()
     assert ctx.context_project_id == seed.PROJ_AIRPORT
     assert ctx.project_id == canon(seed.PROJ_AIRPORT)
@@ -195,13 +197,18 @@ async def test_scenario_m4_012_reply_context_overrides_active_context():
 async def test_scenario_m4_013_workflow_context_overrides_active_context():
     active = FakeActiveContextStore()
     await active.set_active_context(
-        organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR,
-        project_id=seed.PROJ_MARINA, site_id=None, ttl_seconds=3600,
+        organization_id=seed.ABC_ORG,
+        user_id=seed.ABC_DIRECTOR,
+        project_id=seed.PROJ_MARINA,
+        site_id=None,
+        ttl_seconds=3600,
     )
-    r = ContextResolver(seed.build_dependencies(
-        active_store=active,
-        workflow_mapping={(seed.ABC_ORG, seed.ABC_DIRECTOR): (seed.PROJ_AIRPORT, None)},
-    ))
+    r = ContextResolver(
+        seed.build_dependencies(
+            active_store=active,
+            workflow_mapping={(seed.ABC_ORG, seed.ABC_DIRECTOR): (seed.PROJ_AIRPORT, None)},
+        )
+    )
     ctx = (await r.resolve(_msg(seed.WA_ABC_DIRECTOR), _und())).unwrap()
     assert ctx.context_project_id == seed.PROJ_AIRPORT
     assert ctx.project_id == canon(seed.PROJ_AIRPORT)
@@ -218,14 +225,15 @@ async def test_scenario_m4_014_active_context_survives_app_restart():
     await redis.connect()
     store1 = RedisActiveContextStore(redis)
     await store1.set_active_context(
-        organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR,
-        project_id=seed.PROJ_MARINA, site_id=None, ttl_seconds=3600,
+        organization_id=seed.ABC_ORG,
+        user_id=seed.ABC_DIRECTOR,
+        project_id=seed.PROJ_MARINA,
+        site_id=None,
+        ttl_seconds=3600,
     )
     # Simulate restart: brand-new store instance over the same Redis backend.
     store2 = RedisActiveContextStore(redis)
-    got = await store2.get_active_context(
-        organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR
-    )
+    got = await store2.get_active_context(organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR)
     assert got is not None and got.project_id == seed.PROJ_MARINA
 
 
@@ -233,8 +241,11 @@ async def test_scenario_m4_015_active_context_expires():
     clock = {"now": datetime(2026, 1, 1, tzinfo=UTC)}
     active = FakeActiveContextStore(clock=lambda: clock["now"])
     await active.set_active_context(
-        organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR,
-        project_id=seed.PROJ_MARINA, site_id=None, ttl_seconds=60,
+        organization_id=seed.ABC_ORG,
+        user_id=seed.ABC_DIRECTOR,
+        project_id=seed.PROJ_MARINA,
+        site_id=None,
+        ttl_seconds=60,
     )
     clock["now"] += timedelta(seconds=61)
     r = ContextResolver(seed.build_dependencies(active_store=active))
@@ -271,13 +282,16 @@ async def test_scenario_m4_019_context_correction():
     """Given active=Marina, When the user explicitly corrects to Airport, Then explicit wins."""
     active = FakeActiveContextStore()
     await active.set_active_context(
-        organization_id=seed.ABC_ORG, user_id=seed.ABC_DIRECTOR,
-        project_id=seed.PROJ_MARINA, site_id=None, ttl_seconds=3600,
+        organization_id=seed.ABC_ORG,
+        user_id=seed.ABC_DIRECTOR,
+        project_id=seed.PROJ_MARINA,
+        site_id=None,
+        ttl_seconds=3600,
     )
     r = ContextResolver(seed.build_dependencies(active_store=active))
-    ctx = (await r.resolve(
-        _msg(seed.WA_ABC_DIRECTOR), _und({"project_name": "Airport Expansion"})
-    )).unwrap()
+    ctx = (
+        await r.resolve(_msg(seed.WA_ABC_DIRECTOR), _und({"project_name": "Airport Expansion"}))
+    ).unwrap()
     assert ctx.context_project_id == seed.PROJ_AIRPORT
     assert ctx.project_id == canon(seed.PROJ_AIRPORT)
     assert ctx.context_source == ContextSource.MESSAGE_EXPLICIT
@@ -285,10 +299,12 @@ async def test_scenario_m4_019_context_correction():
 
 async def test_scenario_m4_020_correlation_preserved():
     r = ContextResolver(seed.build_dependencies())
-    ctx = (await r.resolve(
-        _msg(seed.WA_ENGINEER, correlation_id="cor_journey", message_id="msg_journey"),
-        _und(correlation_id="cor_journey", message_id="msg_journey"),
-    )).unwrap()
+    ctx = (
+        await r.resolve(
+            _msg(seed.WA_ENGINEER, correlation_id="cor_journey", message_id="msg_journey"),
+            _und(correlation_id="cor_journey", message_id="msg_journey"),
+        )
+    ).unwrap()
     assert ctx.correlation_id == "cor_journey"
     assert ctx.source_message_id == "msg_journey"
     assert ctx.causation_id == "msg_journey"

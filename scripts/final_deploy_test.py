@@ -2,24 +2,29 @@ import time
 
 import paramiko
 
-HOST = '187.127.180.98'
-USER = 'root'
-PASS = 'Mercondatabase1234@'
-REMOTE_SRC = '/opt/mesiri/apps/whatsapp-assistant/src'
+HOST = "187.127.180.98"
+USER = "root"
+PASS = "Mercondatabase1234@"
+REMOTE_SRC = "/opt/mesiri/apps/whatsapp-assistant/src"
+
 
 def run(client, cmd, block=True):
     stdin, stdout, stderr = client.exec_command(cmd)
     if block:
-        return stdout.read().decode('utf-8', errors='replace'), stderr.read().decode('utf-8', errors='replace')
+        return stdout.read().decode("utf-8", errors="replace"), stderr.read().decode(
+            "utf-8", errors="replace"
+        )
     return "", ""
+
 
 def upload(client, local_path, remote_path):
     sftp = client.open_sftp()
-    with open(local_path, encoding='utf-8') as f:
+    with open(local_path, encoding="utf-8") as f:
         content = f.read()
-    with sftp.open(remote_path, 'w') as f:
+    with sftp.open(remote_path, "w") as f:
         f.write(content)
     sftp.close()
+
 
 client = paramiko.SSHClient()
 client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -27,8 +32,16 @@ client.connect(HOST, username=USER, password=PASS)
 
 # Upload files via SFTP (no hex encoding)
 print("Uploading files via SFTP...")
-upload(client, r'E:\Mesiri.AI\apps\whatsapp-assistant\src\auth\router.py', f'{REMOTE_SRC}/auth/router.py')
-upload(client, r'E:\Mesiri.AI\apps\whatsapp-assistant\src\admin\router.py', f'{REMOTE_SRC}/admin/router.py')
+upload(
+    client,
+    r"E:\Mesiri.AI\apps\whatsapp-assistant\src\auth\router.py",
+    f"{REMOTE_SRC}/auth/router.py",
+)
+upload(
+    client,
+    r"E:\Mesiri.AI\apps\whatsapp-assistant\src\admin\router.py",
+    f"{REMOTE_SRC}/admin/router.py",
+)
 print("  OK")
 
 # Kill & restart
@@ -55,7 +68,7 @@ asyncio.run(fix())
 """
 
 sftp = client.open_sftp()
-with sftp.open('/tmp/fix_pw.py', 'w') as f:
+with sftp.open("/tmp/fix_pw.py", "w") as f:
     f.write(fix_script)
 sftp.close()
 print("\nRe-hashing existing user password...")
@@ -66,19 +79,25 @@ if err:
 
 # Check routes
 print("\nRoutes:")
-out, _ = run(client, (
-    "curl -s http://127.0.0.1:8000/openapi.json | python3 -c "
-    "\"import sys,json; d=json.load(sys.stdin); [print(k) for k in d.get('paths',{}).keys()]\""
-))
+out, _ = run(
+    client,
+    (
+        "curl -s http://127.0.0.1:8000/openapi.json | python3 -c "
+        "\"import sys,json; d=json.load(sys.stdin); [print(k) for k in d.get('paths',{}).keys()]\""
+    ),
+)
 print(out if out.strip() else "(no response)")
 
 # Test login
 print("Testing login...")
-out, _ = run(client, (
-    "curl -s -X POST http://127.0.0.1:8000/auth/login "
-    "-H 'Content-Type: application/json' "
-    "-d '{\"email\":\"admin@acmeconstruct.com\",\"password\":\"Acme1234!\"}'"
-))
+out, _ = run(
+    client,
+    (
+        "curl -s -X POST http://127.0.0.1:8000/auth/login "
+        "-H 'Content-Type: application/json' "
+        '-d \'{"email":"admin@acmeconstruct.com","password":"Acme1234!"}\''
+    ),
+)
 print(out)
 
 client.close()

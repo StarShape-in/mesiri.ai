@@ -83,16 +83,20 @@ class PostgresWorkflowInstanceRepository:
 
         async with self._get_engine().connect() as conn:
             row = (
-                await conn.execute(
-                    text(
-                        "SELECT state, version FROM workflow_instances "
-                        "WHERE user_id = :user_id AND phase = 'awaiting_confirmation' "
-                        "AND status = 'active' "
-                        "ORDER BY created_at DESC LIMIT 1"
-                    ),
-                    {"user_id": uuid.UUID(user_id)},
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT state, version FROM workflow_instances "
+                            "WHERE user_id = :user_id AND phase = 'awaiting_confirmation' "
+                            "AND status = 'active' "
+                            "ORDER BY created_at DESC LIMIT 1"
+                        ),
+                        {"user_id": uuid.UUID(user_id)},
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
         if row is None:
             return None
         state = WorkflowStateV2.model_validate_json(_as_json_text(row["state"]))

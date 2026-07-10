@@ -23,13 +23,13 @@ from mesiri.authorization.context import (
 
 class FakeProjectRepository(ProjectRepository):
     """Fake repository for testing without database."""
-    
+
     def __init__(self):
         self.projects: list[ProjectDTO] = []
         self.last_query_org_id: uuid.UUID | None = None
         self.last_query_all_projects: bool | None = None
         self.last_query_project_ids: set[uuid.UUID] | None = None
-    
+
     async def list_projects_by_scope(
         self,
         organization_id: uuid.UUID,
@@ -41,16 +41,15 @@ class FakeProjectRepository(ProjectRepository):
         self.last_query_org_id = organization_id
         self.last_query_all_projects = all_projects
         self.last_query_project_ids = project_ids
-        
+
         if not all_projects and (project_ids is None or len(project_ids) == 0):
             return []
-        
+
         if all_projects:
             return [p for p in self.projects if p.organization_id == organization_id]
-        
+
         return [
-            p for p in self.projects
-            if p.organization_id == organization_id and p.id in project_ids
+            p for p in self.projects if p.organization_id == organization_id and p.id in project_ids
         ]
 
 
@@ -111,7 +110,7 @@ async def test_handler_all_projects_scope(
 ):
     """Test handler with all_projects scope."""
     fake_repository.projects = sample_projects
-    
+
     auth_context = AuthorizationContext(
         user_id=sample_user_id,
         organization_id=sample_org_id,
@@ -120,12 +119,12 @@ async def test_handler_all_projects_scope(
         access_policy=AccessPolicy(mode="all_projects", projects=[]),
         project_scope=ProjectAccessScope(mode="all_projects", project_ids=set()),
     )
-    
+
     handler = ListProjectsHandler(fake_repository)
     query = ListProjects()
-    
+
     result = await handler.handle(query, auth_context)
-    
+
     assert len(result) == 2
     assert fake_repository.last_query_all_projects is True
     assert fake_repository.last_query_org_id == sample_org_id
@@ -139,30 +138,26 @@ async def test_handler_custom_projects_scope(
 ):
     """Test handler with custom_projects scope."""
     fake_repository.projects = sample_projects
-    
+
     # Grant access to only first project
     granted_project_id = sample_projects[0].id
-    
+
     auth_context = AuthorizationContext(
         user_id=sample_user_id,
         organization_id=sample_org_id,
         role="user",
         status="active",
         access_policy=AccessPolicy(
-            mode="custom_projects",
-            projects=[{"projectId": str(granted_project_id)}]
+            mode="custom_projects", projects=[{"projectId": str(granted_project_id)}]
         ),
-        project_scope=ProjectAccessScope(
-            mode="custom_projects",
-            project_ids={granted_project_id}
-        ),
+        project_scope=ProjectAccessScope(mode="custom_projects", project_ids={granted_project_id}),
     )
-    
+
     handler = ListProjectsHandler(fake_repository)
     query = ListProjects()
-    
+
     result = await handler.handle(query, auth_context)
-    
+
     assert len(result) == 1
     assert result[0].id == granted_project_id
     assert fake_repository.last_query_all_projects is False
@@ -177,7 +172,7 @@ async def test_handler_empty_custom_scope_returns_empty(
 ):
     """Test handler with empty custom scope returns no projects."""
     fake_repository.projects = sample_projects
-    
+
     auth_context = AuthorizationContext(
         user_id=sample_user_id,
         organization_id=sample_org_id,
@@ -186,12 +181,12 @@ async def test_handler_empty_custom_scope_returns_empty(
         access_policy=AccessPolicy(mode="custom_projects", projects=[]),
         project_scope=ProjectAccessScope(mode="custom_projects", project_ids=set()),
     )
-    
+
     handler = ListProjectsHandler(fake_repository)
     query = ListProjects()
-    
+
     result = await handler.handle(query, auth_context)
-    
+
     assert len(result) == 0
     assert fake_repository.last_query_all_projects is False
 
@@ -203,7 +198,7 @@ async def test_handler_respects_organization_isolation(
     """Test handler passes correct organization ID to repository."""
     user_org_id = uuid.uuid4()
     other_org_id = uuid.uuid4()
-    
+
     # Add projects from two different orgs
     fake_repository.projects = [
         ProjectDTO(
@@ -231,7 +226,7 @@ async def test_handler_respects_organization_isolation(
             open_issues=0,
         ),
     ]
-    
+
     auth_context = AuthorizationContext(
         user_id=sample_user_id,
         organization_id=user_org_id,
@@ -240,12 +235,12 @@ async def test_handler_respects_organization_isolation(
         access_policy=AccessPolicy(mode="all_projects", projects=[]),
         project_scope=ProjectAccessScope(mode="all_projects", project_ids=set()),
     )
-    
+
     handler = ListProjectsHandler(fake_repository)
     query = ListProjects()
-    
+
     result = await handler.handle(query, auth_context)
-    
+
     # Should only get user's org projects
     assert len(result) == 1
     assert result[0].organization_id == user_org_id

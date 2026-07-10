@@ -22,7 +22,7 @@ class FieldConfidence(BaseModel):
 
     field: str
     confidence: float = Field(ge=0.0, le=1.0)
-    evidence: str | None = None   # provider-provided justification / source span
+    evidence: str | None = None  # provider-provided justification / source span
 
 
 class Candidate(BaseModel):

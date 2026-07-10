@@ -9,6 +9,7 @@ Revision ID: 0040
 Revises: 0030
 Create Date: 2026-07-05
 """
+
 from __future__ import annotations
 
 import sqlalchemy as sa
@@ -26,7 +27,12 @@ def upgrade() -> None:
         sa.Column("id", sa.String(), primary_key=True),
         sa.Column("name", sa.String(), nullable=False),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
     )
 
     op.create_table(
@@ -36,7 +42,12 @@ def upgrade() -> None:
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
         sa.Column("locale", sa.String(), nullable=True),
         sa.Column("timezone", sa.String(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
     )
 
     op.create_table(
@@ -52,7 +63,12 @@ def upgrade() -> None:
     op.create_table(
         "organization_memberships",
         sa.Column("id", sa.String(), primary_key=True),
-        sa.Column("organization_id", sa.String(), sa.ForeignKey("context_organizations.id"), nullable=False),
+        sa.Column(
+            "organization_id",
+            sa.String(),
+            sa.ForeignKey("context_organizations.id"),
+            nullable=False,
+        ),
         sa.Column("user_id", sa.String(), sa.ForeignKey("context_users.id"), nullable=False),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
         sa.UniqueConstraint("organization_id", "user_id", name="uq_membership"),
@@ -63,7 +79,12 @@ def upgrade() -> None:
     op.create_table(
         "roles",
         sa.Column("id", sa.String(), primary_key=True),
-        sa.Column("organization_id", sa.String(), sa.ForeignKey("context_organizations.id"), nullable=False),
+        sa.Column(
+            "organization_id",
+            sa.String(),
+            sa.ForeignKey("context_organizations.id"),
+            nullable=False,
+        ),
         sa.Column("name", sa.String(), nullable=False),
     )
     op.create_table(
@@ -73,7 +94,12 @@ def upgrade() -> None:
     )
     op.create_table(
         "membership_roles",
-        sa.Column("membership_id", sa.String(), sa.ForeignKey("organization_memberships.id"), primary_key=True),
+        sa.Column(
+            "membership_id",
+            sa.String(),
+            sa.ForeignKey("organization_memberships.id"),
+            primary_key=True,
+        ),
         sa.Column("role_id", sa.String(), sa.ForeignKey("roles.id"), primary_key=True),
     )
     op.create_table(
@@ -85,7 +111,12 @@ def upgrade() -> None:
     op.create_table(
         "context_projects",
         sa.Column("id", sa.String(), primary_key=True),
-        sa.Column("organization_id", sa.String(), sa.ForeignKey("context_organizations.id"), nullable=False),
+        sa.Column(
+            "organization_id",
+            sa.String(),
+            sa.ForeignKey("context_organizations.id"),
+            nullable=False,
+        ),
         sa.Column("name", sa.String(), nullable=False),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
     )
@@ -96,7 +127,12 @@ def upgrade() -> None:
         "context_sites",
         sa.Column("id", sa.String(), primary_key=True),
         sa.Column("project_id", sa.String(), sa.ForeignKey("context_projects.id"), nullable=False),
-        sa.Column("organization_id", sa.String(), sa.ForeignKey("context_organizations.id"), nullable=False),
+        sa.Column(
+            "organization_id",
+            sa.String(),
+            sa.ForeignKey("context_organizations.id"),
+            nullable=False,
+        ),
         sa.Column("name", sa.String(), nullable=False),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
     )
@@ -106,7 +142,9 @@ def upgrade() -> None:
     op.create_table(
         "project_memberships",
         sa.Column("user_id", sa.String(), sa.ForeignKey("context_users.id"), primary_key=True),
-        sa.Column("project_id", sa.String(), sa.ForeignKey("context_projects.id"), primary_key=True),
+        sa.Column(
+            "project_id", sa.String(), sa.ForeignKey("context_projects.id"), primary_key=True
+        ),
     )
     op.create_table(
         "site_memberships",
@@ -116,9 +154,16 @@ def upgrade() -> None:
 
     op.create_table(
         "user_context_preferences",
-        sa.Column("organization_id", sa.String(), sa.ForeignKey("context_organizations.id"), primary_key=True),
+        sa.Column(
+            "organization_id",
+            sa.String(),
+            sa.ForeignKey("context_organizations.id"),
+            primary_key=True,
+        ),
         sa.Column("user_id", sa.String(), sa.ForeignKey("context_users.id"), primary_key=True),
-        sa.Column("default_project_id", sa.String(), sa.ForeignKey("context_projects.id"), nullable=True),
+        sa.Column(
+            "default_project_id", sa.String(), sa.ForeignKey("context_projects.id"), nullable=True
+        ),
         sa.Column("default_site_id", sa.String(), sa.ForeignKey("context_sites.id"), nullable=True),
         sa.Column("locale", sa.String(), nullable=True),
         sa.Column("timezone", sa.String(), nullable=True),

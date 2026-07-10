@@ -23,6 +23,7 @@ from typing import Protocol
 # Domain models (assistant-visible surface)
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True, slots=True)
 class ProjectSummary:
     """A project the actor is authorized to see."""
@@ -68,6 +69,7 @@ class ActorIdentity:
 # Ports — what the assistant depends on
 # ---------------------------------------------------------------------------
 
+
 class ActorReader(Protocol):
     """Resolves a WhatsApp sender to their authoritative ActorIdentity.
 
@@ -76,5 +78,4 @@ class ActorReader(Protocol):
     only ActorIdentity.
     """
 
-    async def resolve_by_whatsapp_id(self, wa_id: str) -> ActorIdentity | None:
-        ...
+    async def resolve_by_whatsapp_id(self, wa_id: str) -> ActorIdentity | None: ...

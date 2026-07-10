@@ -28,9 +28,7 @@ def verify_subscription_challenge(
         logger.warning("Rejected webhook challenge with unsupported hub.mode=%s", hub_mode)
         raise WebhookVerificationError("Unsupported hub.mode")
 
-    if not hub_verify_token or not hmac.compare_digest(
-        hub_verify_token, expected_verify_token
-    ):
+    if not hub_verify_token or not hmac.compare_digest(hub_verify_token, expected_verify_token):
         logger.warning("Rejected webhook challenge due to verify token mismatch")
         raise WebhookVerificationError("Invalid verify token")
 

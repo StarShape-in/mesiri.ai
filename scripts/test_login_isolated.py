@@ -1,8 +1,8 @@
 import paramiko
 
-HOST = '187.127.180.98'
-USER = 'root'
-PASS = 'Mercondatabase1234@'
+HOST = "187.127.180.98"
+USER = "root"
+PASS = "Mercondatabase1234@"
 
 client = paramiko.SSHClient()
 client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -52,11 +52,9 @@ async def test():
 asyncio.run(test())
 """
 
-stdin, stdout, stderr = client.exec_command(
-    f"/opt/mesiri/.venv/bin/python3 -c \"{test_script}\""
-)
-out = stdout.read().decode('utf-8', errors='replace')
-err = stderr.read().decode('utf-8', errors='replace')
+stdin, stdout, stderr = client.exec_command(f'/opt/mesiri/.venv/bin/python3 -c "{test_script}"')
+out = stdout.read().decode("utf-8", errors="replace")
+err = stderr.read().decode("utf-8", errors="replace")
 print("OUT:", out)
 if err:
     print("ERR:", err[:1000])

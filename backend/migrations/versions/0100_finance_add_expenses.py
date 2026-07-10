@@ -8,6 +8,7 @@ Revision ID: 0100
 Revises: 0090
 Create Date: 2026-07-08
 """
+
 from __future__ import annotations
 
 import sqlalchemy as sa
@@ -29,9 +30,13 @@ def upgrade() -> None:
             sa.ForeignKey("organizations.id"),
             nullable=False,
         ),
-        sa.Column("project_id", sa.UUID(as_uuid=True), sa.ForeignKey("projects.id"), nullable=False),
+        sa.Column(
+            "project_id", sa.UUID(as_uuid=True), sa.ForeignKey("projects.id"), nullable=False
+        ),
         sa.Column("site_id", sa.UUID(as_uuid=True), sa.ForeignKey("sites.id"), nullable=True),
-        sa.Column("account_id", sa.UUID(as_uuid=True), sa.ForeignKey("finance_accounts.id"), nullable=True),
+        sa.Column(
+            "account_id", sa.UUID(as_uuid=True), sa.ForeignKey("finance_accounts.id"), nullable=True
+        ),
         sa.Column("amount", sa.Numeric(14, 2), nullable=False),
         sa.Column("currency", sa.String(), nullable=False, server_default="INR"),
         sa.Column("description", sa.String(), nullable=True),

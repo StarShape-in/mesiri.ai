@@ -57,6 +57,7 @@ def select(candidates: list[ContextCandidate]) -> ContextCandidate | None:
 
 # -- Confidence derivation ---------------------------------------------------
 
+
 def confidence_for_explicit(*, by_id: bool) -> ContextConfidence:
     """Explicit reference in the current message."""
     return ContextConfidence.VERY_HIGH if by_id else ContextConfidence.HIGH

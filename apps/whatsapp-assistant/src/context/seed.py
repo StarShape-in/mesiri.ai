@@ -195,15 +195,11 @@ def build_dependencies(
         project_access=world.project_access,
     )
     if active_store is None:
-        active_store = (
-            FakeActiveContextStore(clock=clock) if clock else FakeActiveContextStore()
-        )
+        active_store = FakeActiveContextStore(clock=clock) if clock else FakeActiveContextStore()
     return ContextDependencies(
         identities=FakeExternalIdentityRepository(world.identities, world.users),
         memberships=FakeMembershipRepository(world.organizations, world.memberships),
-        roles=FakeRolePermissionRepository(
-            world.membership_roles, world.membership_permissions
-        ),
+        roles=FakeRolePermissionRepository(world.membership_roles, world.membership_permissions),
         projects=FakeProjectRepository(store),
         sites=FakeSiteRepository(store),
         preferences=FakeContextPreferenceRepository(world.preferences),
