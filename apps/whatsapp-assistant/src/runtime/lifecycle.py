@@ -143,4 +143,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         logging.getLogger(__name__).warning("Materials router not loaded: %s", exc)
 
+    # Timeline routes
+    try:
+        from mesiri.domains.timeline.router import router as timeline_router
+
+        app.include_router(timeline_router)
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("Timeline router not loaded: %s", exc)
+
     return app

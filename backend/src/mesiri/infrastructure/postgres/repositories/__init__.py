@@ -15,6 +15,7 @@ from typing import Any
 
 __all__ = [
     "PostgresProjectRepository",
+    "PostgresAIConfigRepository",
 ]
 
 
@@ -23,4 +24,8 @@ def __getattr__(name: str) -> Any:
         from .projects import PostgresProjectRepository
 
         return PostgresProjectRepository
+    if name == "PostgresAIConfigRepository":
+        from .ai_config import PostgresAIConfigRepository
+
+        return PostgresAIConfigRepository
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

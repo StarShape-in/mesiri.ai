@@ -128,7 +128,12 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
 
         redis_client = FakeRedis()
 
-    pipeline = build_pipeline(object_storage)
+    # M8: the one transaction Material command execution runs in. connect()/
+    # disconnect() happen in the lifespan handler (runtime/lifecycle.py), same
+    # lifecycle pattern as redis_client.
+    material_db = PostgresDatabase(_backend_settings.postgres)
+
+    pipeline = build_pipeline(object_storage, material_db, redis_client)
     context_resolver = build_context_resolver(redis=redis_client)
     planner = Planner()  # stateless — safe to construct once and share
     # WorkflowRegistry compiles each graph once and caches it — constructed
@@ -137,10 +142,6 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     workflow_runtime = WorkflowRuntime(
         registry=workflow_registry, repo=PostgresWorkflowInstanceRepository()
     )
-    # M8: the one transaction Material command execution runs in. connect()/
-    # disconnect() happen in the lifespan handler (runtime/lifecycle.py), same
-    # lifecycle pattern as redis_client.
-    material_db = PostgresDatabase(_backend_settings.postgres)
     material_execution_handler = ExecuteConfirmedMaterialActionHandler(
         db=material_db, repo=PostgresMaterialExecutionRepository()
     )
