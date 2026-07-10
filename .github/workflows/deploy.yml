@@ -121,7 +121,7 @@ jobs:
           git reset --hard origin/main
 
           echo "→ Installing Python dependencies..."
-          ~/.local/bin/uv pip install --python ${VENV}/bin/python -e ".[infra,providers]" --quiet
+          ~/.local/bin/uv pip install --python ${VENV}/bin/python -e ".[infra,providers,workflow]" --quiet
 
           echo "→ Running database migrations..."
           cd "${REPO}/backend"
@@ -146,7 +146,7 @@ jobs:
             echo "✗ Health check failed — reverting to ${PREV_SHA}"
             cd "${REPO}"
             git reset --hard "${PREV_SHA}"
-            ~/.local/bin/uv pip install --python ${VENV}/bin/python -e ".[infra,providers]" --quiet
+            ~/.local/bin/uv pip install --python ${VENV}/bin/python -e ".[infra,providers,workflow]" --quiet
             systemctl restart mesiri
             # Give the old code a moment to come back up so the VPS stays live
             sleep 3

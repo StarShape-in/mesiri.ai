@@ -145,7 +145,7 @@ Or directly on the VPS:
 ssh root@187.127.180.98
 cd /opt/mesiri
 git pull origin main
-.venv/bin/uv pip install -e ".[infra,providers]" --quiet
+.venv/bin/uv pip install -e ".[infra,providers,workflow]" --quiet
 cd backend && PYTHONPATH=... .venv/bin/alembic upgrade head && cd ..
 systemctl restart mesiri
 ```

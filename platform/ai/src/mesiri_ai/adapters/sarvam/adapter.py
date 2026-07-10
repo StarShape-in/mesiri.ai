@@ -6,9 +6,10 @@ invocation, so the adapter makes one call — no separate translation request.
 
 The ``sarvamai`` SDK is imported lazily and is the only SDK reference here; the
 response is converted into the Mesiri-owned :class:`SpeechResult` before
-returning. NOTE: the exact SDK method/field names are assumed and must be
-verified against the installed ``sarvamai`` version (tracked in the integration
-report) — the fake provider is used everywhere in tests.
+returning. Method and field names are verified against sarvamai 0.1.28:
+``speech_to_text_translate.translate`` returns ``transcript`` and
+``language_code``. The fake provider is used everywhere in tests, so a
+model-name drift here is only caught against the live SDK.
 """
 
 from __future__ import annotations
@@ -18,6 +19,11 @@ from typing import Any
 
 from ...core.fallback import call_with_resilience
 from ...models import SpeechResult
+
+# The only value sarvamai's SpeechToTextTranslateModel literal accepts. A stale
+# name here fails the call, which surfaces as an UNUSABLE understanding result
+# rather than an error — verify against the installed SDK when upgrading.
+_TRANSLATE_MODEL = "saaras:v2.5"
 
 try:  # settings live in the backend package; import defensively for standalone use
     from mesiri.bootstrap.settings import SarvamSettings
@@ -51,7 +57,7 @@ class SarvamSpeechProvider:
             def _call() -> Any:
                 return client.speech_to_text_translate.translate(
                     file=io.BytesIO(audio),
-                    model="saaras:v2",
+                    model=_TRANSLATE_MODEL,
                 )
 
             return await asyncio.to_thread(_call)
@@ -76,6 +82,6 @@ class SarvamSpeechProvider:
             transcript=_field("transcript") or "",
             detected_language=_field("language_code"),
             translated_text=_field("transcript"),  # translate endpoint returns English
-            model="saaras:v2",
+            model=_TRANSLATE_MODEL,
             latency_ms=latency_ms,
         )
