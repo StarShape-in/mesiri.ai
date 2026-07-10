@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const BASE_URL = 'https://mercon.tech';
+const BASE_URL = 'https://mesiri.mercon.tech';
 const TOKEN_KEY = 'mesiri_token';
 
 export const api = axios.create({ baseURL: BASE_URL });

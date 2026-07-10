@@ -1,6 +1,6 @@
 # Deployment Guide
 
-This project uses GitHub Actions for automated CI/CD. Every push to `main` that passes tests is automatically deployed to the VPS at `mercon.tech`.
+This project uses GitHub Actions for automated CI/CD. Every push to `main` that passes tests is automatically deployed to the VPS, served at `mesiri.mercon.tech` (the `mercon.tech` root domain is a separate, unrelated app on the same box — see `/etc/nginx/sites-available/mesiri.mercon.tech.conf`).
 
 ## How it works
 
@@ -187,6 +187,6 @@ cd /opt/mesiri/backend && PYTHONPATH=... .venv/bin/alembic current
     └── mesiri.service        ← systemd unit (installed to /etc/systemd)
 
 /var/www/mesiriadmin/         ← control panel static files (served by nginx)
-/etc/nginx/sites-available/mercon   ← nginx config (from mercon.conf)
+/etc/nginx/sites-available/mesiri.mercon.tech.conf   ← nginx config (from mercon.conf) — mercon.tech's root domain is a separate app on the same VPS
 /etc/systemd/system/mesiri.service  ← installed copy of infra/mesiri.service
 ```
