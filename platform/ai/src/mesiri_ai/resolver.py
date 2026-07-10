@@ -11,9 +11,9 @@ import json
 import logging
 from typing import Any
 
-from mesiri_contracts.common.errors import MesiriError
 from mesiri_ai import fixtures
 from mesiri_ai.models import ExtractionResult, SpeechResult, TranslationResult, VisionResult
+from mesiri_contracts.common.errors import MesiriError
 
 logger = logging.getLogger(__name__)
 
@@ -197,9 +197,10 @@ class DynamicAIProviderResolver:
         model = route["model"]
 
         if provider_id == "gemini":
+            from pydantic import SecretStr
+
             from mesiri.bootstrap.settings import GeminiSettings
             from mesiri_ai.adapters.gemini.adapter import GeminiProvider
-            from pydantic import SecretStr
 
             secret = config["secrets"].get("gemini", {})
             api_key = secret.get("api_key")
@@ -220,9 +221,10 @@ class DynamicAIProviderResolver:
             )
 
         elif provider_id == "deepseek":
+            from pydantic import SecretStr
+
             from mesiri.bootstrap.settings import DeepSeekSettings
             from mesiri_ai.adapters.deepseek.adapter import DeepSeekExtractionProvider
-            from pydantic import SecretStr
 
             secret = config["secrets"].get("deepseek", {})
             api_key = secret.get("api_key")
@@ -267,9 +269,10 @@ class DynamicAIProviderResolver:
         model = route["model"]
 
         if provider_id == "gemini":
+            from pydantic import SecretStr
+
             from mesiri.bootstrap.settings import GeminiSettings
             from mesiri_ai.adapters.gemini.adapter import GeminiProvider
-            from pydantic import SecretStr
 
             secret = config["secrets"].get("gemini", {})
             api_key = secret.get("api_key")
@@ -310,9 +313,10 @@ class DynamicAIProviderResolver:
         model = route["model"]
 
         if provider_id == "gemini":
+            from pydantic import SecretStr
+
             from mesiri.bootstrap.settings import GeminiSettings
             from mesiri_ai.adapters.gemini.adapter import GeminiProvider
-            from pydantic import SecretStr
 
             secret = config["secrets"].get("gemini", {})
             api_key = secret.get("api_key")

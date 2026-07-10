@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from mesiri_ai.resolver import DynamicAIProviderResolver
-from mesiri_ai.models import ExtractionResult, SpeechResult, TranslationResult, VisionResult
 
 
 class FakeSettings:
