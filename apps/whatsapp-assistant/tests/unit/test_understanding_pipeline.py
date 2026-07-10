@@ -168,3 +168,61 @@ async def test_understanding_result_is_schema_valid_and_serializable():
     dumped = result.model_dump()
     assert dumped["version"] == "v1"
     assert dumped["correlation_id"] == "cor_pipeline"
+
+
+async def test_text_greeting_skips_translation_and_extraction():
+    """A deterministic "hi" must never depend on an AI provider correctly
+    finding no fields -- and should cost nothing while it's at it."""
+    translation = FakeTranslationProvider()
+    extraction = FakeExtractionProvider()
+    pipeline = await _build(translation=translation, extraction=extraction)
+
+    result = await pipeline.understand(_msg(text="hi"))
+
+    assert result.semantic_type == SemanticType.UNKNOWN
+    assert result.overall_confidence == ConfidenceLevel.HIGH
+    assert result.candidates == []
+    assert translation.calls == 0
+    assert extraction.calls == 0
+
+
+async def test_voice_greeting_skips_extraction_after_transcription():
+    """STT is unavoidable for voice -- but the extraction call after it is
+    not, once the transcript is a recognized greeting."""
+    from mesiri_ai.models import SpeechResult
+
+    storage = FakeObjectStorage()
+    await storage.put_object("voice/greeting.ogg", b"<audio>")
+    extraction = FakeExtractionProvider()
+    pipeline = await _build(
+        speech=FakeSpeechProvider(SpeechResult(transcript="hi", translated_text="hi")),
+        extraction=extraction,
+        storage=storage,
+    )
+    msg = _msg(
+        modality=InputModality.VOICE,
+        media=MediaReference(object_key="voice/greeting.ogg", mime_type="audio/ogg"),
+    )
+
+    result = await pipeline.understand(msg)
+
+    assert result.semantic_type == SemanticType.UNKNOWN
+    assert result.overall_confidence == ConfidenceLevel.HIGH
+    assert extraction.calls == 0
+    # The transcription call itself is never skipped -- there's no text to
+    # check against the greeting list before Sarvam produces one.
+    ops = {e.operation for e in result.provider_executions}
+    assert "speech_to_text_translate" in ops
+    assert "extract" not in ops
+
+
+async def test_a_report_that_merely_mentions_hi_still_gets_extracted():
+    """The greeting check requires the whole message to be greeting words --
+    real content alongside "hi" must still reach extraction."""
+    extraction = FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION)
+    pipeline = await _build(extraction=extraction)
+
+    result = await pipeline.understand(_msg(text="hi, 50 bags of cement arrived"))
+
+    assert extraction.calls == 1
+    assert result.semantic_type != SemanticType.UNKNOWN

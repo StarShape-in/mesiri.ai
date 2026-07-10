@@ -22,7 +22,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from channel.replies import ReplySpec, render_category_prompt, render_greeting_menu
+from mesiri_ai.greeting_classifier import is_greeting_trigger
 from mesiri_contracts.application.results.execution_result import ExecutionResult
+from mesiri_contracts.assistant.enums import InputModality
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage
 from mesiri_contracts.assistant.v2.interaction_spec import InteractionIntent
 from workflows import WorkflowResumeResult, WorkflowResumeStatus, WorkflowRunResult, WorkflowRuntime
@@ -116,6 +119,59 @@ class InteractionHandler:
         return InteractionHandled(
             result=result, reply_text=reply_text, execution_result=execution_result
         )
+
+    def handle_category_tap(self, message: NormalizedMessage) -> str | None:
+        """A tap on the category-menu list (see channel/replies.CATEGORY_ROWS,
+        sent by render_direct_reply's greeting). Deterministic -- we defined
+        these row ids ourselves, so recognizing one needs no AI call, same
+        principle as handle_fast_path ("a plain yes costs no tokens"). Never
+        touches WorkflowRuntime: a category tap isn't resuming or starting a
+        workflow, just picking which one to describe next.
+
+        Synchronous and I/O-free, unlike handle_fast_path/handle_slow_path --
+        there's nothing here to await.
+
+        Returns None for anything that isn't a recognized menu tap (not an
+        interactive reply at all, or a stale/foreign button id), so the
+        caller falls through to the normal journey exactly like the other
+        fast-path checks.
+        """
+        if message.modality is not InputModality.INTERACTIVE:
+            return None
+        row_id = message.metadata.get("interactive_reply_id")
+        if not row_id:
+            return None
+        return render_category_prompt(row_id)
+
+    def handle_greeting_trigger(
+        self, message: NormalizedMessage, *, timezone: str | None = None
+    ) -> ReplySpec | None:
+        """A bare "hi"/"menu"/"help"/etc, matched against a deterministic,
+        configurable phrase list (greeting_phrases.json) -- never the AI
+        pipeline's judgment call. "hi" must reliably open the menu regardless
+        of what an extraction provider would have classified it as.
+
+        Text-only: for TEXT/INTERACTIVE modality, message.text is already
+        populated at normalization time, so this runs before Understanding
+        is even invoked -- the biggest saving (translation + extraction both
+        skipped), same principle as handle_fast_path. Voice can't be checked
+        here: there's no text until Sarvam transcribes it. The identical
+        phrase check runs again post-transcription, pre-extraction, inside
+        understanding/pipeline.py's _handle_voice -- deterministic either
+        way, just a smaller saving for voice (STT is unavoidable).
+
+        `is_first_message` isn't threaded through here (not wired anywhere
+        yet, see channel/replies.py) -- always renders the returning-user
+        copy. timezone is best-effort: at this point in the journey (before
+        M4 Context resolution) the caller only has the cheaper identity gate,
+        which doesn't carry a timezone, so this is usually None and falls
+        back to a neutral "Hello" (see channel/replies._greeting).
+        """
+        if message.modality is not InputModality.TEXT:
+            return None
+        if not is_greeting_trigger(message.text):
+            return None
+        return render_greeting_menu(timezone=timezone)
 
     async def handle_slow_path(
         self,

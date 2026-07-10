@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import Any
 
 from mesiri_ai.confidence import ConfidencePolicy, ConfidenceSignals
+from mesiri_ai.greeting_classifier import is_greeting_trigger
 from mesiri_ai.models import ExtractionResult
 from mesiri_ai.ports.extraction import StructuredExtractionProvider
 from mesiri_ai.ports.speech import SpeechUnderstandingProvider
@@ -102,6 +103,17 @@ class UnderstandingPipeline:
 
         result.transcript = text
 
+        # Deterministic greeting/menu check, before any provider call. In
+        # production a text greeting is normally already intercepted by
+        # interactions/handler.py's pre-pipeline fast path and never reaches
+        # here at all -- this is defense-in-depth so the pipeline is
+        # correct in isolation too (direct calls, tests, future callers),
+        # not the primary saving. See mesiri_ai.greeting_classifier.
+        if is_greeting_trigger(text):
+            result.normalized_text = text
+            self._apply_greeting(result)
+            return
+
         translation = await self._translation.translate_to_english(
             text, correlation_id=result.correlation_id
         )
@@ -142,6 +154,16 @@ class UnderstandingPipeline:
             result.overall_confidence = ConfidenceLevel.UNUSABLE
             result.warnings.append("empty transcript")
             return
+
+        # Deterministic greeting/menu check, after transcription (unavoidable
+        # for voice) but before extraction. This is the real saving for
+        # voice: a spoken "hi" skips the extraction call entirely and is
+        # never left to an AI provider's judgment about whether it carries
+        # business fields. See mesiri_ai.greeting_classifier.
+        if is_greeting_trigger(result.normalized_text):
+            self._apply_greeting(result)
+            return
+
         extraction = await self._extraction.extract(
             result.normalized_text, correlation_id=result.correlation_id
         )
@@ -184,6 +206,20 @@ class UnderstandingPipeline:
             )
         obj = await self._storage.get_object(message.media.object_key)
         return obj.data
+
+    def _apply_greeting(self, result: UnderstandingResult) -> None:
+        """A deterministically recognized greeting/menu request (see
+        mesiri_ai.greeting_classifier) -- no extraction call, no candidate.
+        semantic_type=UNKNOWN is the same classification an empty extraction
+        would already produce, so it flows through canonicalization to
+        CanonicalEventType.UNRECOGNIZED -> Planner's DIRECT_REPLY exactly as
+        it does today -- this only makes the outcome deterministic rather
+        than dependent on an AI provider correctly finding no fields.
+        HIGH, not UNUSABLE: we are confident about what this is, we just
+        chose not to spend a provider call confirming it.
+        """
+        result.semantic_type = SemanticType.UNKNOWN
+        result.overall_confidence = ConfidenceLevel.HIGH
 
     def _apply_extraction(
         self, result: UnderstandingResult, extraction: ExtractionResult, *, is_empty: bool

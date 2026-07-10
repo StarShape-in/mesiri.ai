@@ -8,6 +8,8 @@ developer diagnostic. These tests pin the replies a user actually receives.
 from __future__ import annotations
 
 from channel.replies import (
+    CATEGORY_ROWS,
+    render_category_prompt,
     render_clarify_reply,
     render_direct_reply,
     render_understanding_failed_reply,
@@ -65,11 +67,32 @@ def test_clarify_with_no_missing_fields_still_asks_something():
     assert reply.strip()
 
 
-def test_greeting_offers_examples_of_what_mesiri_can_record():
+def test_first_message_offers_examples_of_what_mesiri_can_record():
+    """Only the first-ever greeting spells out examples in the text body --
+    a returning user gets the short "what are you reporting" prompt and
+    relies on the tappable menu instead (see test_first_message_gets_...)."""
+    reply = render_direct_reply(
+        _decision(PlannerDecisionType.DIRECT_REPLY, CanonicalEventType.UNRECOGNIZED),
+        is_first_message=True,
+    )
+    assert "cement" in reply.text
+
+
+def test_greeting_carries_the_four_category_rows_and_nothing_else():
+    """Only the greeting/unrecognized reply ever carries a menu -- and it's
+    exactly the four locked v1 modules, not Equipment and Machinery split
+    into two, and not a fifth 'Site Update' or similar sneaking in."""
     reply = render_direct_reply(
         _decision(PlannerDecisionType.DIRECT_REPLY, CanonicalEventType.UNRECOGNIZED)
     )
-    assert "cement" in reply
+    assert reply.list_rows == CATEGORY_ROWS
+    assert [row.title for row in reply.list_rows] == [
+        "Material",
+        "Equipment & Machinery",
+        "Labour",
+        "Expense",
+    ]
+    assert reply.list_button_label
 
 
 def test_greeting_is_time_aware_in_the_users_timezone():
@@ -77,7 +100,7 @@ def test_greeting_is_time_aware_in_the_users_timezone():
         _decision(PlannerDecisionType.DIRECT_REPLY, CanonicalEventType.UNRECOGNIZED),
         timezone="Asia/Kolkata",
     )
-    assert any(g in reply for g in ("Good morning", "Good afternoon", "Good evening"))
+    assert any(g in reply.text for g in ("Good morning", "Good afternoon", "Good evening"))
 
 
 def test_greeting_falls_back_to_hello_on_unknown_timezone():
@@ -87,15 +110,47 @@ def test_greeting_falls_back_to_hello_on_unknown_timezone():
             _decision(PlannerDecisionType.DIRECT_REPLY, CanonicalEventType.UNRECOGNIZED),
             timezone=tz,
         )
-        assert reply.startswith("Hello")
+        assert reply.text.startswith("Hello")
+
+
+def test_first_message_gets_introduced_returning_user_does_not():
+    """A returning user who already knows what Mesiri does shouldn't be
+    re-introduced on every 'hi' -- only the first-ever message explains what
+    the assistant is."""
+    first = render_direct_reply(
+        _decision(PlannerDecisionType.DIRECT_REPLY, CanonicalEventType.UNRECOGNIZED),
+        is_first_message=True,
+    )
+    returning = render_direct_reply(
+        _decision(PlannerDecisionType.DIRECT_REPLY, CanonicalEventType.UNRECOGNIZED),
+        is_first_message=False,
+    )
+    assert "I'm Mesiri" in first.text
+    assert "I'm Mesiri" not in returning.text
+    # Both still offer the same tappable menu -- only the copy differs.
+    assert first.list_rows == returning.list_rows == CATEGORY_ROWS
 
 
 def test_question_gets_capability_answer_not_a_greeting():
     reply = render_direct_reply(
         _decision(PlannerDecisionType.DIRECT_REPLY, CanonicalEventType.GENERAL_QUESTION_ASKED)
     )
-    assert "record" in reply
-    assert not reply.startswith(("Hello", "Good "))
+    assert "record" in reply.text
+    assert not reply.text.startswith(("Hello", "Good "))
+    # A question that's already understood as a question doesn't need a menu.
+    assert reply.list_rows is None
+
+
+def test_category_prompt_is_deterministic_per_row_and_distinct():
+    prompts = {render_category_prompt(row.id) for row in CATEGORY_ROWS}
+    assert None not in prompts
+    assert len(prompts) == len(CATEGORY_ROWS)  # no two categories share a prompt
+
+
+def test_category_prompt_is_none_for_an_unknown_row_id():
+    """A stale button from an old message, or a tampered payload, must not
+    produce a reply at all -- the caller falls through to the normal journey."""
+    assert render_category_prompt("cat_does_not_exist") is None
 
 
 def test_unsupported_is_distinct_from_not_understood():

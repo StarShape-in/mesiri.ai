@@ -15,6 +15,8 @@ from typing import Any
 
 from canonicalization import build_canonical_event, log_canonical_event
 from channel.replies import (
+    ListRow,
+    ReplySpec,
     render_clarify_reply,
     render_direct_reply,
     render_understanding_failed_reply,
@@ -69,30 +71,38 @@ def _render_reply(
     workflow_resume: WorkflowResumeResult | None,
     decision: PlannerDecisionV2 | None,
     resolved: ResolvedContextV2 | None,
-) -> str | None:
+) -> ReplySpec | None:
     """The single place that decides what the user hears back.
 
     Returns None only when the interaction leg has already replied. Every other
     path must produce something: a message that reaches the assistant and gets
     no answer is indistinguishable from Mesiri being down.
+
+    Only render_direct_reply's UNRECOGNIZED case ever sets list_rows on the
+    returned ReplySpec (the greeting/category menu) -- every other branch is
+    plain text, wrapped here so callers only ever handle one return shape.
     """
     if workflow_run is not None and workflow_run.status in (
         WorkflowRunStatus.STARTED,
         WorkflowRunStatus.BLOCKED_PENDING_CONFIRMATION,
     ):
-        return render_workflow_run_reply(workflow_run, pending_prompt=workflow_run.pending_prompt)
+        return ReplySpec(
+            text=render_workflow_run_reply(workflow_run, pending_prompt=workflow_run.pending_prompt)
+        )
 
     if workflow_resume is not None:
         return None  # interactions/handler.py already sent its own reply
 
     if workflow_run is not None and workflow_run.status is WorkflowRunStatus.NO_GRAPH:
         # Understood, but expense/labour/equipment graphs don't exist yet.
-        return render_unsupported_reply()
+        return ReplySpec(text=render_unsupported_reply())
 
     if decision is not None:
         if decision.decision_type is PlannerDecisionType.CLARIFY:
-            return render_clarify_reply(decision)
+            return ReplySpec(text=render_clarify_reply(decision))
         if decision.decision_type is PlannerDecisionType.DIRECT_REPLY:
+            # is_first_message detection isn't wired yet (would need a message-
+            # history check) -- defaults to the lighter "returning user" copy.
             return render_direct_reply(
                 decision, timezone=resolved.timezone if resolved else None
             )
@@ -101,7 +111,7 @@ def _render_reply(
     # FAILED, or the planner said IGNORE. Never fall through to format_reply():
     # that is a developer diagnostic ("Type: unknown / Confidence: unusable"),
     # not a reply a site worker should ever receive.
-    return render_understanding_failed_reply()
+    return ReplySpec(text=render_understanding_failed_reply())
 
 
 async def process_inbound_message(
@@ -114,6 +124,7 @@ async def process_inbound_message(
     workflow_runtime: WorkflowRuntime,
     interaction_handler: InteractionHandler,
     send_text: Callable[[str, str], Awaitable[Any]],
+    send_list: Callable[[str, str, str, tuple[ListRow, ...]], Awaitable[Any]] | None = None,
     context_debug: bool = False,
     message_logger: MessageLogger | None = None,
     trace_logger: TraceLogger | None = None,
@@ -329,11 +340,25 @@ async def process_inbound_message(
         and message.modality is InputModality.VOICE
         and (understanding.translated_text or understanding.transcript)
     ):
-        reply = understanding.translated_text or understanding.transcript
+        reply = ReplySpec(text=understanding.translated_text or understanding.transcript or "")
 
     if reply is not None:
-        await send_text(message.sender.wa_id, reply)
-        await _safe(mlog.log_reply(correlation_id=correlation_id, reply=reply))
+        if reply.list_rows and send_list is not None:
+            await send_list(
+                message.sender.wa_id,
+                reply.text,
+                reply.list_button_label or "Choose one",
+                reply.list_rows,
+            )
+        elif reply.list_rows:
+            # No list-sending capability wired (e.g. a caller that only needs
+            # plain text) -- degrade gracefully rather than dropping the menu.
+            # Production always wires send_list; this is not the primary UX.
+            options = "\n".join(f"  • {row.title}" for row in reply.list_rows)
+            await send_text(message.sender.wa_id, f"{reply.text}\n{options}")
+        else:
+            await send_text(message.sender.wa_id, reply.text)
+        await _safe(mlog.log_reply(correlation_id=correlation_id, reply=reply.text))
 
     await _safe(mlog.mark_completed(correlation_id=correlation_id))
 

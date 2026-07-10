@@ -16,6 +16,7 @@ _SUPPORTED_TYPES = {
     "text": InputModality.TEXT,
     "image": InputModality.IMAGE,
     "audio": InputModality.VOICE,
+    "interactive": InputModality.INTERACTIVE,
 }
 
 
@@ -36,6 +37,18 @@ class MessageNormalizer:
         sender = self._resolve_sender(message, contacts)
         text = self._resolve_text(message, modality)
         reply_context = self._resolve_reply_context(message)
+        metadata: dict[str, Any] = {
+            "phone_number_id": phone_number_id,
+            "display_phone_number": display_phone_number,
+            "raw_type": message.get("type"),
+        }
+
+        if modality is InputModality.INTERACTIVE:
+            interactive_reply = self._resolve_interactive_reply(message)
+            if interactive_reply is not None:
+                text = interactive_reply["title"]
+                metadata["interactive_reply_id"] = interactive_reply["id"]
+                metadata["interactive_reply_type"] = interactive_reply["type"]
 
         normalized = NormalizedMessage(
             message_id=str(message["id"]),
@@ -46,11 +59,7 @@ class MessageNormalizer:
             text=text,
             media=media,
             reply_context=reply_context,
-            metadata={
-                "phone_number_id": phone_number_id,
-                "display_phone_number": display_phone_number,
-                "raw_type": message.get("type"),
-            },
+            metadata=metadata,
         )
         logger.debug("Normalized WhatsApp message %s as %s", normalized.message_id, modality)
         return normalized
@@ -107,6 +116,31 @@ class MessageNormalizer:
             return image_payload.get("caption")
 
         return None
+
+    def _resolve_interactive_reply(self, message: Mapping[str, Any]) -> dict[str, str] | None:
+        """Extract the tapped list row or button from an interactive reply.
+
+        Meta's shape (verified against the Cloud API reference): the outer
+        message carries `type: "interactive"`; the nested `interactive.type`
+        is `"list_reply"` or `"button_reply"`, each with its own object of
+        the same name holding `id` and `title`. Anything else (e.g. a Flow's
+        `nfm_reply`, which Mesiri doesn't send) is not a menu tap -- returns
+        None rather than raising, so the message still normalizes with no
+        text/selection rather than being dropped outright.
+        """
+        interactive = message.get("interactive") or {}
+        reply_type = interactive.get("type")
+        if reply_type not in ("list_reply", "button_reply"):
+            logger.debug("Unhandled interactive reply type: %s", reply_type)
+            return None
+
+        reply = interactive.get(reply_type) or {}
+        reply_id = reply.get("id")
+        title = reply.get("title")
+        if not reply_id or not title:
+            return None
+
+        return {"id": str(reply_id), "title": str(title), "type": reply_type}
 
     def _resolve_reply_context(self, message: Mapping[str, Any]) -> ReplyContext | None:
         context = message.get("context") or {}

@@ -80,3 +80,24 @@ def voice_webhook_payload(*, message_id: str = "wamid.voice") -> dict[str, Any]:
         }
     ]
     return payload
+
+
+def list_reply_webhook_payload(
+    *, message_id: str = "wamid.interactive", row_id: str = "cat_material"
+) -> dict[str, Any]:
+    """Build a sample Meta interactive list-reply webhook payload -- shape
+    verified against the Cloud API reference."""
+    payload = text_webhook_payload(message_id=message_id)
+    payload["entry"][0]["changes"][0]["value"]["messages"] = [
+        {
+            "from": "919876543210",
+            "id": message_id,
+            "timestamp": "1710000003",
+            "type": "interactive",
+            "interactive": {
+                "type": "list_reply",
+                "list_reply": {"id": row_id, "title": "Material", "description": ""},
+            },
+        }
+    ]
+    return payload
