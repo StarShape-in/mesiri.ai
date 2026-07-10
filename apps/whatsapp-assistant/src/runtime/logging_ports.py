@@ -38,6 +38,10 @@ class MessageLogger(Protocol):
         """UPDATE the row to processing_status='failed' with the error code."""
         ...
 
+    async def log_reply(self, *, correlation_id: str, reply: str) -> None:
+        """UPDATE the row to add the assistant_reply."""
+        ...
+
 
 class TraceLogger(Protocol):
     """Best-effort per-stage pipeline trace."""
@@ -52,6 +56,24 @@ class TraceLogger(Protocol):
         succeeded: bool,
         error_code: str | None = None,
         error_message: str | None = None,
+        severity: str = "info",
+        event_source: str = "pipeline_stage",
     ) -> None:
-        """INSERT a trace row for one pipeline stage."""
+        """INSERT a trace row for one pipeline stage (or, with a non-default
+        ``event_source``, for an unhandled exception / admin action)."""
+        ...
+
+    async def log_provider_execution(
+        self,
+        *,
+        correlation_id: str,
+        stage: str,
+        provider: str,
+        operation: str,
+        model: str | None,
+        latency_ms: float | None,
+        succeeded: bool,
+        error_code: str | None = None,
+    ) -> None:
+        """INSERT a row recording which LLM/provider handled one call."""
         ...

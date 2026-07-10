@@ -42,7 +42,7 @@ async def main() -> None:
     )
     results = []
 
-    async def on_normalized(msg):
+    async def on_normalized(msg, raw_payload=None, retry_of_id=None):
         assert not hasattr(msg, "content")
         assert not hasattr(msg, "message_type")
         result = await pipeline.understand(msg)

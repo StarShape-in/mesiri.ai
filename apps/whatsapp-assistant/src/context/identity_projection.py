@@ -186,10 +186,11 @@ class IdentityProjectionService:
             )
         # Store the subject as bare digits: Meta's inbound `wa_id` is digit-only,
         # while `users.whatsapp_number` may carry "+", spaces, or dashes. Writing
-        # the raw value made lookups depend on how an admin typed the number.
-        wa = _digits(row["whatsapp_number"])
-        if wa:
-            ext_id = f"ext_{WHATSAPP_PROVIDER}_{wa}"
+        # the raw value made lookups depend on how an admin typed the number, and
+        # every lookup silently failed with UNKNOWN_EXTERNAL_IDENTITY as a result.
+        digits = _digits(row["whatsapp_number"])
+        if digits:
+            ext_id = f"ext_{WHATSAPP_PROVIDER}_{digits}"
             conn.execute(
                 text(
                     """
@@ -201,7 +202,7 @@ class IdentityProjectionService:
                 {
                     "id": ext_id,
                     "provider": WHATSAPP_PROVIDER,
-                    "subject": wa,
+                    "subject": digits,
                     "user_id": ctx_id,
                 },
             )

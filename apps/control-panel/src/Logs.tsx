@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
-import { RefreshCw, ChevronDown, ChevronRight } from 'lucide-react';
+import { RefreshCw, ChevronDown, ChevronRight, Check, RotateCcw, Code, Cpu } from 'lucide-react';
 import { api } from './api';
 
 interface InboundMessageSummary {
@@ -12,6 +12,44 @@ interface InboundMessageSummary {
   error_code: string | null;
   received_at: string;
   processed_at: string | null;
+  assistant_reply: string | null;
+  acknowledged_at: string | null;
+}
+
+interface InboundMessageList {
+  items: InboundMessageSummary[];
+  total: number | null;
+}
+
+interface InboundMessageDetail {
+  id: string;
+  correlation_id: string;
+  sender_wa_id: string;
+  message_type: string;
+  body_text: string | null;
+  raw_payload: any;
+  normalized_message: any;
+  media_object_key: string | null;
+  processing_status: string;
+  error_code: string | null;
+  received_at: string;
+  processed_at: string | null;
+  raw_payload_captured: boolean;
+  acknowledged_at: string | null;
+  acknowledged_by: string | null;
+  retry_of_id: string | null;
+  assistant_reply: string | null;
+}
+
+interface ProviderExecutionEntry {
+  stage: string;
+  provider: string;
+  operation: string;
+  model: string | null;
+  latency_ms: number | null;
+  succeeded: boolean;
+  error_code: string | null;
+  created_at: string;
 }
 
 interface JourneyTraceEntry {
@@ -25,6 +63,22 @@ interface JourneyTraceEntry {
 
 const POLL_INTERVAL_MS = 5000;
 const MAX_ROWS = 200;
+
+function formatRelativeTime(dateString: string): string {
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffSec = Math.floor(diffMs / 1000);
+  const diffMin = Math.floor(diffSec / 60);
+  const diffHour = Math.floor(diffMin / 60);
+  const diffDay = Math.floor(diffHour / 24);
+
+  if (diffSec < 60) return 'just now';
+  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffHour < 24) return `${diffHour}h ago`;
+  if (diffDay === 1) return 'yesterday';
+  return date.toLocaleDateString();
+}
 
 // Known WhatsApp numbers used for testing the assistant, offered as a quick
 // filter so you don't have to retype them. wa_id has no "+" or spaces.
@@ -56,40 +110,328 @@ const TracePanel = ({ correlationId }: { correlationId: string }) => {
     };
   }, [correlationId]);
 
-  if (loading) return <div style={{ padding: 'var(--space-4)', color: 'var(--neutral-500)' }}>Loading trace…</div>;
+  if (loading) return <div style={{ padding: 'var(--space-2) 0', color: 'var(--neutral-500)', fontSize: '13px' }}>Loading trace…</div>;
   if (!trace || trace.length === 0) {
-    return <div style={{ padding: 'var(--space-4)', color: 'var(--neutral-500)' }}>No pipeline trace recorded for this message.</div>;
+    return <div style={{ padding: 'var(--space-2) 0', color: 'var(--neutral-500)', fontSize: '13px' }}>No pipeline trace recorded.</div>;
   }
 
   return (
-    <div style={{ padding: 'var(--space-4)', backgroundColor: 'var(--neutral-50)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 0, paddingLeft: '8px', paddingTop: '4px', position: 'relative' }}>
       {trace.map((entry, i) => (
         <div
           key={i}
           style={{
             display: 'flex',
-            alignItems: 'flex-start',
             gap: 'var(--space-3)',
-            padding: 'var(--space-2) 0',
-            borderBottom: i < trace.length - 1 ? '1px solid var(--neutral-200)' : 'none',
+            position: 'relative',
+            paddingBottom: i < trace.length - 1 ? 'var(--space-4)' : 0
           }}
         >
-          <span>{entry.succeeded ? '✅' : '❌'}</span>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 500, fontSize: '13px' }}>{entry.stage}</div>
+          {/* Vertical line connector */}
+          {i < trace.length - 1 && (
+            <div
+              style={{
+                position: 'absolute',
+                left: '7px',
+                top: '16px',
+                bottom: 0,
+                width: '2px',
+                backgroundColor: 'var(--neutral-200)',
+                zIndex: 1
+              }}
+            />
+          )}
+          
+          {/* Node marker */}
+          <div
+            style={{
+              width: '16px',
+              height: '16px',
+              borderRadius: '50%',
+              backgroundColor: entry.succeeded ? 'var(--success-soft)' : 'var(--error-soft)',
+              border: `2px solid ${entry.succeeded ? 'var(--success)' : 'var(--error)'}`,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 2,
+              fontSize: '9px',
+              fontWeight: 'bold',
+              color: entry.succeeded ? 'var(--success)' : 'var(--error)'
+            }}
+          >
+            {entry.succeeded ? '✓' : '✗'}
+          </div>
+
+          <div style={{ flex: 1, marginTop: '-2px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--neutral-800)' }}>
+                {entry.stage}
+              </span>
+              {entry.duration_ms !== null && (
+                <span style={{ fontSize: '11px', color: 'var(--neutral-400)', fontFamily: 'monospace' }}>
+                  {entry.duration_ms}ms
+                </span>
+              )}
+            </div>
             {entry.error_message && (
-              <div style={{ fontSize: '12px', color: 'var(--error)' }}>
+              <div style={{ fontSize: '12px', color: 'var(--error)', marginTop: '4px', backgroundColor: 'var(--error-soft)', padding: '6px 10px', borderRadius: 'var(--radius-xs)', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
                 {entry.error_code}: {entry.error_message}
               </div>
             )}
           </div>
-          {entry.duration_ms !== null && (
-            <span style={{ fontSize: '12px', color: 'var(--neutral-500)', fontFamily: 'monospace' }}>
-              {entry.duration_ms}ms
-            </span>
-          )}
         </div>
       ))}
+    </div>
+  );
+};
+
+const LogDetailPanel = ({
+  message,
+  onUpdate,
+}: {
+  message: InboundMessageSummary;
+  onUpdate: () => void;
+}) => {
+  const [detail, setDetail] = useState<InboundMessageDetail | null>(null);
+  const [providers, setProviders] = useState<ProviderExecutionEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showPayload, setShowPayload] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+
+  const fetchDetails = useCallback(() => {
+    setLoading(true);
+    Promise.all([
+      api.get<InboundMessageDetail>(`/admin/logs/messages/${message.id}`),
+      api.get<ProviderExecutionEntry[]>(`/admin/logs/messages/${message.correlation_id}/providers`),
+    ])
+      .then(([detailRes, providersRes]) => {
+        setDetail(detailRes.data);
+        setProviders(providersRes.data);
+      })
+      .catch((err) => {
+        console.error('Failed to fetch message details', err);
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  }, [message.id, message.correlation_id]);
+
+  useEffect(() => {
+    fetchDetails();
+  }, [fetchDetails]);
+
+  const handleAcknowledge = () => {
+    setActionLoading(true);
+    api
+      .post(`/admin/logs/messages/${message.id}/acknowledge`)
+      .then(() => {
+        fetchDetails();
+        onUpdate();
+      })
+      .catch((err) => {
+        alert(err.response?.data?.detail || 'Failed to acknowledge message');
+      })
+      .finally(() => {
+        setActionLoading(false);
+      });
+  };
+
+  const handleRetry = () => {
+    setActionLoading(true);
+    api
+      .post(`/admin/logs/messages/${message.id}/retry`)
+      .then((res) => {
+        alert(`Retry triggered! New Correlation ID: ${res.data.correlation_id}`);
+        fetchDetails();
+        onUpdate();
+      })
+      .catch((err) => {
+        alert(err.response?.data?.detail || 'Failed to retry message');
+      })
+      .finally(() => {
+        setActionLoading(false);
+      });
+  };
+
+  if (loading) {
+    return <div style={{ padding: 'var(--space-4)', color: 'var(--neutral-500)' }}>Loading details…</div>;
+  }
+
+  if (!detail) {
+    return <div style={{ padding: 'var(--space-4)', color: 'var(--neutral-500)' }}>Failed to load message details.</div>;
+  }
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: 'var(--space-6)', padding: 'var(--space-5)', backgroundColor: 'var(--neutral-50)', borderBottom: '1px solid var(--neutral-200)' }}>
+      {/* Left column - Content */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+        
+        {/* Chat Visualizer Flow */}
+        <div style={{ backgroundColor: '#ffffff', borderRadius: 'var(--radius-sm)', border: '1px solid var(--neutral-200)', padding: 'var(--space-4)', boxShadow: '0 1px 2px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+          <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--neutral-500)', borderBottom: '1px solid var(--neutral-100)', paddingBottom: 'var(--space-2)', marginBottom: 'var(--space-2)' }}>
+            Conversation Flow
+          </div>
+
+          {/* User Message Bubble */}
+          <div style={{ display: 'flex', flexDirection: 'column', alignSelf: 'flex-start', maxWidth: '85%', gap: '4px' }}>
+            <span style={{ fontSize: '10px', fontWeight: 600, color: 'var(--neutral-500)', marginLeft: '8px' }}>
+              USER ({detail.normalized_message?.sender?.profile_name || detail.sender_wa_id})
+            </span>
+            <div style={{ backgroundColor: 'var(--neutral-100)', border: '1px solid var(--neutral-200)', borderRadius: '8px 8px 8px 0', padding: '10px 14px', fontSize: '13px', color: 'var(--neutral-800)', whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>
+              {detail.body_text || <em style={{ color: 'var(--neutral-400)' }}>[Media message or no text]</em>}
+            </div>
+            <span style={{ fontSize: '10px', color: 'var(--neutral-400)', alignSelf: 'flex-start', marginLeft: '4px' }}>
+              {new Date(detail.received_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          </div>
+
+          {/* Assistant Reply Bubble */}
+          {detail.assistant_reply ? (
+            <div style={{ display: 'flex', flexDirection: 'column', alignSelf: 'flex-end', maxWidth: '85%', gap: '4px', marginTop: 'var(--space-2)' }}>
+              <span style={{ fontSize: '10px', fontWeight: 600, color: 'var(--neutral-500)', marginRight: '8px', alignSelf: 'flex-end' }}>
+                ASSISTANT
+              </span>
+              <div style={{ backgroundColor: 'var(--primary-soft)', border: '1px solid var(--neutral-200)', borderRadius: '8px 8px 0 8px', padding: '10px 14px', fontSize: '13px', color: 'var(--neutral-800)', whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>
+                {detail.assistant_reply}
+              </div>
+              <span style={{ fontSize: '10px', color: 'var(--neutral-400)', alignSelf: 'flex-end', marginRight: '4px' }}>
+                {detail.processed_at ? new Date(detail.processed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+              </span>
+            </div>
+          ) : (
+            detail.processing_status === 'completed' && (
+              <div style={{ alignSelf: 'flex-end', fontSize: '12px', color: 'var(--neutral-400)', fontStyle: 'italic', marginTop: 'var(--space-2)' }}>
+                No reply was triggered for this message.
+              </div>
+            )
+          )}
+        </div>
+
+        {/* Raw Payload Section */}
+        <div style={{ backgroundColor: '#ffffff', borderRadius: 'var(--radius-sm)', border: '1px solid var(--neutral-200)', overflow: 'hidden' }}>
+          <button 
+            type="button"
+            onClick={() => setShowPayload(!showPayload)}
+            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 'var(--space-3) var(--space-4)', border: 'none', background: 'none', cursor: 'pointer', outline: 'none' }}
+          >
+            <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--neutral-500)' }}>
+              <Code size={13} />
+              Raw Webhook Payload
+            </span>
+            <ChevronDown size={14} style={{ transform: showPayload ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s', border: 'none', background: 'none' }} />
+          </button>
+          {showPayload && (
+            <div style={{ borderTop: '1px solid var(--neutral-200)', padding: 'var(--space-4)', backgroundColor: 'var(--neutral-900)', color: 'var(--neutral-200)', overflowX: 'auto' }}>
+              <pre style={{ margin: 0, fontSize: '12px', fontFamily: 'monospace', lineHeight: '1.5' }}>
+                {JSON.stringify(detail.raw_payload, null, 2)}
+              </pre>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Right column - Execution & Actions */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+        
+        {/* Actions & Triage */}
+        <div style={{ backgroundColor: '#ffffff', borderRadius: 'var(--radius-sm)', border: '1px solid var(--neutral-200)', padding: 'var(--space-4)' }}>
+          <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--neutral-500)', marginBottom: 'var(--space-3)' }}>
+            Status & Triage
+          </div>
+          
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)', marginBottom: 'var(--space-3)' }}>
+            <span className={`badge ${detail.processing_status === 'completed' ? 'badge-success' : detail.processing_status === 'failed' ? 'badge-error' : 'badge-warning'}`}>
+              {detail.processing_status}
+            </span>
+            {detail.acknowledged_at && (
+              <span className="badge badge-success" style={{ backgroundColor: 'var(--success-soft)', color: 'var(--success)' }}>
+                Acknowledged
+              </span>
+            )}
+            {detail.retry_of_id && (
+              <span className="badge badge-info" style={{ backgroundColor: 'var(--info-soft)', color: 'var(--info)' }}>
+                Retry attempt
+              </span>
+            )}
+          </div>
+
+          {detail.acknowledged_at && (
+            <div style={{ fontSize: '12px', color: 'var(--neutral-500)', marginBottom: 'var(--space-3)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <Check size={12} /> Acknowledged by {detail.acknowledged_by || 'admin'} at {new Date(detail.acknowledged_at).toLocaleString()}
+            </div>
+          )}
+
+          {detail.processing_status === 'failed' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+              {!detail.acknowledged_at && (
+                <button 
+                  className="btn-secondary" 
+                  disabled={actionLoading}
+                  onClick={handleAcknowledge}
+                  style={{ width: '100%', justifyContent: 'center' }}
+                >
+                  <Check size={14} style={{ marginRight: '6px' }} /> Mark as Acknowledged
+                </button>
+              )}
+              <button 
+                className="btn-primary" 
+                disabled={actionLoading}
+                onClick={handleRetry}
+                style={{ width: '100%', justifyContent: 'center' }}
+              >
+                <RotateCcw size={14} style={{ marginRight: '6px' }} /> Retry Message
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* AI Providers Execution Metrics */}
+        <div style={{ backgroundColor: '#ffffff', borderRadius: 'var(--radius-sm)', border: '1px solid var(--neutral-200)', padding: 'var(--space-4)' }}>
+          <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--neutral-500)', marginBottom: 'var(--space-3)' }}>
+            AI Providers Metrics
+          </div>
+          {providers.length === 0 ? (
+            <div style={{ fontSize: '12px', color: 'var(--neutral-400)', fontStyle: 'italic' }}>No AI provider calls executed.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+              {providers.map((p, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: i < providers.length - 1 ? '1px solid var(--neutral-100)' : 'none', paddingBottom: i < providers.length - 1 ? 'var(--space-2)' : 0 }}>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                      <Cpu size={12} color="var(--neutral-500)" />
+                      <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--neutral-800)' }}>{p.provider}</span>
+                      <span style={{ fontSize: '11px', color: 'var(--neutral-400)' }}>({p.operation})</span>
+                    </div>
+                    {p.model && (
+                      <div style={{ fontSize: '11px', color: 'var(--neutral-500)', marginTop: '2px', fontFamily: 'monospace' }}>
+                        {p.model}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 'var(--space-1)' }}>
+                    <span className={`badge ${p.succeeded ? 'badge-success' : 'badge-error'}`} style={{ fontSize: '10px', padding: '1px 6px' }}>
+                      {p.succeeded ? 'Success' : p.error_code || 'Fail'}
+                    </span>
+                    {p.latency_ms !== null && (
+                      <span style={{ fontSize: '11px', fontFamily: 'monospace', color: 'var(--neutral-500)' }}>
+                        {p.latency_ms.toFixed(0)}ms
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Pipeline Journey Trace */}
+        <div style={{ backgroundColor: '#ffffff', borderRadius: 'var(--radius-sm)', border: '1px solid var(--neutral-200)', padding: 'var(--space-4)' }}>
+          <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--neutral-500)', marginBottom: 'var(--space-2)' }}>
+            Pipeline Trace
+          </div>
+          <TracePanel correlationId={message.correlation_id} />
+        </div>
+      </div>
     </div>
   );
 };
@@ -99,24 +441,38 @@ export default function Logs() {
   const [loading, setLoading] = useState(true);
   const [waIdFilter, setWaIdFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [providerFilter, setProviderFilter] = useState('');
   const [live, setLive] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const messagesRef = useRef<InboundMessageSummary[]>([]);
   messagesRef.current = messages;
 
+  // KPI Calculations
+  const completedCount = messages.filter(m => m.processing_status === 'completed').length;
+  const successRate = messages.length ? Math.round((completedCount / messages.length) * 100) : 100;
+  const unacknowledgedCount = messages.filter(m => m.processing_status === 'failed' && !m.acknowledged_at).length;
+  
+  const completedMessages = messages.filter(m => m.processing_status === 'completed' && m.processed_at);
+  const totalLatency = completedMessages.reduce((sum, m) => {
+    const lat = new Date(m.processed_at!).getTime() - new Date(m.received_at).getTime();
+    return sum + (lat > 0 ? lat : 0);
+  }, 0);
+  const avgLatency = completedMessages.length ? Math.round(totalLatency / completedMessages.length) : 0;
+
   const loadHistory = useCallback(() => {
     setLoading(true);
     api
-      .get<InboundMessageSummary[]>('/admin/logs/messages', {
+      .get<InboundMessageList>('/admin/logs/messages', {
         params: {
           wa_id: waIdFilter || undefined,
           status: statusFilter || undefined,
+          provider: providerFilter || undefined,
           limit: 50,
         },
       })
-      .then((res) => setMessages(res.data))
+      .then((res) => setMessages(res.data.items || []))
       .finally(() => setLoading(false));
-  }, [waIdFilter, statusFilter]);
+  }, [waIdFilter, statusFilter, providerFilter]);
 
   useEffect(() => {
     loadHistory();
@@ -131,20 +487,22 @@ export default function Logs() {
       const current = messagesRef.current;
       const newest = current[0];
       api
-        .get<InboundMessageSummary[]>('/admin/logs/messages', {
+        .get<InboundMessageList>('/admin/logs/messages', {
           params: {
             wa_id: waIdFilter || undefined,
             status: statusFilter || undefined,
+            provider: providerFilter || undefined,
             since_received_at: newest?.received_at,
             since_id: newest?.id,
             limit: 50,
           },
         })
         .then((res) => {
-          if (res.data.length === 0) return;
+          const items = res.data.items || [];
+          if (items.length === 0) return;
           setMessages((prev) => {
             const seen = new Set(prev.map((m) => m.id));
-            const fresh = res.data.filter((m) => !seen.has(m.id));
+            const fresh = items.filter((m) => !seen.has(m.id));
             if (fresh.length === 0) return prev;
             // API returns live-cursor results oldest-first; prepend newest-first.
             return [...fresh.reverse(), ...prev].slice(0, MAX_ROWS);
@@ -158,7 +516,7 @@ export default function Logs() {
     }, POLL_INTERVAL_MS);
 
     return () => clearInterval(interval);
-  }, [live, waIdFilter, statusFilter]);
+  }, [live, waIdFilter, statusFilter, providerFilter]);
 
   return (
     <div className="animate-fade-in" style={{ maxWidth: '1200px' }}>
@@ -172,23 +530,38 @@ export default function Logs() {
         </button>
       </header>
 
-      <div style={{ display: 'flex', gap: 'var(--space-4)', marginBottom: 'var(--space-4)', alignItems: 'flex-end' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 180px 180px auto', gap: 'var(--space-4)', marginBottom: 'var(--space-6)', backgroundColor: '#ffffff', border: '1px solid var(--neutral-200)', borderRadius: 'var(--radius-sm)', padding: 'var(--space-4)', alignItems: 'flex-start' }}>
+        
+        {/* WhatsApp number filter */}
         <div className="form-group" style={{ marginBottom: 0 }}>
-          <label>WhatsApp number</label>
-          <input
-            type="text"
-            className="form-input"
-            placeholder="919000000000"
-            value={waIdFilter}
-            onChange={(e) => setWaIdFilter(e.target.value)}
-          />
+          <label style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', color: 'var(--neutral-500)', display: 'block', marginBottom: '6px' }}>WhatsApp Number</label>
+          <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+            <input
+              type="text"
+              className="form-input"
+              placeholder="919000000000"
+              value={waIdFilter}
+              onChange={(e) => setWaIdFilter(e.target.value)}
+              style={{ flex: 1 }}
+            />
+            {waIdFilter && (
+              <button 
+                type="button" 
+                className="btn-secondary" 
+                onClick={() => setWaIdFilter('')}
+                style={{ padding: '0 var(--space-3)', height: '36px' }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
           <div style={{ display: 'flex', gap: 'var(--space-2)', marginTop: 'var(--space-2)' }}>
             {KNOWN_NUMBERS.map((n) => (
               <button
                 key={n.wa_id}
                 type="button"
                 className={`badge ${waIdFilter === n.wa_id ? 'badge-info' : 'badge-warning'}`}
-                style={{ border: 'none', cursor: 'pointer' }}
+                style={{ border: 'none', cursor: 'pointer', fontSize: '10px', padding: '2px 8px' }}
                 onClick={() => setWaIdFilter(waIdFilter === n.wa_id ? '' : n.wa_id)}
               >
                 {n.label}
@@ -196,19 +569,74 @@ export default function Logs() {
             ))}
           </div>
         </div>
+
+        {/* Status filter */}
         <div className="form-group" style={{ marginBottom: 0 }}>
-          <label>Status</label>
-          <select className="form-input" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-            <option value="">All</option>
+          <label style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', color: 'var(--neutral-500)', display: 'block', marginBottom: '6px' }}>Status</label>
+          <select 
+            className="form-input" 
+            value={statusFilter} 
+            onChange={(e) => setStatusFilter(e.target.value)}
+            style={{ width: '100%', height: '36px' }}
+          >
+            <option value="">All Statuses</option>
             <option value="pending">Pending</option>
             <option value="completed">Completed</option>
             <option value="failed">Failed</option>
           </select>
         </div>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: '13px', color: 'var(--neutral-600)', marginBottom: '2px' }}>
-          <input type="checkbox" checked={live} onChange={(e) => setLive(e.target.checked)} />
-          Live (poll every 5s)
-        </label>
+
+        {/* AI Provider filter */}
+        <div className="form-group" style={{ marginBottom: 0 }}>
+          <label style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', color: 'var(--neutral-500)', display: 'block', marginBottom: '6px' }}>AI Provider</label>
+          <select 
+            className="form-input" 
+            value={providerFilter} 
+            onChange={(e) => setProviderFilter(e.target.value)}
+            style={{ width: '100%', height: '36px' }}
+          >
+            <option value="">All Providers</option>
+            <option value="gemini">Gemini</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="sarvam">Sarvam</option>
+          </select>
+        </div>
+
+        {/* Live tail checkbox */}
+        <div style={{ display: 'flex', alignItems: 'center', height: '100%', paddingTop: '28px' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: '13px', color: 'var(--neutral-600)', cursor: 'pointer', userSelect: 'none' }}>
+            <input 
+              type="checkbox" 
+              checked={live} 
+              onChange={(e) => setLive(e.target.checked)} 
+              style={{ cursor: 'pointer' }}
+            />
+            Live (5s poll)
+          </label>
+        </div>
+
+      </div>
+
+      {/* KPI Cards Row */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 'var(--space-4)', marginBottom: 'var(--space-6)' }}>
+        <div style={{ backgroundColor: '#ffffff', border: '1px solid var(--neutral-200)', borderRadius: 'var(--radius-sm)', padding: 'var(--space-4)' }}>
+          <div style={{ fontSize: '12px', fontWeight: 500, color: 'var(--neutral-500)' }}>Ingress Messages</div>
+          <div style={{ fontSize: '24px', fontWeight: 600, color: 'var(--neutral-900)', marginTop: '4px' }}>{messages.length}</div>
+        </div>
+        <div style={{ backgroundColor: '#ffffff', border: '1px solid var(--neutral-200)', borderRadius: 'var(--radius-sm)', padding: 'var(--space-4)' }}>
+          <div style={{ fontSize: '12px', fontWeight: 500, color: 'var(--neutral-500)' }}>Success Rate</div>
+          <div style={{ fontSize: '24px', fontWeight: 600, color: 'var(--neutral-900)', marginTop: '4px' }}>{successRate}%</div>
+        </div>
+        <div style={{ backgroundColor: '#ffffff', border: '1px solid var(--neutral-200)', borderRadius: 'var(--radius-sm)', padding: 'var(--space-4)' }}>
+          <div style={{ fontSize: '12px', fontWeight: 500, color: 'var(--neutral-500)' }}>Avg Response Latency</div>
+          <div style={{ fontSize: '24px', fontWeight: 600, color: 'var(--neutral-900)', marginTop: '4px' }}>
+            {avgLatency === 0 ? '—' : avgLatency < 1000 ? `${avgLatency}ms` : `${(avgLatency / 1000).toFixed(1)}s`}
+          </div>
+        </div>
+        <div style={{ backgroundColor: '#ffffff', border: '1px solid var(--neutral-200)', borderRadius: 'var(--radius-sm)', padding: 'var(--space-4)' }}>
+          <div style={{ fontSize: '12px', fontWeight: 500, color: 'var(--neutral-500)' }}>Triage Required</div>
+          <div style={{ fontSize: '24px', fontWeight: 600, color: unacknowledgedCount > 0 ? 'var(--error)' : 'var(--neutral-900)', marginTop: '4px' }}>{unacknowledgedCount}</div>
+        </div>
       </div>
 
       <div className="table-container">
@@ -236,8 +664,11 @@ export default function Logs() {
                     onClick={() => setExpandedId(expandedId === m.correlation_id ? null : m.correlation_id)}
                   >
                     <td>{expandedId === m.correlation_id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
-                    <td style={{ fontFamily: 'monospace', fontSize: '12px', color: 'var(--neutral-500)' }}>
-                      {new Date(m.received_at).toLocaleString()}
+                    <td>
+                      <div style={{ fontSize: '13px', color: 'var(--neutral-800)', fontWeight: 500 }}>{formatRelativeTime(m.received_at)}</div>
+                      <div style={{ fontSize: '11px', color: 'var(--neutral-400)', fontFamily: 'monospace', marginTop: '2px' }}>
+                        {new Date(m.received_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </div>
                     </td>
                     <td>{m.sender_wa_id}</td>
                     <td>{m.message_type}</td>
@@ -251,7 +682,7 @@ export default function Logs() {
                   {expandedId === m.correlation_id && (
                     <tr>
                       <td colSpan={6} style={{ padding: 0 }}>
-                        <TracePanel correlationId={m.correlation_id} />
+                        <LogDetailPanel message={m} onUpdate={loadHistory} />
                       </td>
                     </tr>
                   )}

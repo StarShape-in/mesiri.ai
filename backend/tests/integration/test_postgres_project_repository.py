@@ -46,7 +46,7 @@ async def clean_db(test_engine: AsyncEngine):
 
 
 @pytest.fixture
-async def test_org(test_engine: AsyncEngine):
+async def test_org(test_engine: AsyncEngine, clean_db):
     """Create test organization."""
     org_id = uuid.uuid4()
     async with test_engine.begin() as conn:

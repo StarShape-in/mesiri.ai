@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from channel.replies import render_unsupported_reply
 from context import seed
 from context.resolver import ContextResolver
 from interactions.handler import InteractionHandler
@@ -81,9 +82,6 @@ async def test_trace_logger_captures_all_stages_on_success():
     mlog = RecordingMessageLogger()
     tlog = RecordingTraceLogger()
 
-    async def reply(msg, understanding):  # noqa: ANN001
-        pass
-
     await process_inbound_message(
         message,
         seed.WA_ENGINEER,
@@ -111,6 +109,13 @@ async def test_trace_logger_captures_all_stages_on_success():
     # Message should be marked completed
     assert "cor_logging_1" in mlog.completed
 
+    # Reply should be logged. VALID_RECEIPT_EXTRACTION is actually an expense
+    # fixture (semantic_type="expense") and FakeWorkflowRegistry() here has no
+    # graphs registered, so the outcome is NO_GRAPH: understood, but nothing
+    # can record it yet -- never format_reply()'s developer diagnostic.
+    assert len(mlog.replies) == 1
+    assert mlog.replies[0] == ("cor_logging_1", render_unsupported_reply())
+
 
 async def test_trace_logger_captures_context_failure():
     """When context resolution fails, the context stage is traced with succeeded=False."""
@@ -118,9 +123,6 @@ async def test_trace_logger_captures_context_failure():
     message = _message(sender=SenderInfo(wa_id="919999999999", profile_name="Unknown"))
     mlog = RecordingMessageLogger()
     tlog = RecordingTraceLogger()
-
-    async def reply(msg, understanding):  # noqa: ANN001
-        pass
 
     await process_inbound_message(
         message,
@@ -164,9 +166,6 @@ async def test_trace_logger_captures_workflow_stage():
     mlog = RecordingMessageLogger()
     tlog = RecordingTraceLogger()
 
-    async def reply(msg, understanding):  # noqa: ANN001
-        pass
-
     await process_inbound_message(
         message,
         seed.WA_ENGINEER,
@@ -193,6 +192,9 @@ async def test_logger_failure_does_not_break_pipeline():
         async def log_stage(self, **kwargs):  # noqa: ANN001
             raise RuntimeError("log DB is down")
 
+        async def log_provider_execution(self, **kwargs):  # noqa: ANN001
+            raise RuntimeError("log DB is down")
+
     class ExplosiveMessageLogger:
         async def log_received(self, **kwargs):  # noqa: ANN001
             raise RuntimeError("log DB is down")
@@ -201,6 +203,9 @@ async def test_logger_failure_does_not_break_pipeline():
             raise RuntimeError("log DB is down")
 
         async def mark_failed(self, **kwargs):  # noqa: ANN001
+            raise RuntimeError("log DB is down")
+
+        async def log_reply(self, **kwargs):  # noqa: ANN001
             raise RuntimeError("log DB is down")
 
     message = _message()
@@ -230,9 +235,6 @@ async def test_logger_failure_does_not_break_pipeline():
 async def test_no_loggers_does_not_break():
     """When no loggers are passed, noop loggers are used — journey still works."""
     message = _message()
-
-    async def reply(msg, understanding):  # noqa: ANN001
-        pass
 
     result = await process_inbound_message(
         message,

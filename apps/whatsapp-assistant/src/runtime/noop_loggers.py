@@ -34,6 +34,9 @@ class NoopMessageLogger:
     async def mark_failed(self, *, correlation_id: str, error_code: str) -> None:
         ...
 
+    async def log_reply(self, *, correlation_id: str, reply: str) -> None:
+        ...
+
 
 class NoopTraceLogger:
     async def log_stage(
@@ -46,6 +49,22 @@ class NoopTraceLogger:
         succeeded: bool,
         error_code: str | None = None,
         error_message: str | None = None,
+        severity: str = "info",
+        event_source: str = "pipeline_stage",
+    ) -> None:
+        ...
+
+    async def log_provider_execution(
+        self,
+        *,
+        correlation_id: str,
+        stage: str,
+        provider: str,
+        operation: str,
+        model: str | None,
+        latency_ms: float | None,
+        succeeded: bool,
+        error_code: str | None = None,
     ) -> None:
         ...
 
@@ -69,6 +88,7 @@ class RecordingMessageLogger:
     received: list[ReceivedMessage] = field(default_factory=list)
     completed: list[str] = field(default_factory=list)
     failed: list[tuple[str, str]] = field(default_factory=list)
+    replies: list[tuple[str, str]] = field(default_factory=list)
 
     async def log_received(
         self,
@@ -101,6 +121,9 @@ class RecordingMessageLogger:
     async def mark_failed(self, *, correlation_id: str, error_code: str) -> None:
         self.failed.append((correlation_id, error_code))
 
+    async def log_reply(self, *, correlation_id: str, reply: str) -> None:
+        self.replies.append((correlation_id, reply))
+
 
 @dataclass
 class TraceEntry:
@@ -111,6 +134,20 @@ class TraceEntry:
     succeeded: bool
     error_code: str | None = None
     error_message: str | None = None
+    severity: str = "info"
+    event_source: str = "pipeline_stage"
+
+
+@dataclass
+class ProviderExecutionEntry:
+    correlation_id: str
+    stage: str
+    provider: str
+    operation: str
+    model: str | None
+    latency_ms: float | None
+    succeeded: bool
+    error_code: str | None = None
 
 
 @dataclass
@@ -118,6 +155,7 @@ class RecordingTraceLogger:
     """Captures all trace calls for test assertions. No DB required."""
 
     entries: list[TraceEntry] = field(default_factory=list)
+    provider_executions: list[ProviderExecutionEntry] = field(default_factory=list)
 
     async def log_stage(
         self,
@@ -129,6 +167,8 @@ class RecordingTraceLogger:
         succeeded: bool,
         error_code: str | None = None,
         error_message: str | None = None,
+        severity: str = "info",
+        event_source: str = "pipeline_stage",
     ) -> None:
         self.entries.append(
             TraceEntry(
@@ -139,6 +179,33 @@ class RecordingTraceLogger:
                 succeeded=succeeded,
                 error_code=error_code,
                 error_message=error_message,
+                severity=severity,
+                event_source=event_source,
+            )
+        )
+
+    async def log_provider_execution(
+        self,
+        *,
+        correlation_id: str,
+        stage: str,
+        provider: str,
+        operation: str,
+        model: str | None,
+        latency_ms: float | None,
+        succeeded: bool,
+        error_code: str | None = None,
+    ) -> None:
+        self.provider_executions.append(
+            ProviderExecutionEntry(
+                correlation_id=correlation_id,
+                stage=stage,
+                provider=provider,
+                operation=operation,
+                model=model,
+                latency_ms=latency_ms,
+                succeeded=succeeded,
+                error_code=error_code,
             )
         )
 

@@ -1,10 +1,11 @@
-"""Read-only WhatsApp assistant log viewer for the control panel.
+"""Read/action WhatsApp assistant log viewer for the control panel.
 
 Platform-admin only (see mesiri.domains.shared.auth.require_platform_admin) --
 this exposes real customer message content and phone numbers. Reads through
-apps/whatsapp-assistant/src/backend/postgres/message_logger.py's list_recent
-and trace_logger.py's get_by_correlation_id; this router adds no SQL of its
-own, per the "one file owns a table's SQL" convention used throughout M8.
+apps/whatsapp-assistant/src/backend/postgres/message_logger.py's list_recent/
+get_message_detail/acknowledge and trace_logger.py's get_by_correlation_id/
+get_provider_executions; this router adds no SQL of its own, per the
+"one file owns a table's SQL" convention used throughout M8.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from mesiri.domains.shared.auth import require_platform_admin
@@ -30,6 +31,35 @@ class InboundMessageSummary(BaseModel):
     error_code: str | None = None
     received_at: datetime
     processed_at: datetime | None = None
+    acknowledged_at: datetime | None = None
+    acknowledged_by: str | None = None
+    raw_payload_captured: bool = False
+    assistant_reply: str | None = None
+
+
+class InboundMessageList(BaseModel):
+    items: list[InboundMessageSummary]
+    total: int | None = None
+
+
+class InboundMessageDetail(BaseModel):
+    id: uuid.UUID
+    correlation_id: str
+    sender_wa_id: str
+    message_type: str
+    body_text: str | None = None
+    raw_payload: dict
+    normalized_message: dict | None = None
+    media_object_key: str | None = None
+    processing_status: str
+    error_code: str | None = None
+    received_at: datetime
+    processed_at: datetime | None = None
+    raw_payload_captured: bool
+    acknowledged_at: datetime | None = None
+    acknowledged_by: str | None = None
+    retry_of_id: uuid.UUID | None = None
+    assistant_reply: str | None = None
 
 
 class JourneyTraceEntry(BaseModel):
@@ -38,28 +68,69 @@ class JourneyTraceEntry(BaseModel):
     duration_ms: int | None = None
     error_code: str | None = None
     error_message: str | None = None
+    severity: str = "info"
+    event_source: str = "pipeline_stage"
     created_at: datetime
 
 
-@router.get("/messages", response_model=list[InboundMessageSummary])
+class ProviderExecutionEntry(BaseModel):
+    stage: str
+    provider: str
+    operation: str
+    model: str | None = None
+    latency_ms: float | None = None
+    succeeded: bool
+    error_code: str | None = None
+    created_at: datetime
+
+
+class AcknowledgeResponse(BaseModel):
+    acknowledged: bool
+
+
+class RetryResponse(BaseModel):
+    correlation_id: str
+
+
+@router.get("/messages", response_model=InboundMessageList)
 async def list_messages(
     request: Request,
     wa_id: str | None = None,
     status: str | None = None,
+    provider: str | None = None,
     since_received_at: datetime | None = None,
     since_id: str | None = None,
     limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     _admin: dict = Depends(require_platform_admin),
-) -> list[InboundMessageSummary]:
+) -> InboundMessageList:
     message_logger = request.app.state.container.message_logger
-    rows = await message_logger.list_recent(
+    rows, total = await message_logger.list_recent(
         wa_id=wa_id,
         status=status,
+        provider=provider,
         since_received_at=since_received_at,
         since_id=since_id,
         limit=limit,
+        offset=offset,
     )
-    return [InboundMessageSummary(**row) for row in rows]
+    return InboundMessageList(
+        items=[InboundMessageSummary(**row) for row in rows],
+        total=total,
+    )
+
+
+@router.get("/messages/{message_id}", response_model=InboundMessageDetail)
+async def get_message(
+    request: Request,
+    message_id: str,
+    _admin: dict = Depends(require_platform_admin),
+) -> InboundMessageDetail:
+    message_logger = request.app.state.container.message_logger
+    row = await message_logger.get_message_detail(message_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+    return InboundMessageDetail(**row)
 
 
 @router.get("/messages/{correlation_id}/trace", response_model=list[JourneyTraceEntry])
@@ -71,3 +142,75 @@ async def get_message_trace(
     trace_logger = request.app.state.container.trace_logger
     rows = await trace_logger.get_by_correlation_id(correlation_id)
     return [JourneyTraceEntry(**row) for row in rows]
+
+
+@router.get("/messages/{correlation_id}/providers", response_model=list[ProviderExecutionEntry])
+async def get_message_providers(
+    request: Request,
+    correlation_id: str,
+    _admin: dict = Depends(require_platform_admin),
+) -> list[ProviderExecutionEntry]:
+    trace_logger = request.app.state.container.trace_logger
+    rows = await trace_logger.get_provider_executions(correlation_id)
+    return [ProviderExecutionEntry(**row) for row in rows]
+
+
+@router.post("/messages/{message_id}/acknowledge", response_model=AcknowledgeResponse)
+async def acknowledge_message(
+    request: Request,
+    message_id: str,
+    admin: dict = Depends(require_platform_admin),
+) -> AcknowledgeResponse:
+    message_logger = request.app.state.container.message_logger
+    trace_logger = request.app.state.container.trace_logger
+    acknowledged_by = admin.get("sub") or "unknown"
+    ok = await message_logger.acknowledge(message_id=message_id, acknowledged_by=acknowledged_by)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Message not found")
+    detail = await message_logger.get_message_detail(message_id)
+    if detail is not None:
+        await trace_logger.log_stage(
+            correlation_id=detail["correlation_id"],
+            stage="acknowledge",
+            stage_payload=None,
+            duration_ms=None,
+            succeeded=True,
+            event_source="admin_action",
+        )
+    return AcknowledgeResponse(acknowledged=True)
+
+
+@router.post("/messages/{message_id}/retry", response_model=RetryResponse)
+async def retry_message(
+    request: Request,
+    message_id: str,
+    admin: dict = Depends(require_platform_admin),
+) -> RetryResponse:
+    message_logger = request.app.state.container.message_logger
+    trace_logger = request.app.state.container.trace_logger
+    receiver = request.app.state.container.receiver
+
+    detail = await message_logger.get_message_detail(message_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if detail["processing_status"] != "failed":
+        raise HTTPException(status_code=409, detail="Only failed messages can be retried")
+    if not detail["raw_payload_captured"]:
+        raise HTTPException(
+            status_code=409,
+            detail="Original webhook payload wasn't captured for this message; it cannot be replayed",
+        )
+
+    await trace_logger.log_stage(
+        correlation_id=detail["correlation_id"],
+        stage="retry",
+        stage_payload=None,
+        duration_ms=None,
+        succeeded=True,
+        event_source="admin_action",
+        error_message=f"retried by {admin.get('sub') or 'unknown'}",
+    )
+    new_correlation_id = await receiver.replay(detail["raw_payload"], retry_of_id=message_id)
+    if new_correlation_id is None:
+        raise HTTPException(status_code=502, detail="Retry failed before the message could be reprocessed")
+    return RetryResponse(correlation_id=new_correlation_id)

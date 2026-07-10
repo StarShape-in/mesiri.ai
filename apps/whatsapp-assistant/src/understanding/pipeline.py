@@ -111,7 +111,7 @@ class UnderstandingPipeline:
 
         result.provider_executions.append(
             ProviderExecution(
-                provider="gemini",
+                provider=getattr(self._translation, "provider", "unknown"),
                 operation="translate",
                 model=translation.model,
                 latency_ms=translation.latency_ms,
@@ -200,7 +200,7 @@ class UnderstandingPipeline:
         result.warnings.extend(extraction.warnings)
         result.provider_executions.append(
             ProviderExecution(
-                provider="gemini",
+                provider=getattr(self._extraction, "provider", "unknown"),
                 operation="extract",
                 model=extraction.model,
                 latency_ms=extraction.latency_ms,

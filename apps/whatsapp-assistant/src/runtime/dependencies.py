@@ -159,26 +159,43 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     )
 
     # Backend capability boundary: create once, reuse the connection pool.
+    # message_logger/trace_logger build their engine lazily on first use (see
+    # their _get_engine()) so importing/constructing the container never
+    # requires a live DB driver import — building it eagerly here broke that
+    # and made container construction fail wherever asyncpg couldn't import.
     actor_reader = PostgresActorReader()
     message_logger: MessageLogger = PostgresMessageLogger()
     trace_logger: TraceLogger = PostgresTraceLogger()
 
-    async def _on_normalized(message) -> None:  # type: ignore[no-untyped-def]
+    # _send_understanding_reply (the old reply_sender=... callback) is gone:
+    # inbound_journey._render_reply() now covers every outcome, so the
+    # understanding-only fallback it fed was dead weight.
+    async def _on_normalized(message, raw_payload, retry_of_id=None) -> None:  # type: ignore[no-untyped-def]
         wa_id = message.sender.wa_id
 
-        # Best-effort inbound message log (for debugging/replay). NormalizedMessage
-        # carries no raw webhook payload (that lives in ingress.receiver's
-        # MessageIngressContext, not passed to this callback) -- logged as {}
-        # rather than a misleading guess.
+        # Best-effort inbound message log (for debugging/replay). raw_payload
+        # is a self-contained, replayable envelope of the raw Meta webhook
+        # JSON (see ingress.receiver.WhatsAppReceiver._envelope) -- stored in
+        # full so a failed message can later be replayed via the admin retry
+        # action. A retry reuses the same WhatsApp message_id, so its dedup_key
+        # is suffixed with the new correlation_id to avoid colliding with the
+        # original row (ON CONFLICT (dedup_key) DO NOTHING would otherwise
+        # silently drop the retry attempt).
+        dedup_key = (
+            message.message_id
+            if retry_of_id is None
+            else f"{message.message_id}:retry:{message.correlation_id}"
+        )
         await message_logger.log_received(
             correlation_id=message.correlation_id,
             sender_wa_id=wa_id,
             message_type=message.modality.value,
-            raw_payload={},
+            raw_payload=dict(raw_payload),
             normalized_message=message.model_dump(mode="json"),
             body_text=message.text,
             media_object_key=message.media.object_key if message.media else None,
-            dedup_key=message.message_id,
+            dedup_key=dedup_key,
+            retry_of_id=retry_of_id,
         )
 
         # M4: resolve the sender before spending on understanding.
@@ -191,16 +208,20 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         if ctx is None:
             _log.info("context.sender_unregistered wa_id=%s", wa_id)
             await sender.send_text(wa_id, UNREGISTERED_MESSAGE)
+            await message_logger.log_reply(correlation_id=message.correlation_id, reply=UNREGISTERED_MESSAGE)
             return
 
         if ctx.organization_id is None:
             _log.info("context.user_no_org user=%s", ctx.user_id)
-            await sender.send_text(wa_id, NO_ORG_MESSAGE.format(name=ctx.full_name))
+            reply = NO_ORG_MESSAGE.format(name=ctx.full_name)
+            await sender.send_text(wa_id, reply)
+            await message_logger.log_reply(correlation_id=message.correlation_id, reply=reply)
             return
 
         if not ctx.org_active:
             _log.info("context.org_suspended org=%s", ctx.organization_id)
             await sender.send_text(wa_id, ORG_SUSPENDED_MESSAGE)
+            await message_logger.log_reply(correlation_id=message.correlation_id, reply=ORG_SUSPENDED_MESSAGE)
             return
 
         _log.info(
@@ -220,6 +241,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             handled = None
         if handled is not None:
             await sender.send_text(wa_id, handled.reply_text)
+            await message_logger.log_reply(correlation_id=message.correlation_id, reply=handled.reply_text)
             return
 
         await process_inbound_message(
@@ -242,6 +264,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         message_store=message_store,
         object_storage=object_storage,
         on_normalized=_on_normalized,
+        trace_logger=trace_logger,
     )
     return AppContainer(
         settings=settings,
