@@ -19,7 +19,6 @@ from mesiri_ai import fixtures
 from mesiri_ai.fakes import (
     FakeExtractionProvider,
     FakeSpeechProvider,
-    FakeTranslationProvider,
     FakeVisionProvider,
 )
 from mesiri_contracts.assistant.enums import InputModality
