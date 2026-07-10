@@ -117,22 +117,3 @@ async def test_resolver_queries_database_on_redis_cache_miss():
         assert config["secrets"]["deepseek"]["api_key"] == "db-deepseek-key"
         assert config["secrets"]["deepseek"]["base_url"] == "https://custom.deepseek.com"
         redis.set.assert_called_once()
-
-
-if __name__ == "__main__":
-    import anyio
-    import sys
-    
-    # Prune any local 'platform' shadowing path if it managed to sneak in
-    sys.path = [p for p in sys.path if p != "E:\\Mesiri.AI" and p != "E:/Mesiri.AI"]
-    
-    async def run_all():
-        print("Running test_resolver_falls_back_to_env_settings...")
-        await test_resolver_falls_back_to_env_settings()
-        print("Running test_resolver_uses_redis_cache...")
-        await test_resolver_uses_redis_cache()
-        print("Running test_resolver_queries_database_on_redis_cache_miss...")
-        await test_resolver_queries_database_on_redis_cache_miss()
-        print("All resolver tests passed successfully!")
-
-    anyio.run(run_all)
