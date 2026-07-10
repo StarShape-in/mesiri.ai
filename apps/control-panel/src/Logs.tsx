@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
-import { RefreshCw, ChevronDown, ChevronRight, Check, RotateCcw, Code, Cpu, MessageSquare, Bot } from 'lucide-react';
+import { RefreshCw, ChevronDown, ChevronRight, Check, RotateCcw, Code, Cpu } from 'lucide-react';
 import { api } from './api';
 
 interface InboundMessageSummary {
@@ -13,6 +13,7 @@ interface InboundMessageSummary {
   received_at: string;
   processed_at: string | null;
   assistant_reply: string | null;
+  acknowledged_at: string | null;
 }
 
 interface InboundMessageList {
@@ -63,6 +64,22 @@ interface JourneyTraceEntry {
 const POLL_INTERVAL_MS = 5000;
 const MAX_ROWS = 200;
 
+function formatRelativeTime(dateString: string): string {
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffSec = Math.floor(diffMs / 1000);
+  const diffMin = Math.floor(diffSec / 60);
+  const diffHour = Math.floor(diffMin / 60);
+  const diffDay = Math.floor(diffHour / 24);
+
+  if (diffSec < 60) return 'just now';
+  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffHour < 24) return `${diffHour}h ago`;
+  if (diffDay === 1) return 'yesterday';
+  return date.toLocaleDateString();
+}
+
 // Known WhatsApp numbers used for testing the assistant, offered as a quick
 // filter so you don't have to retype them. wa_id has no "+" or spaces.
 const KNOWN_NUMBERS = [{ label: '+91 8904034938', wa_id: '918904034938' }];
@@ -93,38 +110,75 @@ const TracePanel = ({ correlationId }: { correlationId: string }) => {
     };
   }, [correlationId]);
 
-  if (loading) return <div style={{ padding: 'var(--space-4)', color: 'var(--neutral-500)' }}>Loading trace…</div>;
+  if (loading) return <div style={{ padding: 'var(--space-2) 0', color: 'var(--neutral-500)', fontSize: '13px' }}>Loading trace…</div>;
   if (!trace || trace.length === 0) {
-    return <div style={{ padding: 'var(--space-4)', color: 'var(--neutral-500)' }}>No pipeline trace recorded for this message.</div>;
+    return <div style={{ padding: 'var(--space-2) 0', color: 'var(--neutral-500)', fontSize: '13px' }}>No pipeline trace recorded.</div>;
   }
 
   return (
-    <div style={{ padding: 'var(--space-4)', backgroundColor: 'var(--neutral-50)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 0, paddingLeft: '8px', paddingTop: '4px', position: 'relative' }}>
       {trace.map((entry, i) => (
         <div
           key={i}
           style={{
             display: 'flex',
-            alignItems: 'flex-start',
             gap: 'var(--space-3)',
-            padding: 'var(--space-2) 0',
-            borderBottom: i < trace.length - 1 ? '1px solid var(--neutral-200)' : 'none',
+            position: 'relative',
+            paddingBottom: i < trace.length - 1 ? 'var(--space-4)' : 0
           }}
         >
-          <span>{entry.succeeded ? '✅' : '❌'}</span>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 500, fontSize: '13px' }}>{entry.stage}</div>
+          {/* Vertical line connector */}
+          {i < trace.length - 1 && (
+            <div
+              style={{
+                position: 'absolute',
+                left: '7px',
+                top: '16px',
+                bottom: 0,
+                width: '2px',
+                backgroundColor: 'var(--neutral-200)',
+                zIndex: 1
+              }}
+            />
+          )}
+          
+          {/* Node marker */}
+          <div
+            style={{
+              width: '16px',
+              height: '16px',
+              borderRadius: '50%',
+              backgroundColor: entry.succeeded ? 'var(--success-soft)' : 'var(--error-soft)',
+              border: `2px solid ${entry.succeeded ? 'var(--success)' : 'var(--error)'}`,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 2,
+              fontSize: '9px',
+              fontWeight: 'bold',
+              color: entry.succeeded ? 'var(--success)' : 'var(--error)'
+            }}
+          >
+            {entry.succeeded ? '✓' : '✗'}
+          </div>
+
+          <div style={{ flex: 1, marginTop: '-2px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--neutral-800)' }}>
+                {entry.stage}
+              </span>
+              {entry.duration_ms !== null && (
+                <span style={{ fontSize: '11px', color: 'var(--neutral-400)', fontFamily: 'monospace' }}>
+                  {entry.duration_ms}ms
+                </span>
+              )}
+            </div>
             {entry.error_message && (
-              <div style={{ fontSize: '12px', color: 'var(--error)' }}>
+              <div style={{ fontSize: '12px', color: 'var(--error)', marginTop: '4px', backgroundColor: 'var(--error-soft)', padding: '6px 10px', borderRadius: 'var(--radius-xs)', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
                 {entry.error_code}: {entry.error_message}
               </div>
             )}
           </div>
-          {entry.duration_ms !== null && (
-            <span style={{ fontSize: '12px', color: 'var(--neutral-500)', fontFamily: 'monospace' }}>
-              {entry.duration_ms}ms
-            </span>
-          )}
         </div>
       ))}
     </div>
@@ -212,31 +266,45 @@ const LogDetailPanel = ({
       {/* Left column - Content */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
         
-        {/* Inbound Message */}
-        <div style={{ backgroundColor: '#ffffff', borderRadius: 'var(--radius-sm)', border: '1px solid var(--neutral-200)', padding: 'var(--space-4)', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--neutral-500)', marginBottom: 'var(--space-3)' }}>
-            <MessageSquare size={13} />
-            Inbound Message ({detail.message_type})
-            {detail.normalized_message?.sender?.profile_name && (
-              <span style={{ marginLeft: 'auto', textTransform: 'none', color: 'var(--neutral-400)', fontWeight: 500 }}>
-                Sent by: {detail.normalized_message.sender.profile_name}
-              </span>
-            )}
+        {/* Chat Visualizer Flow */}
+        <div style={{ backgroundColor: '#ffffff', borderRadius: 'var(--radius-sm)', border: '1px solid var(--neutral-200)', padding: 'var(--space-4)', boxShadow: '0 1px 2px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+          <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--neutral-500)', borderBottom: '1px solid var(--neutral-100)', paddingBottom: 'var(--space-2)', marginBottom: 'var(--space-2)' }}>
+            Conversation Flow
           </div>
-          <div style={{ fontSize: '13px', color: 'var(--neutral-800)', whiteSpace: 'pre-wrap', fontFamily: 'var(--font-sans)', lineHeight: '1.6' }}>
-            {detail.body_text || <em style={{ color: 'var(--neutral-400)' }}>no text content</em>}
-          </div>
-        </div>
 
-        {/* Assistant Reply */}
-        <div style={{ backgroundColor: '#ffffff', borderRadius: 'var(--radius-sm)', border: '1px solid var(--neutral-200)', padding: 'var(--space-4)', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--neutral-500)', marginBottom: 'var(--space-3)' }}>
-            <Bot size={13} />
-            Assistant Reply
+          {/* User Message Bubble */}
+          <div style={{ display: 'flex', flexDirection: 'column', alignSelf: 'flex-start', maxWidth: '85%', gap: '4px' }}>
+            <span style={{ fontSize: '10px', fontWeight: 600, color: 'var(--neutral-500)', marginLeft: '8px' }}>
+              USER ({detail.normalized_message?.sender?.profile_name || detail.sender_wa_id})
+            </span>
+            <div style={{ backgroundColor: 'var(--neutral-100)', border: '1px solid var(--neutral-200)', borderRadius: '8px 8px 8px 0', padding: '10px 14px', fontSize: '13px', color: 'var(--neutral-800)', whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>
+              {detail.body_text || <em style={{ color: 'var(--neutral-400)' }}>[Media message or no text]</em>}
+            </div>
+            <span style={{ fontSize: '10px', color: 'var(--neutral-400)', alignSelf: 'flex-start', marginLeft: '4px' }}>
+              {new Date(detail.received_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </span>
           </div>
-          <div style={{ fontSize: '13px', color: 'var(--neutral-800)', whiteSpace: 'pre-wrap', fontFamily: 'var(--font-sans)', lineHeight: '1.6' }}>
-            {detail.assistant_reply || <em style={{ color: 'var(--neutral-400)' }}>no reply sent or pending</em>}
-          </div>
+
+          {/* Assistant Reply Bubble */}
+          {detail.assistant_reply ? (
+            <div style={{ display: 'flex', flexDirection: 'column', alignSelf: 'flex-end', maxWidth: '85%', gap: '4px', marginTop: 'var(--space-2)' }}>
+              <span style={{ fontSize: '10px', fontWeight: 600, color: 'var(--neutral-500)', marginRight: '8px', alignSelf: 'flex-end' }}>
+                ASSISTANT
+              </span>
+              <div style={{ backgroundColor: 'var(--primary-soft)', border: '1px solid var(--neutral-200)', borderRadius: '8px 8px 0 8px', padding: '10px 14px', fontSize: '13px', color: 'var(--neutral-800)', whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>
+                {detail.assistant_reply}
+              </div>
+              <span style={{ fontSize: '10px', color: 'var(--neutral-400)', alignSelf: 'flex-end', marginRight: '4px' }}>
+                {detail.processed_at ? new Date(detail.processed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+              </span>
+            </div>
+          ) : (
+            detail.processing_status === 'completed' && (
+              <div style={{ alignSelf: 'flex-end', fontSize: '12px', color: 'var(--neutral-400)', fontStyle: 'italic', marginTop: 'var(--space-2)' }}>
+                No reply was triggered for this message.
+              </div>
+            )
+          )}
         </div>
 
         {/* Raw Payload Section */}
@@ -378,6 +446,18 @@ export default function Logs() {
   const messagesRef = useRef<InboundMessageSummary[]>([]);
   messagesRef.current = messages;
 
+  // KPI Calculations
+  const completedCount = messages.filter(m => m.processing_status === 'completed').length;
+  const successRate = messages.length ? Math.round((completedCount / messages.length) * 100) : 100;
+  const unacknowledgedCount = messages.filter(m => m.processing_status === 'failed' && !m.acknowledged_at).length;
+  
+  const completedMessages = messages.filter(m => m.processing_status === 'completed' && m.processed_at);
+  const totalLatency = completedMessages.reduce((sum, m) => {
+    const lat = new Date(m.processed_at!).getTime() - new Date(m.received_at).getTime();
+    return sum + (lat > 0 ? lat : 0);
+  }, 0);
+  const avgLatency = completedMessages.length ? Math.round(totalLatency / completedMessages.length) : 0;
+
   const loadHistory = useCallback(() => {
     setLoading(true);
     api
@@ -486,6 +566,28 @@ export default function Logs() {
         </label>
       </div>
 
+      {/* KPI Cards Row */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 'var(--space-4)', marginBottom: 'var(--space-6)' }}>
+        <div style={{ backgroundColor: '#ffffff', border: '1px solid var(--neutral-200)', borderRadius: 'var(--radius-sm)', padding: 'var(--space-4)' }}>
+          <div style={{ fontSize: '12px', fontWeight: 500, color: 'var(--neutral-500)' }}>Ingress Messages</div>
+          <div style={{ fontSize: '24px', fontWeight: 600, color: 'var(--neutral-900)', marginTop: '4px' }}>{messages.length}</div>
+        </div>
+        <div style={{ backgroundColor: '#ffffff', border: '1px solid var(--neutral-200)', borderRadius: 'var(--radius-sm)', padding: 'var(--space-4)' }}>
+          <div style={{ fontSize: '12px', fontWeight: 500, color: 'var(--neutral-500)' }}>Success Rate</div>
+          <div style={{ fontSize: '24px', fontWeight: 600, color: 'var(--neutral-900)', marginTop: '4px' }}>{successRate}%</div>
+        </div>
+        <div style={{ backgroundColor: '#ffffff', border: '1px solid var(--neutral-200)', borderRadius: 'var(--radius-sm)', padding: 'var(--space-4)' }}>
+          <div style={{ fontSize: '12px', fontWeight: 500, color: 'var(--neutral-500)' }}>Avg Response Latency</div>
+          <div style={{ fontSize: '24px', fontWeight: 600, color: 'var(--neutral-900)', marginTop: '4px' }}>
+            {avgLatency === 0 ? '—' : avgLatency < 1000 ? `${avgLatency}ms` : `${(avgLatency / 1000).toFixed(1)}s`}
+          </div>
+        </div>
+        <div style={{ backgroundColor: '#ffffff', border: '1px solid var(--neutral-200)', borderRadius: 'var(--radius-sm)', padding: 'var(--space-4)' }}>
+          <div style={{ fontSize: '12px', fontWeight: 500, color: 'var(--neutral-500)' }}>Triage Required</div>
+          <div style={{ fontSize: '24px', fontWeight: 600, color: unacknowledgedCount > 0 ? 'var(--error)' : 'var(--neutral-900)', marginTop: '4px' }}>{unacknowledgedCount}</div>
+        </div>
+      </div>
+
       <div className="table-container">
         <table>
           <thead>
@@ -511,8 +613,11 @@ export default function Logs() {
                     onClick={() => setExpandedId(expandedId === m.correlation_id ? null : m.correlation_id)}
                   >
                     <td>{expandedId === m.correlation_id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
-                    <td style={{ fontFamily: 'monospace', fontSize: '12px', color: 'var(--neutral-500)' }}>
-                      {new Date(m.received_at).toLocaleString()}
+                    <td>
+                      <div style={{ fontSize: '13px', color: 'var(--neutral-800)', fontWeight: 500 }}>{formatRelativeTime(m.received_at)}</div>
+                      <div style={{ fontSize: '11px', color: 'var(--neutral-400)', fontFamily: 'monospace', marginTop: '2px' }}>
+                        {new Date(m.received_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </div>
                     </td>
                     <td>{m.sender_wa_id}</td>
                     <td>{m.message_type}</td>
