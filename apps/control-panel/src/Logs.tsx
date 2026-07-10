@@ -441,6 +441,7 @@ export default function Logs() {
   const [loading, setLoading] = useState(true);
   const [waIdFilter, setWaIdFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [providerFilter, setProviderFilter] = useState('');
   const [live, setLive] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const messagesRef = useRef<InboundMessageSummary[]>([]);
@@ -465,12 +466,13 @@ export default function Logs() {
         params: {
           wa_id: waIdFilter || undefined,
           status: statusFilter || undefined,
+          provider: providerFilter || undefined,
           limit: 50,
         },
       })
       .then((res) => setMessages(res.data.items || []))
       .finally(() => setLoading(false));
-  }, [waIdFilter, statusFilter]);
+  }, [waIdFilter, statusFilter, providerFilter]);
 
   useEffect(() => {
     loadHistory();
@@ -489,6 +491,7 @@ export default function Logs() {
           params: {
             wa_id: waIdFilter || undefined,
             status: statusFilter || undefined,
+            provider: providerFilter || undefined,
             since_received_at: newest?.received_at,
             since_id: newest?.id,
             limit: 50,
@@ -513,7 +516,7 @@ export default function Logs() {
     }, POLL_INTERVAL_MS);
 
     return () => clearInterval(interval);
-  }, [live, waIdFilter, statusFilter]);
+  }, [live, waIdFilter, statusFilter, providerFilter]);
 
   return (
     <div className="animate-fade-in" style={{ maxWidth: '1200px' }}>
@@ -527,23 +530,38 @@ export default function Logs() {
         </button>
       </header>
 
-      <div style={{ display: 'flex', gap: 'var(--space-4)', marginBottom: 'var(--space-4)', alignItems: 'flex-end' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 180px 180px auto', gap: 'var(--space-4)', marginBottom: 'var(--space-6)', backgroundColor: '#ffffff', border: '1px solid var(--neutral-200)', borderRadius: 'var(--radius-sm)', padding: 'var(--space-4)', alignItems: 'flex-start' }}>
+        
+        {/* WhatsApp number filter */}
         <div className="form-group" style={{ marginBottom: 0 }}>
-          <label>WhatsApp number</label>
-          <input
-            type="text"
-            className="form-input"
-            placeholder="919000000000"
-            value={waIdFilter}
-            onChange={(e) => setWaIdFilter(e.target.value)}
-          />
+          <label style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', color: 'var(--neutral-500)', display: 'block', marginBottom: '6px' }}>WhatsApp Number</label>
+          <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+            <input
+              type="text"
+              className="form-input"
+              placeholder="919000000000"
+              value={waIdFilter}
+              onChange={(e) => setWaIdFilter(e.target.value)}
+              style={{ flex: 1 }}
+            />
+            {waIdFilter && (
+              <button 
+                type="button" 
+                className="btn-secondary" 
+                onClick={() => setWaIdFilter('')}
+                style={{ padding: '0 var(--space-3)', height: '36px' }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
           <div style={{ display: 'flex', gap: 'var(--space-2)', marginTop: 'var(--space-2)' }}>
             {KNOWN_NUMBERS.map((n) => (
               <button
                 key={n.wa_id}
                 type="button"
                 className={`badge ${waIdFilter === n.wa_id ? 'badge-info' : 'badge-warning'}`}
-                style={{ border: 'none', cursor: 'pointer' }}
+                style={{ border: 'none', cursor: 'pointer', fontSize: '10px', padding: '2px 8px' }}
                 onClick={() => setWaIdFilter(waIdFilter === n.wa_id ? '' : n.wa_id)}
               >
                 {n.label}
@@ -551,19 +569,52 @@ export default function Logs() {
             ))}
           </div>
         </div>
+
+        {/* Status filter */}
         <div className="form-group" style={{ marginBottom: 0 }}>
-          <label>Status</label>
-          <select className="form-input" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-            <option value="">All</option>
+          <label style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', color: 'var(--neutral-500)', display: 'block', marginBottom: '6px' }}>Status</label>
+          <select 
+            className="form-input" 
+            value={statusFilter} 
+            onChange={(e) => setStatusFilter(e.target.value)}
+            style={{ width: '100%', height: '36px' }}
+          >
+            <option value="">All Statuses</option>
             <option value="pending">Pending</option>
             <option value="completed">Completed</option>
             <option value="failed">Failed</option>
           </select>
         </div>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: '13px', color: 'var(--neutral-600)', marginBottom: '2px' }}>
-          <input type="checkbox" checked={live} onChange={(e) => setLive(e.target.checked)} />
-          Live (poll every 5s)
-        </label>
+
+        {/* AI Provider filter */}
+        <div className="form-group" style={{ marginBottom: 0 }}>
+          <label style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', color: 'var(--neutral-500)', display: 'block', marginBottom: '6px' }}>AI Provider</label>
+          <select 
+            className="form-input" 
+            value={providerFilter} 
+            onChange={(e) => setProviderFilter(e.target.value)}
+            style={{ width: '100%', height: '36px' }}
+          >
+            <option value="">All Providers</option>
+            <option value="gemini">Gemini</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="sarvam">Sarvam</option>
+          </select>
+        </div>
+
+        {/* Live tail checkbox */}
+        <div style={{ display: 'flex', alignItems: 'center', height: '100%', paddingTop: '28px' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: '13px', color: 'var(--neutral-600)', cursor: 'pointer', userSelect: 'none' }}>
+            <input 
+              type="checkbox" 
+              checked={live} 
+              onChange={(e) => setLive(e.target.checked)} 
+              style={{ cursor: 'pointer' }}
+            />
+            Live (5s poll)
+          </label>
+        </div>
+
       </div>
 
       {/* KPI Cards Row */}
