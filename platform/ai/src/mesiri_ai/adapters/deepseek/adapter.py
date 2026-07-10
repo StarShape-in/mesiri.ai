@@ -15,7 +15,7 @@ import httpx
 
 from ...core.errors import malformed_output
 from ...core.fallback import call_with_resilience
-from ...models import ExtractionResult
+from ...models import ExtractionResult, TranslationResult
 
 try:
     from mesiri.bootstrap.settings import DeepSeekSettings
@@ -84,6 +84,56 @@ class DeepSeekExtractionProvider:
             field_confidences={
                 k: float(v) for k, v in (data.get("field_confidences", {}) or {}).items()
             },
+            model=self._s.model,
+            latency_ms=latency_ms,
+        )
+
+    async def translate_to_english(
+        self, text: str, *, correlation_id: str | None = None
+    ) -> TranslationResult:
+        api_key = self._s.api_key.get_secret_value() if self._s.api_key else None
+        system_prompt = (
+            "Translate the following text to English. "
+            "Return STRICT JSON only with keys: "
+            '"translated_text" (string) and "detected_language" (ISO-639-1 code or null). '
+            "Never add commentary."
+        )
+
+        async def _raw() -> Any:
+            async with httpx.AsyncClient(timeout=self._s.timeout_seconds) as client:
+                resp = await client.post(
+                    f"{self._s.base_url.rstrip('/')}/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    json={
+                        "model": self._s.model,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": text},
+                        ],
+                        "response_format": {"type": "json_object"},
+                        "temperature": 0,
+                    },
+                )
+                resp.raise_for_status()
+                return resp.json()
+
+        raw, latency_ms = await call_with_resilience(
+            _raw,
+            provider=self.provider,
+            operation="translate",
+            timeout_seconds=self._s.timeout_seconds,
+            max_retries=self._s.max_retries,
+            correlation_id=correlation_id,
+        )
+        try:
+            content = raw["choices"][0]["message"]["content"]
+            data = json.loads(content)
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            raise malformed_output("deepseek", str(exc), correlation_id=correlation_id) from exc
+
+        return TranslationResult(
+            translated_text=data.get("translated_text", text),
+            detected_language=data.get("detected_language"),
             model=self._s.model,
             latency_ms=latency_ms,
         )

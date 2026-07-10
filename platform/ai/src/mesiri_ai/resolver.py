@@ -3,6 +3,9 @@
 Resolves which AI model/provider to use for each capability dynamically at runtime.
 Uses Redis caching to maintain sub-millisecond lookup latency, falling back to
 PostgreSQL config tables and then environment settings.
+
+Supports per-capability fallback providers that are automatically invoked when
+the primary provider raises an error.
 """
 
 from __future__ import annotations
@@ -17,11 +20,82 @@ from mesiri_contracts.common.errors import MesiriError
 
 logger = logging.getLogger(__name__)
 
+# Sentinel for masked/empty keys that should not be used
+_MASKED_KEY_PREFIX = "****"
+
+
+def _build_gemini_provider(config: dict, model: str, env_settings: Any):
+    """Instantiate GeminiProvider with resolved credentials."""
+    from pydantic import SecretStr
+
+    from mesiri.bootstrap.settings import GeminiSettings
+    from mesiri_ai.adapters.gemini.adapter import GeminiProvider
+
+    secret = config["secrets"].get("gemini", {})
+    api_key = secret.get("api_key")
+    if not api_key:
+        raise MesiriError.configuration(
+            "Gemini API Key is not configured.", code="CONFIG_MISSING"
+        )
+    settings = GeminiSettings(
+        api_key=SecretStr(api_key),
+        model=model or env_settings.gemini.model,
+        timeout_seconds=env_settings.gemini.timeout_seconds,
+        max_retries=env_settings.gemini.max_retries,
+    )
+    return GeminiProvider(settings)
+
+
+def _build_deepseek_provider(config: dict, model: str, env_settings: Any):
+    """Instantiate DeepSeekExtractionProvider with resolved credentials."""
+    from pydantic import SecretStr
+
+    from mesiri.bootstrap.settings import DeepSeekSettings
+    from mesiri_ai.adapters.deepseek.adapter import DeepSeekExtractionProvider
+
+    secret = config["secrets"].get("deepseek", {})
+    api_key = secret.get("api_key")
+    base_url = secret.get("base_url") or "https://api.deepseek.com"
+    if not api_key:
+        raise MesiriError.configuration(
+            "DeepSeek API Key is not configured.", code="CONFIG_MISSING"
+        )
+    settings = DeepSeekSettings(
+        api_key=SecretStr(api_key),
+        model=model or env_settings.deepseek.model,
+        base_url=base_url,
+        timeout_seconds=env_settings.deepseek.timeout_seconds,
+        max_retries=env_settings.deepseek.max_retries,
+    )
+    return DeepSeekExtractionProvider(settings)
+
+
+def _build_sarvam_provider(config: dict, env_settings: Any):
+    """Instantiate SarvamSpeechProvider with resolved credentials."""
+    from pydantic import SecretStr
+
+    from mesiri.bootstrap.settings import SarvamSettings
+    from mesiri_ai.adapters.sarvam.adapter import SarvamSpeechProvider
+
+    secret = config["secrets"].get("sarvam", {})
+    api_key = secret.get("api_key")
+    if not api_key:
+        raise MesiriError.configuration(
+            "Sarvam API Key is not configured.", code="CONFIG_MISSING"
+        )
+    settings = SarvamSettings(
+        api_key=SecretStr(api_key),
+        timeout_seconds=env_settings.sarvam.timeout_seconds,
+        max_retries=env_settings.sarvam.max_retries,
+    )
+    return SarvamSpeechProvider(settings)
+
 
 class DynamicAIProviderResolver:
     """Dynamic resolver implementing AI ports.
 
     Queries Redis/DB to route calls to the active provider dynamically.
+    Supports per-capability fallback providers on primary failure.
     """
 
     provider = "dynamic"
@@ -33,10 +107,9 @@ class DynamicAIProviderResolver:
 
     async def _resolve_config(self) -> dict[str, Any]:
         """Resolve active routing and credentials from Redis -> DB -> Env."""
-        # 1. Try Redis cache
         cache_key = "mesiri:ai:config"
+        # 1. Try Redis cache
         try:
-            # Check if redis client has a valid connect state and supports get
             if self._redis and hasattr(self._redis, "get"):
                 cached = await self._redis.get(cache_key)
                 if cached:
@@ -45,11 +118,13 @@ class DynamicAIProviderResolver:
             logger.warning("Failed to read AI config from Redis: %s", exc)
 
         # Default fallback config derived from environment Settings
-        config = {
+        config: dict[str, Any] = {
             "routing": {
                 "voice": {
                     "provider_id": "sarvam" if self._settings.sarvam.api_key else "fake",
                     "model": "saaras:v2.5",
+                    "fallback_provider_id": None,
+                    "fallback_model": None,
                 },
                 "extraction": {
                     "provider_id": (
@@ -62,14 +137,20 @@ class DynamicAIProviderResolver:
                         if self._settings.deepseek.api_key
                         else self._settings.gemini.model
                     ),
+                    "fallback_provider_id": None,
+                    "fallback_model": None,
                 },
                 "vision": {
                     "provider_id": "gemini" if self._settings.gemini.api_key else "fake",
                     "model": self._settings.gemini.model,
+                    "fallback_provider_id": None,
+                    "fallback_model": None,
                 },
                 "translation": {
                     "provider_id": "gemini" if self._settings.gemini.api_key else "fake",
                     "model": self._settings.gemini.model,
+                    "fallback_provider_id": None,
+                    "fallback_model": None,
                 },
             },
             "secrets": {
@@ -112,14 +193,14 @@ class DynamicAIProviderResolver:
                     db_routes = await repo.get_active_routes()
                     db_secrets = await repo.get_provider_secrets()
 
-                # Merge DB routes
                 for cap, route in db_routes.items():
                     config["routing"][cap] = {
                         "provider_id": route["provider_id"],
                         "model": route["model"],
+                        "fallback_provider_id": route.get("fallback_provider_id"),
+                        "fallback_model": route.get("fallback_model"),
                     }
 
-                # Merge DB secrets
                 for provider, sec in db_secrets.items():
                     if sec.get("api_key"):
                         config["secrets"][provider]["api_key"] = sec["api_key"]
@@ -145,43 +226,42 @@ class DynamicAIProviderResolver:
         language_hint: str | None = None,
         correlation_id: str | None = None,
     ) -> SpeechResult:
-        """Transcribe voice audio."""
+        """Transcribe voice audio with automatic fallback."""
         config = await self._resolve_config()
         route = config["routing"].get("voice", {"provider_id": "fake", "model": ""})
         provider_id = route["provider_id"]
+        model = route["model"]
+        fallback_id = route.get("fallback_provider_id")
+        fallback_model = route.get("fallback_model") or ""
 
-        if provider_id == "sarvam":
-            from mesiri.bootstrap.settings import SarvamSettings
-            from mesiri_ai.adapters.sarvam.adapter import SarvamSpeechProvider
-
-            secret = config["secrets"].get("sarvam", {})
-            api_key = secret.get("api_key")
-            if not api_key:
-                raise MesiriError.configuration(
-                    "Sarvam API Key is not configured in environment or database.",
-                    code="CONFIG_MISSING",
+        async def _call_voice(pid: str, mdl: str) -> SpeechResult:
+            if pid == "sarvam":
+                provider = _build_sarvam_provider(config, self._settings)
+                return await provider.transcribe(
+                    audio, language_hint=language_hint, correlation_id=correlation_id
                 )
-
-            # Reconstruct transient settings for adapter
-            from pydantic import SecretStr
-
-            settings = SarvamSettings(
-                api_key=SecretStr(api_key),
-                timeout_seconds=self._settings.sarvam.timeout_seconds,
-                max_retries=self._settings.sarvam.max_retries,
-            )
-            provider = SarvamSpeechProvider(settings)
-            return await provider.transcribe(
+            if pid == "gemini":
+                provider = _build_gemini_provider(config, mdl, self._settings)
+                return await provider.transcribe(
+                    audio, language_hint=language_hint, correlation_id=correlation_id
+                )
+            # fake
+            from mesiri_ai.fakes import FakeSpeechProvider
+            return await FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH).transcribe(
                 audio, language_hint=language_hint, correlation_id=correlation_id
             )
 
-        # Fallback/Fake
-        from mesiri_ai.fakes import FakeSpeechProvider
-
-        provider = FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH)
-        return await provider.transcribe(
-            audio, language_hint=language_hint, correlation_id=correlation_id
-        )
+        try:
+            return await _call_voice(provider_id, model)
+        except MesiriError:
+            if fallback_id:
+                logger.warning(
+                    "voice primary provider %r failed, trying fallback %r",
+                    provider_id,
+                    fallback_id,
+                )
+                return await _call_voice(fallback_id, fallback_model)
+            raise
 
     async def extract(
         self,
@@ -190,69 +270,41 @@ class DynamicAIProviderResolver:
         semantic_hint: str | None = None,
         correlation_id: str | None = None,
     ) -> ExtractionResult:
-        """Extract structured entities from text."""
+        """Extract structured entities from text with automatic fallback."""
         config = await self._resolve_config()
         route = config["routing"].get("extraction", {"provider_id": "fake", "model": ""})
         provider_id = route["provider_id"]
         model = route["model"]
+        fallback_id = route.get("fallback_provider_id")
+        fallback_model = route.get("fallback_model") or ""
 
-        if provider_id == "gemini":
-            from pydantic import SecretStr
-
-            from mesiri.bootstrap.settings import GeminiSettings
-            from mesiri_ai.adapters.gemini.adapter import GeminiProvider
-
-            secret = config["secrets"].get("gemini", {})
-            api_key = secret.get("api_key")
-            if not api_key:
-                raise MesiriError.configuration(
-                    "Gemini API Key is not configured.", code="CONFIG_MISSING"
+        async def _call_extract(pid: str, mdl: str) -> ExtractionResult:
+            if pid == "gemini":
+                provider = _build_gemini_provider(config, mdl, self._settings)
+                return await provider.extract(
+                    text, semantic_hint=semantic_hint, correlation_id=correlation_id
                 )
-
-            settings = GeminiSettings(
-                api_key=SecretStr(api_key),
-                model=model or self._settings.gemini.model,
-                timeout_seconds=self._settings.gemini.timeout_seconds,
-                max_retries=self._settings.gemini.max_retries,
-            )
-            provider = GeminiProvider(settings)
-            return await provider.extract(
+            if pid == "deepseek":
+                provider = _build_deepseek_provider(config, mdl, self._settings)
+                return await provider.extract(
+                    text, semantic_hint=semantic_hint, correlation_id=correlation_id
+                )
+            from mesiri_ai.fakes import FakeExtractionProvider
+            return await FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION).extract(
                 text, semantic_hint=semantic_hint, correlation_id=correlation_id
             )
 
-        elif provider_id == "deepseek":
-            from pydantic import SecretStr
-
-            from mesiri.bootstrap.settings import DeepSeekSettings
-            from mesiri_ai.adapters.deepseek.adapter import DeepSeekExtractionProvider
-
-            secret = config["secrets"].get("deepseek", {})
-            api_key = secret.get("api_key")
-            base_url = secret.get("base_url") or "https://api.deepseek.com"
-            if not api_key:
-                raise MesiriError.configuration(
-                    "DeepSeek API Key is not configured.", code="CONFIG_MISSING"
+        try:
+            return await _call_extract(provider_id, model)
+        except MesiriError:
+            if fallback_id:
+                logger.warning(
+                    "extraction primary provider %r failed, trying fallback %r",
+                    provider_id,
+                    fallback_id,
                 )
-
-            settings = DeepSeekSettings(
-                api_key=SecretStr(api_key),
-                model=model or self._settings.deepseek.model,
-                base_url=base_url,
-                timeout_seconds=self._settings.deepseek.timeout_seconds,
-                max_retries=self._settings.deepseek.max_retries,
-            )
-            provider = DeepSeekExtractionProvider(settings)
-            return await provider.extract(
-                text, semantic_hint=semantic_hint, correlation_id=correlation_id
-            )
-
-        # Fallback/Fake
-        from mesiri_ai.fakes import FakeExtractionProvider
-
-        provider = FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION)
-        return await provider.extract(
-            text, semantic_hint=semantic_hint, correlation_id=correlation_id
-        )
+                return await _call_extract(fallback_id, fallback_model)
+            raise
 
     async def analyze_image(
         self,
@@ -262,43 +314,36 @@ class DynamicAIProviderResolver:
         hint: str | None = None,
         correlation_id: str | None = None,
     ) -> VisionResult:
-        """Analyze image contents."""
+        """Analyze image contents with automatic fallback."""
         config = await self._resolve_config()
         route = config["routing"].get("vision", {"provider_id": "fake", "model": ""})
         provider_id = route["provider_id"]
         model = route["model"]
+        fallback_id = route.get("fallback_provider_id")
+        fallback_model = route.get("fallback_model") or ""
 
-        if provider_id == "gemini":
-            from pydantic import SecretStr
-
-            from mesiri.bootstrap.settings import GeminiSettings
-            from mesiri_ai.adapters.gemini.adapter import GeminiProvider
-
-            secret = config["secrets"].get("gemini", {})
-            api_key = secret.get("api_key")
-            if not api_key:
-                raise MesiriError.configuration(
-                    "Gemini API Key is not configured for Vision.", code="CONFIG_MISSING"
+        async def _call_vision(pid: str, mdl: str) -> VisionResult:
+            if pid == "gemini":
+                provider = _build_gemini_provider(config, mdl, self._settings)
+                return await provider.analyze_image(
+                    image, mime_type=mime_type, hint=hint, correlation_id=correlation_id
                 )
-
-            settings = GeminiSettings(
-                api_key=SecretStr(api_key),
-                model=model or self._settings.gemini.model,
-                timeout_seconds=self._settings.gemini.timeout_seconds,
-                max_retries=self._settings.gemini.max_retries,
-            )
-            provider = GeminiProvider(settings)
-            return await provider.analyze_image(
+            from mesiri_ai.fakes import FakeVisionProvider
+            return await FakeVisionProvider(fixtures.VALID_RECEIPT_VISION).analyze_image(
                 image, mime_type=mime_type, hint=hint, correlation_id=correlation_id
             )
 
-        # Fallback/Fake
-        from mesiri_ai.fakes import FakeVisionProvider
-
-        provider = FakeVisionProvider(fixtures.VALID_RECEIPT_VISION)
-        return await provider.analyze_image(
-            image, mime_type=mime_type, hint=hint, correlation_id=correlation_id
-        )
+        try:
+            return await _call_vision(provider_id, model)
+        except MesiriError:
+            if fallback_id:
+                logger.warning(
+                    "vision primary provider %r failed, trying fallback %r",
+                    provider_id,
+                    fallback_id,
+                )
+                return await _call_vision(fallback_id, fallback_model)
+            raise
 
     async def translate_to_english(
         self,
@@ -306,36 +351,34 @@ class DynamicAIProviderResolver:
         *,
         correlation_id: str | None = None,
     ) -> TranslationResult:
-        """Translate text to English."""
+        """Translate text to English with automatic fallback."""
         config = await self._resolve_config()
         route = config["routing"].get("translation", {"provider_id": "fake", "model": ""})
         provider_id = route["provider_id"]
         model = route["model"]
+        fallback_id = route.get("fallback_provider_id")
+        fallback_model = route.get("fallback_model") or ""
 
-        if provider_id == "gemini":
-            from pydantic import SecretStr
-
-            from mesiri.bootstrap.settings import GeminiSettings
-            from mesiri_ai.adapters.gemini.adapter import GeminiProvider
-
-            secret = config["secrets"].get("gemini", {})
-            api_key = secret.get("api_key")
-            if not api_key:
-                raise MesiriError.configuration(
-                    "Gemini API Key is not configured for Translation.", code="CONFIG_MISSING"
-                )
-
-            settings = GeminiSettings(
-                api_key=SecretStr(api_key),
-                model=model or self._settings.gemini.model,
-                timeout_seconds=self._settings.gemini.timeout_seconds,
-                max_retries=self._settings.gemini.max_retries,
+        async def _call_translate(pid: str, mdl: str) -> TranslationResult:
+            if pid == "gemini":
+                provider = _build_gemini_provider(config, mdl, self._settings)
+                return await provider.translate_to_english(text, correlation_id=correlation_id)
+            if pid == "deepseek":
+                provider = _build_deepseek_provider(config, mdl, self._settings)
+                return await provider.translate_to_english(text, correlation_id=correlation_id)
+            from mesiri_ai.fakes import FakeTranslationProvider
+            return await FakeTranslationProvider().translate_to_english(
+                text, correlation_id=correlation_id
             )
-            provider = GeminiProvider(settings)
-            return await provider.translate_to_english(text, correlation_id=correlation_id)
 
-        # Fallback/Fake
-        from mesiri_ai.fakes import FakeTranslationProvider
-
-        provider = FakeTranslationProvider()
-        return await provider.translate_to_english(text, correlation_id=correlation_id)
+        try:
+            return await _call_translate(provider_id, model)
+        except MesiriError:
+            if fallback_id:
+                logger.warning(
+                    "translation primary provider %r failed, trying fallback %r",
+                    provider_id,
+                    fallback_id,
+                )
+                return await _call_translate(fallback_id, fallback_model)
+            raise
