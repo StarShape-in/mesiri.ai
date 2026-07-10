@@ -6,10 +6,14 @@ invocation, so the adapter makes one call — no separate translation request.
 
 The ``sarvamai`` SDK is imported lazily and is the only SDK reference here; the
 response is converted into the Mesiri-owned :class:`SpeechResult` before
-returning. Method and field names are verified against sarvamai 0.1.28:
-``speech_to_text_translate.translate`` returns ``transcript`` and
-``language_code``. The fake provider is used everywhere in tests, so a
-model-name drift here is only caught against the live SDK.
+returning.
+
+Verified against sarvamai 0.1.28: the client exposes ``speech_to_text``
+(there is no ``speech_to_text_translate`` attribute), whose ``translate()``
+returns ``transcript`` and ``language_code``. Every call here is exercised
+only against the live SDK — the fake provider stands in for all tests — so
+an SDK rename surfaces as an UNUSABLE understanding result, never a test
+failure. Re-verify this call on every ``sarvamai`` upgrade.
 """
 
 from __future__ import annotations
@@ -55,8 +59,11 @@ class SarvamSpeechProvider:
             import asyncio
 
             def _call() -> Any:
-                return client.speech_to_text_translate.translate(
-                    file=io.BytesIO(audio),
+                # Sarvam infers the codec from the upload's filename/content-type,
+                # so send a named tuple rather than a bare BytesIO. WhatsApp voice
+                # notes are always OGG/Opus.
+                return client.speech_to_text.translate(
+                    file=("audio.ogg", io.BytesIO(audio), "audio/ogg"),
                     model=_TRANSLATE_MODEL,
                 )
 
