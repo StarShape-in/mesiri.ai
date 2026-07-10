@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
-import { RefreshCw, ChevronDown, ChevronRight } from 'lucide-react';
+import { RefreshCw, ChevronDown, ChevronRight, Check, RotateCcw, Code, Cpu, MessageSquare, Bot } from 'lucide-react';
 import { api } from './api';
 
 interface InboundMessageSummary {
@@ -18,6 +18,37 @@ interface InboundMessageSummary {
 interface InboundMessageList {
   items: InboundMessageSummary[];
   total: number | null;
+}
+
+interface InboundMessageDetail {
+  id: string;
+  correlation_id: string;
+  sender_wa_id: string;
+  message_type: string;
+  body_text: string | null;
+  raw_payload: any;
+  normalized_message: any;
+  media_object_key: string | null;
+  processing_status: string;
+  error_code: string | null;
+  received_at: string;
+  processed_at: string | null;
+  raw_payload_captured: boolean;
+  acknowledged_at: string | null;
+  acknowledged_by: string | null;
+  retry_of_id: string | null;
+  assistant_reply: string | null;
+}
+
+interface ProviderExecutionEntry {
+  stage: string;
+  provider: string;
+  operation: string;
+  model: string | null;
+  latency_ms: number | null;
+  succeeded: boolean;
+  error_code: string | null;
+  created_at: string;
 }
 
 interface JourneyTraceEntry {
@@ -96,6 +127,238 @@ const TracePanel = ({ correlationId }: { correlationId: string }) => {
           )}
         </div>
       ))}
+    </div>
+  );
+};
+
+const LogDetailPanel = ({
+  message,
+  onUpdate,
+}: {
+  message: InboundMessageSummary;
+  onUpdate: () => void;
+}) => {
+  const [detail, setDetail] = useState<InboundMessageDetail | null>(null);
+  const [providers, setProviders] = useState<ProviderExecutionEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showPayload, setShowPayload] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+
+  const fetchDetails = useCallback(() => {
+    setLoading(true);
+    Promise.all([
+      api.get<InboundMessageDetail>(`/admin/logs/messages/${message.id}`),
+      api.get<ProviderExecutionEntry[]>(`/admin/logs/messages/${message.correlation_id}/providers`),
+    ])
+      .then(([detailRes, providersRes]) => {
+        setDetail(detailRes.data);
+        setProviders(providersRes.data);
+      })
+      .catch((err) => {
+        console.error('Failed to fetch message details', err);
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  }, [message.id, message.correlation_id]);
+
+  useEffect(() => {
+    fetchDetails();
+  }, [fetchDetails]);
+
+  const handleAcknowledge = () => {
+    setActionLoading(true);
+    api
+      .post(`/admin/logs/messages/${message.id}/acknowledge`)
+      .then(() => {
+        fetchDetails();
+        onUpdate();
+      })
+      .catch((err) => {
+        alert(err.response?.data?.detail || 'Failed to acknowledge message');
+      })
+      .finally(() => {
+        setActionLoading(false);
+      });
+  };
+
+  const handleRetry = () => {
+    setActionLoading(true);
+    api
+      .post(`/admin/logs/messages/${message.id}/retry`)
+      .then((res) => {
+        alert(`Retry triggered! New Correlation ID: ${res.data.correlation_id}`);
+        fetchDetails();
+        onUpdate();
+      })
+      .catch((err) => {
+        alert(err.response?.data?.detail || 'Failed to retry message');
+      })
+      .finally(() => {
+        setActionLoading(false);
+      });
+  };
+
+  if (loading) {
+    return <div style={{ padding: 'var(--space-4)', color: 'var(--neutral-500)' }}>Loading details…</div>;
+  }
+
+  if (!detail) {
+    return <div style={{ padding: 'var(--space-4)', color: 'var(--neutral-500)' }}>Failed to load message details.</div>;
+  }
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: 'var(--space-6)', padding: 'var(--space-5)', backgroundColor: 'var(--neutral-50)', borderBottom: '1px solid var(--neutral-200)' }}>
+      {/* Left column - Content */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+        
+        {/* Inbound Message */}
+        <div style={{ backgroundColor: '#ffffff', borderRadius: 'var(--radius-sm)', border: '1px solid var(--neutral-200)', padding: 'var(--space-4)', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--neutral-500)', marginBottom: 'var(--space-3)' }}>
+            <MessageSquare size={13} />
+            Inbound Message ({detail.message_type})
+          </div>
+          <div style={{ fontSize: '13px', color: 'var(--neutral-800)', whiteSpace: 'pre-wrap', fontFamily: 'var(--font-sans)', lineHeight: '1.6' }}>
+            {detail.body_text || <em style={{ color: 'var(--neutral-400)' }}>no text content</em>}
+          </div>
+        </div>
+
+        {/* Assistant Reply */}
+        <div style={{ backgroundColor: '#ffffff', borderRadius: 'var(--radius-sm)', border: '1px solid var(--neutral-200)', padding: 'var(--space-4)', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--neutral-500)', marginBottom: 'var(--space-3)' }}>
+            <Bot size={13} />
+            Assistant Reply
+          </div>
+          <div style={{ fontSize: '13px', color: 'var(--neutral-800)', whiteSpace: 'pre-wrap', fontFamily: 'var(--font-sans)', lineHeight: '1.6' }}>
+            {detail.assistant_reply || <em style={{ color: 'var(--neutral-400)' }}>no reply sent or pending</em>}
+          </div>
+        </div>
+
+        {/* Raw Payload Section */}
+        <div style={{ backgroundColor: '#ffffff', borderRadius: 'var(--radius-sm)', border: '1px solid var(--neutral-200)', overflow: 'hidden' }}>
+          <button 
+            type="button"
+            onClick={() => setShowPayload(!showPayload)}
+            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 'var(--space-3) var(--space-4)', border: 'none', background: 'none', cursor: 'pointer', outline: 'none' }}
+          >
+            <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--neutral-500)' }}>
+              <Code size={13} />
+              Raw Webhook Payload
+            </span>
+            <ChevronDown size={14} style={{ transform: showPayload ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s', border: 'none', background: 'none' }} />
+          </button>
+          {showPayload && (
+            <div style={{ borderTop: '1px solid var(--neutral-200)', padding: 'var(--space-4)', backgroundColor: 'var(--neutral-900)', color: 'var(--neutral-200)', overflowX: 'auto' }}>
+              <pre style={{ margin: 0, fontSize: '12px', fontFamily: 'monospace', lineHeight: '1.5' }}>
+                {JSON.stringify(detail.raw_payload, null, 2)}
+              </pre>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Right column - Execution & Actions */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+        
+        {/* Actions & Triage */}
+        <div style={{ backgroundColor: '#ffffff', borderRadius: 'var(--radius-sm)', border: '1px solid var(--neutral-200)', padding: 'var(--space-4)' }}>
+          <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--neutral-500)', marginBottom: 'var(--space-3)' }}>
+            Status & Triage
+          </div>
+          
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)', marginBottom: 'var(--space-3)' }}>
+            <span className={`badge ${detail.processing_status === 'completed' ? 'badge-success' : detail.processing_status === 'failed' ? 'badge-error' : 'badge-warning'}`}>
+              {detail.processing_status}
+            </span>
+            {detail.acknowledged_at && (
+              <span className="badge badge-success" style={{ backgroundColor: 'var(--success-soft)', color: 'var(--success)' }}>
+                Acknowledged
+              </span>
+            )}
+            {detail.retry_of_id && (
+              <span className="badge badge-info" style={{ backgroundColor: 'var(--info-soft)', color: 'var(--info)' }}>
+                Retry attempt
+              </span>
+            )}
+          </div>
+
+          {detail.acknowledged_at && (
+            <div style={{ fontSize: '12px', color: 'var(--neutral-500)', marginBottom: 'var(--space-3)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <Check size={12} /> Acknowledged by {detail.acknowledged_by || 'admin'} at {new Date(detail.acknowledged_at).toLocaleString()}
+            </div>
+          )}
+
+          {detail.processing_status === 'failed' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+              {!detail.acknowledged_at && (
+                <button 
+                  className="btn-secondary" 
+                  disabled={actionLoading}
+                  onClick={handleAcknowledge}
+                  style={{ width: '100%', justifyContent: 'center' }}
+                >
+                  <Check size={14} style={{ marginRight: '6px' }} /> Mark as Acknowledged
+                </button>
+              )}
+              <button 
+                className="btn-primary" 
+                disabled={actionLoading}
+                onClick={handleRetry}
+                style={{ width: '100%', justifyContent: 'center' }}
+              >
+                <RotateCcw size={14} style={{ marginRight: '6px' }} /> Retry Message
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* AI Providers Execution Metrics */}
+        <div style={{ backgroundColor: '#ffffff', borderRadius: 'var(--radius-sm)', border: '1px solid var(--neutral-200)', padding: 'var(--space-4)' }}>
+          <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--neutral-500)', marginBottom: 'var(--space-3)' }}>
+            AI Providers Metrics
+          </div>
+          {providers.length === 0 ? (
+            <div style={{ fontSize: '12px', color: 'var(--neutral-400)', fontStyle: 'italic' }}>No AI provider calls executed.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+              {providers.map((p, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: i < providers.length - 1 ? '1px solid var(--neutral-100)' : 'none', paddingBottom: i < providers.length - 1 ? 'var(--space-2)' : 0 }}>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                      <Cpu size={12} color="var(--neutral-500)" />
+                      <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--neutral-800)' }}>{p.provider}</span>
+                      <span style={{ fontSize: '11px', color: 'var(--neutral-400)' }}>({p.operation})</span>
+                    </div>
+                    {p.model && (
+                      <div style={{ fontSize: '11px', color: 'var(--neutral-500)', marginTop: '2px', fontFamily: 'monospace' }}>
+                        {p.model}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 'var(--space-1)' }}>
+                    <span className={`badge ${p.succeeded ? 'badge-success' : 'badge-error'}`} style={{ fontSize: '10px', padding: '1px 6px' }}>
+                      {p.succeeded ? 'Success' : p.error_code || 'Fail'}
+                    </span>
+                    {p.latency_ms !== null && (
+                      <span style={{ fontSize: '11px', fontFamily: 'monospace', color: 'var(--neutral-500)' }}>
+                        {p.latency_ms.toFixed(0)}ms
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Pipeline Journey Trace */}
+        <div style={{ backgroundColor: '#ffffff', borderRadius: 'var(--radius-sm)', border: '1px solid var(--neutral-200)', padding: 'var(--space-4)' }}>
+          <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--neutral-500)', marginBottom: 'var(--space-2)' }}>
+            Pipeline Trace
+          </div>
+          <TracePanel correlationId={message.correlation_id} />
+        </div>
+      </div>
     </div>
   );
 };
@@ -257,21 +520,8 @@ export default function Logs() {
                   </tr>
                   {expandedId === m.correlation_id && (
                     <tr>
-                      <td colSpan={6} style={{ padding: 'var(--space-4)', backgroundColor: 'var(--neutral-50)' }}>
-                        {m.assistant_reply && (
-                          <div style={{ marginBottom: 'var(--space-4)', padding: 'var(--space-4)', backgroundColor: '#ffffff', borderRadius: 'var(--radius-sm)', border: '1px solid var(--neutral-200)' }}>
-                            <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--neutral-500)', marginBottom: 'var(--space-2)' }}>
-                              Assistant Reply
-                            </div>
-                            <div style={{ fontSize: '13px', whiteSpace: 'pre-wrap', color: 'var(--neutral-800)', fontFamily: 'var(--font-sans)' }}>
-                              {m.assistant_reply}
-                            </div>
-                          </div>
-                        )}
-                        <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--neutral-500)', marginBottom: 'var(--space-2)' }}>
-                          Pipeline Trace
-                        </div>
-                        <TracePanel correlationId={m.correlation_id} />
+                      <td colSpan={6} style={{ padding: 0 }}>
+                        <LogDetailPanel message={m} onUpdate={loadHistory} />
                       </td>
                     </tr>
                   )}
