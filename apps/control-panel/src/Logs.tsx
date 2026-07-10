@@ -217,6 +217,11 @@ const LogDetailPanel = ({
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--neutral-500)', marginBottom: 'var(--space-3)' }}>
             <MessageSquare size={13} />
             Inbound Message ({detail.message_type})
+            {detail.normalized_message?.sender?.profile_name && (
+              <span style={{ marginLeft: 'auto', textTransform: 'none', color: 'var(--neutral-400)', fontWeight: 500 }}>
+                Sent by: {detail.normalized_message.sender.profile_name}
+              </span>
+            )}
           </div>
           <div style={{ fontSize: '13px', color: 'var(--neutral-800)', whiteSpace: 'pre-wrap', fontFamily: 'var(--font-sans)', lineHeight: '1.6' }}>
             {detail.body_text || <em style={{ color: 'var(--neutral-400)' }}>no text content</em>}
