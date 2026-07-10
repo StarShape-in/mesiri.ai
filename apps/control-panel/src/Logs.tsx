@@ -274,8 +274,13 @@ const LogDetailPanel = ({
 
           {/* User Message Bubble */}
           <div style={{ display: 'flex', flexDirection: 'column', alignSelf: 'flex-start', maxWidth: '85%', gap: '4px' }}>
-            <span style={{ fontSize: '10px', fontWeight: 600, color: 'var(--neutral-500)', marginLeft: '8px' }}>
+            <span style={{ fontSize: '10px', fontWeight: 600, color: 'var(--neutral-500)', marginLeft: '8px', display: 'flex', alignItems: 'center', gap: '4px' }}>
               USER ({detail.normalized_message?.sender?.profile_name || detail.sender_wa_id})
+              {detail.message_type === 'audio' && (
+                <span style={{ backgroundColor: 'var(--info-soft)', color: 'var(--info)', fontSize: '9px', padding: '1px 6px', borderRadius: '4px', textTransform: 'uppercase', fontWeight: 600 }}>
+                  🗣 Voice Transcribed
+                </span>
+              )}
             </span>
             <div style={{ backgroundColor: 'var(--neutral-100)', border: '1px solid var(--neutral-200)', borderRadius: '8px 8px 8px 0', padding: '10px 14px', fontSize: '13px', color: 'var(--neutral-800)', whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>
               {detail.body_text || <em style={{ color: 'var(--neutral-400)' }}>[Media message or no text]</em>}
@@ -671,7 +676,10 @@ export default function Logs() {
                       </div>
                     </td>
                     <td>{m.sender_wa_id}</td>
-                    <td>{m.message_type}</td>
+                    <td>
+                      {m.message_type}
+                      {m.message_type === 'audio' && ' 🗣'}
+                    </td>
                     <td style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {m.body_preview || <em style={{ color: 'var(--neutral-400)' }}>no text</em>}
                     </td>

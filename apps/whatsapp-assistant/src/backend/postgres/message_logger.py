@@ -252,3 +252,18 @@ class PostgresMessageLogger:
                 )
         except Exception:  # noqa: BLE001
             _log.exception("message_logger.log_reply failed correlation_id=%s", correlation_id)
+
+    async def update_body_text(self, *, correlation_id: str, body_text: str) -> None:
+        from sqlalchemy import text
+
+        try:
+            async with self._get_engine().begin() as conn:
+                await conn.execute(
+                    text(
+                        "UPDATE inbound_messages SET body_text = :body_text "
+                        "WHERE correlation_id = :correlation_id"
+                    ),
+                    {"correlation_id": correlation_id, "body_text": body_text},
+                )
+        except Exception:  # noqa: BLE001
+            _log.exception("message_logger.update_body_text failed correlation_id=%s", correlation_id)

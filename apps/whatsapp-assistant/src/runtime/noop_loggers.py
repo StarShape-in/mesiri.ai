@@ -37,6 +37,9 @@ class NoopMessageLogger:
     async def log_reply(self, *, correlation_id: str, reply: str) -> None:
         ...
 
+    async def update_body_text(self, *, correlation_id: str, body_text: str) -> None:
+        ...
+
 
 class NoopTraceLogger:
     async def log_stage(
@@ -89,6 +92,7 @@ class RecordingMessageLogger:
     completed: list[str] = field(default_factory=list)
     failed: list[tuple[str, str]] = field(default_factory=list)
     replies: list[tuple[str, str]] = field(default_factory=list)
+    transcriptions: list[tuple[str, str]] = field(default_factory=list)
 
     async def log_received(
         self,
@@ -123,6 +127,12 @@ class RecordingMessageLogger:
 
     async def log_reply(self, *, correlation_id: str, reply: str) -> None:
         self.replies.append((correlation_id, reply))
+
+    async def update_body_text(self, *, correlation_id: str, body_text: str) -> None:
+        self.transcriptions.append((correlation_id, body_text))
+        for r in self.received:
+            if r.correlation_id == correlation_id:
+                r.body_text = body_text
 
 
 @dataclass

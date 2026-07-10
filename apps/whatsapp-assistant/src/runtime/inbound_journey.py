@@ -132,6 +132,8 @@ async def process_inbound_message(
             duration_ms=int((time.perf_counter() - t0) * 1000),
             succeeded=True,
         ))
+        if understanding.transcript:
+            await _safe(mlog.update_body_text(correlation_id=correlation_id, body_text=understanding.transcript))
         for execution in understanding.provider_executions:
             await _safe(tlog.log_provider_execution(
                 correlation_id=correlation_id,

@@ -42,6 +42,10 @@ class MessageLogger(Protocol):
         """UPDATE the row to add the assistant_reply."""
         ...
 
+    async def update_body_text(self, *, correlation_id: str, body_text: str) -> None:
+        """UPDATE the row's body_text column (e.g. after speech transcription)."""
+        ...
+
 
 class TraceLogger(Protocol):
     """Best-effort per-stage pipeline trace."""

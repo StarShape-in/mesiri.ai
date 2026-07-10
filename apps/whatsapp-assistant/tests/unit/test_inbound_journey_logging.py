@@ -208,6 +208,9 @@ async def test_logger_failure_does_not_break_pipeline():
         async def log_reply(self, **kwargs):  # noqa: ANN001
             raise RuntimeError("log DB is down")
 
+        async def update_body_text(self, **kwargs):  # noqa: ANN001
+            raise RuntimeError("log DB is down")
+
     message = _message()
     sent_replies: list[str] = []
 
@@ -230,6 +233,51 @@ async def test_logger_failure_does_not_break_pipeline():
 
     assert isinstance(result.understanding, UnderstandingResult)
     assert len(sent_replies) == 1  # a broken logger must not swallow the reply
+
+
+async def test_voice_message_transcription_logging(anyio_backend: str) -> None:  # noqa: ARG001
+    from mesiri_contracts.assistant import MediaReference
+
+    mlog = RecordingMessageLogger()
+    tlog = RecordingTraceLogger()
+
+    # Seed object storage with the voice media data
+    storage = FakeObjectStorage()
+    await storage.put_object("media/wamid.voice/media-audio-1", b"audio data")
+
+    # Voice input modality
+    message = _message(
+        modality=InputModality.VOICE,
+        text=None,
+        media=MediaReference(
+            object_key="media/wamid.voice/media-audio-1",
+            mime_type="audio/ogg",
+        ),
+    )
+    # Stub pipeline returns JCB speech transcription
+    pipeline = UnderstandingPipeline(
+        speech=FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
+        vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
+        extraction=FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION),
+        translation=FakeTranslationProvider(),
+        object_storage=storage,
+    )
+
+    await process_inbound_message(
+        message,
+        seed.WA_ENGINEER,
+        pipeline=pipeline,
+        context_resolver=_resolver(),
+        planner=Planner(),
+        workflow_runtime=_workflow_runtime(),
+        interaction_handler=_interaction_handler(),
+        send_text=_noop_send_text,
+        message_logger=mlog,
+        trace_logger=tlog,
+    )
+
+    # Assert that body_text was updated in the message logger
+    assert mlog.transcriptions == [("cor_logging_1", "ജെസിബി നാല് മണിക്കൂർ ഓടി")]
 
 
 async def test_no_loggers_does_not_break():
