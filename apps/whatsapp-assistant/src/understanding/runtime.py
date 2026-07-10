@@ -14,52 +14,21 @@ from understanding.pipeline import UnderstandingPipeline
 logger = logging.getLogger(__name__)
 
 
-def build_pipeline(object_storage: ObjectStoragePort) -> UnderstandingPipeline:
+def build_pipeline(object_storage: ObjectStoragePort, db: Any, redis_client: Any) -> UnderstandingPipeline:
     """Construct the understanding pipeline from configured providers."""
     from mesiri.bootstrap.settings import get_settings
+    from mesiri_ai.resolver import DynamicAIProviderResolver
 
     settings = get_settings()
 
-    if settings.sarvam.api_key:
-        from mesiri_ai.adapters.sarvam.adapter import SarvamSpeechProvider
+    resolver = DynamicAIProviderResolver(db, redis_client, settings)
 
-        speech: object = SarvamSpeechProvider(settings.sarvam)
-    else:
-        speech = FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH)
-
-    if settings.deepseek.api_key:
-        from mesiri_ai.adapters.deepseek.adapter import DeepSeekExtractionProvider
-
-        extraction: object = DeepSeekExtractionProvider(settings.deepseek)
-    elif settings.gemini.api_key:
-        from mesiri_ai.adapters.gemini.adapter import GeminiProvider
-
-        extraction = GeminiProvider(settings.gemini)
-    else:
-        extraction = FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION)
-
-    if settings.gemini.api_key:
-        from mesiri_ai.adapters.gemini.adapter import GeminiProvider
-
-        vision: object = GeminiProvider(settings.gemini)
-        translation: object = GeminiProvider(settings.gemini)
-    else:
-        from mesiri_ai.fakes import FakeTranslationProvider
-
-        vision = FakeVisionProvider(fixtures.VALID_RECEIPT_VISION)
-        translation = FakeTranslationProvider()
-
-    logger.info(
-        "Understanding pipeline: speech=%s extraction=%s vision=%s",
-        type(speech).__name__,
-        type(extraction).__name__,
-        type(vision).__name__,
-    )
+    logger.info("Understanding pipeline configured with DynamicAIProviderResolver proxy.")
     return UnderstandingPipeline(
-        speech=speech,  # type: ignore[arg-type]
-        vision=vision,  # type: ignore[arg-type]
-        extraction=extraction,  # type: ignore[arg-type]
-        translation=translation,  # type: ignore[arg-type]
+        speech=resolver,  # type: ignore[arg-type]
+        vision=resolver,  # type: ignore[arg-type]
+        extraction=resolver,  # type: ignore[arg-type]
+        translation=resolver,  # type: ignore[arg-type]
         object_storage=object_storage,
         confidence_policy=ConfidencePolicy(),
     )
