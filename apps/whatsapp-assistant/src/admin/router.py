@@ -11,9 +11,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from mesiri.domains.shared.auth import require_platform_admin
-
 from context.projection_hooks import project_entity
+from mesiri.domains.shared.auth import require_platform_admin
 
 router = APIRouter(prefix="/admin/organizations", tags=["admin"])
 
