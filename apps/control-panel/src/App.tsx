@@ -16,6 +16,8 @@ import { api } from './api';
 import { RequireAuth } from './AuthContext';
 import Login from './Login';
 import Logs from './Logs';
+import SettingsPage from './Settings';
+import PlatformUsers from './PlatformUsers';
 
 const Sidebar = () => (
   <div className="sidebar">
@@ -280,6 +282,8 @@ function AppLayout() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/organizations" element={<Organizations />} />
             <Route path="/logs" element={<Logs />} />
+            <Route path="/users" element={<PlatformUsers />} />
+            <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<Dashboard />} />
           </Routes>
         </main>

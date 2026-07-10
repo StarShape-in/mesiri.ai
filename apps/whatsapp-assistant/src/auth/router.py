@@ -10,7 +10,7 @@ import bcrypt as _bcrypt
 import jwt
 import sqlalchemy as sa
 from fastapi import APIRouter, Header, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import create_async_engine
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -94,6 +94,11 @@ class Me(BaseModel):
     name: str
     org_name: str
     is_platform_admin: bool
+
+
+class ChangePassword(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=8)
 
 
 # ---------------------------------------------------------------------------
@@ -182,6 +187,35 @@ async def me(authorization: str = Header(None)) -> Me:
         org_name=payload.get("org_name", ""),
         is_platform_admin=role == "ADMIN" and not org,
     )
+
+
+@router.post("/change-password", status_code=204)
+async def change_password(body: ChangePassword, authorization: str = Header(None)) -> None:
+    """Self-service password change for any authenticated user, tenant or
+    platform admin — requires the current password, not just a valid
+    session, mirroring api.ts's rule that a token's mere presence proves
+    nothing on its own."""
+    from mesiri.domains.shared.auth import get_current_user
+
+    payload = await get_current_user(authorization)
+    user_id = uuid.UUID(payload["sub"])
+
+    engine = get_engine()
+    async with engine.begin() as conn:
+        result = await conn.execute(
+            sa.select(users_table.c.hashed_password).where(users_table.c.id == user_id)
+        )
+        row = result.first()
+        if row is None:
+            raise HTTPException(status_code=401, detail="User not found")
+        if not _verify_pw(body.current_password, row.hashed_password):
+            raise HTTPException(status_code=401, detail="Current password is incorrect")
+
+        await conn.execute(
+            users_table.update()
+            .where(users_table.c.id == user_id)
+            .values(hashed_password=_hash_pw(body.new_password))
+        )
 
 
 @router.post("/register", response_model=Token)

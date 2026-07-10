@@ -26,6 +26,10 @@ interface JourneyTraceEntry {
 const POLL_INTERVAL_MS = 5000;
 const MAX_ROWS = 200;
 
+// Known WhatsApp numbers used for testing the assistant, offered as a quick
+// filter so you don't have to retype them. wa_id has no "+" or spaces.
+const KNOWN_NUMBERS = [{ label: '+91 8904034938', wa_id: '918904034938' }];
+
 const statusBadgeClass = (status: string) => {
   if (status === 'completed') return 'badge-success';
   if (status === 'failed') return 'badge-error';
@@ -178,6 +182,19 @@ export default function Logs() {
             value={waIdFilter}
             onChange={(e) => setWaIdFilter(e.target.value)}
           />
+          <div style={{ display: 'flex', gap: 'var(--space-2)', marginTop: 'var(--space-2)' }}>
+            {KNOWN_NUMBERS.map((n) => (
+              <button
+                key={n.wa_id}
+                type="button"
+                className={`badge ${waIdFilter === n.wa_id ? 'badge-info' : 'badge-warning'}`}
+                style={{ border: 'none', cursor: 'pointer' }}
+                onClick={() => setWaIdFilter(waIdFilter === n.wa_id ? '' : n.wa_id)}
+              >
+                {n.label}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="form-group" style={{ marginBottom: 0 }}>
           <label>Status</label>

@@ -83,6 +83,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         logging.getLogger(__name__).warning("Logs router not loaded: %s", exc)
 
+    # Platform-admin account management (platform-admin only)
+    try:
+        from admin.platform_users_router import router as platform_users_router
+
+        app.include_router(platform_users_router)
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("Platform users router not loaded: %s", exc)
+
     # Auth routes (mobile app login/register)
     try:
         from auth.router import router as auth_router
