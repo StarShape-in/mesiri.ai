@@ -52,7 +52,6 @@ def _pipeline() -> UnderstandingPipeline:
         speech=FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
         vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
         extraction=FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION),
-        translation=FakeTranslationProvider(),
         object_storage=FakeObjectStorage(),
     )
 

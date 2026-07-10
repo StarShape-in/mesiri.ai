@@ -53,3 +53,17 @@ class ExtractionResult(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     model: str | None = None
     latency_ms: float | None = None
+
+
+class TranslationResult(BaseModel):
+    """Output of a text-translation call.
+
+    Carries the translated text alongside metadata so callers can decide
+    whether to surface the translation or fall back to the original.
+    """
+
+    translated_text: str
+    source_language: str | None = None
+    target_language: str = "en"
+    model: str | None = None
+    latency_ms: float | None = None
