@@ -169,16 +169,19 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     async def _on_normalized(message) -> None:  # type: ignore[no-untyped-def]
         wa_id = message.sender.wa_id
 
-        # Best-effort inbound message log (for debugging/replay).
+        # Best-effort inbound message log (for debugging/replay). NormalizedMessage
+        # carries no raw webhook payload (that lives in ingress.receiver's
+        # MessageIngressContext, not passed to this callback) -- logged as {}
+        # rather than a misleading guess.
         await message_logger.log_received(
             correlation_id=message.correlation_id,
             sender_wa_id=wa_id,
-            message_type=message.message_type.value if hasattr(message.message_type, "value") else str(message.message_type),
-            raw_payload=getattr(message, "raw_payload", {}),
-            normalized_message=message.model_dump(mode="json") if hasattr(message, "model_dump") else None,
-            body_text=getattr(message, "body_text", None),
-            media_object_key=getattr(message, "media_object_key", None),
-            dedup_key=getattr(message, "message_id", message.correlation_id),
+            message_type=message.modality.value,
+            raw_payload={},
+            normalized_message=message.model_dump(mode="json"),
+            body_text=message.text,
+            media_object_key=message.media.object_key if message.media else None,
+            dedup_key=message.message_id,
         )
 
         # M4: resolve the sender before spending on understanding.

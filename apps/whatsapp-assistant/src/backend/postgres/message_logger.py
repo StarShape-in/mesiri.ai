@@ -139,10 +139,11 @@ class PostgresMessageLogger:
         Unlike the write methods above, a query failure here is NOT swallowed
         — the caller (an authenticated API endpoint) should see a real error.
         """
-        from sqlalchemy import text
+        from sqlalchemy import String, bindparam, text
 
         where = ["(:wa_id IS NULL OR sender_wa_id = :wa_id)", "(:status IS NULL OR processing_status = :status)"]
         params: dict[str, Any] = {"wa_id": wa_id, "status": status, "limit": limit}
+        bind_types = [bindparam("wa_id", type_=String), bindparam("status", type_=String)]
 
         if since_received_at is not None:
             where.append(
@@ -164,7 +165,8 @@ class PostgresMessageLogger:
             f"ORDER BY {order_by} "
             "LIMIT :limit"
         )
+        stmt = text(query).bindparams(*bind_types)
 
         async with self._get_engine().connect() as conn:
-            rows = (await conn.execute(text(query), params)).mappings().all()
+            rows = (await conn.execute(stmt, params)).mappings().all()
         return [dict(row) for row in rows]
