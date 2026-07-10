@@ -149,7 +149,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     # (fall through to the normal understanding journey). M8: when a CONFIRM
     # resolves to CONFIRMED, the dispatcher executes the domain write
     # synchronously in the same request and the reply reflects the real outcome.
-    interaction_handler = build_interaction_handler(workflow_runtime, material_dispatcher)
+    interaction_handler = build_interaction_handler(workflow_runtime, dispatcher=material_dispatcher)
     sender = WhatsAppSender(
         client=http_client,
         access_token=settings.access_token,

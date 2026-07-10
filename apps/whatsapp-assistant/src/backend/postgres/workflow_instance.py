@@ -178,18 +178,14 @@ async def list_confirmed_by_workflow_keys(
     async context manager) — matches how every other M8 read/write obtains its
     connection, rather than reaching for a raw engine.
     """
-    from sqlalchemy import text
+    from sqlalchemy import ARRAY, String, bindparam, text
 
     async with db.transaction() as conn:
-        rows = (
-            await conn.execute(
-                text(
-                    "SELECT state, version FROM workflow_instances "
-                    "WHERE phase = 'confirmed' AND workflow_key = ANY(:workflow_keys::text[])"
-                ),
-                {"workflow_keys": workflow_keys},
-            )
-        ).mappings().all()
+        stmt = text(
+            "SELECT state, version FROM workflow_instances "
+            "WHERE phase = 'confirmed' AND workflow_key = ANY(:workflow_keys)"
+        ).bindparams(bindparam("workflow_keys", type_=ARRAY(String)))
+        rows = (await conn.execute(stmt, {"workflow_keys": workflow_keys})).mappings().all()
     return [
         LoadedWorkflowInstance(
             state=WorkflowStateV2.model_validate_json(_as_json_text(row["state"])),

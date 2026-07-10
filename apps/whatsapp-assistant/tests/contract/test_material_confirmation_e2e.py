@@ -82,7 +82,7 @@ async def test_confirm_reply_executes_domain_write_and_replies_recorded():
         workflow_repo=workflow_repo, material_repo=material_repo
     )
 
-    handled = await interaction_handler.handle(USR, _message("yes"))
+    handled = await interaction_handler.handle_fast_path(USR, _message("yes"))
 
     assert handled is not None
     assert handled.execution_result is not None
@@ -106,8 +106,8 @@ async def test_duplicate_confirm_reply_is_idempotent_and_replies_recorded():
         workflow_repo=workflow_repo, material_repo=material_repo
     )
 
-    first = await interaction_handler.handle(USR, _message("yes"))
-    second = await interaction_handler.handle(USR, _message("yes"))
+    first = await interaction_handler.handle_fast_path(USR, _message("yes"))
+    second = await interaction_handler.handle_fast_path(USR, _message("yes"))
 
     assert first.execution_result.status is ExecutionStatus.SUCCEEDED
     # No pending workflow left for the second "yes" -> falls through to a new journey.
@@ -123,7 +123,7 @@ async def test_reject_reply_never_invokes_dispatcher():
         workflow_repo=workflow_repo, material_repo=material_repo
     )
 
-    handled = await interaction_handler.handle(USR, _message("no"))
+    handled = await interaction_handler.handle_fast_path(USR, _message("no"))
 
     assert handled is not None
     assert handled.execution_result is None

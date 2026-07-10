@@ -31,6 +31,10 @@ async def test_engine():
 async def clean_db(test_engine: AsyncEngine):
     """Clean test tables before each test."""
     async with test_engine.begin() as conn:
+        # workflow_instances FKs to users/organizations (migration 0195) — any
+        # row left behind by another integration test sharing this database
+        # would otherwise block DELETE FROM users below.
+        await conn.execute(sa.text("DELETE FROM workflow_instances"))
         await conn.execute(sa.text("DELETE FROM sites"))
         await conn.execute(sa.text("DELETE FROM projects"))
         await conn.execute(sa.text("DELETE FROM users"))
