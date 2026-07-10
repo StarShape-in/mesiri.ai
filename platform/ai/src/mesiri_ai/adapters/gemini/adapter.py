@@ -17,7 +17,7 @@ from typing import Any
 
 from ...core.errors import malformed_output
 from ...core.fallback import call_with_resilience
-from ...models import ExtractionResult, TranslationResult, VisionResult
+from ...models import ExtractionResult, SpeechResult, TranslationResult, VisionResult
 
 try:
     from mesiri.bootstrap.settings import GeminiSettings
@@ -166,6 +166,26 @@ class GeminiProvider:
         return TranslationResult(
             translated_text=data.get("translated_text", text),
             detected_language=data.get("detected_language"),
+            model=self._settings.model,
+            latency_ms=latency_ms,
+        )
+
+    async def transcribe(
+        self,
+        audio: bytes,
+        *,
+        language_hint: str | None = None,
+        correlation_id: str | None = None,
+    ) -> SpeechResult:
+        from google.genai import types  # lazy
+
+        part = types.Part.from_bytes(data=audio, mime_type="audio/ogg")
+        prompt = "Transcribe the audio accurately. Output the transcript directly without any prefix or commentary."
+        text, latency_ms = await self._generate([prompt, part], correlation_id, "transcribe")
+        return SpeechResult(
+            transcript=text.strip(),
+            detected_language=None,
+            translated_text=text.strip(),
             model=self._settings.model,
             latency_ms=latency_ms,
         )

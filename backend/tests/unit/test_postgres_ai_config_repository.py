@@ -12,17 +12,21 @@ from mesiri.infrastructure.postgres.repositories.ai_config import PostgresAIConf
 @pytest.mark.anyio
 async def test_get_active_routes():
     conn = AsyncMock()
-    
-    # Mock row output
+
+    # Mock row output (include new fallback columns)
     row1 = MagicMock()
     row1.capability = "voice"
     row1.provider_id = "sarvam"
     row1.model = "saaras:v2.5"
+    row1.fallback_provider_id = None
+    row1.fallback_model = None
 
     row2 = MagicMock()
     row2.capability = "extraction"
     row2.provider_id = "gemini"
     row2.model = "gemini-2.5-flash"
+    row2.fallback_provider_id = "deepseek"
+    row2.fallback_model = "deepseek-chat"
 
     mock_result = MagicMock()
     mock_result.fetchall.return_value = [row1, row2]
@@ -32,10 +36,9 @@ async def test_get_active_routes():
     routes = await repo.get_active_routes()
 
     assert routes == {
-        "voice": {"provider_id": "sarvam", "model": "saaras:v2.5"},
-        "extraction": {"provider_id": "gemini", "model": "gemini-2.5-flash"},
+        "voice": {"provider_id": "sarvam", "model": "saaras:v2.5", "fallback_provider_id": None, "fallback_model": None},
+        "extraction": {"provider_id": "gemini", "model": "gemini-2.5-flash", "fallback_provider_id": "deepseek", "fallback_model": "deepseek-chat"},
     }
-    # Ensure correct select execution
     assert conn.execute.call_count == 1
 
 

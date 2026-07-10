@@ -23,6 +23,8 @@ class PostgresAIConfigRepository:
             sa.Column("capability", sa.String, primary_key=True),
             sa.Column("provider_id", sa.String, nullable=False),
             sa.Column("model", sa.String, nullable=False),
+            sa.Column("fallback_provider_id", sa.String, nullable=True),
+            sa.Column("fallback_model", sa.String, nullable=True),
             sa.Column("updated_at", sa.DateTime(timezone=True)),
         )
 
@@ -35,12 +37,14 @@ class PostgresAIConfigRepository:
             sa.Column("updated_at", sa.DateTime(timezone=True)),
         )
 
-    async def get_active_routes(self) -> dict[str, dict[str, str]]:
-        """Retrieve all active capability routes."""
+    async def get_active_routes(self) -> dict[str, dict[str, str | None]]:
+        """Retrieve all active capability routes (including fallback columns)."""
         query = sa.select(
             self._active_routes.c.capability,
             self._active_routes.c.provider_id,
             self._active_routes.c.model,
+            self._active_routes.c.fallback_provider_id,
+            self._active_routes.c.fallback_model,
         )
         result = await self._conn.execute(query)
         rows = result.fetchall()
@@ -48,6 +52,8 @@ class PostgresAIConfigRepository:
             row.capability: {
                 "provider_id": row.provider_id,
                 "model": row.model,
+                "fallback_provider_id": row.fallback_provider_id,
+                "fallback_model": row.fallback_model,
             }
             for row in rows
         }
@@ -69,21 +75,37 @@ class PostgresAIConfigRepository:
             for row in rows
         }
 
-    async def update_active_route(self, capability: str, provider_id: str, model: str) -> None:
+    async def update_active_route(
+        self,
+        capability: str,
+        provider_id: str,
+        model: str,
+        fallback_provider_id: str | None = None,
+        fallback_model: str | None = None,
+    ) -> None:
         """Upsert an active route for a capability."""
-        # PostgreSQL UPSERT (ON CONFLICT DO UPDATE)
         insert_stmt = pg_insert(self._active_routes).values(
             capability=capability,
             provider_id=provider_id,
             model=model,
+            fallback_provider_id=fallback_provider_id,
+            fallback_model=fallback_model,
         )
         stmt = insert_stmt.on_conflict_do_update(
             index_elements=["capability"],
-            set_={"provider_id": provider_id, "model": model, "updated_at": sa.func.now()},
+            set_={
+                "provider_id": provider_id,
+                "model": model,
+                "fallback_provider_id": fallback_provider_id,
+                "fallback_model": fallback_model,
+                "updated_at": sa.func.now(),
+            },
         )
         await self._conn.execute(stmt)
 
-    async def update_provider_secret(self, provider_id: str, api_key: str, base_url: str | None = None) -> None:
+    async def update_provider_secret(
+        self, provider_id: str, api_key: str, base_url: str | None = None
+    ) -> None:
         """Upsert secret details for a provider."""
         insert_stmt = pg_insert(self._provider_secrets).values(
             provider_id=provider_id,

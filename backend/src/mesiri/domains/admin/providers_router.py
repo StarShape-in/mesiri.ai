@@ -27,6 +27,8 @@ router = APIRouter(prefix="/admin/providers", tags=["admin"])
 class CapabilityRouting(BaseModel):
     provider_id: str
     model: str
+    fallback_provider_id: str | None = None
+    fallback_model: str | None = None
 
 
 class ProviderSecretInput(BaseModel):
@@ -166,7 +168,10 @@ async def get_ai_config(
     for cap, default_val in default_routes.items():
         val = db_routes.get(cap, default_val)
         resolved_routing[cap] = CapabilityRouting(
-            provider_id=val["provider_id"], model=val["model"]
+            provider_id=val["provider_id"],
+            model=val["model"],
+            fallback_provider_id=val.get("fallback_provider_id"),
+            fallback_model=val.get("fallback_model"),
         )
 
     # Expose secrets (masked previews + urls)
@@ -207,7 +212,11 @@ async def update_ai_config(
     # 1. Update capability routing
     for cap, route in data.routing.items():
         await repo.update_active_route(
-            capability=cap, provider_id=route.provider_id, model=route.model
+            capability=cap,
+            provider_id=route.provider_id,
+            model=route.model,
+            fallback_provider_id=route.fallback_provider_id or None,
+            fallback_model=route.fallback_model or None,
         )
 
     # 2. Update provider secrets (skip if key is masked/unchanged)
