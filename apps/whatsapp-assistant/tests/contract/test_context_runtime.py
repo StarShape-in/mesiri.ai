@@ -5,7 +5,8 @@ database. WorkflowRuntime here always uses a FakeWorkflowRegistry/
 FakeWorkflowInstanceRepository — no LangGraph import needed, matching the
 core-suite-runs-without-langgraph invariant. The key invariants:
   - process_inbound_message wires Understanding → Context → Canonicalization → Planner → Workflow → reply
-  - reply is sent regardless of context resolution outcome
+  - a reply is always sent, whatever the context resolution outcome
+  - the reply is never format_reply()'s developer diagnostic
   - build_container wires an M4 ContextResolver (not ContractContextResolver)
   - context_debug flag triggers log output from log_resolved_context / log_canonical_event /
     log_planner_decision / log_workflow_run
@@ -19,6 +20,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 
+from channel.replies import render_understanding_failed_reply, render_unsupported_reply
 from context import seed
 from context.identity_bridge import deterministic_canonical_uuid as canon
 from context.resolver import ContextResolver
@@ -101,8 +103,8 @@ async def test_inbound_journey_produces_resolved_context():
     context_resolver = _resolver()
     sent_replies: list[str] = []
 
-    async def capture_reply(msg: NormalizedMessage, understanding: UnderstandingResult) -> None:
-        sent_replies.append(format_reply(understanding))
+    async def capture_send(wa_id: str, body: str) -> None:
+        sent_replies.append(body)
 
     result = await process_inbound_message(
         message,
@@ -112,8 +114,7 @@ actor_user_id=canon(seed.USER_ENGINEER),
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
 interaction_handler=InteractionHandler(_workflow_runtime()),
-        reply_sender=capture_reply,
-        send_text=_noop_send_text,
+        send_text=capture_send,
     )
 
     assert isinstance(result.understanding, UnderstandingResult)
@@ -125,9 +126,10 @@ interaction_handler=InteractionHandler(_workflow_runtime()),
     assert result.resolved_context.context_organization_id == seed.ORG_A
     assert result.resolved_context.user_id == canon(seed.USER_ENGINEER)
     assert result.resolved_context.organization_id == canon(seed.ORG_A)
-    # No graph registered for expense.submit in this fake registry -> falls
-    # back to the understanding reply, same as before workflows existed.
-    assert len(sent_replies) == 1
+    # No graph registered for expense.submit in this fake registry -> NO_GRAPH,
+    # which tells the user we understood but can't record it yet. It must never
+    # be the "I couldn't make out that message" reply: the message was fine.
+    assert sent_replies == [render_unsupported_reply()]
 
     # Context resolved successfully → canonicalization and planning run too.
     assert isinstance(result.canonical_event, CanonicalEventV2)
@@ -141,49 +143,53 @@ interaction_handler=InteractionHandler(_workflow_runtime()),
     assert result.planner_decision.user_id == canon(seed.USER_ENGINEER)
 
 
-async def test_inbound_journey_reply_unchanged_by_context():
-    """Reply content must not depend on whether context resolved."""
+async def test_inbound_journey_never_sends_the_developer_diagnostic():
+    """format_reply() renders "Type: ... / Confidence: ..." — a developer
+    diagnostic. It must never reach a user, on any path.
+
+    Supersedes the old contract "reply content must not depend on whether
+    context resolved": the reply now derives from the PlannerDecision, so it
+    depends on context by design.
+    """
     message = _message()
     pipeline = _pipeline()
-    context_resolver = _resolver()
 
-    understanding_only = await pipeline.understand(message)
-    expected_reply = format_reply(understanding_only)
-
+    diagnostic = format_reply(await pipeline.understand(message))
     captured: list[str] = []
 
-    async def capture_reply(msg: NormalizedMessage, understanding: UnderstandingResult) -> None:
-        captured.append(format_reply(understanding))
+    async def capture_send(wa_id: str, body: str) -> None:
+        captured.append(body)
 
     await process_inbound_message(
         message,
 actor_user_id=canon(seed.USER_ENGINEER),
         pipeline=pipeline,
-        context_resolver=context_resolver,
+        context_resolver=_resolver(),
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
 interaction_handler=InteractionHandler(_workflow_runtime()),
-        reply_sender=capture_reply,
-        send_text=_noop_send_text,
+        send_text=capture_send,
     )
 
-    assert captured == [expected_reply]
+    assert captured and diagnostic not in captured
+    assert not any("Confidence:" in body for body in captured)
 
 
 async def test_inbound_journey_unknown_user_still_sends_reply():
-    """An unregistered wa_id causes context to fail, but the reply is still sent.
+    """An unregistered wa_id causes context to fail, but a reply is still sent.
 
     The identity gate in _on_normalized blocks unregistered users before
     process_inbound_message is called. This test verifies that if context
-    resolution fails for any reason, the reply path is not blocked.
+    resolution fails for any reason, the user still hears something back —
+    silence is indistinguishable from Mesiri being down.
     """
     message = _message(wa_id="wa_unregistered_999")
     pipeline = _pipeline()
     context_resolver = _resolver()
     sent_replies: list[str] = []
 
-    async def capture_reply(msg: NormalizedMessage, understanding: UnderstandingResult) -> None:
-        sent_replies.append(format_reply(understanding))
+    async def capture_send(wa_id: str, body: str) -> None:
+        sent_replies.append(body)
 
     result = await process_inbound_message(
         message,
@@ -193,8 +199,7 @@ actor_user_id="wa_unregistered_999",
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
 interaction_handler=InteractionHandler(_workflow_runtime()),
-        reply_sender=capture_reply,
-        send_text=_noop_send_text,
+        send_text=capture_send,
     )
 
     assert isinstance(result.understanding, UnderstandingResult)
@@ -202,13 +207,12 @@ interaction_handler=InteractionHandler(_workflow_runtime()),
     assert result.canonical_event is None  # canonicalization requires resolved context
     assert result.planner_decision is None  # no canonical event to plan from
     assert result.workflow_run is None  # no planner decision to act on
-    assert len(sent_replies) == 1  # reply still went out
+    assert sent_replies == [render_understanding_failed_reply()]
 
 
 async def test_inbound_journey_starts_workflow_and_replies_with_confirmation_prompt():
     """When Planner emits START_WORKFLOW and a graph is registered, the reply is
-    the workflow's confirmation prompt — not the understanding summary. This
-    is the first time context/planner output changes what the user sees."""
+    the workflow's confirmation prompt — never the understanding summary."""
     message = _message()
     pipeline = UnderstandingPipeline(
         speech=FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
@@ -256,9 +260,6 @@ async def test_inbound_journey_starts_workflow_and_replies_with_confirmation_pro
     async def capture_send_text(wa_id: str, body: str) -> None:
         sent_texts.append((wa_id, body))
 
-    async def unexpected_reply(msg: NormalizedMessage, understanding: UnderstandingResult) -> None:
-        raise AssertionError("reply_sender must not be called when a workflow starts")
-
     result = await process_inbound_message(
         message,
 actor_user_id=canon(seed.USER_ENGINEER),
@@ -267,7 +268,6 @@ actor_user_id=canon(seed.USER_ENGINEER),
         planner=Planner(),
         workflow_runtime=workflow_runtime,
 interaction_handler=InteractionHandler(workflow_runtime),
-        reply_sender=unexpected_reply,
         send_text=capture_send_text,
     )
 
@@ -344,9 +344,6 @@ async def test_inbound_journey_blocks_new_workflow_while_confirmation_pending():
     async def capture_send_text(wa_id: str, body: str) -> None:
         sent_texts.append(body)
 
-    async def unexpected_reply(msg, understanding) -> None:
-        raise AssertionError("must not fall back to understanding reply when blocked")
-
     result = await process_inbound_message(
         message,
 actor_user_id=canon(seed.USER_ENGINEER),
@@ -355,7 +352,6 @@ actor_user_id=canon(seed.USER_ENGINEER),
         planner=Planner(),
         workflow_runtime=workflow_runtime,
 interaction_handler=InteractionHandler(workflow_runtime),
-        reply_sender=unexpected_reply,
         send_text=capture_send_text,
     )
 
@@ -408,7 +404,6 @@ actor_user_id=canon(seed.USER_ENGINEER),
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
 interaction_handler=InteractionHandler(_workflow_runtime()),
-        reply_sender=noop_reply,
         send_text=_noop_send_text,
         context_debug=True,
     )
@@ -436,7 +431,6 @@ actor_user_id=canon(seed.USER_ENGINEER),
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
 interaction_handler=InteractionHandler(_workflow_runtime()),
-        reply_sender=noop_reply,
         send_text=_noop_send_text,
         context_debug=True,
     )
@@ -463,7 +457,6 @@ actor_user_id=canon(seed.USER_ENGINEER),
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
 interaction_handler=InteractionHandler(_workflow_runtime()),
-        reply_sender=noop_reply,
         send_text=_noop_send_text,
         context_debug=True,
     )
@@ -491,7 +484,6 @@ actor_user_id=canon(seed.USER_ENGINEER),
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
 interaction_handler=InteractionHandler(_workflow_runtime()),
-        reply_sender=noop_reply,
         send_text=_noop_send_text,
         context_debug=True,
     )
@@ -501,27 +493,21 @@ interaction_handler=InteractionHandler(_workflow_runtime()),
     )
 
 
-async def test_reply_sender_receives_same_understanding_as_format_reply():
+async def test_reply_is_sent_once_to_the_sender():
+    """Exactly one reply, addressed to the wa_id that sent the message."""
     message = _message()
-    pipeline = _pipeline()
-    understanding = await pipeline.understand(message)
-    expected_reply = format_reply(understanding)
-
-    sender = AsyncMock()
-
-    async def _send_understanding_reply(msg, result) -> None:
-        await sender.send_text(msg.sender.wa_id, format_reply(result))
+    send_text = AsyncMock()
 
     await process_inbound_message(
         message,
 actor_user_id=canon(seed.USER_ENGINEER),
-        pipeline=pipeline,
+        pipeline=_pipeline(),
         context_resolver=_resolver(),
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
 interaction_handler=InteractionHandler(_workflow_runtime()),
-        reply_sender=_send_understanding_reply,
-        send_text=_noop_send_text,
+        send_text=send_text,
     )
 
-    sender.send_text.assert_awaited_once_with(message.sender.wa_id, expected_reply)
+    # expense.submit has no graph in the fake registry -> NO_GRAPH.
+    send_text.assert_awaited_once_with(message.sender.wa_id, render_unsupported_reply())

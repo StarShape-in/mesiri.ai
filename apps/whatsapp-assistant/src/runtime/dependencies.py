@@ -107,7 +107,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     )
     from planner import Planner
     from runtime.inbound_journey import process_inbound_message
-    from understanding.runtime import build_pipeline, format_reply
+    from understanding.runtime import build_pipeline
     from workflows import WorkflowRegistry, WorkflowRuntime
 
     _log = _logging.getLogger("mesiri.context")
@@ -162,9 +162,6 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     actor_reader = PostgresActorReader()
     message_logger: MessageLogger = PostgresMessageLogger()
     trace_logger: TraceLogger = PostgresTraceLogger()
-
-    async def _send_understanding_reply(message, understanding) -> None:  # type: ignore[no-untyped-def]
-        await sender.send_text(message.sender.wa_id, format_reply(understanding))
 
     async def _on_normalized(message) -> None:  # type: ignore[no-untyped-def]
         wa_id = message.sender.wa_id
@@ -233,7 +230,6 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             planner=planner,
             workflow_runtime=workflow_runtime,
             interaction_handler=interaction_handler,
-            reply_sender=_send_understanding_reply,
             send_text=sender.send_text,
             context_debug=settings.context_debug,
             message_logger=message_logger,

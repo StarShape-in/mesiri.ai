@@ -13,6 +13,7 @@ without modifying the M1 ``PostgresDatabase`` facade.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 from mesiri.infrastructure.errors import map_postgres_error
@@ -50,14 +51,29 @@ class _EngineMixin:
         return rows[0] if rows else None
 
 
+def _digits(value: str) -> str:
+    """Phone numbers as digits only. Mirrors ``_digits`` in backend/postgres/actor.py."""
+    return re.sub(r"\D", "", value or "")
+
+
 class PostgresExternalIdentityRepository(_EngineMixin):
     async def find_identity(
         self, *, provider: str, external_subject: str
     ) -> ExternalIdentity | None:
+        # WhatsApp subjects are phone numbers written inconsistently: Meta sends
+        # bare digits ("919876543210") while `external_identities.external_subject`
+        # is projected verbatim from `users.whatsapp_number`, which an admin may
+        # have typed as "+91 98765 43210". An exact match silently misses, and the
+        # caller reports UNKNOWN_EXTERNAL_IDENTITY for a user who plainly exists.
+        # Compare on digits, as the identity gate (actor.py) already does.
+        #
+        # This cannot use ix_external_identities_* — add a functional index on
+        # regexp_replace(external_subject, '\D', '', 'g') if this table ever grows
+        # past a trivial size.
         row = await self._row(
             "SELECT provider, external_subject, user_id FROM external_identities "
-            "WHERE provider = :p AND external_subject = :s",
-            {"p": provider, "s": external_subject},
+            "WHERE provider = :p AND regexp_replace(external_subject, '\\D', '', 'g') = :s",
+            {"p": provider, "s": _digits(external_subject)},
         )
         if row is None:
             return None

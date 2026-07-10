@@ -29,7 +29,6 @@ from planner import Planner
 from runtime.inbound_journey import process_inbound_message
 from runtime.noop_loggers import RecordingMessageLogger, RecordingTraceLogger
 from understanding.pipeline import UnderstandingPipeline
-from understanding.runtime import format_reply
 from workflows import WorkflowRuntime
 from workflows.fakes import FakeWorkflowInstanceRepository, FakeWorkflowRegistry
 
@@ -93,7 +92,6 @@ async def test_trace_logger_captures_all_stages_on_success():
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
         interaction_handler=_interaction_handler(),
-        reply_sender=reply,
         send_text=_noop_send_text,
         message_logger=mlog,
         trace_logger=tlog,
@@ -132,7 +130,6 @@ async def test_trace_logger_captures_context_failure():
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
         interaction_handler=_interaction_handler(),
-        reply_sender=reply,
         send_text=_noop_send_text,
         message_logger=mlog,
         trace_logger=tlog,
@@ -178,7 +175,6 @@ async def test_trace_logger_captures_workflow_stage():
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
         interaction_handler=_interaction_handler(),
-        reply_sender=reply,
         send_text=_noop_send_text,
         message_logger=mlog,
         trace_logger=tlog,
@@ -210,8 +206,8 @@ async def test_logger_failure_does_not_break_pipeline():
     message = _message()
     sent_replies: list[str] = []
 
-    async def capture_reply(msg, understanding):  # noqa: ANN001
-        sent_replies.append(format_reply(understanding))
+    async def capture_send(wa_id: str, body: str) -> None:
+        sent_replies.append(body)
 
     # Must not raise
     result = await process_inbound_message(
@@ -222,14 +218,13 @@ async def test_logger_failure_does_not_break_pipeline():
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
         interaction_handler=_interaction_handler(),
-        reply_sender=capture_reply,
-        send_text=_noop_send_text,
+        send_text=capture_send,
         message_logger=ExplosiveMessageLogger(),
         trace_logger=ExplosiveTraceLogger(),
     )
 
     assert isinstance(result.understanding, UnderstandingResult)
-    assert len(sent_replies) == 1
+    assert len(sent_replies) == 1  # a broken logger must not swallow the reply
 
 
 async def test_no_loggers_does_not_break():
@@ -247,7 +242,6 @@ async def test_no_loggers_does_not_break():
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
         interaction_handler=_interaction_handler(),
-        reply_sender=reply,
         send_text=_noop_send_text,
     )
 

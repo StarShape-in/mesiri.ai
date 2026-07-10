@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Literal
 from uuid import UUID
@@ -19,6 +20,11 @@ from .identity_bridge import (
 
 EntityType = Literal["organization", "user", "project", "site"]
 WHATSAPP_PROVIDER = "whatsapp"
+
+
+def _digits(value: str | None) -> str:
+    """Phone numbers as digits only. Mirrors ``_digits`` in backend/postgres/actor.py."""
+    return re.sub(r"\D", "", value or "")
 
 
 @dataclass(slots=True)
@@ -178,7 +184,10 @@ class IdentityProjectionService:
                 ),
                 {"id": membership_id, "org_id": org_ctx, "user_id": ctx_id},
             )
-        wa = row["whatsapp_number"]
+        # Store the subject as bare digits: Meta's inbound `wa_id` is digit-only,
+        # while `users.whatsapp_number` may carry "+", spaces, or dashes. Writing
+        # the raw value made lookups depend on how an admin typed the number.
+        wa = _digits(row["whatsapp_number"])
         if wa:
             ext_id = f"ext_{WHATSAPP_PROVIDER}_{wa}"
             conn.execute(

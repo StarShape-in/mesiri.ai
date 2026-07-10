@@ -14,6 +14,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from canonicalization import build_canonical_event, log_canonical_event
+from channel.replies import (
+    render_clarify_reply,
+    render_direct_reply,
+    render_understanding_failed_reply,
+    render_unsupported_reply,
+)
 from context.resolver import ContextResolver
 from context.runtime import log_resolved_context
 from interactions.handler import InteractionHandler
@@ -57,6 +63,46 @@ async def _safe(coro: Awaitable[None]) -> None:
         _log.warning("logger call failed", exc_info=True)
 
 
+def _render_reply(
+    workflow_run: WorkflowRunResult | None,
+    workflow_resume: WorkflowResumeResult | None,
+    decision: PlannerDecisionV2 | None,
+    resolved: ResolvedContextV2 | None,
+) -> str | None:
+    """The single place that decides what the user hears back.
+
+    Returns None only when the interaction leg has already replied. Every other
+    path must produce something: a message that reaches the assistant and gets
+    no answer is indistinguishable from Mesiri being down.
+    """
+    if workflow_run is not None and workflow_run.status in (
+        WorkflowRunStatus.STARTED,
+        WorkflowRunStatus.BLOCKED_PENDING_CONFIRMATION,
+    ):
+        return render_workflow_run_reply(workflow_run, pending_prompt=workflow_run.pending_prompt)
+
+    if workflow_resume is not None:
+        return None  # interactions/handler.py already sent its own reply
+
+    if workflow_run is not None and workflow_run.status is WorkflowRunStatus.NO_GRAPH:
+        # Understood, but expense/labour/equipment graphs don't exist yet.
+        return render_unsupported_reply()
+
+    if decision is not None:
+        if decision.decision_type is PlannerDecisionType.CLARIFY:
+            return render_clarify_reply(decision)
+        if decision.decision_type is PlannerDecisionType.DIRECT_REPLY:
+            return render_direct_reply(
+                decision, timezone=resolved.timezone if resolved else None
+            )
+
+    # Context resolution failed, understanding was UNUSABLE, the workflow run
+    # FAILED, or the planner said IGNORE. Never fall through to format_reply():
+    # that is a developer diagnostic ("Type: unknown / Confidence: unusable"),
+    # not a reply a site worker should ever receive.
+    return render_understanding_failed_reply()
+
+
 async def process_inbound_message(
     message: NormalizedMessage,
     actor_user_id: str,
@@ -66,7 +112,6 @@ async def process_inbound_message(
     planner: Planner,
     workflow_runtime: WorkflowRuntime,
     interaction_handler: InteractionHandler,
-    reply_sender: Callable[[NormalizedMessage, UnderstandingResult], Awaitable[None]],
     send_text: Callable[[str, str], Awaitable[Any]],
     context_debug: bool = False,
     message_logger: MessageLogger | None = None,
@@ -225,18 +270,9 @@ async def process_inbound_message(
         )
 
     # --- Send reply ---
-    if workflow_run is not None and workflow_run.status in (
-        WorkflowRunStatus.STARTED,
-        WorkflowRunStatus.BLOCKED_PENDING_CONFIRMATION,
-    ):
-        await send_text(
-            message.sender.wa_id,
-            render_workflow_run_reply(workflow_run, pending_prompt=workflow_run.pending_prompt),
-        )
-    else:
-        # Only send the default understanding reply if we didn't just resume a workflow
-        if not workflow_resume:
-            await reply_sender(message, understanding)
+    reply = _render_reply(workflow_run, workflow_resume, planner_decision, resolved)
+    if reply is not None:
+        await send_text(message.sender.wa_id, reply)
 
     await _safe(mlog.mark_completed(correlation_id=correlation_id))
 
