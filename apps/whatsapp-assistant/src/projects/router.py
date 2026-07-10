@@ -308,6 +308,8 @@ async def create_project(project_in: ProjectCreate, payload: dict = Depends(get_
             )
         )
 
+    await project_entity("project", project_id)
+
     ui_status, label = _STATUS_DISPLAY[status]
     return ProjectResponse(
         id=project_id,
