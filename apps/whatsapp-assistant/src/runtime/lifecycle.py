@@ -123,4 +123,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         logging.getLogger(__name__).warning("Projects router not loaded: %s", exc)
 
+    # Materials routes (tenant-scoped materials log)
+    try:
+        from mesiri.domains.materials.router import router as materials_router
+
+        app.include_router(materials_router)
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("Materials router not loaded: %s", exc)
+
     return app

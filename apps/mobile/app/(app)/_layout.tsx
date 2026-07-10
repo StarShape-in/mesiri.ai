@@ -58,6 +58,7 @@ export default function AppLayout() {
       <Tabs.Screen name="profile" options={{ title: 'Profile' }} />
       
       {/* Hidden fallback screens from earlier if needed */}
+      <Tabs.Screen name="field/materials" options={{ title: 'Materials Log', href: null }} />
       <Tabs.Screen name="sites" options={{ title: 'Sites', href: null }} />
       <Tabs.Screen name="reports" options={{ title: 'Reports', href: null }} />
       <Tabs.Screen name="projects/index" options={{ title: 'Projects', href: null }} />

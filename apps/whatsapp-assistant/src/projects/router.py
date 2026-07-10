@@ -241,7 +241,7 @@ async def create_project_site(
     org_id = payload.get("org")
     if not org_id:
         raise HTTPException(status_code=400, detail="User has no organization")
-    if payload.get("role") not in _CREATE_ROLES:
+    if (payload.get("role") or "").upper() not in _CREATE_ROLES:
         raise HTTPException(status_code=403, detail="Not authorized to create sites")
 
     name = site_in.name.strip()
@@ -279,7 +279,7 @@ async def create_project(project_in: ProjectCreate, payload: dict = Depends(get_
     org_id = payload.get("org")
     if not org_id:
         raise HTTPException(status_code=400, detail="User has no organization")
-    if payload.get("role") not in _CREATE_ROLES:
+    if (payload.get("role") or "").upper() not in _CREATE_ROLES:
         raise HTTPException(status_code=403, detail="Not authorized to create projects")
     if not project_in.name.strip():
         raise HTTPException(status_code=400, detail="Project name is required")

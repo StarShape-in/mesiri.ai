@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, Modal, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, Modal, ActivityIndicator, Alert, KeyboardAvoidingView, ScrollView, Platform, Keyboard, Pressable } from 'react-native';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -42,7 +42,12 @@ export default function UsersScreen() {
     setLoading(true);
     try {
       const res = await api.get('/users');
-      setUsers(res.data);
+      if (Array.isArray(res.data)) {
+        setUsers(res.data);
+      } else {
+        console.warn('API returned non-array users data:', res.data);
+        setUsers([]);
+      }
     } catch (e: any) {
       if (e.response?.status === 403) {
         Alert.alert("Access Denied", "Only administrators can view the team.");
@@ -126,26 +131,33 @@ export default function UsersScreen() {
     }
   };
 
-  const renderItem = ({ item }: { item: User }) => (
-    <TouchableOpacity style={styles.userCard} onPress={() => router.push(`/users/${item.id}`)} activeOpacity={0.7}>
-      <View style={styles.userInfo}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{item.full_name.charAt(0)}</Text>
+  const renderItem = ({ item }: { item: User }) => {
+    const fullName = item.full_name || 'Unknown';
+    const email = item.email || '';
+    const whatsappNumber = item.whatsapp_number || '';
+    const role = item.role || 'USER';
+
+    return (
+      <TouchableOpacity style={styles.userCard} onPress={() => router.push(`/users/${item.id || ''}`)} activeOpacity={0.7}>
+        <View style={styles.userInfo}>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{(fullName || email || '?').charAt(0).toUpperCase()}</Text>
+          </View>
+          <View style={styles.userInfoText}>
+            <Text style={styles.userName}>{fullName}</Text>
+            <Text style={styles.userEmail}>{email}</Text>
+            <Text style={styles.userWhatsapp}>
+              <Ionicons name="logo-whatsapp" size={12} color={theme.colors.textMuted} />
+              {' '}{whatsappNumber || 'No WhatsApp number'}
+            </Text>
+          </View>
         </View>
-        <View style={styles.userInfoText}>
-          <Text style={styles.userName}>{item.full_name}</Text>
-          <Text style={styles.userEmail}>{item.email}</Text>
-          <Text style={styles.userWhatsapp}>
-            <Ionicons name="logo-whatsapp" size={12} color={theme.colors.textMuted} />
-            {' '}{item.whatsapp_number || 'No WhatsApp number'}
-          </Text>
+        <View style={styles.roleBadge}>
+          <Text style={styles.roleText}>{role.replace('_', ' ')}</Text>
         </View>
-      </View>
-      <View style={styles.roleBadge}>
-        <Text style={styles.roleText}>{item.role.replace('_', ' ')}</Text>
-      </View>
-    </TouchableOpacity>
-  );
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -164,7 +176,7 @@ export default function UsersScreen() {
       ) : (
         <FlatList
           data={users}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item, index) => item.id || String(index)}
           renderItem={renderItem}
           contentContainerStyle={{ paddingBottom: 24 }}
           ListEmptyComponent={<Text style={styles.emptyText}>No users found.</Text>}
@@ -173,72 +185,83 @@ export default function UsersScreen() {
 
       {/* CREATE USER MODAL */}
       <Modal visible={isModalOpen} animationType="slide" transparent={true}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>{isEditing ? 'Edit Team Member' : 'Add Team Member'}</Text>
-              <TouchableOpacity onPress={closeModal}>
-                <Ionicons name="close" size={24} color={theme.colors.textSecondary} />
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.formGroup}>
-              <Text style={styles.label}>Full Name</Text>
-              <TextInput style={styles.input} value={name} onChangeText={setName} placeholder="Jane Doe" />
-            </View>
-
-            <View style={styles.formGroup}>
-              <Text style={styles.label}>Email Address</Text>
-              <TextInput
-                style={[styles.input, isEditing && styles.inputDisabled]}
-                value={email}
-                onChangeText={setEmail}
-                placeholder="jane@example.com"
-                autoCapitalize="none"
-                keyboardType="email-address"
-                editable={!isEditing}
-              />
-            </View>
-
-            <View style={styles.formGroup}>
-              <Text style={styles.label}>WhatsApp Number</Text>
-              <TextInput
-                style={styles.input}
-                value={whatsapp}
-                onChangeText={setWhatsapp}
-                placeholder="+91 98765 43210"
-                autoCapitalize="none"
-                keyboardType="phone-pad"
-              />
-            </View>
-
-            <View style={styles.formGroup}>
-              <Text style={styles.label}>{isEditing ? 'New Password' : 'Password'}</Text>
-              <TextInput style={styles.input} value={password} onChangeText={setPassword} placeholder={isEditing ? 'Leave blank to keep current' : 'Temporary Password'} secureTextEntry />
-            </View>
-
-            <View style={styles.formGroup}>
-              <Text style={styles.label}>Role</Text>
-              <View style={styles.roleSelector}>
-                {ROLES.map((r) => (
-                  <TouchableOpacity
-                    key={r}
-                    style={[styles.roleOption, role === r && styles.roleOptionActive]}
-                    onPress={() => setRole(r)}
-                  >
-                    <Text style={[styles.roleOptionText, role === r && styles.roleOptionTextActive]}>
-                      {r.replace('_', ' ')}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.keyboardAvoidingView}
+        >
+          <Pressable style={styles.modalOverlay} onPress={Keyboard.dismiss}>
+            <Pressable style={styles.modalContent} onPress={(e) => e.stopPropagation()}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>{isEditing ? 'Edit Team Member' : 'Add Team Member'}</Text>
+                <TouchableOpacity onPress={closeModal}>
+                  <Ionicons name="close" size={24} color={theme.colors.textSecondary} />
+                </TouchableOpacity>
               </View>
-            </View>
 
-            <TouchableOpacity style={styles.submitButton} onPress={handleSubmit} disabled={creating}>
-              {creating ? <ActivityIndicator color={theme.colors.actionPrimaryForeground} /> : <Text style={styles.submitButtonText}>{isEditing ? 'Save Changes' : 'Create User'}</Text>}
-            </TouchableOpacity>
-          </View>
-        </View>
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={styles.modalFormScroll}
+              >
+                <View style={styles.formGroup}>
+                  <Text style={styles.label}>Full Name</Text>
+                  <TextInput style={styles.input} value={name} onChangeText={setName} placeholder="Jane Doe" />
+                </View>
+
+                <View style={styles.formGroup}>
+                  <Text style={styles.label}>Email Address</Text>
+                  <TextInput
+                    style={[styles.input, isEditing && styles.inputDisabled]}
+                    value={email}
+                    onChangeText={setEmail}
+                    placeholder="jane@example.com"
+                    autoCapitalize="none"
+                    keyboardType="email-address"
+                    editable={!isEditing}
+                  />
+                </View>
+
+                <View style={styles.formGroup}>
+                  <Text style={styles.label}>WhatsApp Number</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={whatsapp}
+                    onChangeText={setWhatsapp}
+                    placeholder="+91 98765 43210"
+                    autoCapitalize="none"
+                    keyboardType="phone-pad"
+                  />
+                </View>
+
+                <View style={styles.formGroup}>
+                  <Text style={styles.label}>{isEditing ? 'New Password' : 'Password'}</Text>
+                  <TextInput style={styles.input} value={password} onChangeText={setPassword} placeholder={isEditing ? 'Leave blank to keep current' : 'Temporary Password'} secureTextEntry />
+                </View>
+
+                <View style={styles.formGroup}>
+                  <Text style={styles.label}>Role</Text>
+                  <View style={styles.roleSelector}>
+                    {ROLES.map((r) => (
+                      <TouchableOpacity
+                        key={r}
+                        style={[styles.roleOption, role === r && styles.roleOptionActive]}
+                        onPress={() => setRole(r)}
+                      >
+                        <Text style={[styles.roleOptionText, role === r && styles.roleOptionTextActive]}>
+                          {r.replace('_', ' ')}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+
+                <TouchableOpacity style={styles.submitButton} onPress={handleSubmit} disabled={creating}>
+                  {creating ? <ActivityIndicator color={theme.colors.actionPrimaryForeground} /> : <Text style={styles.submitButtonText}>{isEditing ? 'Save Changes' : 'Create User'}</Text>}
+                </TouchableOpacity>
+              </ScrollView>
+            </Pressable>
+          </Pressable>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -263,8 +286,10 @@ const createStyles = (theme: any) => StyleSheet.create({
   roleBadge: { backgroundColor: theme.colors.backgroundSubtle, paddingHorizontal: 10, paddingVertical: 4, borderRadius: theme.radius.lg },
   roleText: { fontSize: 11, fontWeight: theme.typography.weightSemiBold, color: theme.colors.textMuted, textTransform: 'capitalize' },
   
+  keyboardAvoidingView: { flex: 1 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  modalContent: { backgroundColor: theme.colors.backgroundSurface, borderTopLeftRadius: theme.radius.xl, borderTopRightRadius: theme.radius.xl, padding: theme.spacing.space6, paddingBottom: 40 },
+  modalContent: { backgroundColor: theme.colors.backgroundSurface, borderTopLeftRadius: theme.radius.xl, borderTopRightRadius: theme.radius.xl, padding: theme.spacing.space6, paddingBottom: 40, maxHeight: '90%' },
+  modalFormScroll: { paddingBottom: 24 },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: theme.spacing.space6 },
   modalTitle: { fontSize: theme.typography.sizeXl, fontWeight: theme.typography.weightSemiBold, color: theme.colors.textPrimary },
   formGroup: { marginBottom: theme.spacing.space4 },

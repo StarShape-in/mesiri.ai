@@ -2,6 +2,7 @@
 
 Endpoints
 ---------
+POST /users               create a new user in the caller's org  (admin)
 GET  /users               list all users in the caller's org  (admin)
 GET  /users/{id}          fetch a single user with access policy  (admin)
 PATCH /users/{id}         update role / full_name / whatsapp  (admin)
@@ -97,7 +98,65 @@ def _row_to_response(row: Any) -> UserResponse:
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+class UserCreate(BaseModel):
+    full_name: str
+    email: str
+    password: str
+    role: str
+    whatsapp_number: str | None = None
+
+
+@router.post("", response_model=UserResponse, status_code=201)
+@router.post("/", response_model=UserResponse, status_code=201, include_in_schema=False)
+async def create_user(
+    body: UserCreate,
+    admin: dict = Depends(require_admin),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Create a new user in the admin's organization."""
+    org_id = admin.get("org")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="Token missing org claim")
+
+    role = body.role.upper()
+    if role not in _VALID_ROLES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid role. Must be one of {sorted(_VALID_ROLES)}",
+        )
+
+    # Check for duplicate email within this org
+    existing = await conn.execute(
+        sa.select(_users.c.id).where(_users.c.email == body.email)
+    )
+    if existing.first():
+        raise HTTPException(status_code=409, detail="A user with this email already exists")
+
+    hashed_password = _bcrypt.hashpw(
+        body.password.encode(), _bcrypt.gensalt()
+    ).decode()
+
+    new_id = uuid.uuid4()
+    await conn.execute(
+        _users.insert().values(
+            id=new_id,
+            organization_id=org_id,
+            email=body.email,
+            hashed_password=hashed_password,
+            full_name=body.full_name,
+            role=role,
+            whatsapp_number=body.whatsapp_number or None,
+            status="active",
+            access_policy=_DEFAULT_ACCESS_POLICY,
+        )
+    )
+
+    result = await conn.execute(sa.select(_users).where(_users.c.id == new_id))
+    return _row_to_response(result.first())
+
+
 @router.get("", response_model=list[UserResponse])
+@router.get("/", response_model=list[UserResponse], include_in_schema=False)
 async def list_users(
     admin: dict = Depends(require_admin),
     conn: AsyncConnection = Depends(get_db_conn),

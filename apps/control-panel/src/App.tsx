@@ -10,7 +10,8 @@ import {
   Cloud,
   TrendingUp,
   Activity,
-  ScrollText
+  ScrollText,
+  Cpu
 } from 'lucide-react';
 import { api } from './api';
 import { RequireAuth } from './AuthContext';
@@ -18,6 +19,7 @@ import Login from './Login';
 import Logs from './Logs';
 import SettingsPage from './Settings';
 import PlatformUsers from './PlatformUsers';
+import Providers from './Providers';
 
 const Sidebar = () => (
   <div className="sidebar">
@@ -40,6 +42,10 @@ const Sidebar = () => (
       <NavLink to="/logs" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
         <ScrollText size={16} />
         Assistant Logs
+      </NavLink>
+      <NavLink to="/providers" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+        <Cpu size={16} />
+        AI Providers
       </NavLink>
       <NavLink to="/users" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
         <Users size={16} />
@@ -282,6 +288,7 @@ function AppLayout() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/organizations" element={<Organizations />} />
             <Route path="/logs" element={<Logs />} />
+            <Route path="/providers" element={<Providers />} />
             <Route path="/users" element={<PlatformUsers />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<Dashboard />} />

@@ -144,7 +144,7 @@ export default function UserDetailsScreen() {
     const projs = draftPolicy.projects || [];
     const newProjs = projs.map(p => {
       if (p.projectId === projectId) {
-        return { ...p, siteAccess: { mode: isAllSites ? 'all_sites' : 'custom_sites', siteIds: [] } };
+        return { ...p, siteAccess: { mode: isAllSites ? 'all_sites' as const : 'custom_sites' as const, siteIds: [] } };
       }
       return p;
     });

@@ -1,4 +1,4 @@
-import { FolderKanban, Images, FileText, WalletCards, Settings, HelpCircle, Palette, LucideIcon } from 'lucide-react-native';
+import { FolderKanban, Images, FileText, WalletCards, Settings, HelpCircle, Palette, LucideIcon, Boxes } from 'lucide-react-native';
 import { Capability } from '../../app/_layout';
 
 export type DrawerSectionId = 'management' | 'settings';
@@ -20,6 +20,14 @@ export const drawerNavigationItems: DrawerNavigationItem[] = [
     label: 'Projects',
     icon: FolderKanban,
     route: '/projects',
+    requiredCapability: 'projects.view',
+    section: 'management',
+  },
+  {
+    id: 'materials',
+    label: 'Materials Log',
+    icon: Boxes,
+    route: '/field/materials',
     requiredCapability: 'projects.view',
     section: 'management',
   },

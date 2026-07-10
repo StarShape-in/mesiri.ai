@@ -58,7 +58,7 @@ export default function ProfileScreen() {
         </View>
       </View>
 
-      {userData?.role === 'ADMIN' && (
+      {(userData?.role || '').toUpperCase() === 'ADMIN' && (
         <View style={styles.section}>
           <Link href="/users" asChild>
             <TouchableOpacity style={styles.manageTeamButton}>

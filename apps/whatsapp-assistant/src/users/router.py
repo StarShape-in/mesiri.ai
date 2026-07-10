@@ -217,7 +217,7 @@ async def get_current_admin(authorization: str = Header(None)):
     token = authorization.split(" ")[1]
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        if payload.get("role") != "ADMIN":
+        if (payload.get("role") or "").upper() != "ADMIN":
             raise HTTPException(status_code=403, detail="Not authorized (Admin only)")
         return payload
     except jwt.PyJWTError as exc:
@@ -228,6 +228,7 @@ async def get_current_admin(authorization: str = Header(None)):
 # Routes
 # ---------------------------------------------------------------------------
 @router.get("", response_model=list[UserResponse])
+@router.get("/", response_model=list[UserResponse], include_in_schema=False)
 async def list_users(admin_payload: dict = Depends(get_current_admin)):
     engine = get_engine()
     org_id = admin_payload.get("org")
@@ -265,6 +266,7 @@ async def get_user(user_id: uuid.UUID, admin_payload: dict = Depends(get_current
 
 
 @router.post("", response_model=UserResponse)
+@router.post("/", response_model=UserResponse, include_in_schema=False)
 async def create_user(user_in: UserCreate, admin_payload: dict = Depends(get_current_admin)):
     engine = get_engine()
     org_id = admin_payload.get("org")

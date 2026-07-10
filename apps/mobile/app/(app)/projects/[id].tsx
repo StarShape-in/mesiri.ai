@@ -8,6 +8,10 @@ import {
   Text,
   TouchableOpacity,
   View,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  Keyboard,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { api } from '@mesiri/auth';
@@ -208,43 +212,54 @@ export default function ProjectDetailsRoute() {
       </ScrollView>
 
       <Modal visible={createOpen} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
-          <View style={styles.sheet}>
-            <Text style={styles.sheetTitle}>Create Site</Text>
-            <FormTextInput
-              label="Site Name *"
-              placeholder="e.g. Tower A"
-              value={siteName}
-              onChangeText={text => {
-                setSiteName(text);
-                setSiteError(null);
-              }}
-              error={siteError || undefined}
-            />
-            <View style={styles.sheetActions}>
-              <TouchableOpacity
-                style={styles.secondaryButton}
-                onPress={() => {
-                  setCreateOpen(false);
-                  setSiteName('');
-                  setSiteError(null);
-                }}
-                disabled={submittingSite}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.keyboardAvoidingView}
+        >
+          <Pressable style={styles.modalOverlay} onPress={Keyboard.dismiss}>
+            <Pressable style={styles.sheet} onPress={e => e.stopPropagation()}>
+              <Text style={styles.sheetTitle}>Create Site</Text>
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={styles.sheetFormScroll}
               >
-                <Text style={styles.secondaryButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.primaryButton, submittingSite && styles.disabledButton]}
-                onPress={handleCreateSite}
-                disabled={submittingSite}
-              >
-                <Text style={styles.primaryButtonText}>
-                  {submittingSite ? 'Creating...' : 'Create'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
+                <FormTextInput
+                  label="Site Name *"
+                  placeholder="e.g. Tower A"
+                  value={siteName}
+                  onChangeText={text => {
+                    setSiteName(text);
+                    setSiteError(null);
+                  }}
+                  error={siteError || undefined}
+                />
+                <View style={styles.sheetActions}>
+                  <TouchableOpacity
+                    style={styles.secondaryButton}
+                    onPress={() => {
+                      setCreateOpen(false);
+                      setSiteName('');
+                      setSiteError(null);
+                    }}
+                    disabled={submittingSite}
+                  >
+                    <Text style={styles.secondaryButtonText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.primaryButton, submittingSite && styles.disabledButton]}
+                    onPress={handleCreateSite}
+                    disabled={submittingSite}
+                  >
+                    <Text style={styles.primaryButtonText}>
+                      {submittingSite ? 'Creating...' : 'Create'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
+            </Pressable>
+          </Pressable>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -454,6 +469,9 @@ const createStyles = (theme: any) => StyleSheet.create({
     marginTop: 2,
     textTransform: 'capitalize',
   },
+  keyboardAvoidingView: {
+    flex: 1,
+  },
   modalOverlay: {
     flex: 1,
     justifyContent: 'flex-end',
@@ -465,6 +483,9 @@ const createStyles = (theme: any) => StyleSheet.create({
     borderTopRightRadius: theme.radius.xl,
     padding: 20,
     paddingBottom: 36,
+    maxHeight: '90%',
+  },
+  sheetFormScroll: {
     gap: 16,
   },
   sheetTitle: {

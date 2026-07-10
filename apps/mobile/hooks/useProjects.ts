@@ -26,10 +26,20 @@ export function useProjects() {
     setIsLoading(true);
     try {
       const res = await api.get('/projects');
-      setProjects(res.data);
+      if (Array.isArray(res.data)) {
+        setProjects(res.data);
+      } else if (res.data && Array.isArray(res.data.projects)) {
+        setProjects(res.data.projects);
+      } else if (res.data && Array.isArray(res.data.data)) {
+        setProjects(res.data.data);
+      } else {
+        console.warn('API returned non-array projects data:', res.data);
+        setProjects([]);
+      }
       setError(null);
     } catch (err: any) {
       setError(err instanceof Error ? err : new Error('Failed to load projects'));
+      setProjects([]);
     } finally {
       setIsLoading(false);
     }

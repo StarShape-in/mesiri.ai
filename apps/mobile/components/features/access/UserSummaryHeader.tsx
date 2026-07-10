@@ -16,6 +16,13 @@ export function UserSummaryHeader({ name, role, email, phone, status }: UserSumm
   const styles = useStyles(createStyles);
 
   const initial = name.charAt(0).toUpperCase();
+  const statusMap: Record<typeof status, { status: 'critical' | 'warning' | 'success' | 'neutral'; label: string }> = {
+    active: { status: 'success', label: 'Active' },
+    inactive: { status: 'neutral', label: 'Inactive' },
+    suspended: { status: 'critical', label: 'Suspended' },
+    invited: { status: 'warning', label: 'Invited' },
+  };
+  const mapped = statusMap[status] || { status: 'neutral', label: status };
 
   return (
     <View style={styles.container}>
@@ -28,7 +35,7 @@ export function UserSummaryHeader({ name, role, email, phone, status }: UserSumm
         <Text style={styles.role}>{role.replace('_', ' ')}</Text>
       </View>
       <View style={styles.statusContainer}>
-        <StatusBadge status={status} />
+        <StatusBadge status={mapped.status} label={mapped.label} />
       </View>
     </View>
   );

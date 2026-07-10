@@ -16,8 +16,8 @@ import { AlertCircle } from 'lucide-react-native';
 export function PortfolioHomeScreen() {
   const { data, isLoading, error } = usePortfolioHomeData();
   // Projects are live; the remaining dashboard widgets are still placeholder
-  // data until their endpoints exist.
   const { projects } = useProjects();
+  const safeProjects = Array.isArray(projects) ? projects : [];
   const { setProjectScope } = useScope();
 
   if (error) {
@@ -84,12 +84,12 @@ export function PortfolioHomeScreen() {
 
       {/* 4. PROJECTS */}
       <View style={styles.section}>
-        <SectionHeader title="Projects" count={projects.length} actionLabel="View All" onActionPress={() => {}} />
-        {projects.length === 0 ? (
+        <SectionHeader title="Projects" count={safeProjects.length} actionLabel="View All" onActionPress={() => {}} />
+        {safeProjects.length === 0 ? (
           <EmptyState message="No active projects available." />
         ) : (
           <View>
-            {projects.map((project) => (
+            {safeProjects.map((project) => (
               <ProjectHealthCard
                 key={project.id}
                 name={project.name}

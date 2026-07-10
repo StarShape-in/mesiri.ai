@@ -92,6 +92,13 @@ def create_app(lifecycle: AppLifecycle | None = None) -> FastAPI:
         _log.exception("admin router not loaded: %s", exc)
 
     try:
+        from mesiri.domains.admin.providers_router import router as providers_router
+
+        app.include_router(providers_router)
+    except Exception as exc:  # noqa: BLE001
+        _log.exception("providers router not loaded: %s", exc)
+
+    try:
         from mesiri.domains.users.router import router as users_router
 
         app.include_router(users_router)
@@ -104,5 +111,19 @@ def create_app(lifecycle: AppLifecycle | None = None) -> FastAPI:
         app.include_router(projects_router)
     except Exception as exc:  # noqa: BLE001
         _log.exception("projects router not loaded: %s", exc)
+
+    try:
+        from mesiri.domains.materials.router import router as materials_router
+
+        app.include_router(materials_router)
+    except Exception as exc:  # noqa: BLE001
+        _log.exception("materials router not loaded: %s", exc)
+
+    try:
+        from mesiri.domains.timeline.router import router as timeline_router
+
+        app.include_router(timeline_router)
+    except Exception as exc:  # noqa: BLE001
+        _log.exception("timeline router not loaded: %s", exc)
 
     return app
