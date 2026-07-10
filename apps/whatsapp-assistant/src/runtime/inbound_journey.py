@@ -24,6 +24,7 @@ from context.resolver import ContextResolver
 from context.runtime import log_resolved_context
 from interactions.handler import InteractionHandler
 from interactions.response_handler import render_workflow_run_reply
+from mesiri_contracts.assistant.enums import InputModality
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage
 from mesiri_contracts.assistant.planner_decision import PlannerDecisionType
 from mesiri_contracts.assistant.understanding_result import UnderstandingResult
@@ -315,6 +316,21 @@ async def process_inbound_message(
     # slow-path interaction dispatch above -- _render_reply returns None for
     # that case specifically so it isn't sent (or logged) a second time here.
     reply = _render_reply(workflow_run, workflow_resume, planner_decision, resolved)
+
+    # TEMPORARY, for testing voice transcription: echo back exactly what
+    # Sarvam transcribed/translated instead of the normal templated reply, so
+    # it's directly visible on WhatsApp whether voice is working end-to-end.
+    # Only overrides when a reply is actually about to be sent (reply is not
+    # None) -- never fires on the workflow_resume path, whose own reply was
+    # already sent above. Remove once voice is confirmed solid and let voice
+    # messages flow through _render_reply like every other modality.
+    if (
+        reply is not None
+        and message.modality is InputModality.VOICE
+        and (understanding.translated_text or understanding.transcript)
+    ):
+        reply = understanding.translated_text or understanding.transcript
+
     if reply is not None:
         await send_text(message.sender.wa_id, reply)
         await _safe(mlog.log_reply(correlation_id=correlation_id, reply=reply))
