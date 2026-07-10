@@ -15,6 +15,11 @@ interface InboundMessageSummary {
   assistant_reply: string | null;
 }
 
+interface InboundMessageList {
+  items: InboundMessageSummary[];
+  total: number | null;
+}
+
 interface JourneyTraceEntry {
   stage: string;
   succeeded: boolean;
@@ -108,14 +113,14 @@ export default function Logs() {
   const loadHistory = useCallback(() => {
     setLoading(true);
     api
-      .get<InboundMessageSummary[]>('/admin/logs/messages', {
+      .get<InboundMessageList>('/admin/logs/messages', {
         params: {
           wa_id: waIdFilter || undefined,
           status: statusFilter || undefined,
           limit: 50,
         },
       })
-      .then((res) => setMessages(res.data))
+      .then((res) => setMessages(res.data.items || []))
       .finally(() => setLoading(false));
   }, [waIdFilter, statusFilter]);
 
@@ -132,7 +137,7 @@ export default function Logs() {
       const current = messagesRef.current;
       const newest = current[0];
       api
-        .get<InboundMessageSummary[]>('/admin/logs/messages', {
+        .get<InboundMessageList>('/admin/logs/messages', {
           params: {
             wa_id: waIdFilter || undefined,
             status: statusFilter || undefined,
@@ -142,10 +147,11 @@ export default function Logs() {
           },
         })
         .then((res) => {
-          if (res.data.length === 0) return;
+          const items = res.data.items || [];
+          if (items.length === 0) return;
           setMessages((prev) => {
             const seen = new Set(prev.map((m) => m.id));
-            const fresh = res.data.filter((m) => !seen.has(m.id));
+            const fresh = items.filter((m) => !seen.has(m.id));
             if (fresh.length === 0) return prev;
             // API returns live-cursor results oldest-first; prepend newest-first.
             return [...fresh.reverse(), ...prev].slice(0, MAX_ROWS);
