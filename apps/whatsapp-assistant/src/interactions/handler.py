@@ -22,13 +22,16 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from backend.ports import ActorIdentity
 from channel.replies import ReplySpec, render_category_prompt, render_greeting_menu
+from context.live_identity import whoami_reply
 from mesiri_ai.greeting_classifier import is_greeting_trigger
 from mesiri_contracts.application.results.execution_result import ExecutionResult
 from mesiri_contracts.assistant.enums import InputModality
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage
 from mesiri_contracts.assistant.v2.interaction_spec import InteractionIntent
 from workflows import WorkflowResumeResult, WorkflowResumeStatus, WorkflowRunResult, WorkflowRuntime
+from workflows.who_am_i import is_whoami_trigger
 
 from .classifier import classify_reply
 from .classifier_port import InteractionClassifierPort
@@ -172,6 +175,29 @@ class InteractionHandler:
         if not is_greeting_trigger(message.text):
             return None
         return render_greeting_menu(timezone=timezone)
+
+    def handle_whoami_trigger(
+        self, message: NormalizedMessage, actor: ActorIdentity
+    ) -> str | None:
+        """A bare "who am i"/"whoami"/"my profile"/etc (see
+        workflows.who_am_i.phrases.json) -- deterministic identity-lookup fast
+        path, no AI call, same principle as handle_greeting_trigger ("a plain
+        question costs no tokens"). Unlike the greeting trigger this needs the
+        caller's already-resolved ActorIdentity (name/role/org/projects/sites)
+        to build the reply, hence the extra parameter -- the caller (M4's
+        identity gate, in runtime/dependencies.py) already has it before this
+        runs, so there's no extra lookup.
+
+        Text-only, same reasoning as handle_greeting_trigger: voice has no
+        text until Sarvam transcribes it, and this isn't wired into the
+        post-transcription path (understanding/pipeline.py has no identity to
+        build the reply from).
+        """
+        if message.modality is not InputModality.TEXT:
+            return None
+        if not is_whoami_trigger(message.text):
+            return None
+        return whoami_reply(actor)
 
     async def handle_slow_path(
         self,

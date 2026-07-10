@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from backend.ports import ActorIdentity
 from interactions.classifier_port import InteractionClassifierPort
 from interactions.handler import InteractionHandler
 from mesiri_contracts.assistant.draft_action import DraftActionType
@@ -335,3 +336,42 @@ def test_greeting_trigger_is_none_for_voice_even_with_greeting_text():
         text="hi",  # even if somehow populated, modality gates this off
     )
     assert handler.handle_greeting_trigger(voice_message) is None
+
+
+def _actor() -> ActorIdentity:
+    return ActorIdentity(
+        user_id=USR,
+        full_name="Ravi",
+        role="SITE_ENGINEER",
+        organization_id=ORG,
+        org_name="Superman Company",
+        org_active=True,
+    )
+
+
+def test_whoami_trigger_returns_the_identity_summary_for_a_bare_whoami():
+    handler = _handler(FakeWorkflowInstanceRepository())
+    reply = handler.handle_whoami_trigger(_message("who am i"), _actor())
+    assert reply is not None
+    assert "Ravi" in reply
+    assert "Superman Company" in reply
+
+
+def test_whoami_trigger_is_none_for_a_real_report():
+    handler = _handler(FakeWorkflowInstanceRepository())
+    assert handler.handle_whoami_trigger(_message("50 bags of cement arrived"), _actor()) is None
+
+
+def test_whoami_trigger_is_none_for_voice_even_with_whoami_text():
+    """Same modality gate as handle_greeting_trigger -- no text at
+    normalization time for voice."""
+    handler = _handler(FakeWorkflowInstanceRepository())
+    voice_message = NormalizedMessage(
+        message_id="wamid.voice2",
+        correlation_id="cor_voice_2",
+        sender=SenderInfo(wa_id="919000000000", profile_name="Engineer"),
+        timestamp=datetime(2026, 7, 8, 10, 0, tzinfo=UTC),
+        modality=InputModality.VOICE,
+        text="who am i",
+    )
+    assert handler.handle_whoami_trigger(voice_message, _actor()) is None

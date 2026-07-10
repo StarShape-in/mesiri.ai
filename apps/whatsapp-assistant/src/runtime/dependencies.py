@@ -277,6 +277,19 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             )
             return
 
+        # Bare "who am i"/"whoami"/"my profile"/etc (see
+        # workflows/who_am_i/phrases.json): deterministic identity-lookup
+        # fast path, same principle as the greeting trigger above -- the AI
+        # pipeline is never touched. Uses ctx (already resolved above), so
+        # no extra DB round-trip.
+        whoami_reply_text = interaction_handler.handle_whoami_trigger(message, ctx)
+        if whoami_reply_text is not None:
+            await sender.send_text(wa_id, whoami_reply_text)
+            await message_logger.log_reply(
+                correlation_id=message.correlation_id, reply=whoami_reply_text
+            )
+            return
+
         await process_inbound_message(
             message,
             actor_user_id=ctx.user_id,
