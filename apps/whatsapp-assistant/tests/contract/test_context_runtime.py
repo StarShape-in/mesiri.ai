@@ -36,7 +36,11 @@ from mesiri_ai.fakes import (
 from mesiri_ai.models import ExtractionResult
 from mesiri_contracts.assistant.draft_action import DraftActionType
 from mesiri_contracts.assistant.enums import InputModality
-from mesiri_contracts.assistant.normalized_message import NormalizedMessage, SenderInfo
+from mesiri_contracts.assistant.normalized_message import (
+    MediaReference,
+    NormalizedMessage,
+    SenderInfo,
+)
 from mesiri_contracts.assistant.planner_decision import WorkflowKey
 from mesiri_contracts.assistant.understanding_result import UnderstandingResult
 from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
@@ -511,3 +515,45 @@ interaction_handler=InteractionHandler(_workflow_runtime()),
 
     # expense.submit has no graph in the fake registry -> NO_GRAPH.
     send_text.assert_awaited_once_with(message.sender.wa_id, render_unsupported_reply())
+
+
+async def test_voice_reply_echoes_translation_instead_of_the_normal_reply():
+    """TEMPORARY (voice transcription testing): a voice message's reply is the
+    transcribed/translated text itself, not the normal templated reply --
+    even when that normal reply would have been NO_GRAPH (as it is here:
+    MALAYALAM_JCB_SPEECH resolves to EQUIPMENT_USAGE, which has no fake graph
+    registered). Remove this test alongside the override in inbound_journey.py
+    once voice is confirmed solid.
+    """
+    message = _message(
+        modality=InputModality.VOICE,
+        text=None,
+        media=MediaReference(object_key="voice/1.ogg", mime_type="audio/ogg"),
+    )
+    storage = FakeObjectStorage()
+    await storage.put_object("voice/1.ogg", b"<audio>")
+    pipeline = UnderstandingPipeline(
+        speech=FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
+        vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
+        extraction=FakeExtractionProvider(fixtures.JCB_EQUIPMENT_EXTRACTION),
+        translation=FakeTranslationProvider(),
+        object_storage=storage,
+    )
+    sent_texts: list[tuple[str, str]] = []
+
+    async def capture_send_text(wa_id: str, body: str) -> None:
+        sent_texts.append((wa_id, body))
+
+    result = await process_inbound_message(
+        message,
+actor_user_id=canon(seed.USER_ENGINEER),
+        pipeline=pipeline,
+        context_resolver=_resolver(),
+        planner=Planner(),
+        workflow_runtime=_workflow_runtime(),
+interaction_handler=InteractionHandler(_workflow_runtime()),
+        send_text=capture_send_text,
+    )
+
+    assert result.understanding.translated_text == "The JCB ran for 4 hours"
+    assert sent_texts == [(message.sender.wa_id, "The JCB ran for 4 hours")]
