@@ -23,7 +23,8 @@ class UserModel(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
     full_name = Column(String, nullable=False)
-    role = Column(Enum(UserRole), nullable=False)
+    role: Column = Column(Enum(UserRole), nullable=False)
+
     whatsapp_number = Column(String, unique=True, index=True, nullable=True)
     # Added by migration 0060_users_add_status_sites_access
     status = Column(String, nullable=False, server_default="active")

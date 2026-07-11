@@ -1,6 +1,5 @@
 import uuid
 from datetime import datetime
-from typing import Any, Optional
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -25,11 +24,11 @@ class CompanyResponse(BaseModel):
     deployment_type: DeploymentType
     db_route: str
     status: OrganizationStatus
-    code: Optional[str] = None
-    email: Optional[str] = None
-    phone: Optional[str] = None
-    address: Optional[str] = None
-    primary_contact: Optional[str] = None
+    code: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    address: str | None = None
+    primary_contact: str | None = None
     timezone: str
     created_at: datetime
     updated_at: datetime
@@ -39,13 +38,13 @@ class CompanyResponse(BaseModel):
 
 
 class CompanyUpdate(BaseModel):
-    name: Optional[str] = None
-    code: Optional[str] = None
-    email: Optional[str] = None
-    phone: Optional[str] = None
-    address: Optional[str] = None
-    primary_contact: Optional[str] = None
-    timezone: Optional[str] = None
+    name: str | None = None
+    code: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    address: str | None = None
+    primary_contact: str | None = None
+    timezone: str | None = None
 
 
 class CompanySummaryResponse(BaseModel):
@@ -62,7 +61,7 @@ class CompanySummaryResponse(BaseModel):
     active_conversations_count: int
     messages_received_today: int
     messages_requiring_clarification: int
-    last_whatsapp_activity: Optional[datetime] = None
+    last_whatsapp_activity: datetime | None = None
 
 
 class UserMinResponse(BaseModel):
@@ -71,7 +70,7 @@ class UserMinResponse(BaseModel):
     full_name: str
     role: str
     status: str
-    whatsapp_number: Optional[str] = None
+    whatsapp_number: str | None = None
 
 
 class MessageSummary(BaseModel):
@@ -82,13 +81,13 @@ class MessageSummary(BaseModel):
     message_type: str
     body: str
     processing_status: str
-    error_code: Optional[str] = None
+    error_code: str | None = None
     timestamp: datetime
-    member: Optional[UserMinResponse] = None
-    project_id: Optional[uuid.UUID] = None
-    project_name: Optional[str] = None
-    site_id: Optional[uuid.UUID] = None
-    site_name: Optional[str] = None
+    member: UserMinResponse | None = None
+    project_id: uuid.UUID | None = None
+    project_name: str | None = None
+    site_id: uuid.UUID | None = None
+    site_name: str | None = None
 
 
 class MessageListResponse(BaseModel):
@@ -99,9 +98,9 @@ class MessageListResponse(BaseModel):
 class JourneyTrace(BaseModel):
     stage: str
     succeeded: bool
-    duration_ms: Optional[int] = None
-    error_code: Optional[str] = None
-    error_message: Optional[str] = None
+    duration_ms: int | None = None
+    error_code: str | None = None
+    error_message: str | None = None
     created_at: datetime
 
 
@@ -109,8 +108,8 @@ class ProviderExecution(BaseModel):
     stage: str
     provider: str
     operation: str
-    model: Optional[str] = None
-    latency_ms: Optional[float] = None
+    model: str | None = None
+    latency_ms: float | None = None
     succeeded: bool
     created_at: datetime
 
@@ -130,7 +129,7 @@ class InteractionMin(BaseModel):
     prompt: str
     status: str
     created_at: datetime
-    resolved_at: Optional[datetime] = None
+    resolved_at: datetime | None = None
 
 
 class MessageDetailResponse(BaseModel):
@@ -138,21 +137,21 @@ class MessageDetailResponse(BaseModel):
     correlation_id: str
     sender_wa_id: str
     message_type: str
-    body_text: Optional[str] = None
+    body_text: str | None = None
     processing_status: str
-    error_code: Optional[str] = None
+    error_code: str | None = None
     received_at: datetime
-    processed_at: Optional[datetime] = None
+    processed_at: datetime | None = None
     raw_payload_captured: bool
-    assistant_reply: Optional[str] = None
-    raw_payload: Optional[dict] = None
-    normalized_message: Optional[dict] = None
-    media_object_key: Optional[str] = None
-    member: Optional[UserMinResponse] = None
-    project_id: Optional[uuid.UUID] = None
-    project_name: Optional[str] = None
-    site_id: Optional[uuid.UUID] = None
-    site_name: Optional[str] = None
+    assistant_reply: str | None = None
+    raw_payload: dict | None = None
+    normalized_message: dict | None = None
+    media_object_key: str | None = None
+    member: UserMinResponse | None = None
+    project_id: uuid.UUID | None = None
+    project_name: str | None = None
+    site_id: uuid.UUID | None = None
+    site_name: str | None = None
     traces: list[JourneyTrace] = []
     providers: list[ProviderExecution] = []
     timeline_entries: list[TimelineEntryMin] = []
@@ -269,14 +268,14 @@ async def get_company_summary(
 @router.get("/whatsapp/messages", response_model=MessageListResponse)
 async def list_messages(
     direction: str = "all",
-    search: Optional[str] = None,
-    member_id: Optional[uuid.UUID] = None,
-    message_type: Optional[str] = None,
-    project_id: Optional[uuid.UUID] = None,
-    site_id: Optional[uuid.UUID] = None,
-    processing_status: Optional[str] = None,
-    has_attachments: Optional[bool] = None,
-    mapped_participant: Optional[str] = None,  # "mapped" | "unmapped" | "all"
+    search: str | None = None,
+    member_id: uuid.UUID | None = None,
+    message_type: str | None = None,
+    project_id: uuid.UUID | None = None,
+    site_id: uuid.UUID | None = None,
+    processing_status: str | None = None,
+    has_attachments: bool | None = None,
+    mapped_participant: str | None = None,  # "mapped" | "unmapped" | "all"
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     admin: dict = Depends(require_admin),

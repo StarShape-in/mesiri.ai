@@ -8,16 +8,17 @@ IDOR checks, and tenant organization checks.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
+
 import jwt
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from users.router import router
 from mesiri.domains.identity.auth_service import ALGORITHM, SECRET_KEY
+from users.router import router
 
 USER_ID = uuid.uuid4()
 OTHER_USER_ID = uuid.uuid4()

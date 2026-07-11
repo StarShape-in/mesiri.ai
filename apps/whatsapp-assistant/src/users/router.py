@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import os
 import uuid
+from datetime import datetime
 
 import bcrypt as _bcrypt
 import jwt
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from datetime import datetime, date
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import create_async_engine
 

@@ -22,9 +22,10 @@ class OrganizationModel(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String, index=True, nullable=False)
-    deployment_type = Column(Enum(DeploymentType), nullable=False)
+    deployment_type: Column = Column(Enum(DeploymentType), nullable=False)
     db_route = Column(String, nullable=False)
-    status = Column(Enum(OrganizationStatus), nullable=False)
+    status: Column = Column(Enum(OrganizationStatus), nullable=False)
+
     code = Column(String, unique=True, index=True, nullable=True)
     email = Column(String, nullable=True)
     phone = Column(String, nullable=True)
