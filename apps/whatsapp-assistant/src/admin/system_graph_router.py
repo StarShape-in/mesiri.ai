@@ -80,9 +80,28 @@ class FastPathInfo(BaseModel):
     example_messages: list[str] = []
 
 
+class HardcodedReplyInfo(BaseModel):
+    """A reply that is a fixed/templated string, not model output — the user
+    never gets an answer generated for their specific message here, just one
+    of a small set of canned texts. Distinct from fast_paths (which is about
+    *when the AI is skipped*); this is about *every* canned string in the
+    system, including ones the AI pipeline itself falls back to (e.g. the
+    'general question' canned reply, or the post-confirmation outcome
+    replies) — so a wrong-but-plausible-looking reply can be traced back to
+    its exact source line."""
+
+    key: str
+    title: str
+    source: str
+    trigger: str
+    template: str
+    flag: str | None = None
+
+
 class SystemGraphResponse(BaseModel):
     mermaid: str
     fast_paths: list[FastPathInfo]
+    hardcoded_replies: list[HardcodedReplyInfo]
     stages: list[PipelineStage]
     workflows: list[WorkflowGraphInfo]
 
@@ -243,6 +262,224 @@ def _confirmation_lifecycle_mermaid() -> str:
             "  cancelled --> doneReply",
         ]
     )
+
+
+def _hardcoded_replies() -> list[HardcodedReplyInfo]:
+    """Catalog of every fixed/templated reply in the system, rendered from the
+    real source functions/constants wherever construction is cheap (so this
+    can never drift from what actually ships) — never hand-retyped strings.
+    `flag` calls out entries that are misleading or leftover dev scaffolding,
+    found by reading the source: whoami_reply() ships a literal "this is a
+    test reply" disclaimer in production, and render_execution_reply's FAILED
+    case claims an automatic retry that no code anywhere implements."""
+    from backend.ports import ActorIdentity, ProjectSummary, SiteSummary
+    from channel.replies import (
+        render_category_prompt,
+        render_direct_reply,
+        render_greeting_menu,
+        render_understanding_failed_reply,
+        render_unsupported_reply,
+    )
+    from context.live_identity import (
+        NO_ORG_MESSAGE,
+        ORG_SUSPENDED_MESSAGE,
+        UNREGISTERED_MESSAGE,
+        whoami_reply,
+    )
+    from interactions.response_handler import render_execution_reply, render_resume_reply
+    from mesiri_contracts.application.results.execution_result import (
+        ExecutionResult,
+        ExecutionStatus,
+    )
+    from mesiri_contracts.assistant.canonical_event import CanonicalEventType
+    from mesiri_contracts.assistant.planner_decision import PlannerDecisionType
+    from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
+    from workflows.runtime import WorkflowResumeResult, WorkflowResumeStatus
+
+    def _decision(reason: CanonicalEventType) -> PlannerDecisionV2:
+        return PlannerDecisionV2(
+            correlation_id="sample",
+            source_message_id="sample",
+            decision_type=PlannerDecisionType.DIRECT_REPLY,
+            reason=reason,
+            organization_id="00000000-0000-0000-0000-000000000000",
+            user_id="00000000-0000-0000-0000-000000000000",
+        )
+
+    def _resume(status: WorkflowResumeStatus) -> WorkflowResumeResult:
+        return WorkflowResumeResult(status=status, workflow_instance_id="sample", correlation_id="sample")
+
+    def _execution(status: ExecutionStatus, **kw: object) -> ExecutionResult:
+        return ExecutionResult(status=status, idempotency_key="sample", **kw)
+
+    sample_actor = ActorIdentity(
+        user_id="sample",
+        full_name="Jane Doe",
+        role="project_manager",
+        organization_id="sample",
+        org_name="Acme Construction",
+        org_active=True,
+        projects=[
+            ProjectSummary(
+                id="p1", name="Green Valley", location="East Zone", code="GV-01",
+                status="at_risk", progress=42, open_issues=1,
+            )
+        ],
+        sites=[SiteSummary(id="s1", name="East Zone Site")],
+    )
+
+    entries: list[HardcodedReplyInfo] = [
+        # --- Identity gate (context/live_identity.py) ---
+        HardcodedReplyInfo(
+            key="unregistered_number",
+            title="Unregistered WhatsApp number",
+            source="context/live_identity.py:UNREGISTERED_MESSAGE",
+            trigger="Sender's WhatsApp number has no matching user record.",
+            template=UNREGISTERED_MESSAGE,
+        ),
+        HardcodedReplyInfo(
+            key="no_organization",
+            title="User has no organization",
+            source="context/live_identity.py:NO_ORG_MESSAGE",
+            trigger="User exists but isn't attached to any organization.",
+            template=NO_ORG_MESSAGE.format(name="{name}"),
+        ),
+        HardcodedReplyInfo(
+            key="org_suspended",
+            title="Organization suspended",
+            source="context/live_identity.py:ORG_SUSPENDED_MESSAGE",
+            trigger="User's organization is not Active.",
+            template=ORG_SUSPENDED_MESSAGE,
+        ),
+        HardcodedReplyInfo(
+            key="whoami_reply",
+            title="Who-am-I identity summary",
+            source="context/live_identity.py:whoami_reply()",
+            trigger='"who am i" fast path (see the Fast paths section above).',
+            template=whoami_reply(sample_actor),
+            flag=(
+                'Ships a literal "(this is a test whoami reply — will be replaced by real '
+                "understanding replies)\" disclaimer in the production reply — leftover dev "
+                "scaffolding, not a bug in the logic itself."
+            ),
+        ),
+        # --- Direct / fallback replies (channel/replies.py) ---
+        HardcodedReplyInfo(
+            key="greeting_returning_user",
+            title="Greeting — returning user",
+            source="channel/replies.py:render_greeting_menu()",
+            trigger='A bare "hi"/"menu"/etc, or anything UNRECOGNIZED that reaches the planner as DIRECT_REPLY.',
+            template=render_greeting_menu(is_first_message=False).text,
+        ),
+        HardcodedReplyInfo(
+            key="greeting_first_message",
+            title="Greeting — first-ever message",
+            source="channel/replies.py:render_greeting_menu(is_first_message=True)",
+            trigger="Same as above, for a sender's very first message (is_first_message isn't wired anywhere yet — always False today).",
+            template=render_greeting_menu(is_first_message=True).text,
+        ),
+        HardcodedReplyInfo(
+            key="general_question_canned",
+            title="General question — canned answer",
+            source="channel/replies.py:render_direct_reply() GENERAL_QUESTION_ASKED case",
+            trigger='semantic_type=general_question (e.g. "what can you do", or any question the model has no other bucket for).',
+            template=render_direct_reply(_decision(CanonicalEventType.GENERAL_QUESTION_ASKED)).text,
+            flag="Always the same text regardless of what was actually asked — it doesn't answer the question, it describes what Mesiri records.",
+        ),
+        HardcodedReplyInfo(
+            key="category_prompt_material",
+            title="Category prompt — Material",
+            source="channel/replies.py:render_category_prompt('cat_material')",
+            trigger='Tapping "Material" on the category menu.',
+            template=render_category_prompt("cat_material") or "",
+        ),
+        HardcodedReplyInfo(
+            key="category_prompt_equipment",
+            title="Category prompt — Equipment",
+            source="channel/replies.py:render_category_prompt('cat_equipment')",
+            trigger='Tapping "Equipment & Machinery" on the category menu.',
+            template=render_category_prompt("cat_equipment") or "",
+        ),
+        HardcodedReplyInfo(
+            key="category_prompt_labour",
+            title="Category prompt — Labour",
+            source="channel/replies.py:render_category_prompt('cat_labour')",
+            trigger='Tapping "Labour" on the category menu.',
+            template=render_category_prompt("cat_labour") or "",
+        ),
+        HardcodedReplyInfo(
+            key="category_prompt_expense",
+            title="Category prompt — Expense",
+            source="channel/replies.py:render_category_prompt('cat_expense')",
+            trigger='Tapping "Expense" on the category menu.',
+            template=render_category_prompt("cat_expense") or "",
+        ),
+        HardcodedReplyInfo(
+            key="understanding_failed",
+            title="Understanding failed",
+            source="channel/replies.py:render_understanding_failed_reply()",
+            trigger="Extraction/speech/vision confidence came back UNUSABLE — the AI couldn't make sense of the message at all.",
+            template=render_understanding_failed_reply(),
+        ),
+        HardcodedReplyInfo(
+            key="unsupported_workflow",
+            title="Understood, but not supported",
+            source="channel/replies.py:render_unsupported_reply()",
+            trigger="A real intent was understood (expense/equipment/labour/site-update) but that workflow isn't built yet — see Workflows above.",
+            template=render_unsupported_reply(),
+        ),
+        # --- Post-confirmation outcome replies (interactions/response_handler.py) ---
+        HardcodedReplyInfo(
+            key="resume_rejected",
+            title="Confirmation — rejected",
+            source="interactions/response_handler.py:render_resume_reply()",
+            trigger='User replied "no" and no ExecutionDispatcher is wired for that workflow (M7-only path).',
+            template=render_resume_reply(_resume(WorkflowResumeStatus.REJECTED)),
+        ),
+        HardcodedReplyInfo(
+            key="resume_cancelled",
+            title="Confirmation — cancelled",
+            source="interactions/response_handler.py:render_resume_reply()",
+            trigger='User replied "cancel"/"stop".',
+            template=render_resume_reply(_resume(WorkflowResumeStatus.CANCELLED)),
+        ),
+        HardcodedReplyInfo(
+            key="resume_already_handled",
+            title="Confirmation — already handled",
+            source="interactions/response_handler.py:render_resume_reply()",
+            trigger="Duplicate WhatsApp delivery / double reply to an already-resolved confirmation.",
+            template=render_resume_reply(_resume(WorkflowResumeStatus.ALREADY_RESOLVED)),
+        ),
+        HardcodedReplyInfo(
+            key="execution_succeeded",
+            title="Execution — succeeded",
+            source="interactions/response_handler.py:render_execution_reply()",
+            trigger="User confirmed and the material dispatcher's domain write succeeded (also the CONFIRMED text for any workflow without a dispatcher).",
+            template=render_execution_reply(_execution(ExecutionStatus.SUCCEEDED, material_row_id="sample")),
+        ),
+        HardcodedReplyInfo(
+            key="execution_rejected",
+            title="Execution — rejected",
+            source="interactions/response_handler.py:render_execution_reply()",
+            trigger="The domain layer rejected the confirmed action (a business rule failed).",
+            template=render_execution_reply(
+                _execution(ExecutionStatus.REJECTED, rejection_reasons=["<reason from the domain layer>"])
+            ),
+        ),
+        HardcodedReplyInfo(
+            key="execution_failed",
+            title="Execution — failed",
+            source="interactions/response_handler.py:render_execution_reply()",
+            trigger="The dispatcher caught an unhandled exception during the domain write (mesiri.application.materials.dispatcher).",
+            template=render_execution_reply(_execution(ExecutionStatus.FAILED)),
+            flag=(
+                "Claims the write \"will retry automatically\" — no retry job or queue exists "
+                "anywhere in the codebase for a FAILED execution today; the workflow is left at "
+                "CONFIRMED (recoverable) but nothing currently retries it."
+            ),
+        ),
+    ]
+    return entries
 
 
 def _workflow_node_names(graph: object | None) -> list[str]:
@@ -464,6 +701,7 @@ async def get_system_graph(_admin: dict = Depends(require_platform_admin)):
     return SystemGraphResponse(
         mermaid=_build_pipeline_mermaid(),
         fast_paths=_fast_paths(),
+        hardcoded_replies=_hardcoded_replies(),
         stages=_build_stages(),
         workflows=_workflow_infos(),
     )

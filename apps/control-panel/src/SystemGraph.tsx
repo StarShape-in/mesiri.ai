@@ -13,6 +13,8 @@ import {
   FlaskConical,
   Cpu,
   Zap,
+  AlertTriangle,
+  FileText,
 } from 'lucide-react';
 import mermaid from 'mermaid';
 import { api } from './api';
@@ -47,9 +49,18 @@ interface FastPathInfo {
   description: string;
   example_messages: string[];
 }
+interface HardcodedReplyInfo {
+  key: string;
+  title: string;
+  source: string;
+  trigger: string;
+  template: string;
+  flag: string | null;
+}
 interface SystemGraphResponse {
   mermaid: string;
   fast_paths: FastPathInfo[];
+  hardcoded_replies: HardcodedReplyInfo[];
   stages: PipelineStage[];
   workflows: WorkflowGraphInfo[];
 }
@@ -178,6 +189,7 @@ const SystemGraph = () => {
         setData({
           ...res.data,
           fast_paths: res.data.fast_paths ?? [],
+          hardcoded_replies: res.data.hardcoded_replies ?? [],
           stages: res.data.stages ?? [],
           workflows: res.data.workflows ?? [],
         }),
@@ -295,6 +307,51 @@ const SystemGraph = () => {
                         <Play size={11} /> {msg}
                       </span>
                     ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* --- Hardcoded / canned replies --- */}
+          <h2 style={{ fontSize: '16px', fontWeight: 600, marginBottom: 'var(--space-2)', display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+            <FileText size={16} style={{ color: 'var(--neutral-600)' }} /> Hardcoded / canned replies
+          </h2>
+          <p style={{ fontSize: '12px', color: 'var(--neutral-500)', marginTop: 0, marginBottom: 'var(--space-4)' }}>
+            Every reply in the system that's a fixed template, not generated for the specific message — including ones the AI pipeline itself falls back to. Rendered live from the actual source functions, so this is always what's really shipping.
+            {data.hardcoded_replies.some((r) => r.flag) && (
+              <span style={{ color: 'var(--warning, #c98a1e)', fontWeight: 500 }}>
+                {' '}{data.hardcoded_replies.filter((r) => r.flag).length} flagged as misleading or leftover dev text below.
+              </span>
+            )}
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', marginBottom: 'var(--space-8)' }}>
+            {data.hardcoded_replies.map((r) => (
+              <div
+                key={r.key}
+                className="card"
+                style={r.flag ? { borderColor: 'var(--warning, #c98a1e)', borderWidth: '1px', borderStyle: 'solid' } : undefined}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 'var(--space-3)', marginBottom: 'var(--space-2)' }}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: '13px' }}>{r.title}</div>
+                    <div style={{ fontFamily: 'monospace', fontSize: '11px', color: 'var(--neutral-500)' }}>{r.source}</div>
+                  </div>
+                  {r.flag && (
+                    <span className="badge badge-warning" style={{ fontSize: '10px', flexShrink: 0 }}>
+                      <AlertTriangle size={11} style={{ marginRight: 4 }} /> Flagged
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--neutral-500)', marginBottom: 'var(--space-2)' }}>
+                  <strong>Trigger:</strong> {r.trigger}
+                </div>
+                <div style={{ whiteSpace: 'pre-wrap', background: 'var(--neutral-50, #fafafa)', border: '1px solid var(--neutral-200, #e5e5e5)', borderRadius: 'var(--radius-sm)', padding: 'var(--space-3)', fontSize: '13px' }}>
+                  {r.template}
+                </div>
+                {r.flag && (
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px', marginTop: 'var(--space-2)', fontSize: '12px', color: 'var(--warning, #c98a1e)' }}>
+                    <AlertTriangle size={13} style={{ flexShrink: 0, marginTop: '2px' }} /> {r.flag}
                   </div>
                 )}
               </div>
