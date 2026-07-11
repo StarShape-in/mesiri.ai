@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from backend.ports import ActorIdentity
@@ -258,8 +258,8 @@ async def process_inbound_message(
                     "full_name": actor.full_name,
                     "role": actor.role,
                     "org_name": actor.org_name,
-                    "projects": [p.model_dump() for p in actor.projects] if actor.projects else [],
-                    "sites": [s.model_dump() for s in actor.sites] if actor.sites else [],
+                    "projects": [asdict(p) for p in actor.projects] if actor.projects else [],
+                    "sites": [asdict(s) for s in actor.sites] if actor.sites else [],
                 }
 
             if context_debug:
