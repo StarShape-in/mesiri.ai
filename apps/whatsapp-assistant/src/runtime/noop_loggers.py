@@ -25,8 +25,21 @@ class NoopMessageLogger:
         body_text: str | None,
         media_object_key: str | None,
         dedup_key: str,
+        retry_of_id: str | None = None,
+        organization_id: str | None = None,
     ) -> None:
         ...
+
+    async def update_context(
+        self,
+        *,
+        correlation_id: str,
+        organization_id: str | None = None,
+        project_id: str | None = None,
+        site_id: str | None = None,
+    ) -> None:
+        ...
+
 
     async def mark_completed(self, *, correlation_id: str) -> None:
         ...
@@ -82,6 +95,11 @@ class ReceivedMessage:
     body_text: str | None
     media_object_key: str | None
     dedup_key: str
+    retry_of_id: str | None = None
+    organization_id: str | None = None
+    project_id: str | None = None
+    site_id: str | None = None
+
 
 
 @dataclass
@@ -105,6 +123,8 @@ class RecordingMessageLogger:
         body_text: str | None,
         media_object_key: str | None,
         dedup_key: str,
+        retry_of_id: str | None = None,
+        organization_id: str | None = None,
     ) -> None:
         self.received.append(
             ReceivedMessage(
@@ -116,8 +136,28 @@ class RecordingMessageLogger:
                 body_text=body_text,
                 media_object_key=media_object_key,
                 dedup_key=dedup_key,
+                retry_of_id=retry_of_id,
+                organization_id=organization_id,
             )
         )
+
+    async def update_context(
+        self,
+        *,
+        correlation_id: str,
+        organization_id: str | None = None,
+        project_id: str | None = None,
+        site_id: str | None = None,
+    ) -> None:
+        for r in self.received:
+            if r.correlation_id == correlation_id:
+                if organization_id is not None:
+                    r.organization_id = organization_id
+                if project_id is not None:
+                    r.project_id = project_id
+                if site_id is not None:
+                    r.site_id = site_id
+
 
     async def mark_completed(self, *, correlation_id: str) -> None:
         self.completed.append(correlation_id)

@@ -4,6 +4,7 @@ import Login from '@/pages/Login'
 import Overview from '@/pages/Overview'
 import Users from '@/pages/Users'
 import UserDetails from '@/pages/UserDetails'
+import CompanyDetails from '@/pages/CompanyDetails'
 import Projects from '@/pages/Projects'
 import ProjectDetails from '@/pages/ProjectDetails'
 import FieldReportsPage from '@/pages/FieldReportsPage'
@@ -22,7 +23,9 @@ export default function App() {
       <Route path="/" element={<AppLayout />}>
         <Route index element={<IndexRedirect />} />
         <Route path="overview" element={<Overview />} />
+        <Route path="company" element={<CompanyDetails />} />
         <Route path="users" element={<Users />} />
+
         <Route path="users/:id" element={<UserDetails />} />
         <Route path="projects" element={<Projects />} />
         <Route path="projects/:id" element={<ProjectDetails />} />

@@ -26,8 +26,21 @@ class MessageLogger(Protocol):
         body_text: str | None,
         media_object_key: str | None,
         dedup_key: str,
+        retry_of_id: str | None = None,
+        organization_id: str | None = None,
     ) -> None:
         """INSERT the inbound message row at receipt time. Idempotent on dedup_key."""
+        ...
+
+    async def update_context(
+        self,
+        *,
+        correlation_id: str,
+        organization_id: str | None = None,
+        project_id: str | None = None,
+        site_id: str | None = None,
+    ) -> None:
+        """UPDATE the row's organization, project, and site context."""
         ...
 
     async def mark_completed(self, *, correlation_id: str) -> None:
@@ -45,6 +58,7 @@ class MessageLogger(Protocol):
     async def update_body_text(self, *, correlation_id: str, body_text: str) -> None:
         """UPDATE the row's body_text column (e.g. after speech transcription)."""
         ...
+
 
 
 class TraceLogger(Protocol):

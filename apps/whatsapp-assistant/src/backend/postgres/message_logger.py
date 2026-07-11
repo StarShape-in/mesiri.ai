@@ -53,6 +53,7 @@ class PostgresMessageLogger:
         media_object_key: str | None,
         dedup_key: str,
         retry_of_id: str | None = None,
+        organization_id: str | None = None,
     ) -> None:
         import json
 
@@ -65,11 +66,11 @@ class PostgresMessageLogger:
                         "INSERT INTO inbound_messages "
                         "(id, correlation_id, sender_wa_id, message_type, raw_payload, "
                         "normalized_message, body_text, media_object_key, dedup_key, "
-                        "raw_payload_captured, retry_of_id) "
+                        "raw_payload_captured, retry_of_id, organization_id) "
                         "VALUES (:id, :correlation_id, :sender_wa_id, :message_type, "
                         "CAST(:raw_payload AS jsonb), CAST(:normalized_message AS jsonb), "
                         ":body_text, :media_object_key, :dedup_key, "
-                        ":raw_payload_captured, :retry_of_id) "
+                        ":raw_payload_captured, :retry_of_id, CAST(:organization_id AS uuid)) "
                         "ON CONFLICT (dedup_key) DO NOTHING"
                     ),
                     {
@@ -86,10 +87,46 @@ class PostgresMessageLogger:
                         "dedup_key": dedup_key,
                         "raw_payload_captured": bool(raw_payload),
                         "retry_of_id": retry_of_id,
+                        "organization_id": organization_id,
                     },
                 )
         except Exception:  # noqa: BLE001
             _log.exception("message_logger.log_received failed correlation_id=%s", correlation_id)
+
+    async def update_context(
+        self,
+        *,
+        correlation_id: str,
+        organization_id: str | None = None,
+        project_id: str | None = None,
+        site_id: str | None = None,
+    ) -> None:
+        from sqlalchemy import text
+        try:
+            async with self._get_engine().begin() as conn:
+                updates = []
+                params = {"correlation_id": correlation_id}
+                if organization_id is not None:
+                    updates.append("organization_id = CAST(:organization_id AS uuid)")
+                    params["organization_id"] = organization_id
+                if project_id is not None:
+                    updates.append("project_id = CAST(:project_id AS uuid)")
+                    params["project_id"] = project_id
+                if site_id is not None:
+                    updates.append("site_id = CAST(:site_id AS uuid)")
+                    params["site_id"] = site_id
+
+                if updates:
+                    await conn.execute(
+                        text(
+                            f"UPDATE inbound_messages SET {', '.join(updates)} "
+                            "WHERE correlation_id = :correlation_id"
+                        ),
+                        params,
+                    )
+        except Exception:  # noqa: BLE001
+            _log.exception("message_logger.update_context failed correlation_id=%s", correlation_id)
+
 
     async def mark_completed(self, *, correlation_id: str) -> None:
         from sqlalchemy import text

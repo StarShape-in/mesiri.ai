@@ -51,6 +51,7 @@ const NAV_ITEMS: NavItem[] = [
   { title: 'Petty Cash', url: '/petty-cash', icon: Wallet },
   { title: 'Projects & Sites', url: '/projects', icon: Building2, requiredRole: 'ADMIN' },
   { title: 'Users', url: '/users', icon: Users, requiredRole: 'ADMIN' },
+  { title: 'Company', url: '/company', icon: Building2, requiredRole: 'ADMIN' },
 ]
 
 export function AppSidebar() {
@@ -66,8 +67,9 @@ export function AppSidebar() {
   )
 
   const getUrlWithScope = (baseUrl: string) => {
-    const isOperational = !['/projects', '/users'].includes(baseUrl)
+    const isOperational = !['/projects', '/users', '/company'].includes(baseUrl)
     if (!isOperational) return baseUrl
+
 
     const params = new URLSearchParams()
     if (scope.mode === 'project' || scope.mode === 'site') {

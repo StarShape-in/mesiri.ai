@@ -126,4 +126,12 @@ def create_app(lifecycle: AppLifecycle | None = None) -> FastAPI:
     except Exception as exc:  # noqa: BLE001
         _log.exception("timeline router not loaded: %s", exc)
 
+    try:
+        from mesiri.domains.organizations.router import router as organizations_router
+
+        app.include_router(organizations_router)
+    except Exception as exc:  # noqa: BLE001
+        _log.exception("organizations router not loaded: %s", exc)
+
     return app
+

@@ -25,6 +25,12 @@ class OrganizationModel(Base):
     deployment_type = Column(Enum(DeploymentType), nullable=False)
     db_route = Column(String, nullable=False)
     status = Column(Enum(OrganizationStatus), nullable=False)
+    code = Column(String, unique=True, index=True, nullable=True)
+    email = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
+    address = Column(String, nullable=True)
+    primary_contact = Column(String, nullable=True)
+    timezone = Column(String, nullable=False, server_default="UTC")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False

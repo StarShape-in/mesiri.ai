@@ -267,6 +267,14 @@ async def process_inbound_message(
             duration_ms=int((time.perf_counter() - t0) * 1000),
             succeeded=True,
         ))
+        if message_logger:
+            await _safe(message_logger.update_context(
+                correlation_id=correlation_id,
+                organization_id=resolved.organization_id,
+                project_id=resolved.project_id,
+                site_id=resolved.site_id,
+            ))
+
 
         # --- Canonicalization stage ---
         t0 = time.perf_counter()

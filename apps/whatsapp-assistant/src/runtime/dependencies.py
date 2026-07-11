@@ -224,6 +224,15 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     async def _on_normalized(message, raw_payload, retry_of_id=None) -> None:  # type: ignore[no-untyped-def]
         wa_id = message.sender.wa_id
 
+        # M4: resolve the sender before spending on understanding.
+        try:
+            ctx = await resolve_sender(actor_reader, wa_id)
+        except Exception:  # noqa: BLE001 — never let a lookup error drop the message silently
+            _log.exception("context.identity_lookup_failed wa_id=%s", wa_id)
+            ctx = None
+
+        org_id = ctx.organization_id if ctx else None
+
         # Best-effort inbound message log (for debugging/replay). raw_payload
         # is a self-contained, replayable envelope of the raw Meta webhook
         # JSON (see ingress.receiver.WhatsAppReceiver._envelope) -- stored in
@@ -247,14 +256,8 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             media_object_key=message.media.object_key if message.media else None,
             dedup_key=dedup_key,
             retry_of_id=retry_of_id,
+            organization_id=org_id,
         )
-
-        # M4: resolve the sender before spending on understanding.
-        try:
-            ctx = await resolve_sender(actor_reader, wa_id)
-        except Exception:  # noqa: BLE001 — never let a lookup error drop the message silently
-            _log.exception("context.identity_lookup_failed wa_id=%s", wa_id)
-            ctx = None
 
         if ctx is None:
             _log.info("context.sender_unregistered wa_id=%s", wa_id)

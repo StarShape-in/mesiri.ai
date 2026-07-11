@@ -200,6 +200,9 @@ async def test_logger_failure_does_not_break_pipeline():
         async def log_received(self, **kwargs):  # noqa: ANN001
             raise RuntimeError("log DB is down")
 
+        async def update_context(self, **kwargs):  # noqa: ANN001
+            raise RuntimeError("log DB is down")
+
         async def mark_completed(self, **kwargs):  # noqa: ANN001
             raise RuntimeError("log DB is down")
 

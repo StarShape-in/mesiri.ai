@@ -35,6 +35,7 @@ import {
   WhatsAppManagerDialog,
 } from '@/components/user-dialogs'
 import { UserOverviewTab } from '@/components/user-overview-tab'
+import { UserWhatsAppMessagesTab } from '@/components/user-whatsapp-messages-tab'
 import type { ProjectItem } from '@/lib/scope-types'
 
 const ROLE_BADGES = {
@@ -55,7 +56,7 @@ export default function UserDetails() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const [activeTab, setActiveTab] = React.useState<'overview' | 'access' | 'whatsapp' | 'activity' | 'settings'>('overview')
+  const [activeTab, setActiveTab] = React.useState<'overview' | 'access' | 'whatsapp' | 'whatsapp_messages' | 'activity' | 'settings'>('overview')
 
   // Dialog States
   const [editOpen, setEditOpen] = React.useState(false)
@@ -241,6 +242,15 @@ export default function UserDetails() {
           WhatsApp Mappings
         </button>
         <button
+          onClick={() => setActiveTab('whatsapp_messages')}
+          className={`pb-2 border-b-2 transition-colors ${
+            activeTab === 'whatsapp_messages' ? 'border-primary text-foreground' : 'border-transparent hover:text-foreground'
+          } flex items-center gap-1.5 whitespace-nowrap`}
+        >
+          <History className="size-3.5" />
+          WhatsApp Messages
+        </button>
+        <button
           onClick={() => setActiveTab('activity')}
           className={`pb-2 border-b-2 transition-colors ${
             activeTab === 'activity' ? 'border-primary text-foreground' : 'border-transparent hover:text-foreground'
@@ -395,6 +405,14 @@ export default function UserDetails() {
               </div>
             </CardContent>
           </Card>
+        )}
+
+        {activeTab === 'whatsapp_messages' && (
+          <UserWhatsAppMessagesTab
+            user={user}
+            setActiveTab={setActiveTab}
+            setWhatsappOpen={setWhatsappOpen}
+          />
         )}
 
         {activeTab === 'activity' && (
