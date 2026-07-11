@@ -8,6 +8,7 @@ export default [
       "packages/ui/src/**",
       "apps/whatsapp-assistant/src/**",
       "apps/control-panel/src/**",
+      "apps/dashboard/src/**",
       "dist/**",
       "node_modules/**",
     ],
