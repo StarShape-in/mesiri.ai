@@ -141,11 +141,11 @@ export function InventoryView({ projectId, siteId }: InventoryViewProps) {
                         {row.current_stock} {row.unit}
                       </TableCell>
                       <TableCell className="text-muted-foreground">
-                        {siteNameById.get(row.site_id) ?? row.site_id.slice(0, 8)}
+                        {row.site_id ? (siteNameById.get(row.site_id) ?? row.site_id.slice(0, 8)) : '—'}
                       </TableCell>
                       {showProjectColumn && (
                         <TableCell className="text-muted-foreground">
-                          {projectNameById.get(row.project_id) ?? row.project_id.slice(0, 8)}
+                          {row.project_id ? (projectNameById.get(row.project_id) ?? row.project_id.slice(0, 8)) : '—'}
                         </TableCell>
                       )}
                       <TableCell className="text-right font-mono tabular-nums text-muted-foreground">

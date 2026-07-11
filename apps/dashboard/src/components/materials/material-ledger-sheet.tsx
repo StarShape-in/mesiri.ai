@@ -16,7 +16,7 @@ import { fetchLedger, type LedgerEntry, type StockState } from '@/lib/materials'
 const PAGE_SIZE = 25
 
 interface MaterialLedgerSheetProps {
-  siteId: string
+  siteId: string | null
   materialId: string
   materialName: string
   open: boolean
@@ -44,7 +44,7 @@ export function MaterialLedgerSheet({
 
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ['materials', 'ledger', siteId, materialId, offset],
-    queryFn: () => fetchLedger(siteId, materialId, { limit: PAGE_SIZE, offset }),
+    queryFn: () => fetchLedger(siteId!, materialId, { limit: PAGE_SIZE, offset }),
     enabled: open && !!siteId && !!materialId,
   })
 
