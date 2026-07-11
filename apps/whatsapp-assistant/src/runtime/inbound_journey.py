@@ -133,6 +133,7 @@ async def process_inbound_message(
     trace_logger: TraceLogger | None = None,
     actor: ActorIdentity | None = None,
     inventory_query: MaterialInventoryQueryService | None = None,
+    semantic_hint: str | None = None,
 ) -> JourneyResult:
     mlog: MessageLogger = message_logger or NoopMessageLogger()
     tlog: TraceLogger = trace_logger or NoopTraceLogger()
@@ -141,7 +142,7 @@ async def process_inbound_message(
     # --- Understanding stage ---
     t0 = time.perf_counter()
     try:
-        understanding = await pipeline.understand(message)
+        understanding = await pipeline.understand(message, semantic_hint=semantic_hint)
         await _safe(tlog.log_stage(
             correlation_id=correlation_id,
             stage="understanding",

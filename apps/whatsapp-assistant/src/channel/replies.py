@@ -71,6 +71,17 @@ _CATEGORY_PROMPTS: dict[str, str] = {
     "cat_expense": 'Tell me the expense — for example:\n  • "Paid 1500 to ABC Hardware"',
 }
 
+# The semantic_type a category tap hints extraction toward for the user's
+# *next* message (see interactions/category_hint.py). A hint only ever
+# nudges classification -- the model can still override it if the text
+# clearly says otherwise (see the extraction prompts).
+CATEGORY_SEMANTIC_HINT: dict[str, str] = {
+    "cat_material": "material_update",
+    "cat_equipment": "equipment_usage",
+    "cat_labour": "labour_update",
+    "cat_expense": "expense",
+}
+
 # Field names as a site worker would say them, not as the schema spells them.
 _FIELD_LABELS: dict[str, str] = {
     "material_name": "which material",

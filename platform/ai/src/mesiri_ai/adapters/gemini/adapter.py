@@ -154,6 +154,12 @@ class GeminiProvider:
         self, text: str, *, semantic_hint: str | None = None, correlation_id: str | None = None
     ) -> ExtractionResult:
         prompt = f"{_EXTRACTION_PROMPT}\n\nText:\n{text}"
+        if semantic_hint:
+            prompt += (
+                f'\n\nHint: the user selected the "{semantic_hint}" category just before '
+                "sending this message. Prefer that semantic_type unless the text clearly "
+                "indicates a different one -- never force it against clear evidence."
+            )
         raw_text, latency_ms = await self._generate(prompt, correlation_id, "extract")
         data = self._parse_json(raw_text, correlation_id)
         return ExtractionResult(

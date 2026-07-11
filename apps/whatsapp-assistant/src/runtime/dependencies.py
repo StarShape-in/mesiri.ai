@@ -100,6 +100,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from backend.postgres.message_logger import PostgresMessageLogger
     from backend.postgres.trace_logger import PostgresTraceLogger
     from backend.postgres.workflow_instance import PostgresWorkflowInstanceRepository
+    from channel.replies import CATEGORY_SEMANTIC_HINT
     from channel.whatsapp.outbound import WhatsAppSender
     from context.live_identity import (
         NO_ORG_MESSAGE,
@@ -109,6 +110,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     )
     from context.runtime import build_context_resolver
     from interactions import build_interaction_handler
+    from interactions.category_hint import CategoryHintStore
     from mesiri.application.materials.dispatcher import MaterialExecutionDispatcher
     from mesiri.application.materials.handlers import ExecuteConfirmedMaterialActionHandler
     from mesiri.bootstrap.settings import get_settings as _get_backend_settings
@@ -139,6 +141,10 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         from mesiri.infrastructure.redis.client import FakeRedis
 
         redis_client = FakeRedis()
+
+    # Ephemeral category-tap hint (see interactions/category_hint.py) -- same
+    # redis_client as the active context store, never authoritative.
+    category_hint_store = CategoryHintStore(redis_client)
 
     # M8: the one transaction Material command execution runs in. connect()/
     # disconnect() happen in the lifespan handler (runtime/lifecycle.py), same
@@ -270,6 +276,10 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         # InteractionHandler.handle_category_tap for why this lives there.
         category_prompt = interaction_handler.handle_category_tap(message)
         if category_prompt is not None:
+            row_id = message.metadata.get("interactive_reply_id")
+            hint = CATEGORY_SEMANTIC_HINT.get(row_id) if row_id else None
+            if hint:
+                await category_hint_store.set_hint(user_id=ctx.user_id, semantic_hint=hint)
             await sender.send_text(wa_id, category_prompt)
             await message_logger.log_reply(correlation_id=message.correlation_id, reply=category_prompt)
             return
@@ -308,10 +318,12 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             )
             return
 
+        semantic_hint = await category_hint_store.pop_hint(user_id=ctx.user_id)
         await process_inbound_message(
             message,
             actor_user_id=ctx.user_id,
             actor=ctx,
+            semantic_hint=semantic_hint,
             pipeline=pipeline,
             context_resolver=context_resolver,
             planner=planner,

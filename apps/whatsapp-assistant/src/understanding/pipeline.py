@@ -67,7 +67,13 @@ class UnderstandingPipeline:
         self._storage = object_storage
         self._confidence = confidence_policy or ConfidencePolicy()
 
-    async def understand(self, message: NormalizedMessage) -> UnderstandingResult:
+    async def understand(
+        self, message: NormalizedMessage, *, semantic_hint: str | None = None
+    ) -> UnderstandingResult:
+        """``semantic_hint`` is an optional nudge from a recent category-menu
+        tap (see interactions/category_hint.py) -- it only reaches the
+        extraction call, never the deterministic greeting/whoami shortcuts,
+        and the provider may still override it if the text clearly disagrees."""
         result = UnderstandingResult(
             source_message_id=message.message_id,
             correlation_id=message.correlation_id,
@@ -76,11 +82,11 @@ class UnderstandingPipeline:
         )
         try:
             if message.modality in (InputModality.TEXT, InputModality.INTERACTIVE):
-                await self._handle_text(message, result)
+                await self._handle_text(message, result, semantic_hint=semantic_hint)
             elif message.modality == InputModality.VOICE:
-                await self._handle_voice(message, result)
+                await self._handle_voice(message, result, semantic_hint=semantic_hint)
             elif message.modality in (InputModality.IMAGE, InputModality.DOCUMENT):
-                await self._handle_image(message, result)
+                await self._handle_image(message, result, semantic_hint=semantic_hint)
             else:
                 result.warnings.append(f"unsupported modality: {message.modality.value}")
                 result.overall_confidence = ConfidenceLevel.UNUSABLE
@@ -97,7 +103,13 @@ class UnderstandingPipeline:
             )
         return result
 
-    async def _handle_text(self, message: NormalizedMessage, result: UnderstandingResult) -> None:
+    async def _handle_text(
+        self,
+        message: NormalizedMessage,
+        result: UnderstandingResult,
+        *,
+        semantic_hint: str | None = None,
+    ) -> None:
         text = (message.text or "").strip()
         if not text:
             result.overall_confidence = ConfidenceLevel.UNUSABLE
@@ -159,11 +171,17 @@ class UnderstandingPipeline:
             return
 
         extraction = await self._extraction.extract(
-            result.normalized_text, correlation_id=result.correlation_id
+            result.normalized_text, semantic_hint=semantic_hint, correlation_id=result.correlation_id
         )
         self._apply_extraction(result, extraction, is_empty=False)
 
-    async def _handle_voice(self, message: NormalizedMessage, result: UnderstandingResult) -> None:
+    async def _handle_voice(
+        self,
+        message: NormalizedMessage,
+        result: UnderstandingResult,
+        *,
+        semantic_hint: str | None = None,
+    ) -> None:
         audio = await self._read_media(message)
         speech = await self._speech.transcribe(audio, correlation_id=result.correlation_id)
         result.transcript = speech.transcript
@@ -204,11 +222,17 @@ class UnderstandingPipeline:
             return
 
         extraction = await self._extraction.extract(
-            result.normalized_text, correlation_id=result.correlation_id
+            result.normalized_text, semantic_hint=semantic_hint, correlation_id=result.correlation_id
         )
         self._apply_extraction(result, extraction, is_empty=False)
 
-    async def _handle_image(self, message: NormalizedMessage, result: UnderstandingResult) -> None:
+    async def _handle_image(
+        self,
+        message: NormalizedMessage,
+        result: UnderstandingResult,
+        *,
+        semantic_hint: str | None = None,
+    ) -> None:
         image = await self._read_media(message)
         mime = message.media.mime_type if message.media else None
         vision = await self._vision.analyze_image(
@@ -232,7 +256,9 @@ class UnderstandingPipeline:
             result.warnings.append("image not interpretable")
             return
         source = vision.description or str(vision.raw_fields)
-        extraction = await self._extraction.extract(source, correlation_id=result.correlation_id)
+        extraction = await self._extraction.extract(
+            source, semantic_hint=semantic_hint, correlation_id=result.correlation_id
+        )
         self._apply_extraction(result, extraction, is_empty=False)
 
     async def _read_media(self, message: NormalizedMessage) -> bytes:

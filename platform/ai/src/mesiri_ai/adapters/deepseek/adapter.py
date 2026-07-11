@@ -64,6 +64,13 @@ class DeepSeekExtractionProvider:
         self, text: str, *, semantic_hint: str | None = None, correlation_id: str | None = None
     ) -> ExtractionResult:
         api_key = self._s.api_key.get_secret_value() if self._s.api_key else None
+        system_prompt = _EXTRACTION_PROMPT
+        if semantic_hint:
+            system_prompt += (
+                f'\n\nHint: the user selected the "{semantic_hint}" category just before '
+                "sending this message. Prefer that semantic_type unless the text clearly "
+                "indicates a different one -- never force it against clear evidence."
+            )
 
         async def _raw() -> Any:
             async with httpx.AsyncClient(timeout=self._s.timeout_seconds) as client:
@@ -73,7 +80,7 @@ class DeepSeekExtractionProvider:
                     json={
                         "model": self._s.model,
                         "messages": [
-                            {"role": "system", "content": _EXTRACTION_PROMPT},
+                            {"role": "system", "content": system_prompt},
                             {"role": "user", "content": text},
                         ],
                         "response_format": {"type": "json_object"},
