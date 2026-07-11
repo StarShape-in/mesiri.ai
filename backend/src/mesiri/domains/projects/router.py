@@ -615,7 +615,7 @@ async def add_project_member(
         )
     except Exception as e:
         if "unique" in str(e).lower() or "23505" in str(e):
-            raise HTTPException(status_code=409, detail="User is already a member of this project")
+            raise HTTPException(status_code=409, detail="User is already a member of this project") from e
         raise
 
     return ProjectMemberResponse(
