@@ -260,9 +260,13 @@ async def test_inbound_journey_starts_workflow_and_replies_with_confirmation_pro
     workflow_runtime = _workflow_runtime({WorkflowKey.MATERIAL_RECEIPT: fake_graph})
 
     sent_texts: list[tuple[str, str]] = []
+    sent_buttons: list[tuple[str, str, tuple]] = []
 
     async def capture_send_text(wa_id: str, body: str) -> None:
         sent_texts.append((wa_id, body))
+
+    async def capture_send_button(wa_id: str, body: str, buttons: tuple) -> None:
+        sent_buttons.append((wa_id, body, buttons))
 
     result = await process_inbound_message(
         message,
@@ -273,6 +277,7 @@ actor_user_id=canon(seed.USER_ENGINEER),
         workflow_runtime=workflow_runtime,
 interaction_handler=InteractionHandler(workflow_runtime),
         send_text=capture_send_text,
+        send_button=capture_send_button,
     )
 
     assert result.planner_decision is not None
@@ -280,7 +285,14 @@ interaction_handler=InteractionHandler(workflow_runtime),
     assert result.workflow_run is not None
     assert result.workflow_run.status is WorkflowRunStatus.STARTED
     assert result.workflow_run.pending_prompt == "Confirm: 20 bags cement received?"
-    assert sent_texts == [(message.sender.wa_id, "Confirm: 20 bags cement received?")]
+    # A confirmation prompt is sent as Yes/No buttons, not plain text -- see
+    # runtime/inbound_journey.py's _render_reply.
+    assert sent_texts == []
+    assert len(sent_buttons) == 1
+    wa_id, body, buttons = sent_buttons[0]
+    assert wa_id == message.sender.wa_id
+    assert body == "Confirm: 20 bags cement received?"
+    assert [b.id for b in buttons] == ["confirm_yes", "confirm_no"]
 
 
 def _material_pipeline() -> UnderstandingPipeline:
@@ -344,9 +356,13 @@ async def test_inbound_journey_blocks_new_workflow_while_confirmation_pending():
     )
 
     sent_texts: list[str] = []
+    sent_buttons: list[tuple[str, str, tuple]] = []
 
     async def capture_send_text(wa_id: str, body: str) -> None:
         sent_texts.append(body)
+
+    async def capture_send_button(wa_id: str, body: str, buttons: tuple) -> None:
+        sent_buttons.append((wa_id, body, buttons))
 
     result = await process_inbound_message(
         message,
@@ -357,12 +373,19 @@ actor_user_id=canon(seed.USER_ENGINEER),
         workflow_runtime=workflow_runtime,
 interaction_handler=InteractionHandler(workflow_runtime),
         send_text=capture_send_text,
+        send_button=capture_send_button,
     )
 
     assert result.workflow_run is not None
     assert result.workflow_run.status is WorkflowRunStatus.BLOCKED_PENDING_CONFIRMATION
-    assert len(sent_texts) == 1
-    assert "Confirm: 10 rods steel received?" in sent_texts[0]
+    # The "please finish the pending confirmation first" re-show is still a
+    # confirmation prompt -- Yes/No buttons, not plain text (see
+    # runtime/inbound_journey.py's _render_reply).
+    assert sent_texts == []
+    assert len(sent_buttons) == 1
+    _, body, buttons = sent_buttons[0]
+    assert "Confirm: 10 rods steel received?" in body
+    assert [b.id for b in buttons] == ["confirm_yes", "confirm_no"]
     # the pre-existing pending workflow is untouched — no second instance created
     assert len(repo.saved) == 1
 
