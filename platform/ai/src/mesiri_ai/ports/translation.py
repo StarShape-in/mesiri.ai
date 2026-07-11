@@ -12,6 +12,8 @@ from ..models import TranslationResult
 
 @runtime_checkable
 class TranslationProvider(Protocol):
+    provider: str
+
     async def translate_to_english(
         self,
         text: str,
