@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from context.projection_hooks import project_entity
 from mesiri.domains.shared.auth import require_platform_admin
+from mesiri.domains.timeline.responses import TimelineEntriesListResponse
+from mesiri.infrastructure.postgres.repositories.timeline import PostgresTimelineReadRepository
 
 router = APIRouter(prefix="/admin/organizations", tags=["admin"])
 
@@ -132,6 +134,72 @@ async def list_organizations(_admin: dict = Depends(require_platform_admin)):
         )
         for row in rows
     ]
+
+
+@router.get("/{org_id}", response_model=OrganizationResponse)
+async def get_organization(org_id: uuid.UUID, _admin: dict = Depends(require_platform_admin)):
+    engine = get_engine()
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            sa.select(organizations_table).where(organizations_table.c.id == org_id)
+        )
+        row = result.first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    return OrganizationResponse(
+        id=row.id,
+        name=row.name,
+        deployment_type=row.deployment_type,
+        db_route=row.db_route,
+        status=row.status,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+@router.delete("/{org_id}", status_code=204)
+async def delete_organization(org_id: uuid.UUID, _admin: dict = Depends(require_platform_admin)):
+    engine = get_engine()
+    async with engine.begin() as conn:
+        result = await conn.execute(
+            sa.select(organizations_table.c.id).where(organizations_table.c.id == org_id)
+        )
+        if result.first() is None:
+            raise HTTPException(status_code=404, detail="Organization not found")
+
+        await conn.execute(users_table.delete().where(users_table.c.organization_id == org_id))
+        await conn.execute(organizations_table.delete().where(organizations_table.c.id == org_id))
+
+
+@router.get("/{org_id}/timeline", response_model=TimelineEntriesListResponse)
+async def list_organization_timeline(
+    org_id: uuid.UUID,
+    event_type: str | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    _admin: dict = Depends(require_platform_admin),
+):
+    """Cross-tenant activity feed for a single organization (platform admin view)."""
+    engine = get_engine()
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            sa.select(organizations_table.c.id).where(organizations_table.c.id == org_id)
+        )
+        if result.first() is None:
+            raise HTTPException(status_code=404, detail="Organization not found")
+
+        repo = PostgresTimelineReadRepository(conn)
+        items, total = await repo.list_entries(
+            organization_id=org_id,
+            event_type=event_type,
+            date_from=date_from,
+            date_to=date_to,
+            limit=limit,
+            offset=offset,
+        )
+    return {"items": items, "total": total}
 
 
 @router.get("/{org_id}/users", response_model=list[OrgUserResponse])
