@@ -43,6 +43,7 @@ _REQUIRED_FIELDS: dict[SemanticType, tuple[str, ...]] = {
     SemanticType.LABOUR_UPDATE: ("headcount",),
     SemanticType.GENERAL_SITE_UPDATE: (),
     SemanticType.GENERAL_QUESTION: (),
+    SemanticType.WHOAMI_QUESTION: (),
     SemanticType.UNKNOWN: (),
 }
 
@@ -112,17 +113,20 @@ class UnderstandingPipeline:
         # not the primary saving. See mesiri_ai.greeting_classifier.
         if is_greeting_trigger(text):
             result.normalized_text = text
-            self._apply_deterministic_shortcut(result)
+            self._apply_deterministic_shortcut(result, SemanticType.UNKNOWN)
             return
 
         # Same reasoning, for "who am i"/"my profile"/etc -- see
         # mesiri_ai.whoami_classifier. Also defense-in-depth here (the
         # primary saving is interactions/handler.py's pre-pipeline check);
-        # the reply itself is built later, in inbound_journey.py, which has
-        # the ActorIdentity this module must not know about.
+        # the reply itself is built later, in inbound_journey.py (which has
+        # the ActorIdentity this module must not know about) by reading
+        # semantic_type back off this result -- not by re-running this same
+        # classifier a second time on raw text, which is what caused a real
+        # bug (the second copy checked the wrong field for voice).
         if is_whoami_trigger(text):
             result.normalized_text = text
-            self._apply_deterministic_shortcut(result)
+            self._apply_deterministic_shortcut(result, SemanticType.WHOAMI_QUESTION)
             return
 
         translation = await self._translation.translate_to_english(
@@ -172,16 +176,18 @@ class UnderstandingPipeline:
         # never left to an AI provider's judgment about whether it carries
         # business fields. See mesiri_ai.greeting_classifier.
         if is_greeting_trigger(result.normalized_text):
-            self._apply_deterministic_shortcut(result)
+            self._apply_deterministic_shortcut(result, SemanticType.UNKNOWN)
             return
 
         # This is the real saving for voice whoami questions ("njaan aara"
         # translates to "who am I" in the same Sarvam call that produced
         # normalized_text above) -- extraction is skipped entirely rather
-        # than spent on a question with no business fields to extract. See
-        # mesiri_ai.whoami_classifier.
+        # than spent on a question with no business fields to extract.
+        # WHOAMI_QUESTION (not UNKNOWN) is the signal inbound_journey.py
+        # reads to build the identity-summary reply -- see the comment in
+        # _handle_text above for why it reads this instead of re-classifying.
         if is_whoami_trigger(result.normalized_text):
-            self._apply_deterministic_shortcut(result)
+            self._apply_deterministic_shortcut(result, SemanticType.WHOAMI_QUESTION)
             return
 
         extraction = await self._extraction.extract(
@@ -227,24 +233,28 @@ class UnderstandingPipeline:
         obj = await self._storage.get_object(message.media.object_key)
         return obj.data
 
-    def _apply_deterministic_shortcut(self, result: UnderstandingResult) -> None:
+    def _apply_deterministic_shortcut(
+        self, result: UnderstandingResult, semantic_type: SemanticType
+    ) -> None:
         """A deterministically recognized greeting/menu or who-am-i request
         (see mesiri_ai.greeting_classifier / mesiri_ai.whoami_classifier) --
-        no extraction call, no candidate. semantic_type=UNKNOWN is the same
+        no extraction call, no candidate.
+
+        semantic_type distinguishes the two: UNKNOWN for greeting (the same
         classification an empty extraction would already produce, so it
         flows through canonicalization to CanonicalEventType.UNRECOGNIZED ->
         Planner's DIRECT_REPLY exactly as it does today -- this only makes
         the outcome deterministic rather than dependent on an AI provider
-        correctly finding no fields. The whoami case is answered before
-        reaching that far in practice (inbound_journey.py checks
-        is_whoami_trigger on the transcript directly, since building the
-        actual reply needs the caller's ActorIdentity, which this module
-        must not know about) -- semantic_type=UNKNOWN is still the correct,
-        harmless classification if that check is ever bypassed.
+        correctly finding no fields). WHOAMI_QUESTION for who-am-i -- this
+        result is the single source of truth callers read (e.g.
+        inbound_journey.py checks result.semantic_type directly) rather than
+        re-running is_whoami_trigger on raw text a second time downstream,
+        which is what let a real bug in: two independent copies of "which
+        text field do I check" drifted apart for voice.
         HIGH, not UNUSABLE: we are confident about what this is, we just
         chose not to spend a provider call confirming it.
         """
-        result.semantic_type = SemanticType.UNKNOWN
+        result.semantic_type = semantic_type
         result.overall_confidence = ConfidenceLevel.HIGH
 
     def _apply_extraction(

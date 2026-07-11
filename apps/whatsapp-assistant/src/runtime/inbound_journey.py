@@ -28,6 +28,7 @@ from context.resolver import ContextResolver
 from context.runtime import log_resolved_context
 from interactions.handler import InteractionHandler
 from interactions.response_handler import render_workflow_run_reply
+from mesiri_contracts.assistant.enums import SemanticType
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage
 from mesiri_contracts.assistant.planner_decision import PlannerDecisionType
 from mesiri_contracts.assistant.understanding_result import UnderstandingResult
@@ -45,7 +46,6 @@ from workflows import (
     WorkflowRuntime,
     log_workflow_run,
 )
-from workflows.who_am_i import is_whoami_trigger
 
 _log = logging.getLogger("mesiri.inbound_journey")
 
@@ -183,14 +183,17 @@ async def process_inbound_message(
     # answer even with a confirmation pending; actor is None only when the
     # caller didn't wire one in (e.g. some tests), in which case this simply
     # doesn't fire.
+    #
+    # Reads understanding.semantic_type -- set deterministically by
+    # understanding/pipeline.py's own is_whoami_trigger check -- rather than
+    # re-running that classifier here on raw text. Two independent copies of
+    # "which text field do I check" is exactly what caused a real bug (the
+    # duplicate here checked transcript, the original-language text, instead
+    # of normalized_text, the translation); reading Understanding's own
+    # answer makes that whole bug class structurally impossible, not just
+    # fixed for today.
     if actor is not None:
-        # normalized_text first, not transcript: for voice, transcript is the
-        # *original-language* text ("njaan aara"), which will never match an
-        # English phrase list -- normalized_text is Sarvam's English
-        # translation ("who am I"), the one that actually matches. For text
-        # messages the two are already identical (see _handle_text).
-        whoami_text = understanding.normalized_text or understanding.transcript
-        if is_whoami_trigger(whoami_text):
+        if understanding.semantic_type is SemanticType.WHOAMI_QUESTION:
             reply_text = whoami_reply(actor)
             await send_text(message.sender.wa_id, reply_text)
             await _safe(mlog.log_reply(correlation_id=correlation_id, reply=reply_text))
