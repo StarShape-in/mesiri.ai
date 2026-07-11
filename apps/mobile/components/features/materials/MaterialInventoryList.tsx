@@ -136,8 +136,8 @@ export function MaterialInventoryList({
 
 const createStyles = (theme: any) => StyleSheet.create({
   container: {
-    gap: 12,
-    marginTop: theme.spacing.space2,
+    gap: 14,
+    marginTop: theme.spacing.space3,
   },
   loadingContainer: {
     padding: 40,
@@ -158,15 +158,16 @@ const createStyles = (theme: any) => StyleSheet.create({
   card: {
     backgroundColor: theme.colors.backgroundSurface,
     borderWidth: 1,
-    borderColor: theme.colors.borderSubtle,
+    borderColor: theme.colors.borderDefault,
     borderRadius: theme.radius.lg,
     padding: theme.spacing.space4,
+    ...theme.shadow.subtle,
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 14,
   },
   titleContainer: {
     flexDirection: 'row',
@@ -178,13 +179,13 @@ const createStyles = (theme: any) => StyleSheet.create({
     marginRight: 8,
   },
   materialName: {
-    fontSize: theme.typography.sizeSm,
+    fontSize: theme.typography.sizeMd,
     fontWeight: theme.typography.weightSemiBold,
     color: theme.colors.textPrimary,
     flex: 1,
   },
   stockValue: {
-    fontSize: theme.typography.sizeMd,
+    fontSize: theme.typography.sizeLg,
     fontWeight: theme.typography.weightBold,
   },
   highStockValue: {

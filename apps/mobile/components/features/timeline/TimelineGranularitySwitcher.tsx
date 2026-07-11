@@ -43,14 +43,16 @@ const createStyles = (theme: any) => StyleSheet.create({
     flexDirection: 'row',
     backgroundColor: theme.colors.backgroundSubtle,
     marginHorizontal: theme.spacing.space4,
-    marginTop: theme.spacing.space2,
+    marginTop: theme.spacing.space3,
     borderRadius: theme.radius.lg,
-    padding: 4,
+    padding: 5,
   },
   button: {
     flex: 1,
-    paddingVertical: 6,
+    minHeight: 38,
+    paddingVertical: 10,
     alignItems: 'center',
+    justifyContent: 'center',
     borderRadius: theme.radius.md,
   },
   buttonActive: {
@@ -58,7 +60,7 @@ const createStyles = (theme: any) => StyleSheet.create({
     ...theme.shadow.subtle,
   },
   buttonText: {
-    fontSize: 12,
+    fontSize: theme.typography.sizeSm,
     fontWeight: theme.typography.weightMedium,
     color: theme.colors.textMuted,
   },

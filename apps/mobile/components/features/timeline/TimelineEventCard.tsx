@@ -116,24 +116,25 @@ const createStyles = (theme: any) => StyleSheet.create({
   },
   chipRow: {
     flexDirection: 'row',
-    marginTop: 6,
+    marginTop: 8,
   },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    minHeight: 26,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     borderRadius: theme.radius.full,
     maxWidth: '80%',
   },
   chipDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    marginRight: 5,
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    marginRight: 6,
   },
   chipText: {
-    fontSize: 11,
+    fontSize: theme.typography.sizeXs,
     fontWeight: theme.typography.weightMedium,
   },
   footerRow: {
