@@ -261,6 +261,7 @@ async def process_inbound_message(
                     "org_name": actor.org_name,
                     "projects": [asdict(p) for p in actor.projects] if actor.projects else [],
                     "sites": [asdict(s) for s in actor.sites] if actor.sites else [],
+                    "query_text": understanding.translated_text or understanding.normalized_text,
                 }
 
             if context_debug:
