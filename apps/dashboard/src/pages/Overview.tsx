@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
 import { useAuth } from '@/lib/AuthContext'
+import { useScope } from '@/lib/ScopeContext'
 import { api } from '@/lib/api'
 
 interface ActivityRow {
@@ -20,6 +21,13 @@ interface ActivityRow {
   label: string
   status: 'active' | 'pending'
   updatedAt: string
+}
+
+interface TimelineEntry {
+  id: string
+  event_type: string
+  summary: string
+  occurred_at: string
 }
 
 const chartConfig = {
@@ -56,15 +64,31 @@ const FALLBACK_ROWS: ActivityRow[] = [
 
 export default function Overview() {
   const { me } = useAuth()
+  const { scope } = useScope()
 
-  // Placeholder query against the backend to prove the data layer end-to-end.
-  // Falls back to static demo data if the endpoint isn't available yet.
+  // Reads the current Scope and filters the shared Overview page's data
+  // accordingly — Portfolio has no project_id/site_id (org-wide), Project
+  // scope passes project_id only, Site scope passes both. This is the same
+  // pattern every future shared page should follow: Scope -> Filtered Data.
+  const projectId = scope.mode !== 'portfolio' ? scope.projectId : undefined
+  const siteId = scope.mode === 'site' ? scope.siteId : undefined
+
   const { data: rows, isLoading } = useQuery({
-    queryKey: ['overview-activity'],
+    queryKey: ['overview-activity', projectId, siteId],
     queryFn: async () => {
       try {
-        const res = await api.get<ActivityRow[]>('/dashboard/activity')
-        return res.data
+        const res = await api.get<{ items: TimelineEntry[] }>('/timeline', {
+          params: { project_id: projectId, site_id: siteId, limit: 10 },
+        })
+        if (res.data.items.length === 0) return FALLBACK_ROWS
+        return res.data.items.map(
+          (entry): ActivityRow => ({
+            id: entry.id,
+            label: entry.summary || entry.event_type,
+            status: 'active',
+            updatedAt: new Date(entry.occurred_at).toLocaleString(),
+          })
+        )
       } catch {
         return FALLBACK_ROWS
       }
@@ -80,8 +104,14 @@ export default function Overview() {
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <h2 className="text-lg font-semibold">Welcome back{me?.name ? `, ${me.name}` : ''}</h2>
-        <p className="text-sm text-muted-foreground">Here's what's happening with your account.</p>
+        <h2 className="text-lg font-semibold">Welcome back{me?.full_name ? `, ${me.full_name}` : ''}</h2>
+        <p className="text-sm text-muted-foreground">
+          {scope.mode === 'portfolio'
+            ? 'Organization-wide view across all projects.'
+            : scope.mode === 'project'
+              ? `Viewing ${scope.projectName}.`
+              : `Viewing ${scope.siteName} (${scope.projectName}).`}
+        </p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
@@ -111,7 +141,7 @@ export default function Overview() {
             <Users className="size-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{me?.org_name ? 1 : 0}</div>
+            <div className="text-2xl font-bold">{me?.organization_name ? 1 : 0}</div>
             <p className="text-xs text-muted-foreground">organization</p>
           </CardContent>
         </Card>

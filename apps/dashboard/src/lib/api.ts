@@ -41,12 +41,21 @@ api.interceptors.response.use(
   }
 )
 
+export type AccessPolicy = {
+  mode: 'all_projects' | 'custom_projects'
+  projects: Array<{
+    projectId: string
+    siteAccess?: { mode: 'all_sites' | 'custom_sites'; siteIds?: string[] }
+  }>
+}
+
 export interface Me {
   user_id: string
-  org_id: string
+  organization_id: string
+  organization_name: string | null
   role: string
-  name: string
-  org_name: string
+  full_name: string
+  access_policy: AccessPolicy
 }
 
 export async function login(email: string, password: string): Promise<void> {

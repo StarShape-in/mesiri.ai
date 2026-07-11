@@ -208,6 +208,19 @@ async def test_resolve_from_jwt_null_policy_denies_by_default(mock_conn, sample_
     assert ctx.project_scope.grants_no_projects is True
 
 
+def test_resolve_site_scope_static_delegates_to_context_helper():
+    """AuthorizationService._resolve_site_scope is a thin wrapper — smoke test only,
+    full deny-by-default coverage lives in test_authorization_context.py."""
+    from mesiri.authorization.context import AccessPolicy
+
+    project_id = uuid.uuid4()
+    policy = AccessPolicy(mode="all_projects", projects=[])
+
+    scope = AuthorizationService._resolve_site_scope(policy, project_id)
+
+    assert scope.grants_all_sites is True
+
+
 async def test_resolve_from_jwt_malformed_policy_denies_by_default(mock_conn, sample_user_row):
     """Test malformed policy defaults to empty custom (deny by default)."""
     sample_user_row.access_policy = {"mode": "invalid_mode", "projects": []}

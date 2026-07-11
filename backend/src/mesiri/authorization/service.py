@@ -12,7 +12,13 @@ import sqlalchemy as sa
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from .context import AccessPolicy, AuthorizationContext, ProjectAccessScope
+from .context import (
+    AccessPolicy,
+    AuthorizationContext,
+    ProjectAccessScope,
+    SiteAccessScope,
+    resolve_site_scope,
+)
 
 
 class AuthorizationService:
@@ -125,3 +131,14 @@ class AuthorizationService:
                         pass
 
         return ProjectAccessScope(mode="custom_projects", project_ids=project_ids)
+
+    @staticmethod
+    def _resolve_site_scope(access_policy: AccessPolicy, project_id: UUID) -> SiteAccessScope:
+        """Resolve site access scope for a project from an access policy.
+
+        Pure function of the already-parsed access_policy — no DB access is
+        needed since siteAccess is nested inside the same JSON blob resolved
+        by _resolve_project_scope. See context.resolve_site_scope for the
+        deny-by-default rules.
+        """
+        return resolve_site_scope(access_policy, project_id)

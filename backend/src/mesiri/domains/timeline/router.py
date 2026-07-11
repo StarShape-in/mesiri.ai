@@ -40,6 +40,27 @@ def _resolve_project_ids(
     return None, False
 
 
+def _site_filter_denied(
+    auth_context: AuthorizationContext,
+    project_id: uuid.UUID | None,
+    site_id: uuid.UUID | None,
+) -> bool:
+    """True if the requested site_id filter must be denied under the caller's site scope.
+
+    Mirrors mesiri.domains.materials.router._site_filter_denied: site access is
+    resolved per-project, so a site_id without a project_id can only be trusted
+    for org-wide (all_projects) callers.
+    """
+    if site_id is None:
+        return False
+    if project_id is None:
+        return not auth_context.project_scope.grants_all_org_projects
+    site_scope = auth_context.site_scope_for_project(project_id)
+    if site_scope.grants_all_sites:
+        return False
+    return site_id not in site_scope.site_ids
+
+
 @router.get("", response_model=TimelineEntriesListResponse)
 async def list_timeline(
     project_id: uuid.UUID | None = None,
@@ -55,6 +76,8 @@ async def list_timeline(
     """List timeline entries within the user's organization and project scope."""
     project_ids, out_of_scope = _resolve_project_ids(auth_context, project_id)
     if out_of_scope:
+        return {"items": [], "total": 0}
+    if _site_filter_denied(auth_context, project_id, site_id):
         return {"items": [], "total": 0}
 
     repo = PostgresTimelineReadRepository(conn)
@@ -83,6 +106,8 @@ async def timeline_day_summary(
     """Aggregated per-day, per-event-type counts within the user's scope."""
     project_ids, out_of_scope = _resolve_project_ids(auth_context, project_id)
     if out_of_scope:
+        return {"items": []}
+    if _site_filter_denied(auth_context, project_id, site_id):
         return {"items": []}
 
     repo = PostgresTimelineReadRepository(conn)

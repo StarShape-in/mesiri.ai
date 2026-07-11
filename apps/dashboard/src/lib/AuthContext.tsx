@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { Navigate } from 'react-router-dom'
 import { fetchMe, getToken, type Me } from './api'
+import { ScopeProvider } from './ScopeContext'
 
 interface AuthState {
   me: Me | null
@@ -44,5 +45,9 @@ export function RequireAuth({ children }: { children: ReactNode }) {
     return <Navigate to="/login" replace />
   }
 
-  return <AuthContext.Provider value={state}>{children}</AuthContext.Provider>
+  return (
+    <AuthContext.Provider value={state}>
+      <ScopeProvider>{children}</ScopeProvider>
+    </AuthContext.Provider>
+  )
 }

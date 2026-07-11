@@ -23,6 +23,29 @@ from mesiri.infrastructure.postgres.repositories.materials import PostgresMateri
 router = APIRouter(prefix="/materials", tags=["materials"])
 
 
+def _site_filter_denied(
+    auth_context: AuthorizationContext,
+    project_id: uuid.UUID | None,
+    site_id: uuid.UUID | None,
+) -> bool:
+    """True if the requested site_id filter must be denied under the caller's site scope.
+
+    site_id filters are only authorization-checked when a single project_id is
+    also known — site access is resolved per-project (AccessPolicy nests
+    siteAccess under each project grant). A site_id without a project_id can
+    only be trusted for org-wide (all_projects) callers; custom-scoped callers
+    are denied in that ambiguous case rather than leaking cross-project data.
+    """
+    if site_id is None:
+        return False
+    if project_id is None:
+        return not auth_context.project_scope.grants_all_org_projects
+    site_scope = auth_context.site_scope_for_project(project_id)
+    if site_scope.grants_all_sites:
+        return False
+    return site_id not in site_scope.site_ids
+
+
 async def _publish_outbox_event(
     conn: AsyncConnection,
     *,
@@ -84,6 +107,9 @@ async def list_inflows(
         else:
             project_ids = None
 
+    if _site_filter_denied(auth_context, project_id, site_id):
+        return {"items": [], "total": 0}
+
     repo = PostgresMaterialReadRepository(conn)
     items, total = await repo.list_receipts(
         organization_id=auth_context.organization_id,
@@ -124,6 +150,9 @@ async def list_outflows(
         else:
             project_ids = None
 
+    if _site_filter_denied(auth_context, project_id, site_id):
+        return {"items": [], "total": 0}
+
     repo = PostgresMaterialReadRepository(conn)
     items, total = await repo.list_usage(
         organization_id=auth_context.organization_id,
@@ -158,6 +187,9 @@ async def list_inventory(
             project_ids = auth_context.project_scope.project_ids
         else:
             project_ids = None
+
+    if _site_filter_denied(auth_context, project_id, site_id):
+        return []
 
     repo = PostgresMaterialReadRepository(conn)
     levels = await repo.get_stock_levels(
@@ -203,6 +235,10 @@ async def create_inflow(
         if body.project_id not in auth_context.project_scope.project_ids:
             from fastapi import HTTPException
             raise HTTPException(status_code=403, detail="Not authorized for this project")
+
+    if _site_filter_denied(auth_context, body.project_id, body.site_id):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Not authorized for this site")
 
     from sqlalchemy import text
 
@@ -256,6 +292,10 @@ async def create_outflow(
         if body.project_id not in auth_context.project_scope.project_ids:
             from fastapi import HTTPException
             raise HTTPException(status_code=403, detail="Not authorized for this project")
+
+    if _site_filter_denied(auth_context, body.project_id, body.site_id):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Not authorized for this site")
 
     from sqlalchemy import text
 

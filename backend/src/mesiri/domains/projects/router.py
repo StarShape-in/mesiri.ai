@@ -189,21 +189,31 @@ async def create_project(
 @router.get("/{project_id}/sites", response_model=list[SiteResponse])
 async def list_sites(
     project_id: uuid.UUID,
-    user: dict = Depends(get_current_user),
+    auth_context: AuthorizationContext = Depends(get_auth_context),
     conn: AsyncConnection = Depends(get_db_conn),
 ):
-    org_id = user.get("org")
+    if not auth_context.project_scope.grants_all_org_projects:
+        if project_id not in auth_context.project_scope.project_ids:
+            raise HTTPException(status_code=404, detail="Project not found")
 
     proj_result = await conn.execute(
         sa.select(_projects.c.id).where(
             _projects.c.id == project_id,
-            _projects.c.organization_id == org_id,
+            _projects.c.organization_id == auth_context.organization_id,
         )
     )
     if proj_result.first() is None:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    result = await conn.execute(sa.select(_sites).where(_sites.c.project_id == project_id))
+    site_scope = auth_context.site_scope_for_project(project_id)
+    if site_scope.grants_no_sites:
+        return []
+
+    query = sa.select(_sites).where(_sites.c.project_id == project_id)
+    if not site_scope.grants_all_sites:
+        query = query.where(_sites.c.id.in_(site_scope.site_ids))
+
+    result = await conn.execute(query)
     return [
         SiteResponse(
             id=r.id,
@@ -219,15 +229,16 @@ async def list_sites(
 async def create_site(
     project_id: uuid.UUID,
     body: SiteCreate,
-    admin: dict = Depends(require_admin),
+    auth_context: AuthorizationContext = Depends(get_auth_context),
     conn: AsyncConnection = Depends(get_db_conn),
 ):
-    org_id = admin.get("org")
+    if auth_context.role.upper() != "ADMIN":
+        raise HTTPException(status_code=403, detail="Admin access required")
 
     proj_result = await conn.execute(
         sa.select(_projects.c.id).where(
             _projects.c.id == project_id,
-            _projects.c.organization_id == org_id,
+            _projects.c.organization_id == auth_context.organization_id,
         )
     )
     if proj_result.first() is None:
@@ -238,7 +249,7 @@ async def create_site(
         _sites.insert().values(
             id=site_id,
             project_id=project_id,
-            organization_id=org_id,
+            organization_id=auth_context.organization_id,
             name=body.name,
         )
     )

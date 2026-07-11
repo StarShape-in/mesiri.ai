@@ -13,12 +13,29 @@ import {
   SidebarMenuItem,
 } from '@/components/ui/sidebar'
 import { useAuth } from '@/lib/AuthContext'
+import { useAllowedScopes } from '@/lib/ScopeContext'
 import { logout } from '@/lib/api'
+import type { ScopeKind } from '@/lib/scope-types'
 
-const NAV_ITEMS = [{ title: 'Overview', url: '/', icon: LayoutDashboard }]
+type NavItem = {
+  title: string
+  url: string
+  icon: typeof LayoutDashboard
+  /** Omit to show at every scope the user can reach; set to restrict a nav
+   * entry to scopes where it makes sense (e.g. cross-project views only
+   * make sense in Portfolio scope). */
+  requiredScope?: ScopeKind
+}
+
+const NAV_ITEMS: NavItem[] = [{ title: 'Overview', url: '/', icon: LayoutDashboard }]
 
 export function AppSidebar() {
   const { me } = useAuth()
+  const allowed = useAllowedScopes()
+
+  const visibleItems = NAV_ITEMS.filter(
+    (item) => !item.requiredScope || allowed.includes(item.requiredScope)
+  )
 
   return (
     <Sidebar collapsible="icon">
@@ -26,7 +43,7 @@ export function AppSidebar() {
         <div className="flex items-center gap-2 px-2 py-1.5">
           <Building2 className="size-5" />
           <span className="font-semibold group-data-[collapsible=icon]:hidden">
-            {me?.org_name ?? 'Mesiri'}
+            {me?.organization_name ?? 'Mesiri'}
           </span>
         </div>
       </SidebarHeader>
@@ -35,7 +52,7 @@ export function AppSidebar() {
           <SidebarGroupLabel>Dashboard</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {NAV_ITEMS.map((item) => (
+              {visibleItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton asChild tooltip={item.title}>
                     <NavLink to={item.url} end>

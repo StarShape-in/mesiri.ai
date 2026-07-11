@@ -10,6 +10,8 @@ from mesiri.authorization.context import (
     AccessPolicy,
     AuthorizationContext,
     ProjectAccessScope,
+    SiteAccessScope,
+    resolve_site_scope,
 )
 
 
@@ -90,6 +92,151 @@ class TestProjectAccessScope:
         assert len(scope.project_ids) == 2
 
 
+class TestSiteAccessScope:
+    """Tests for SiteAccessScope model."""
+
+    def test_grants_all_sites(self):
+        scope = SiteAccessScope(mode="all_sites", site_ids=set())
+
+        assert scope.grants_all_sites is True
+        assert scope.grants_no_sites is False
+
+    def test_grants_no_sites_when_empty_custom(self):
+        scope = SiteAccessScope(mode="custom_sites", site_ids=set())
+
+        assert scope.grants_all_sites is False
+        assert scope.grants_no_sites is True
+
+    def test_custom_scope_with_sites(self):
+        site_ids = {uuid.uuid4(), uuid.uuid4()}
+        scope = SiteAccessScope(mode="custom_sites", site_ids=site_ids)
+
+        assert scope.grants_all_sites is False
+        assert scope.grants_no_sites is False
+        assert len(scope.site_ids) == 2
+
+
+class TestResolveSiteScope:
+    """Tests for resolve_site_scope — mirrors _resolve_project_scope's deny-by-default rules."""
+
+    def test_all_projects_mode_grants_all_sites(self):
+        """all_projects org-wide access implies all_sites for any project."""
+        policy = AccessPolicy(mode="all_projects", projects=[])
+        scope = resolve_site_scope(policy, uuid.uuid4())
+
+        assert scope.grants_all_sites is True
+
+    def test_custom_projects_all_sites_grant(self):
+        project_id = uuid.uuid4()
+        policy = AccessPolicy(
+            mode="custom_projects",
+            projects=[{"projectId": str(project_id), "siteAccess": {"mode": "all_sites"}}],
+        )
+        scope = resolve_site_scope(policy, project_id)
+
+        assert scope.grants_all_sites is True
+
+    def test_custom_projects_custom_sites_with_matches(self):
+        project_id = uuid.uuid4()
+        site_id_1 = uuid.uuid4()
+        site_id_2 = uuid.uuid4()
+        policy = AccessPolicy(
+            mode="custom_projects",
+            projects=[
+                {
+                    "projectId": str(project_id),
+                    "siteAccess": {
+                        "mode": "custom_sites",
+                        "siteIds": [str(site_id_1), str(site_id_2)],
+                    },
+                }
+            ],
+        )
+        scope = resolve_site_scope(policy, project_id)
+
+        assert scope.grants_all_sites is False
+        assert scope.grants_no_sites is False
+        assert scope.site_ids == {site_id_1, site_id_2}
+
+    def test_custom_sites_empty_grants_no_sites(self):
+        project_id = uuid.uuid4()
+        policy = AccessPolicy(
+            mode="custom_projects",
+            projects=[
+                {"projectId": str(project_id), "siteAccess": {"mode": "custom_sites", "siteIds": []}}
+            ],
+        )
+        scope = resolve_site_scope(policy, project_id)
+
+        assert scope.grants_no_sites is True
+
+    def test_project_not_in_grants_denies_by_default(self):
+        """A project_id with no matching grant resolves to empty custom scope."""
+        policy = AccessPolicy(
+            mode="custom_projects",
+            projects=[{"projectId": str(uuid.uuid4()), "siteAccess": {"mode": "all_sites"}}],
+        )
+        scope = resolve_site_scope(policy, uuid.uuid4())
+
+        assert scope.grants_no_sites is True
+
+    def test_missing_site_access_denies_by_default(self):
+        project_id = uuid.uuid4()
+        policy = AccessPolicy(
+            mode="custom_projects",
+            projects=[{"projectId": str(project_id)}],
+        )
+        scope = resolve_site_scope(policy, project_id)
+
+        assert scope.grants_no_sites is True
+
+    def test_malformed_site_access_mode_denies_by_default(self):
+        project_id = uuid.uuid4()
+        policy = AccessPolicy(
+            mode="custom_projects",
+            projects=[
+                {"projectId": str(project_id), "siteAccess": {"mode": "invalid_mode"}}
+            ],
+        )
+        scope = resolve_site_scope(policy, project_id)
+
+        assert scope.grants_no_sites is True
+
+    def test_malformed_site_ids_denies_by_default(self):
+        project_id = uuid.uuid4()
+        policy = AccessPolicy(
+            mode="custom_projects",
+            projects=[
+                {
+                    "projectId": str(project_id),
+                    "siteAccess": {"mode": "custom_sites", "siteIds": "not a list"},
+                }
+            ],
+        )
+        scope = resolve_site_scope(policy, project_id)
+
+        assert scope.grants_no_sites is True
+
+    def test_invalid_site_id_string_skipped(self):
+        project_id = uuid.uuid4()
+        valid_site_id = uuid.uuid4()
+        policy = AccessPolicy(
+            mode="custom_projects",
+            projects=[
+                {
+                    "projectId": str(project_id),
+                    "siteAccess": {
+                        "mode": "custom_sites",
+                        "siteIds": [str(valid_site_id), "not-a-uuid"],
+                    },
+                }
+            ],
+        )
+        scope = resolve_site_scope(policy, project_id)
+
+        assert scope.site_ids == {valid_site_id}
+
+
 class TestAuthorizationContext:
     """Tests for AuthorizationContext model."""
 
@@ -132,3 +279,27 @@ class TestAuthorizationContext:
 
         with pytest.raises((AttributeError, TypeError)):
             ctx.status = "suspended"  # type: ignore
+
+    def test_site_scope_for_project_delegates_to_resolve_site_scope(self):
+        project_id = uuid.uuid4()
+        site_id = uuid.uuid4()
+        ctx = AuthorizationContext(
+            user_id=uuid.uuid4(),
+            organization_id=uuid.uuid4(),
+            role="admin",
+            status="active",
+            access_policy=AccessPolicy(
+                mode="custom_projects",
+                projects=[
+                    {
+                        "projectId": str(project_id),
+                        "siteAccess": {"mode": "custom_sites", "siteIds": [str(site_id)]},
+                    }
+                ],
+            ),
+            project_scope=ProjectAccessScope(mode="custom_projects", project_ids={project_id}),
+        )
+
+        scope = ctx.site_scope_for_project(project_id)
+
+        assert scope.site_ids == {site_id}
