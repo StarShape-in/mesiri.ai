@@ -121,7 +121,7 @@ export default function Overview() {
             <Activity className="size-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">109</div>
+            <div className="font-mono text-2xl font-bold tabular-nums">109</div>
             <p className="text-xs text-muted-foreground">this week</p>
           </CardContent>
         </Card>
@@ -131,7 +131,7 @@ export default function Overview() {
             <TrendingUp className="size-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">+12%</div>
+            <div className="font-mono text-2xl font-bold tabular-nums">+12%</div>
             <p className="text-xs text-muted-foreground">vs last week</p>
           </CardContent>
         </Card>
@@ -141,7 +141,7 @@ export default function Overview() {
             <Users className="size-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{me?.organization_name ? 1 : 0}</div>
+            <div className="font-mono text-2xl font-bold tabular-nums">{me?.organization_name ? 1 : 0}</div>
             <p className="text-xs text-muted-foreground">organization</p>
           </CardContent>
         </Card>
