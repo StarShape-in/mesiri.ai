@@ -37,6 +37,7 @@ class CanonicalEventType(str, Enum):
     GENERAL_SITE_UPDATE_REQUESTED = "GeneralSiteUpdateRequested"
     GENERAL_QUESTION_ASKED = "GeneralQuestionAsked"
     IDENTITY_LOOKUP_REQUESTED = "IdentityLookupRequested"
+    INVENTORY_QUERY_ASKED = "InventoryQueryAsked"
     CLARIFICATION_REQUIRED = "ClarificationRequired"
     UNRECOGNIZED = "Unrecognized"
 

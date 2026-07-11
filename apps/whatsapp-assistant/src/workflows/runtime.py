@@ -29,6 +29,13 @@ from .state import WorkflowGraphState
 
 logger = logging.getLogger(__name__)
 
+# Workflows that only answer a question and never produce a draft_action --
+# no business record to confirm, so they are exempt from the single-active
+# pending-confirmation gate and complete without AWAITING_CONFIRMATION.
+_INFORMATIONAL_WORKFLOW_KEYS = frozenset(
+    {WorkflowKey.WHO_AM_I, WorkflowKey.MATERIAL_INVENTORY_QUERY}
+)
+
 
 class WorkflowRunStatus(str, Enum):
     STARTED = "started"
@@ -210,8 +217,8 @@ class WorkflowRuntime:
         # workflow. If one is pending, block the new one and re-show its prompt
         # rather than piling up ambiguous confirmations. (The partial unique index
         # in Postgres is the hard guarantee; this is the friendly pre-check.)
-        # Informational workflows like WHO_AM_I are exempt.
-        if workflow_key is not WorkflowKey.WHO_AM_I:
+        # Informational workflows (see _INFORMATIONAL_WORKFLOW_KEYS) are exempt.
+        if workflow_key not in _INFORMATIONAL_WORKFLOW_KEYS:
             existing = await self._repo.get_awaiting_confirmation(event.user_id)
             if existing is not None and existing.state.pending_prompt:
                 logger.info(
@@ -272,7 +279,7 @@ class WorkflowRuntime:
             )
 
         if draft_action is None:
-            if workflow_key is not WorkflowKey.WHO_AM_I:
+            if workflow_key not in _INFORMATIONAL_WORKFLOW_KEYS:
                 logger.error(
                     "workflow.missing_draft_action workflow_key=%s workflow_instance_id=%s",
                     workflow_key.value,

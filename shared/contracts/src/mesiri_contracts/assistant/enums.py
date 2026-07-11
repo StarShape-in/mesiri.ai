@@ -41,4 +41,9 @@ class SemanticType(str, Enum):
     # (runtime/inbound_journey.py), since it needs the resolved
     # ActorIdentity, which Understanding must not know about.
     WHOAMI_QUESTION = "whoami_question"
+    # A question about current stock or movement history for a material (e.g.
+    # "how much cement is left?") -- read-only, never an update. Distinct from
+    # MATERIAL_UPDATE the same way WHOAMI_QUESTION is distinct from a report:
+    # it carries no business record to save, only a query to answer.
+    INVENTORY_QUERY = "inventory_query"
     UNKNOWN = "unknown"

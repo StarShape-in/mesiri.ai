@@ -44,6 +44,7 @@ _REQUIRED_FIELDS: dict[SemanticType, tuple[str, ...]] = {
     SemanticType.GENERAL_SITE_UPDATE: (),
     SemanticType.GENERAL_QUESTION: (),
     SemanticType.WHOAMI_QUESTION: (),
+    SemanticType.INVENTORY_QUERY: (),
     SemanticType.UNKNOWN: (),
 }
 

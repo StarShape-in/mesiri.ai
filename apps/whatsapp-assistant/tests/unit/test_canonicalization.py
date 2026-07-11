@@ -9,6 +9,7 @@ from mesiri_contracts.assistant.candidates import (
     Candidate,
     ExpenseCandidate,
     GeneralQuestionCandidate,
+    InventoryQueryCandidate,
     MaterialUpdateCandidate,
 )
 from mesiri_contracts.assistant.canonical_event import CanonicalEventType, IntentCompleteness
@@ -160,6 +161,29 @@ def test_expense_missing_amount_needs_clarification():
     assert event.event_type is CanonicalEventType.CLARIFICATION_REQUIRED
     assert event.completeness is IntentCompleteness.NEEDS_CLARIFICATION
     assert "amount" in event.missing_fields
+
+
+def test_inventory_query_with_material_name_is_actionable():
+    understanding = _understanding(
+        semantic_type=SemanticType.INVENTORY_QUERY,
+        candidates=[InventoryQueryCandidate(fields={"material_name": "cement"})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.INVENTORY_QUERY_ASKED
+    assert event.completeness is IntentCompleteness.ACTIONABLE
+    assert event.fields["material_name"] == "cement"
+
+
+def test_inventory_query_without_material_name_is_still_actionable():
+    """material_name is optional -- absent means "all materials", not incomplete."""
+    understanding = _understanding(
+        semantic_type=SemanticType.INVENTORY_QUERY,
+        candidates=[InventoryQueryCandidate(fields={})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.INVENTORY_QUERY_ASKED
+    assert event.completeness is IntentCompleteness.ACTIONABLE
+    assert event.missing_fields == []
 
 
 def test_general_question_is_not_actionable():

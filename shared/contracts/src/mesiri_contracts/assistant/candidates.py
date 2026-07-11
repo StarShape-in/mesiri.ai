@@ -56,7 +56,8 @@ class EquipmentUsageCandidate(Candidate):
 
 class MaterialUpdateCandidate(Candidate):
     semantic_type: SemanticType = SemanticType.MATERIAL_UPDATE
-    # Conventional keys: material_name, quantity, unit, direction(received/used).
+    # Conventional keys: material_name, quantity, unit, direction(received/used),
+    # work_item (usage only -- the activity the material was used for).
 
 
 class LabourUpdateCandidate(Candidate):
@@ -74,6 +75,11 @@ class GeneralQuestionCandidate(Candidate):
     # Conventional keys: question, topic.
 
 
+class InventoryQueryCandidate(Candidate):
+    semantic_type: SemanticType = SemanticType.INVENTORY_QUERY
+    # Conventional keys: material_name (optional -- absent means "all materials").
+
+
 # Registry so callers can build the right candidate from a semantic type.
 CANDIDATE_TYPES: dict[SemanticType, type[Candidate]] = {
     SemanticType.EXPENSE: ExpenseCandidate,
@@ -82,4 +88,5 @@ CANDIDATE_TYPES: dict[SemanticType, type[Candidate]] = {
     SemanticType.LABOUR_UPDATE: LabourUpdateCandidate,
     SemanticType.GENERAL_SITE_UPDATE: GeneralSiteUpdateCandidate,
     SemanticType.GENERAL_QUESTION: GeneralQuestionCandidate,
+    SemanticType.INVENTORY_QUERY: InventoryQueryCandidate,
 }

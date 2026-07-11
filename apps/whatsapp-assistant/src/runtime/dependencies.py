@@ -158,6 +158,12 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         db=material_db, repo=PostgresMaterialExecutionRepository()
     )
     material_dispatcher = MaterialExecutionDispatcher(material_execution_handler)
+    # Read-only inventory lookups for the material.inventory_query workflow --
+    # reuses the same material_db connection pool, never opens a write
+    # transaction. See runtime/inventory_query.py.
+    from runtime.inventory_query import MaterialInventoryQueryService
+
+    inventory_query = MaterialInventoryQueryService(material_db)
     # M7: resolves a confirmation reply into the pending workflow, or None
     # (fall through to the normal understanding journey). M8: when a CONFIRM
     # resolves to CONFIRMED, the dispatcher executes the domain write
@@ -316,6 +322,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             context_debug=settings.context_debug,
             message_logger=message_logger,
             trace_logger=trace_logger,
+            inventory_query=inventory_query,
         )
 
     receiver = WhatsAppReceiver(

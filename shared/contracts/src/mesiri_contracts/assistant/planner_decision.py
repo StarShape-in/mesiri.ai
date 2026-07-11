@@ -53,6 +53,7 @@ class WorkflowKey(str, Enum):
     LABOUR_ATTENDANCE = "labour.attendance"
     SITE_UPDATE = "site.update"
     WHO_AM_I = "who.am.i"
+    MATERIAL_INVENTORY_QUERY = "material.inventory_query"
 
 
 class PlannerDecision(BaseModel):

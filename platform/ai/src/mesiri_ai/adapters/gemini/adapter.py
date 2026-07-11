@@ -34,22 +34,31 @@ _VISION_PROMPT = (
 _EXTRACTION_PROMPT = (
     "Extract structured construction data from the text. Return strict JSON with "
     'keys: "semantic_type" (expense|equipment_usage|material_update|labour_update|'
-    'general_site_update|general_question|whoami_question|unknown), "fields" (object), '
-    '"missing_fields" (array), "field_confidences" (object of field->0..1). '
+    'general_site_update|general_question|whoami_question|inventory_query|unknown), '
+    '"fields" (object), "missing_fields" (array), '
+    '"field_confidences" (object of field->0..1). '
     "Never invent values.\n\n"
     "Field schema per semantic_type (only include keys you actually found):\n"
     "- expense: amount, currency, vendor, category, description, paid_to, occurred_on\n"
     "- equipment_usage: equipment_name, duration_hours, operator, activity\n"
-    "- material_update: material_name, quantity, unit, direction. "
+    "- material_update: material_name, quantity, unit, direction, work_item. "
     'direction MUST be exactly "received" or "used" -- never any other word. '
     'Use "received" when material arrived, was delivered, or was brought to site '
     '(e.g. "50 bags of cement arrived", "cement delivered today"). '
     'Use "used" when material was consumed, used, or applied to work '
-    '(e.g. "20 bags of cement used for the foundation").\n'
+    '(e.g. "20 bags of cement used for the foundation"). '
+    "work_item is only for used material: the activity or task it was used for "
+    '(e.g. "slabing the footing area", "column casting"). Omit work_item entirely '
+    "for received material.\n"
     "- labour_update: headcount, trade, hours, contractor\n"
     "- general_site_update: summary, activity, location, weather\n"
     "- general_question: question, topic\n"
-    "- whoami_question: question"
+    "- whoami_question: question\n"
+    "- inventory_query: material_name (omit material_name if asking about all "
+    'materials, e.g. "show inventory"). Use this type for questions about how '
+    'much of a material is currently in stock (e.g. "how much cement is left?", '
+    '"current stock of steel") or its movement history '
+    '(e.g. "show today\'s cement history"). This is a question, never an update.'
 )
 
 

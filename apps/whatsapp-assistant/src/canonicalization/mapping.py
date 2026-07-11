@@ -18,6 +18,7 @@ _SIMPLE_EVENT_TYPE: dict[SemanticType, CanonicalEventType] = {
     SemanticType.GENERAL_SITE_UPDATE: CanonicalEventType.GENERAL_SITE_UPDATE_REQUESTED,
     SemanticType.GENERAL_QUESTION: CanonicalEventType.GENERAL_QUESTION_ASKED,
     SemanticType.WHOAMI_QUESTION: CanonicalEventType.IDENTITY_LOOKUP_REQUESTED,
+    SemanticType.INVENTORY_QUERY: CanonicalEventType.INVENTORY_QUERY_ASKED,
 }
 
 # MATERIAL_UPDATE is the one semantic type that splits by the candidate's
@@ -38,6 +39,7 @@ REQUIRED_FIELDS: dict[CanonicalEventType, tuple[str, ...]] = {
     CanonicalEventType.GENERAL_SITE_UPDATE_REQUESTED: (),
     CanonicalEventType.GENERAL_QUESTION_ASKED: (),
     CanonicalEventType.IDENTITY_LOOKUP_REQUESTED: (),
+    CanonicalEventType.INVENTORY_QUERY_ASKED: (),
     CanonicalEventType.CLARIFICATION_REQUIRED: (),
     CanonicalEventType.UNRECOGNIZED: (),
 }

@@ -35,6 +35,7 @@ from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
 from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
 from mesiri_contracts.assistant.v2.resolved_context import ResolvedContextV2
 from planner import Planner, log_planner_decision
+from runtime.inventory_query import MaterialInventoryQueryService
 from runtime.logging_ports import MessageLogger, TraceLogger
 from runtime.noop_loggers import NoopMessageLogger, NoopTraceLogger
 from understanding.pipeline import UnderstandingPipeline
@@ -131,6 +132,7 @@ async def process_inbound_message(
     message_logger: MessageLogger | None = None,
     trace_logger: TraceLogger | None = None,
     actor: ActorIdentity | None = None,
+    inventory_query: MaterialInventoryQueryService | None = None,
 ) -> JourneyResult:
     mlog: MessageLogger = message_logger or NoopMessageLogger()
     tlog: TraceLogger = trace_logger or NoopTraceLogger()
@@ -263,6 +265,18 @@ async def process_inbound_message(
                     "sites": [asdict(s) for s in actor.sites] if actor.sites else [],
                     "query_text": understanding.translated_text or understanding.normalized_text,
                 }
+
+            # Same reasoning as actor_profile above, for the inventory-query
+            # workflow: it must not touch the database itself, so the read
+            # happens here (the wiring layer) and the result is injected as
+            # plain, already-scoped data before the graph ever runs.
+            if canonical_event.event_type is CanonicalEventType.INVENTORY_QUERY_ASKED and inventory_query is not None:
+                canonical_event.fields["inventory_levels"] = await inventory_query.query(
+                    organization_id=canonical_event.organization_id,
+                    project_id=canonical_event.project_id,
+                    site_id=canonical_event.site_id,
+                    material_name=canonical_event.fields.get("material_name"),
+                )
 
             if context_debug:
                 log_canonical_event(canonical_event)
