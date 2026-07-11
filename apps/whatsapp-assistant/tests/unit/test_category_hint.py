@@ -56,3 +56,19 @@ async def test_hints_are_scoped_per_user():
     await store.set_hint(user_id="usr_1", semantic_hint="material_update")
     assert await store.pop_hint(user_id="usr_2") is None
     assert await store.pop_hint(user_id="usr_1") == "material_update"
+
+
+async def test_changing_the_selection_immediately_overrides_the_pending_hint():
+    """Tapping a different category before the first hint is consumed must
+    switch it right away -- never wait out the old TTL, never queue both."""
+    store = CategoryHintStore(_FakeRedis())
+    await store.set_hint(user_id="usr_1", semantic_hint="material_update")
+    await store.set_hint(user_id="usr_1", semantic_hint="equipment_usage")
+    assert await store.pop_hint(user_id="usr_1") == "equipment_usage"
+
+
+async def test_switching_categories_repeatedly_always_reflects_the_latest_tap():
+    store = CategoryHintStore(_FakeRedis())
+    for hint in ("material_update", "labour_update", "expense", "equipment_usage"):
+        await store.set_hint(user_id="usr_1", semantic_hint=hint)
+    assert await store.pop_hint(user_id="usr_1") == "equipment_usage"
