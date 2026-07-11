@@ -12,6 +12,7 @@ import {
   Send,
   FlaskConical,
   Cpu,
+  Zap,
 } from 'lucide-react';
 import mermaid from 'mermaid';
 import { api } from './api';
@@ -38,9 +39,17 @@ interface WorkflowGraphInfo {
   node_names: string[];
   example_messages: string[];
   mermaid: string | null;
+  lifecycle_mermaid: string | null;
+}
+interface FastPathInfo {
+  key: string;
+  title: string;
+  description: string;
+  example_messages: string[];
 }
 interface SystemGraphResponse {
   mermaid: string;
+  fast_paths: FastPathInfo[];
   stages: PipelineStage[];
   workflows: WorkflowGraphInfo[];
 }
@@ -67,6 +76,7 @@ interface ProviderExecution {
 interface SimulateResponse {
   dry_run: boolean;
   ran_as_wa_id: string;
+  routed_via: string;
   replies: string[];
   understanding: {
     semantic_type?: string;
@@ -120,6 +130,15 @@ function MermaidDiagram({ source }: { source: string }) {
   return <div ref={containerRef} style={{ overflowX: 'auto' }} />;
 }
 
+const ROUTED_VIA_LABELS: Record<string, string> = {
+  identity_gate: 'Identity gate (unregistered / no org / suspended)',
+  confirmation_fast_path: 'Confirmation fast path — no AI',
+  category_tap: 'Category menu tap — no AI',
+  greeting_trigger: 'Greeting trigger — no AI',
+  whoami_trigger: 'Who-am-I trigger — no AI',
+  ai_pipeline: 'AI pipeline',
+};
+
 const chipStyle: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
@@ -155,7 +174,14 @@ const SystemGraph = () => {
     setError(null);
     api
       .get<SystemGraphResponse>('/admin/system-graph')
-      .then((res) => setData({ ...res.data, stages: res.data.stages ?? [], workflows: res.data.workflows ?? [] }))
+      .then((res) =>
+        setData({
+          ...res.data,
+          fast_paths: res.data.fast_paths ?? [],
+          stages: res.data.stages ?? [],
+          workflows: res.data.workflows ?? [],
+        }),
+      )
       .catch((err) => setError(err.response?.data?.detail || 'Failed to load system graph'))
       .finally(() => setLoading(false));
   }, []);
@@ -250,6 +276,31 @@ const SystemGraph = () => {
             ))}
           </div>
 
+          {/* --- Fast paths (deterministic, pre-AI) --- */}
+          <h2 style={{ fontSize: '16px', fontWeight: 600, marginBottom: 'var(--space-2)', display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+            <Zap size={16} style={{ color: 'var(--warning, #c98a1e)' }} /> Fast paths (deterministic, no AI)
+          </h2>
+          <p style={{ fontSize: '12px', color: 'var(--neutral-500)', marginTop: 0, marginBottom: 'var(--space-4)' }}>
+            These run before the AI pipeline is ever touched — matched against static phrase lists, not model output. Click an example to test it.
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 'var(--space-4)', marginBottom: 'var(--space-8)' }}>
+            {data.fast_paths.map((fp) => (
+              <div key={fp.key} className="card">
+                <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>{fp.title}</div>
+                <p style={{ fontSize: '12px', color: 'var(--neutral-500)', margin: 0, marginBottom: 'var(--space-3)' }}>{fp.description}</p>
+                {fp.example_messages.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                    {fp.example_messages.map((msg) => (
+                      <span key={msg} style={chipStyle} onClick={() => tryExample(msg)} title="Load into the test panel">
+                        <Play size={11} /> {msg}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
           {/* --- Overview diagram (collapsible) --- */}
           <div className="card" style={{ marginBottom: 'var(--space-8)' }}>
             <button
@@ -327,7 +378,18 @@ const SystemGraph = () => {
                       </dl>
                       {wf.mermaid && (
                         <div style={{ marginTop: 'var(--space-3)' }}>
+                          <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--neutral-500)', marginBottom: 'var(--space-2)' }}>
+                            Draft graph
+                          </div>
                           <MermaidDiagram source={wf.mermaid} />
+                        </div>
+                      )}
+                      {wf.lifecycle_mermaid && (
+                        <div style={{ marginTop: 'var(--space-4)' }}>
+                          <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--neutral-500)', marginBottom: 'var(--space-2)' }}>
+                            After confirmation — branches to outcome
+                          </div>
+                          <MermaidDiagram source={wf.lifecycle_mermaid} />
                         </div>
                       )}
                       {!wf.implemented && (
@@ -398,9 +460,16 @@ const SystemGraph = () => {
 
             {result && (
               <div style={{ marginTop: 'var(--space-5)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 'var(--space-2)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 'var(--space-2)', flexWrap: 'wrap' }}>
                   <MessageSquare size={15} style={{ color: 'var(--primary)' }} />
                   <span style={{ fontWeight: 600, fontSize: '13px' }}>Assistant reply</span>
+                  <span
+                    className={`badge ${result.routed_via === 'ai_pipeline' ? 'badge-info' : 'badge-success'}`}
+                    style={{ fontSize: '10px' }}
+                  >
+                    {result.routed_via === 'ai_pipeline' ? <Cpu size={11} style={{ marginRight: 4 }} /> : <Zap size={11} style={{ marginRight: 4 }} />}
+                    {ROUTED_VIA_LABELS[result.routed_via] || result.routed_via}
+                  </span>
                 </div>
                 {result.replies.length ? (
                   result.replies.map((r, i) => (
@@ -412,6 +481,11 @@ const SystemGraph = () => {
                   <div style={{ fontSize: '13px', color: 'var(--neutral-500)' }}>(no reply produced)</div>
                 )}
 
+                {result.routed_via !== 'ai_pipeline' ? (
+                  <div style={{ marginTop: 'var(--space-4)', fontSize: '12px', color: 'var(--neutral-500)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Zap size={13} /> Deterministic reply — no AI model was involved, zero cost.
+                  </div>
+                ) : (
                 <div style={{ marginTop: 'var(--space-4)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 'var(--space-2)' }}>
                     <Cpu size={14} style={{ color: 'var(--neutral-500)' }} />
@@ -458,22 +532,25 @@ const SystemGraph = () => {
                     );
                   })()}
                 </div>
+                )}
 
-                <details style={{ marginTop: 'var(--space-3)' }}>
-                  <summary style={{ cursor: 'pointer', fontSize: '13px', fontWeight: 500, color: 'var(--neutral-600)' }}>How it was routed</summary>
-                  <dl style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '6px 12px', margin: '10px 0 0', fontSize: '13px' }}>
-                    <dt style={{ color: 'var(--neutral-500)' }}>Understood as</dt>
-                    <dd style={{ margin: 0, fontFamily: 'monospace' }}>{result.understanding?.semantic_type || '—'}</dd>
-                    <dt style={{ color: 'var(--neutral-500)' }}>Canonical event</dt>
-                    <dd style={{ margin: 0, fontFamily: 'monospace' }}>{result.canonical_event?.event_type || '—'}</dd>
-                    <dt style={{ color: 'var(--neutral-500)' }}>Planner decision</dt>
-                    <dd style={{ margin: 0, fontFamily: 'monospace' }}>{result.planner_decision?.decision_type || '—'}</dd>
-                    <dt style={{ color: 'var(--neutral-500)' }}>Workflow</dt>
-                    <dd style={{ margin: 0, fontFamily: 'monospace' }}>
-                      {result.workflow_run ? `${result.workflow_run.workflow_key} (${result.workflow_run.status})` : '—'}
-                    </dd>
-                  </dl>
-                </details>
+                {result.routed_via === 'ai_pipeline' && (
+                  <details style={{ marginTop: 'var(--space-3)' }}>
+                    <summary style={{ cursor: 'pointer', fontSize: '13px', fontWeight: 500, color: 'var(--neutral-600)' }}>How it was routed</summary>
+                    <dl style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '6px 12px', margin: '10px 0 0', fontSize: '13px' }}>
+                      <dt style={{ color: 'var(--neutral-500)' }}>Understood as</dt>
+                      <dd style={{ margin: 0, fontFamily: 'monospace' }}>{result.understanding?.semantic_type || '—'}</dd>
+                      <dt style={{ color: 'var(--neutral-500)' }}>Canonical event</dt>
+                      <dd style={{ margin: 0, fontFamily: 'monospace' }}>{result.canonical_event?.event_type || '—'}</dd>
+                      <dt style={{ color: 'var(--neutral-500)' }}>Planner decision</dt>
+                      <dd style={{ margin: 0, fontFamily: 'monospace' }}>{result.planner_decision?.decision_type || '—'}</dd>
+                      <dt style={{ color: 'var(--neutral-500)' }}>Workflow</dt>
+                      <dd style={{ margin: 0, fontFamily: 'monospace' }}>
+                        {result.workflow_run ? `${result.workflow_run.workflow_key} (${result.workflow_run.status})` : '—'}
+                      </dd>
+                    </dl>
+                  </details>
+                )}
               </div>
             )}
           </div>
