@@ -85,6 +85,7 @@ def _render_reply(
     """
     if workflow_run is not None and workflow_run.status in (
         WorkflowRunStatus.STARTED,
+        WorkflowRunStatus.COMPLETED,
         WorkflowRunStatus.BLOCKED_PENDING_CONFIRMATION,
     ):
         return ReplySpec(

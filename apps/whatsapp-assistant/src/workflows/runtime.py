@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 class WorkflowRunStatus(str, Enum):
     STARTED = "started"
+    COMPLETED = "completed"
     NO_GRAPH = "no_graph"
     FAILED = "failed"
     # A new actionable intent arrived while the user already has a confirmation
@@ -57,6 +58,9 @@ class WorkflowRunResult:
                 raise ValueError(
                     "STARTED requires workflow_instance_id, draft_action, and pending_prompt"
                 )
+        elif self.status is WorkflowRunStatus.COMPLETED:
+            if not self.pending_prompt:
+                raise ValueError("COMPLETED requires pending_prompt")
         elif self.status is WorkflowRunStatus.BLOCKED_PENDING_CONFIRMATION:
             if not self.pending_prompt:
                 raise ValueError("BLOCKED_PENDING_CONFIRMATION requires the pending prompt")
@@ -112,6 +116,21 @@ class WorkflowRunResult:
     ) -> WorkflowRunResult:
         return cls(
             status=WorkflowRunStatus.BLOCKED_PENDING_CONFIRMATION,
+            workflow_key=workflow_key,
+            correlation_id=correlation_id,
+            pending_prompt=pending_prompt,
+        )
+
+    @classmethod
+    def completed(
+        cls,
+        *,
+        workflow_key: WorkflowKey,
+        correlation_id: str,
+        pending_prompt: str,
+    ) -> WorkflowRunResult:
+        return cls(
+            status=WorkflowRunStatus.COMPLETED,
             workflow_key=workflow_key,
             correlation_id=correlation_id,
             pending_prompt=pending_prompt,
@@ -241,7 +260,8 @@ class WorkflowRuntime:
 
         draft_action: DraftActionV2 | None = result_state.get("draft_action")
         pending_prompt: str | None = result_state.get("pending_prompt")
-        if draft_action is None or pending_prompt is None:
+        
+        if pending_prompt is None:
             logger.error(
                 "workflow.incomplete_result workflow_key=%s workflow_instance_id=%s",
                 workflow_key.value,
@@ -249,6 +269,23 @@ class WorkflowRuntime:
             )
             return WorkflowRunResult.failed(
                 workflow_key=workflow_key, correlation_id=event.correlation_id
+            )
+
+        if draft_action is None:
+            if workflow_key is not WorkflowKey.WHO_AM_I:
+                logger.error(
+                    "workflow.missing_draft_action workflow_key=%s workflow_instance_id=%s",
+                    workflow_key.value,
+                    workflow_instance_id,
+                )
+                return WorkflowRunResult.failed(
+                    workflow_key=workflow_key, correlation_id=event.correlation_id
+                )
+            
+            return WorkflowRunResult.completed(
+                workflow_key=workflow_key,
+                correlation_id=event.correlation_id,
+                pending_prompt=pending_prompt,
             )
 
         state = WorkflowStateV2(
