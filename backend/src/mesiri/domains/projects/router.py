@@ -603,7 +603,7 @@ async def add_project_member(
     if user_row is None:
         raise HTTPException(status_code=404, detail="User not found in organization")
 
-    try {
+    try:
         member_id = uuid.uuid4()
         await conn.execute(
             _project_members.insert().values(
