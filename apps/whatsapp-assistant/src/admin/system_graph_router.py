@@ -149,7 +149,13 @@ _WORKFLOW_TITLES: dict[str, str] = {
     "equipment.usage": "Equipment Usage",
     "labour.attendance": "Labour Attendance",
     "site.update": "Site Update",
+    "who.am.i": "Who Am I",
+    "material.inventory_query": "Material Inventory Query",
 }
+
+# Workflows that only read and reply (COMPLETED with no draft_action) — never
+# reach a confirmation prompt, so they have no post-confirmation lifecycle.
+_READ_ONLY_WORKFLOWS: set[str] = {"who.am.i", "material.inventory_query"}
 
 
 def _quoted(text: str) -> list[str]:
@@ -172,6 +178,15 @@ def _example_messages_by_workflow() -> dict[str, list[str]]:
         "labour.attendance": _quoted(_CATEGORY_PROMPTS.get("cat_labour", "")),
         "expense.submit": _quoted(_CATEGORY_PROMPTS.get("cat_expense", "")),
         "site.update": ["Concrete pour finished on the 3rd floor"],
+        # Reachable via this route (canonicalization -> planner -> START_WORKFLOW)
+        # only for voice or non-English text -- English text matching
+        # whoami_phrases.json is always intercepted earlier by the pre-pipeline
+        # fast path (interactions/handler.py:handle_whoami_trigger), which
+        # answers with the simpler context/live_identity.py:whoami_reply()
+        # template instead of this workflow's project/site-aware one. See the
+        # "Who-am-I identity summary" entries below for both templates.
+        "who.am.i": ["Which project am I on?", "Which sites do I have?"],
+        "material.inventory_query": ["How much cement do we have?", "Show current material stock"],
     }
 
 
@@ -203,8 +218,12 @@ def _fast_paths() -> list[FastPathInfo]:
             title="Category menu tap",
             description=(
                 "Tapping a row on the WhatsApp category menu (Material / Equipment / "
-                "Labour / Expense) sends a deterministic prompt for that category — "
-                "no AI call, the row id is matched verbatim."
+                "Labour / Expense) sends a deterministic prompt for that category — no AI "
+                "call, the row id is matched verbatim. It also stores a semantic_hint "
+                "(channel/replies.py:CATEGORY_SEMANTIC_HINT) for that user, which is "
+                "popped and fed into extraction on their VERY NEXT message only — a "
+                "one-shot bias, not sticky state, so this simulate endpoint (single "
+                "message only) can't reproduce it end-to-end."
             ),
             example_messages=[r.title for r in CATEGORY_ROWS],
         ),
@@ -230,6 +249,48 @@ def _fast_paths() -> list[FastPathInfo]:
             example_messages=sorted(_WHOAMI_PHRASES)[:6],
         ),
     ]
+
+
+def _who_am_i_sample_reply() -> str:
+    """Renders the real who.am.i workflow node against a representative state,
+    so the catalog shows exactly what a project-specific sub-query looks like
+    (the case the pre-pipeline fast path's simpler template can't produce)."""
+    from workflows.state import WorkflowGraphState
+    from workflows.who_am_i.nodes import generate_identity_reply
+
+    state: WorkflowGraphState = {
+        "collected_fields": {
+            "actor_profile": {
+                "full_name": "Jane Doe",
+                "role": "project_manager",
+                "org_name": "Acme Construction",
+                "projects": [
+                    {"name": "Green Valley", "location": "East Zone", "status": "at_risk"},
+                    {"name": "Metro Heights", "location": "South Zone", "status": "on_track"},
+                ],
+                "sites": [{"name": "East Zone Site"}],
+                "query_text": "which project am i on",
+            }
+        }
+    }
+    return generate_identity_reply(state).get("pending_prompt", "")
+
+
+def _inventory_query_sample_reply() -> str:
+    """Renders the real material.inventory_query workflow node against a
+    representative stock snapshot."""
+    from workflows.material_inventory_query.nodes import generate_inventory_reply
+    from workflows.state import WorkflowGraphState
+
+    state: WorkflowGraphState = {
+        "collected_fields": {
+            "material_name": "cement",
+            "inventory_levels": [
+                {"material_name": "Cement", "unit": "bags", "current_stock": 30, "received": 50, "used": 20}
+            ],
+        }
+    }
+    return generate_inventory_reply(state).get("pending_prompt", "")
 
 
 def _confirmation_lifecycle_mermaid() -> str:
@@ -354,16 +415,48 @@ def _hardcoded_replies() -> list[HardcodedReplyInfo]:
             template=ORG_SUSPENDED_MESSAGE,
         ),
         HardcodedReplyInfo(
-            key="whoami_reply",
-            title="Who-am-I identity summary",
+            key="whoami_reply_fast_path",
+            title="Who-am-I — pre-pipeline fast path (English text)",
             source="context/live_identity.py:whoami_reply()",
             trigger=(
-                "SemanticType.WHOAMI_QUESTION — set either by the pre-pipeline fast path "
-                "(English phrase list, see Fast paths above) or, as a fallback, by "
-                "Understanding's own post-translation check inside the AI pipeline "
-                "(so a non-English identity question is still recognized)."
+                'A bare "who am i"/"my profile"/etc, matched by '
+                "interactions/handler.py:handle_whoami_trigger BEFORE Understanding runs "
+                "(see the whoami_trigger fast path above). Always the full profile — no "
+                "project/site drill-down."
             ),
             template=whoami_reply(sample_actor),
+        ),
+        HardcodedReplyInfo(
+            key="whoami_reply_workflow",
+            title="Who-am-I — workflow (voice / non-English text)",
+            source="workflows/who_am_i/nodes.py:generate_identity_reply()",
+            trigger=(
+                "The who.am.i LangGraph workflow (SemanticType.WHOAMI_QUESTION -> "
+                "CanonicalEventType.IDENTITY_LOOKUP_REQUESTED -> START_WORKFLOW). "
+                "Supports project-specific and site-specific sub-queries."
+            ),
+            template=_who_am_i_sample_reply(),
+            flag=(
+                "For plain-English text this workflow is effectively unreachable: "
+                "handle_whoami_trigger above matches the exact same phrase list "
+                "(whoami_phrases.json) and always intercepts first, before Understanding "
+                "ever runs — so English 'which project am I on'-style sub-queries never "
+                "reach this richer, project/site-aware template. Only voice and "
+                "non-English text (which the fast path can't check pre-translation) "
+                "actually get here."
+            ),
+        ),
+        HardcodedReplyInfo(
+            key="inventory_query_reply",
+            title="Material inventory snapshot",
+            source="workflows/material_inventory_query/nodes.py:generate_inventory_reply()",
+            trigger=(
+                "SemanticType.INVENTORY_QUERY -> CanonicalEventType.INVENTORY_QUERY_ASKED "
+                "-> START_WORKFLOW. Stock levels are queried read-only in "
+                "runtime/inbound_journey.py before the graph runs (the workflow itself "
+                "never touches the database) and injected as inventory_levels."
+            ),
+            template=_inventory_query_sample_reply(),
         ),
         # --- Direct / fallback replies (channel/replies.py) ---
         HardcodedReplyInfo(
@@ -825,6 +918,10 @@ async def simulate_message(
         options = "\n".join(f"  • {getattr(r, 'title', r)}" for r in rows)
         captured.append(f"{body}\n{options}")
 
+    async def _capture_button(_to: str, *, body: str, buttons) -> None:
+        options = " / ".join(getattr(r, "title", r) for r in buttons)
+        captured.append(f"{body}\n\nReply {options}")
+
     result = await process_inbound_message(
         message,
         actor_user_id=ctx.user_id,
@@ -835,14 +932,19 @@ async def simulate_message(
         interaction_handler=container.interaction_handler,
         send_text=_capture_text,
         send_list=_capture_list,
+        send_button=_capture_button,
         context_debug=False,
         # actor=ctx mirrors runtime/dependencies.py's real call: without it, a
         # non-English whoami question that only Understanding's post-
         # translation check catches (see understanding/pipeline.py) would
         # reach here with semantic_type=WHOAMI_QUESTION but never get
         # answered, since process_inbound_message only builds that reply when
-        # actor is not None.
+        # actor is not None. Same reasoning for IDENTITY_LOOKUP_REQUESTED's
+        # actor_profile injection at canonicalization time.
         actor=ctx,
+        # Real stock levels for the material.inventory_query workflow — without
+        # this it would always report "no recorded stock" regardless of reality.
+        inventory_query=container.inventory_query,
         # No loggers: this is a dry run, not a real inbound message.
     )
 

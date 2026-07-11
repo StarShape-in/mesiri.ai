@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from interactions import InteractionHandler
     from mesiri.infrastructure.postgres.database import PostgresDatabase
     from planner import Planner
+    from runtime.inventory_query import MaterialInventoryQueryService
     from understanding.pipeline import UnderstandingPipeline
     from workflows import WorkflowRuntime
 
@@ -70,6 +71,9 @@ class AppContainer:
     # the exact same pre-pipeline fast-path order as _on_normalized below,
     # which starts with resolve_sender(actor_reader, wa_id).
     actor_reader: ActorReader
+    # Read-only inventory lookups for the material.inventory_query workflow.
+    # Exposed for the same reason as pipeline/actor_reader above.
+    inventory_query: MaterialInventoryQueryService
     # redis_client is either a real RedisClient (when MESIRI_REDIS__HOST is set)
     # or FakeRedis for local/test.  Both expose connect() / disconnect() so the
     # lifespan handler can manage the lifecycle without special-casing.
@@ -356,6 +360,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         pipeline=pipeline,
         planner=planner,
         actor_reader=actor_reader,
+        inventory_query=inventory_query,
         workflow_runtime=workflow_runtime,
         interaction_handler=interaction_handler,
         redis_client=redis_client,
