@@ -296,3 +296,80 @@ async def test_no_loggers_does_not_break():
     )
 
     assert isinstance(result.understanding, UnderstandingResult)
+
+
+async def test_voice_whoami_is_answered_without_extraction():
+    """"njaan aara" (or any spoken phrasing Sarvam translates to a recognized
+    who-am-i phrase) must be answered the same way typed "who am i" is --
+    checked post-transcription since there's no text before Sarvam runs."""
+    from backend.ports import ActorIdentity
+    from context.live_identity import whoami_reply
+    from mesiri_ai.models import SpeechResult
+    from mesiri_contracts.assistant import MediaReference
+
+    actor = ActorIdentity(
+        user_id="usr_1",
+        full_name="Ravi",
+        role="SITE_ENGINEER",
+        organization_id="org_1",
+        org_name="Superman Company",
+        org_active=True,
+    )
+    storage = FakeObjectStorage()
+    await storage.put_object("voice/whoami.ogg", b"<audio>")
+    extraction = FakeExtractionProvider()
+    pipeline = UnderstandingPipeline(
+        speech=FakeSpeechProvider(SpeechResult(transcript="njaan aara", translated_text="who am I")),
+        vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
+        extraction=extraction,
+        translation=FakeTranslationProvider(),
+        object_storage=storage,
+    )
+    message = _message(
+        modality=InputModality.VOICE,
+        media=MediaReference(object_key="voice/whoami.ogg", mime_type="audio/ogg"),
+    )
+    mlog = RecordingMessageLogger()
+    sent: list[tuple[str, str]] = []
+
+    async def capture_send(wa_id: str, body: str) -> None:
+        sent.append((wa_id, body))
+
+    await process_inbound_message(
+        message,
+        seed.WA_ENGINEER,
+        actor=actor,
+        pipeline=pipeline,
+        context_resolver=_resolver(),
+        planner=Planner(),
+        workflow_runtime=_workflow_runtime(),
+        interaction_handler=_interaction_handler(),
+        send_text=capture_send,
+        message_logger=mlog,
+    )
+
+    assert sent == [(message.sender.wa_id, whoami_reply(actor))]
+    assert extraction.calls == 0  # never reached -- answered before extraction
+
+
+async def test_actor_not_wired_falls_through_to_normal_journey():
+    """actor=None (the default) must not raise -- some callers/tests don't
+    wire it, and the whoami fast path should simply not fire for them."""
+    message = _message(text="who am i")
+    sent: list[tuple[str, str]] = []
+
+    async def capture_send(wa_id: str, body: str) -> None:
+        sent.append((wa_id, body))
+
+    result = await process_inbound_message(
+        message,
+        seed.WA_ENGINEER,
+        pipeline=_pipeline(),
+        context_resolver=_resolver(),
+        planner=Planner(),
+        workflow_runtime=_workflow_runtime(),
+        interaction_handler=_interaction_handler(),
+        send_text=capture_send,
+    )
+    assert isinstance(result.understanding, UnderstandingResult)
+    assert len(sent) == 1

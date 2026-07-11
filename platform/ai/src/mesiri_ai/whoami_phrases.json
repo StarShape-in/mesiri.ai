@@ -1,0 +1,49 @@
+{
+  "_comment": "Trigger vocabulary for the deterministic who-am-i classifier. Language data only -- no logic. Add more phrasings/languages here without touching whoami_classifier.py. Unlike greeting_phrases.json (whole-message, per-token match), these are whole-message, whole-phrase matches -- 'who am i' is a phrase, not a set of independently meaningful tokens. This is a known interim measure, not the end state: it can only ever catch phrasings someone thought to add here. Broader, AI-understood identity questions are the acknowledged future direction (flagged explicitly, not forgotten) -- deferred for now because it costs the same AI call as any other understood message, versus this list's zero cost.",
+  "whoami": [
+    "who am i",
+    "whoami",
+    "who am i talking to",
+    "who is this",
+    "my profile",
+    "my details",
+    "my info",
+    "my information",
+    "tell me my details",
+    "tell me about myself",
+    "show my details",
+    "show my profile",
+
+    "what is my name",
+    "what's my name",
+    "tell me my name",
+
+    "what is my role",
+    "what's my role",
+    "which role am i",
+    "my role",
+    "tell me my role",
+
+    "which company am i in",
+    "which company do i belong to",
+    "what company am i in",
+    "which company",
+    "my company",
+    "which organization am i in",
+    "what organization am i in",
+    "my organization",
+
+    "which project am i on",
+    "which project am i in",
+    "what project am i on",
+    "which project",
+    "my project",
+    "my projects",
+
+    "which site am i on",
+    "what site am i on",
+    "which site",
+    "my site",
+    "my sites"
+  ]
+}

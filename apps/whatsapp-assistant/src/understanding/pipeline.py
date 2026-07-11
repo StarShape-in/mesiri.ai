@@ -26,6 +26,7 @@ from mesiri_ai.ports.extraction import StructuredExtractionProvider
 from mesiri_ai.ports.speech import SpeechUnderstandingProvider
 from mesiri_ai.ports.translation import TranslationProvider
 from mesiri_ai.ports.vision import VisionUnderstandingProvider
+from mesiri_ai.whoami_classifier import is_whoami_trigger
 from mesiri_contracts.assistant.candidates import CANDIDATE_TYPES, Candidate, FieldConfidence
 from mesiri_contracts.assistant.confidence import ConfidenceLevel
 from mesiri_contracts.assistant.enums import InputModality, SemanticType
@@ -111,7 +112,17 @@ class UnderstandingPipeline:
         # not the primary saving. See mesiri_ai.greeting_classifier.
         if is_greeting_trigger(text):
             result.normalized_text = text
-            self._apply_greeting(result)
+            self._apply_deterministic_shortcut(result)
+            return
+
+        # Same reasoning, for "who am i"/"my profile"/etc -- see
+        # mesiri_ai.whoami_classifier. Also defense-in-depth here (the
+        # primary saving is interactions/handler.py's pre-pipeline check);
+        # the reply itself is built later, in inbound_journey.py, which has
+        # the ActorIdentity this module must not know about.
+        if is_whoami_trigger(text):
+            result.normalized_text = text
+            self._apply_deterministic_shortcut(result)
             return
 
         translation = await self._translation.translate_to_english(
@@ -161,7 +172,16 @@ class UnderstandingPipeline:
         # never left to an AI provider's judgment about whether it carries
         # business fields. See mesiri_ai.greeting_classifier.
         if is_greeting_trigger(result.normalized_text):
-            self._apply_greeting(result)
+            self._apply_deterministic_shortcut(result)
+            return
+
+        # This is the real saving for voice whoami questions ("njaan aara"
+        # translates to "who am I" in the same Sarvam call that produced
+        # normalized_text above) -- extraction is skipped entirely rather
+        # than spent on a question with no business fields to extract. See
+        # mesiri_ai.whoami_classifier.
+        if is_whoami_trigger(result.normalized_text):
+            self._apply_deterministic_shortcut(result)
             return
 
         extraction = await self._extraction.extract(
@@ -207,14 +227,20 @@ class UnderstandingPipeline:
         obj = await self._storage.get_object(message.media.object_key)
         return obj.data
 
-    def _apply_greeting(self, result: UnderstandingResult) -> None:
-        """A deterministically recognized greeting/menu request (see
-        mesiri_ai.greeting_classifier) -- no extraction call, no candidate.
-        semantic_type=UNKNOWN is the same classification an empty extraction
-        would already produce, so it flows through canonicalization to
-        CanonicalEventType.UNRECOGNIZED -> Planner's DIRECT_REPLY exactly as
-        it does today -- this only makes the outcome deterministic rather
-        than dependent on an AI provider correctly finding no fields.
+    def _apply_deterministic_shortcut(self, result: UnderstandingResult) -> None:
+        """A deterministically recognized greeting/menu or who-am-i request
+        (see mesiri_ai.greeting_classifier / mesiri_ai.whoami_classifier) --
+        no extraction call, no candidate. semantic_type=UNKNOWN is the same
+        classification an empty extraction would already produce, so it
+        flows through canonicalization to CanonicalEventType.UNRECOGNIZED ->
+        Planner's DIRECT_REPLY exactly as it does today -- this only makes
+        the outcome deterministic rather than dependent on an AI provider
+        correctly finding no fields. The whoami case is answered before
+        reaching that far in practice (inbound_journey.py checks
+        is_whoami_trigger on the transcript directly, since building the
+        actual reply needs the caller's ActorIdentity, which this module
+        must not know about) -- semantic_type=UNKNOWN is still the correct,
+        harmless classification if that check is ever bypassed.
         HIGH, not UNUSABLE: we are confident about what this is, we just
         chose not to spend a provider call confirming it.
         """

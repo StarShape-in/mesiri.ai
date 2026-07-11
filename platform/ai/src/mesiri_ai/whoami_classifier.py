@@ -1,16 +1,21 @@
 """Deterministic detection of a "who am I" / identity-lookup trigger.
 
+Lives in mesiri_ai (not workflows/who_am_i/, where it originally lived)
+specifically so understanding/pipeline.py can use it too, mirroring
+greeting_classifier's exact reasoning: understanding/ must not import from
+workflows/ (dependency direction -- ingress -> understanding -> context ->
+planner -> workflows -> interactions, no stage may depend on a later one),
+but any module may import mesiri_ai. workflows/who_am_i/__init__.py
+re-exports this for interactions/handler.py, which already depended on that
+import path.
+
 A site engineer asking "who am i" (or "whoami", "my profile", "which
 company/site am i on", ...) should get their identity summary -- name, role,
 organization, projects, sites -- without ever going through the AI pipeline,
-same principle as mesiri_ai.greeting_classifier ("a plain identity question
-costs no tokens"). Kept as its own module/folder (rather than folded into the
-greeting classifier) because building the actual reply needs the caller's
-resolved ActorIdentity, not just a phrase match -- see
-interactions.handler.InteractionHandler.handle_whoami_trigger and
-context.live_identity.whoami_reply.
+same principle as greeting_classifier ("a plain identity question costs no
+tokens").
 
-Vocabulary lives in phrases.json -- a config edit, not a code change.
+Vocabulary lives in whoami_phrases.json -- a config edit, not a code change.
 
 Unlike greeting_classifier's per-token match (fine there because every
 greeting word IS the whole message space), these are multi-word phrases --
@@ -25,7 +30,7 @@ import json
 import pathlib
 import string
 
-_PHRASES_PATH = pathlib.Path(__file__).with_name("phrases.json")
+_PHRASES_PATH = pathlib.Path(__file__).with_name("whoami_phrases.json")
 _PUNCTUATION_TABLE = str.maketrans("", "", string.punctuation)
 
 

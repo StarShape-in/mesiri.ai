@@ -293,6 +293,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         await process_inbound_message(
             message,
             actor_user_id=ctx.user_id,
+            actor=ctx,
             pipeline=pipeline,
             context_resolver=context_resolver,
             planner=planner,

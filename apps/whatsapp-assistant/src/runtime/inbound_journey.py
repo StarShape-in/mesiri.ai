@@ -13,6 +13,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from backend.ports import ActorIdentity
 from canonicalization import build_canonical_event, log_canonical_event
 from channel.replies import (
     ListRow,
@@ -22,6 +23,7 @@ from channel.replies import (
     render_understanding_failed_reply,
     render_unsupported_reply,
 )
+from context.live_identity import whoami_reply
 from context.resolver import ContextResolver
 from context.runtime import log_resolved_context
 from interactions.handler import InteractionHandler
@@ -44,6 +46,7 @@ from workflows import (
     WorkflowRuntime,
     log_workflow_run,
 )
+from workflows.who_am_i import is_whoami_trigger
 
 _log = logging.getLogger("mesiri.inbound_journey")
 
@@ -128,6 +131,7 @@ async def process_inbound_message(
     context_debug: bool = False,
     message_logger: MessageLogger | None = None,
     trace_logger: TraceLogger | None = None,
+    actor: ActorIdentity | None = None,
 ) -> JourneyResult:
     mlog: MessageLogger = message_logger or NoopMessageLogger()
     tlog: TraceLogger = trace_logger or NoopTraceLogger()
@@ -169,6 +173,36 @@ async def process_inbound_message(
         ))
         await _safe(mlog.mark_failed(correlation_id=correlation_id, error_code=type(exc).__name__))
         raise
+
+    # --- Deterministic identity-lookup fast path (voice + defense-in-depth
+    # for text) --- Text is normally already caught by interactions/handler.py's
+    # pre-pipeline handle_whoami_trigger, before Understanding even runs (zero
+    # AI cost). Voice can't be checked that early -- there's no text until
+    # Sarvam transcribes and translates it ("njaan aara" -> "who am I" happens
+    # in that same call) -- so this is the first point voice can be recognized.
+    # Purely informational and never touches WorkflowRuntime, so it's safe to
+    # answer even with a confirmation pending; actor is None only when the
+    # caller didn't wire one in (e.g. some tests), in which case this simply
+    # doesn't fire.
+    if actor is not None:
+        # normalized_text first, not transcript: for voice, transcript is the
+        # *original-language* text ("njaan aara"), which will never match an
+        # English phrase list -- normalized_text is Sarvam's English
+        # translation ("who am I"), the one that actually matches. For text
+        # messages the two are already identical (see _handle_text).
+        whoami_text = understanding.normalized_text or understanding.transcript
+        if is_whoami_trigger(whoami_text):
+            reply_text = whoami_reply(actor)
+            await send_text(message.sender.wa_id, reply_text)
+            await _safe(mlog.log_reply(correlation_id=correlation_id, reply=reply_text))
+            return JourneyResult(
+                understanding=understanding,
+                resolved_context=None,
+                canonical_event=None,
+                planner_decision=None,
+                workflow_run=None,
+                workflow_resume=None,
+            )
 
     # --- Slow-path interaction dispatch (correction / confirm / reject from classifier) ---
     workflow_resume: WorkflowResumeResult | None = None

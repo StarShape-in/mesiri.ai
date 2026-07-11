@@ -1,15 +1,16 @@
-"""workflows.who_am_i.classifier -- deterministic who-am-i detection.
+"""mesiri_ai.whoami_classifier -- deterministic who-am-i detection.
 
-Pins the matching behavior directly since interactions/handler.py's
-handle_whoami_trigger depends on it staying deterministic (whole-phrase
-match, not substring), same reasoning as test_greeting_classifier.py.
+Pins the matching behavior directly since both interactions/handler.py's
+handle_whoami_trigger and understanding/pipeline.py's pre-extraction check
+depend on it staying deterministic (whole-phrase match, not substring), same
+reasoning as test_greeting_classifier.py.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from workflows.who_am_i.classifier import is_whoami_trigger
+from mesiri_ai.whoami_classifier import is_whoami_trigger
 
 
 @pytest.mark.parametrize(
@@ -25,6 +26,8 @@ from workflows.who_am_i.classifier import is_whoami_trigger
         "which company am i in",
         "which site am i on",
         "my site",
+        "what is my role",
+        "my role",
     ],
 )
 def test_recognizes_configured_whoami_phrases_case_insensitively(text):
