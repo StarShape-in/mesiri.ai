@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from mesiri_ai.resolver import DynamicAIProviderResolver
+from mesiri_contracts.common.errors import MesiriError
 
 
 class FakeSettings:
@@ -117,3 +118,47 @@ async def test_resolver_queries_database_on_redis_cache_miss():
         assert config["secrets"]["deepseek"]["api_key"] == "db-deepseek-key"
         assert config["secrets"]["deepseek"]["base_url"] == "https://custom.deepseek.com"
         redis.set.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_generate_json_falls_back_to_gemini_even_when_extraction_routes_elsewhere():
+    """Extraction is routed to deepseek by default in FakeSettings (deepseek key
+    present), but generate_json (used by the interaction slow-path correction
+    classifier -- only GeminiProvider implements it) must still reach Gemini
+    directly as long as a Gemini key exists at all."""
+    settings = FakeSettings()
+    db = MagicMock()
+    if hasattr(db, "transaction"):
+        del db.transaction
+    redis = AsyncMock()
+    redis.get.return_value = None
+
+    resolver = DynamicAIProviderResolver(db, redis, settings)
+
+    class FakeGeminiProvider:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def generate_json(self, system_prompt, user_prompt, *, correlation_id=None):
+            return '[{"intent": "correction", "segment_text": "40 bags"}]'
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("mesiri_ai.resolver._build_gemini_provider", lambda *a, **kw: FakeGeminiProvider())
+        result = await resolver.generate_json("sys prompt", "user prompt", correlation_id="cor_1")
+
+    assert result == '[{"intent": "correction", "segment_text": "40 bags"}]'
+
+
+@pytest.mark.anyio
+async def test_generate_json_raises_without_any_gemini_key():
+    settings = FakeSettings()
+    settings.gemini = FakeSettings.Section(api_key=None)
+    db = MagicMock()
+    if hasattr(db, "transaction"):
+        del db.transaction
+    redis = AsyncMock()
+    redis.get.return_value = None
+
+    resolver = DynamicAIProviderResolver(db, redis, settings)
+    with pytest.raises(MesiriError):
+        await resolver.generate_json("sys prompt", "user prompt")

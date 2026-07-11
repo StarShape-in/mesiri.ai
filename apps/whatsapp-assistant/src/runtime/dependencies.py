@@ -170,11 +170,27 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from runtime.inventory_query import MaterialInventoryQueryService
 
     inventory_query = MaterialInventoryQueryService(material_db)
+    # Slow-path interaction classifier: while a confirmation is pending, a
+    # message that isn't a plain "yes"/"no" (e.g. "40 bags of cement" instead
+    # of the drafted 50) needs an LLM to recognize it as a CORRECTION rather
+    # than a brand-new report. Without this wired, interactions/handler.py's
+    # handle_slow_path() short-circuits to None (classifier is None) and every
+    # such message falls through to the single-active-invariant block, which
+    # just re-shows the stale draft untouched -- this was a real bug, not a
+    # missing feature: the classifier existed but was never constructed here.
+    from interactions.llm_classifier import AdapterInteractionClassifier
+    from mesiri_ai.resolver import DynamicAIProviderResolver
+
+    interaction_classifier = AdapterInteractionClassifier(
+        DynamicAIProviderResolver(material_db, redis_client, _backend_settings)
+    )
     # M7: resolves a confirmation reply into the pending workflow, or None
     # (fall through to the normal understanding journey). M8: when a CONFIRM
     # resolves to CONFIRMED, the dispatcher executes the domain write
     # synchronously in the same request and the reply reflects the real outcome.
-    interaction_handler = build_interaction_handler(workflow_runtime, dispatcher=material_dispatcher)
+    interaction_handler = build_interaction_handler(
+        workflow_runtime, classifier=interaction_classifier, dispatcher=material_dispatcher
+    )
     sender = WhatsAppSender(
         client=http_client,
         access_token=settings.access_token,

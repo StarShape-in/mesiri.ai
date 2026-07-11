@@ -306,6 +306,35 @@ class DynamicAIProviderResolver:
                 return await _call_extract(fallback_id, fallback_model)
             raise
 
+    async def generate_json(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        correlation_id: str | None = None,
+    ) -> str:
+        """Free-form JSON generation for the interaction slow-path classifier
+        (correction detection). Only GeminiProvider implements this today --
+        DeepSeek's adapter doesn't -- so this reuses the "extraction" route's
+        provider when it resolves to gemini, and otherwise falls back to
+        building a Gemini provider directly whenever a Gemini key exists at
+        all (e.g. extraction is routed to DeepSeek but Gemini is still
+        configured). Raises if no Gemini-capable provider is configured;
+        callers (interactions/handler.py's slow path) already treat any
+        exception here as AMBIGUOUS rather than crashing the journey."""
+        config = await self._resolve_config()
+        route = config["routing"].get("extraction", {"provider_id": "fake", "model": ""})
+        model = route["model"] if route["provider_id"] == "gemini" else self._settings.gemini.model
+        gemini_key = config["secrets"].get("gemini", {}).get("api_key")
+        if not gemini_key:
+            raise MesiriError.configuration(
+                "No Gemini-capable provider configured for JSON generation", code="CONFIG_MISSING"
+            )
+        provider = _build_gemini_provider(config, model, self._settings)
+        return await provider.generate_json(
+            system_prompt, user_prompt, correlation_id=correlation_id
+        )
+
     async def analyze_image(
         self,
         image: bytes,
