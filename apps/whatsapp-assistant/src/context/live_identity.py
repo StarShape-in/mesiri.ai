@@ -117,7 +117,7 @@ def context_header(actor: ActorIdentity, project: ProjectSummary | None) -> str:
 
 
 def whoami_reply(actor: ActorIdentity) -> str:
-    """Full whoami summary for identity resolution smoke-testing."""
+    """Full whoami summary sent in response to a "who am I" / "my role" query."""
     lines: list[str] = [
         "*Mesiri — whoami*",
         "",
@@ -151,8 +151,4 @@ def whoami_reply(actor: ActorIdentity) -> str:
         for s in actor.sites:
             lines.append(f"   • {s.name}")
 
-    lines += [
-        "",
-        "_(this is a test whoami reply — will be replaced by real understanding replies)_",
-    ]
     return "\n".join(lines)

@@ -145,6 +145,18 @@ class UnderstandingPipeline:
             )
         )
 
+        # The is_whoami_trigger check above (before translation) only ever
+        # catches English phrasing -- a non-English text message ("എന്റെ
+        # റോൾ എന്താണ്?") never matches the English phrase list until *after*
+        # translation. _handle_voice already re-checks post-translation for
+        # exactly this reason (STT bakes translation into one call); text was
+        # missing the equivalent second check, so a non-English whoami
+        # question fell through to extraction and came back misclassified as
+        # a GENERAL_QUESTION_ASKED instead of WHOAMI_QUESTION.
+        if is_whoami_trigger(result.normalized_text):
+            self._apply_deterministic_shortcut(result, SemanticType.WHOAMI_QUESTION)
+            return
+
         extraction = await self._extraction.extract(
             result.normalized_text, correlation_id=result.correlation_id
         )

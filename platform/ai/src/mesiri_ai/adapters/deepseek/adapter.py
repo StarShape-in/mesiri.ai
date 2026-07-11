@@ -30,7 +30,19 @@ _EXTRACTION_PROMPT = (
     '"fields" (object of extracted values), '
     '"missing_fields" (array of expected-but-absent keys), '
     '"field_confidences" (object mapping each field to 0..1). '
-    "Never invent values; if unsure, omit or list under missing_fields."
+    "Never invent values; if unsure, omit or list under missing_fields.\n\n"
+    "Field schema per semantic_type (only include keys you actually found):\n"
+    "- expense: amount, currency, vendor, category, description, paid_to, occurred_on\n"
+    "- equipment_usage: equipment_name, duration_hours, operator, activity\n"
+    "- material_update: material_name, quantity, unit, direction. "
+    'direction MUST be exactly "received" or "used" -- never any other word. '
+    'Use "received" when material arrived, was delivered, or was brought to site '
+    '(e.g. "50 bags of cement arrived", "cement delivered today"). '
+    'Use "used" when material was consumed, used, or applied to work '
+    '(e.g. "20 bags of cement used for the foundation").\n'
+    "- labour_update: headcount, trade, hours, contractor\n"
+    "- general_site_update: summary, activity, location, weather\n"
+    "- general_question: question, topic"
 )
 
 
