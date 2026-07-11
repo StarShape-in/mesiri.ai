@@ -1,4 +1,17 @@
-import { LayoutDashboard, Building2, LogOut, Users, ArrowLeft } from 'lucide-react'
+import {
+  LayoutDashboard,
+  Building2,
+  LogOut,
+  Users,
+  ArrowLeft,
+  History,
+  BarChart3,
+  Image as ImageIcon,
+  FileText,
+  ClipboardList,
+  DollarSign,
+  Wallet,
+} from 'lucide-react'
 import { NavLink, Link, useLocation } from 'react-router-dom'
 import {
   Sidebar,
@@ -13,23 +26,27 @@ import {
   SidebarMenuItem,
 } from '@/components/ui/sidebar'
 import { useAuth } from '@/lib/AuthContext'
-import { useAllowedScopes } from '@/lib/ScopeContext'
+import { useAllowedScopes, useScope } from '@/lib/ScopeContext'
 import { logout } from '@/lib/api'
 import type { ScopeKind } from '@/lib/scope-types'
 
 type NavItem = {
   title: string
   url: string
-  icon: typeof LayoutDashboard
-  /** Omit to show at every scope the user can reach; set to restrict a nav
-   * entry to scopes where it makes sense (e.g. cross-project views only
-   * make sense in Portfolio scope). */
+  icon: any
   requiredScope?: ScopeKind
   requiredRole?: string
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { title: 'Overview', url: '/', icon: LayoutDashboard },
+  { title: 'Overview', url: '/overview', icon: LayoutDashboard },
+  { title: 'Timeline', url: '/timeline', icon: History },
+  { title: 'Analytics', url: '/analytics', icon: BarChart3 },
+  { title: 'Gallery', url: '/gallery', icon: ImageIcon },
+  { title: 'Reports', url: '/reports', icon: FileText },
+  { title: 'Field Reports', url: '/field-reports', icon: ClipboardList },
+  { title: 'Expenses', url: '/expenses', icon: DollarSign },
+  { title: 'Petty Cash', url: '/petty-cash', icon: Wallet },
   { title: 'Projects & Sites', url: '/projects', icon: Building2, requiredRole: 'ADMIN' },
   { title: 'Users', url: '/users', icon: Users, requiredRole: 'ADMIN' },
 ]
@@ -37,6 +54,8 @@ const NAV_ITEMS: NavItem[] = [
 export function AppSidebar() {
   const { me } = useAuth()
   const allowed = useAllowedScopes()
+  const { scope } = useScope()
+  const location = useLocation()
 
   const visibleItems = NAV_ITEMS.filter(
     (item) =>
@@ -44,7 +63,21 @@ export function AppSidebar() {
       (!item.requiredRole || me?.role === item.requiredRole)
   )
 
-  const location = useLocation()
+  const getUrlWithScope = (baseUrl: string) => {
+    const isOperational = !['/projects', '/users'].includes(baseUrl)
+    if (!isOperational) return baseUrl
+
+    const params = new URLSearchParams()
+    if (scope.mode === 'project' || scope.mode === 'site') {
+      params.set('project', scope.projectId)
+    }
+    if (scope.mode === 'site') {
+      params.set('site', scope.siteId)
+    }
+    const qs = params.toString()
+    return qs ? `${baseUrl}?${qs}` : baseUrl
+  }
+
   const showBackButton = location.pathname.startsWith('/projects/') || location.pathname.startsWith('/users/')
 
   return (
@@ -76,7 +109,7 @@ export function AppSidebar() {
               {visibleItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton asChild tooltip={item.title}>
-                    <NavLink to={item.url} end>
+                    <NavLink to={getUrlWithScope(item.url)} end={item.url === '/overview'}>
                       <item.icon />
                       <span>{item.title}</span>
                     </NavLink>

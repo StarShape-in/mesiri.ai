@@ -42,7 +42,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { useScope } from '@/lib/ScopeContext'
 import {
   fetchProjectsFull,
   archiveProject,
@@ -62,7 +61,6 @@ const STATUS_BADGES = {
 export default function Projects() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const { setProjectScope } = useScope()
 
   // Selection states
   const [search, setSearch] = React.useState('')
@@ -140,8 +138,7 @@ export default function Projects() {
   }, [projects])
 
   const handleOpenProject = (project: Project) => {
-    setProjectScope({ id: project.id, name: project.name })
-    navigate('/')
+    navigate(`/overview?project=${project.id}`)
   }
 
   return (

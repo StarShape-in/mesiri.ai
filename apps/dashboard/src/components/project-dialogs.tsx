@@ -10,7 +10,6 @@ import {
   User as UserIcon,
   Hash,
 } from 'lucide-react'
-import { useScope } from '@/lib/ScopeContext'
 import {
   Dialog,
   DialogContent,
@@ -56,7 +55,6 @@ export function AddEditProjectDialog({
   const isEdit = !!project
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const { setProjectScope } = useScope()
   const [name, setName] = React.useState('')
   const [code, setCode] = React.useState('')
   const [client, setClient] = React.useState('')
@@ -140,8 +138,7 @@ export function AddEditProjectDialog({
         onSuccess()
         onOpenChange(false)
         if (openAfter) {
-          setProjectScope({ id: created.id, name: created.name })
-          navigate('/')
+          navigate(`/overview?project=${created.id}`)
         } else {
           navigate(`/projects/${created.id}?new=1`)
         }

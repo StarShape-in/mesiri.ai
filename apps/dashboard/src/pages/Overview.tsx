@@ -1,196 +1,45 @@
-import { useQuery } from '@tanstack/react-query'
-import {
-  flexRender,
-  getCoreRowModel,
-  useReactTable,
-  type ColumnDef,
-} from '@tanstack/react-table'
-import { Bar, BarChart, CartesianGrid, XAxis } from 'recharts'
-import { Activity, TrendingUp, Users } from 'lucide-react'
+import { Hammer, MapPin } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { KpiCard } from '@/components/ui/kpi-card'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Badge } from '@/components/ui/badge'
-import { Skeleton } from '@/components/ui/skeleton'
-import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
-import { useAuth } from '@/lib/AuthContext'
 import { useScope } from '@/lib/ScopeContext'
-import { api } from '@/lib/api'
-
-interface ActivityRow {
-  id: string
-  label: string
-  status: 'active' | 'pending'
-  updatedAt: string
-}
-
-interface TimelineEntry {
-  id: string
-  event_type: string
-  summary: string
-  occurred_at: string
-}
-
-const chartConfig = {
-  value: { label: 'Activity', color: 'var(--chart-1)' },
-} satisfies ChartConfig
-
-const FALLBACK_CHART_DATA = [
-  { day: 'Mon', value: 12 },
-  { day: 'Tue', value: 19 },
-  { day: 'Wed', value: 14 },
-  { day: 'Thu', value: 22 },
-  { day: 'Fri', value: 18 },
-  { day: 'Sat', value: 9 },
-  { day: 'Sun', value: 15 },
-]
-
-const columns: ColumnDef<ActivityRow>[] = [
-  { accessorKey: 'label', header: 'Item' },
-  {
-    accessorKey: 'status',
-    header: 'Status',
-    cell: ({ row }) => (
-      <Badge variant={row.original.status === 'active' ? 'default' : 'secondary'}>
-        {row.original.status}
-      </Badge>
-    ),
-  },
-  { accessorKey: 'updatedAt', header: 'Updated' },
-]
-
-const FALLBACK_ROWS: ActivityRow[] = [
-  { id: '1', label: 'Welcome to your dashboard', status: 'active', updatedAt: 'just now' },
-]
+import { ProjectOverview } from '@/components/project-overview'
+import { PortfolioOverview } from '@/components/portfolio-overview'
 
 export default function Overview() {
-  const { me } = useAuth()
   const { scope } = useScope()
 
-  // Reads the current Scope and filters the shared Overview page's data
-  // accordingly — Portfolio has no project_id/site_id (org-wide), Project
-  // scope passes project_id only, Site scope passes both. This is the same
-  // pattern every future shared page should follow: Scope -> Filtered Data.
-  const projectId = scope.mode !== 'portfolio' ? scope.projectId : undefined
-  const siteId = scope.mode === 'site' ? scope.siteId : undefined
+  if (scope.mode === 'project') {
+    return <ProjectOverview projectId={scope.projectId} />
+  }
 
-  const { data: rows, isLoading } = useQuery({
-    queryKey: ['overview-activity', projectId, siteId],
-    queryFn: async () => {
-      try {
-        const res = await api.get<{ items: TimelineEntry[] }>('/timeline', {
-          params: { project_id: projectId, site_id: siteId, limit: 10 },
-        })
-        if (res.data.items.length === 0) return FALLBACK_ROWS
-        return res.data.items.map(
-          (entry): ActivityRow => ({
-            id: entry.id,
-            label: entry.summary || entry.event_type,
-            status: 'active',
-            updatedAt: new Date(entry.occurred_at).toLocaleString(),
-          })
-        )
-      } catch {
-        return FALLBACK_ROWS
-      }
-    },
-  })
+  if (scope.mode === 'site') {
+    return <SiteOverviewPlaceholder />
+  }
 
-  const table = useReactTable({
-    data: rows ?? [],
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-  })
+  return <PortfolioOverview />
+}
 
+function SiteOverviewPlaceholder() {
+  const { scope } = useScope()
   return (
-    <div className="flex flex-col gap-4">
-      <div className="grid gap-4 md:grid-cols-3">
-        <KpiCard
-          title="Activity"
-          value="109"
-          description="this week"
-          icon={<Activity className="size-4" />}
-          trend="up"
-          trendValue="+12.3%"
-          chartData={[15, 24, 21, 32, 28, 41, 38, 48, 44, 52]}
-        />
-        <KpiCard
-          title="Growth"
-          value="+12%"
-          description="vs last week"
-          icon={<TrendingUp className="size-4" />}
-          trend="up"
-          trendValue="+4.1%"
-          chartData={[12, 14, 13, 16, 15, 18, 17, 20, 19, 22]}
-        />
-        <KpiCard
-          title="Team"
-          value={me?.organization_name ? 1 : 0}
-          description="organization"
-          icon={<Users className="size-4" />}
-          trend="neutral"
-          trendValue="stable"
-          chartData={[1, 1, 1, 1, 1, 1, 1, 1, 1, 1]}
-        />
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Weekly activity</CardTitle>
-          <CardDescription>Overview of activity over the last 7 days.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ChartContainer config={chartConfig} className="h-[240px] w-full">
-            <BarChart data={FALLBACK_CHART_DATA}>
-              <CartesianGrid vertical={false} />
-              <XAxis dataKey="day" tickLine={false} axisLine={false} tickMargin={8} />
-              <ChartTooltip content={<ChartTooltipContent />} />
-              <Bar dataKey="value" fill="var(--color-value)" radius={4} />
-            </BarChart>
-          </ChartContainer>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Recent items</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="grid gap-2">
-              <Skeleton className="h-8 w-full" />
-              <Skeleton className="h-8 w-full" />
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                {table.getHeaderGroups().map((headerGroup) => (
-                  <TableRow key={headerGroup.id}>
-                    {headerGroup.headers.map((header) => (
-                      <TableHead key={header.id}>
-                        {header.isPlaceholder
-                          ? null
-                          : flexRender(header.column.columnDef.header, header.getContext())}
-                      </TableHead>
-                    ))}
-                  </TableRow>
-                ))}
-              </TableHeader>
-              <TableBody>
-                {table.getRowModel().rows.map((row) => (
-                  <TableRow key={row.id}>
-                    {row.getVisibleCells().map((cell) => (
-                      <TableCell key={cell.id}>
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+    <Card className="rounded-md border-border/70 border-l-4 border-l-sky-500 overflow-hidden">
+      <CardHeader className="bg-sky-500/[0.02] pb-3">
+        <CardTitle className="text-sm font-bold text-sky-600 dark:text-sky-400 flex items-center gap-2">
+          <MapPin className="size-4 text-sky-500" />
+          Site Overview
+        </CardTitle>
+        <CardDescription className="text-xs">
+          Active Site Context: <strong className="text-foreground">{scope.mode === 'site' ? `${scope.projectName} / ${scope.siteName}` : ''}</strong>
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="pt-4 text-xs text-muted-foreground leading-relaxed space-y-2">
+        <p>
+          The operational dashboard for individual Site scope is currently under construction.
+        </p>
+        <p className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-semibold bg-amber-500/5 px-2.5 py-1.5 rounded border border-amber-500/10 w-fit mt-2">
+          <Hammer className="size-4 animate-pulse shrink-0" />
+          Database schemas and daily report ingestion maps for this site are active. Full analytics integration is pending backend deployment.
+        </p>
+      </CardContent>
+    </Card>
   )
 }

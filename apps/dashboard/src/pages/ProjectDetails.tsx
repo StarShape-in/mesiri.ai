@@ -36,7 +36,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { useScope } from '@/lib/ScopeContext'
 import {
   fetchProject,
   fetchSitesFull,
@@ -67,7 +66,6 @@ export default function ProjectDetails() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const { setProjectScope, setSiteScope } = useScope()
   const [searchParams, setSearchParams] = useSearchParams()
   const isNewProject = searchParams.get('new') === '1'
 
@@ -165,16 +163,11 @@ export default function ProjectDetails() {
   }
 
   const handleOpenProject = () => {
-    setProjectScope({ id: project.id, name: project.name })
-    navigate('/')
+    navigate(`/overview?project=${project.id}`)
   }
 
   const handleOpenSite = (site: Site) => {
-    setSiteScope(
-      { id: project.id, name: project.name },
-      { id: site.id, name: site.name, projectId: project.id }
-    )
-    navigate('/')
+    navigate(`/overview?project=${project.id}&site=${site.id}`)
   }
 
   // Filters site list
