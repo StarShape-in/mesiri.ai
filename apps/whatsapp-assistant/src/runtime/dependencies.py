@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from interactions import InteractionHandler
     from mesiri.infrastructure.postgres.database import PostgresDatabase
     from planner import Planner
+    from understanding.pipeline import UnderstandingPipeline
     from workflows import WorkflowRuntime
 
 
@@ -55,6 +56,11 @@ class AppContainer:
     message_store: InMemoryNormalizedMessageStore
     receiver: WhatsAppReceiver
     context_resolver: ContextResolver
+    # The understanding pipeline (STT/vision/extraction). Held on the container
+    # so out-of-band callers (e.g. the control-plane test harness in
+    # admin/system_graph_router.py) can run process_inbound_message without
+    # re-wiring providers; the webhook path uses the same instance.
+    pipeline: UnderstandingPipeline
     planner: Planner
     workflow_runtime: WorkflowRuntime
     interaction_handler: InteractionHandler
@@ -320,6 +326,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         message_store=message_store,
         receiver=receiver,
         context_resolver=context_resolver,
+        pipeline=pipeline,
         planner=planner,
         workflow_runtime=workflow_runtime,
         interaction_handler=interaction_handler,
