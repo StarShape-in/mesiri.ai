@@ -1,6 +1,11 @@
 # Deployment Guide
 
-This project uses GitHub Actions for automated CI/CD. Every push to `main` that passes tests is automatically deployed to the VPS, served at `mesiri.mercon.tech` (the `mercon.tech` root domain is a separate, unrelated app on the same box — see `/etc/nginx/sites-available/mesiri.mercon.tech.conf`).
+This project uses GitHub Actions for automated CI/CD. Every push to `main` that passes tests is automatically deployed to the VPS. Two frontends are served from the same box on different domains:
+
+- `mesiri.mercon.tech` — backend API + `control-panel` (internal admin UI, under `/mesiriadmin`). Config: `/etc/nginx/sites-available/mesiri.mercon.tech.conf` (tracked in the repo as `mercon.conf`).
+- `mesiriweb.mercon.tech` — `apps/dashboard` (customer-facing web app), static files only, talks to the same backend cross-origin. Config: `/etc/nginx/sites-available/mesiriweb.mercon.tech.conf` (tracked in the repo as `mercon_web.conf`).
+
+(The `mercon.tech` root domain itself is a separate, unrelated app on the same box.)
 
 ## How it works
 
@@ -10,13 +15,15 @@ git push → main
 GitHub Actions: deploy.yml
     ├── Unit tests (Python, fakes only)
     ├── Build control-panel (Vite)
-    └── Deploy (only if both above pass)
+    ├── Build dashboard (Vite, VITE_API_URL=https://mesiri.mercon.tech)
+    └── Deploy (only if all above pass)
             ├── SSH → git pull origin/main
             ├── uv pip install (Python deps)
             ├── alembic upgrade head (migrations)
             ├── systemctl restart mesiri
             ├── Health check /health
-            └── rsync frontend dist → /var/www/mesiriadmin/
+            ├── rsync control-panel dist → /var/www/mesiriadmin/
+            └── rsync dashboard dist → /var/www/mesiriweb/
 ```
 
 If migrations fail or the health check fails after restart, the deploy step exits with a non-zero code and GitHub marks the deployment as failed. The service is restarted again as a best-effort rollback.
@@ -92,6 +99,75 @@ Name it `production`. You can add required reviewers or deployment protection ru
 
 ---
 
+## Direct VPS access (manual debugging / one-off fixes)
+
+You don't need to wait for CI to inspect or fix things on the box directly — the same deploy key GitHub Actions uses (`VPS_SSH_KEY` secret) works for a normal SSH session if you have a local copy of the private key.
+
+```bash
+ssh -i ~/.ssh/<your-copy-of-the-deploy-key> root@187.127.180.98
+```
+
+- **Host**: `187.127.180.98` (same as the `VPS_HOST` secret)
+- **User**: `root`
+- **Key**: the same keypair from [First-time VPS setup](#first-time-vps-setup) step 3 (`~/.ssh/github_deploy` there). If you don't have a local copy, get the private key from wherever the team stores secrets, or generate a new keypair and append its public half to `~/.ssh/authorized_keys` on the VPS (you'll need an existing session to do that once).
+- **Gotcha**: if `ssh -i` fails with `Load key "...": invalid format`, the key file has picked up CRLF line endings (common after copy-pasting on Windows) — re-save it with LF-only line endings, or run it through `tr -d '\r'` into a fresh file, before retrying.
+
+Once connected you have full root access — see [Useful commands on the VPS](#useful-commands-on-the-vps) below, and [Directory layout](#directory-layout-on-the-vps) for where things live.
+
+### Adding/editing an nginx site directly
+
+Both `mercon.conf` (mesiri.mercon.tech) and `mercon_web.conf` (mesiriweb.mercon.tech) are tracked in the repo root as a record of what's live, but nginx reads from `/etc/nginx/sites-available/` on the VPS — editing the repo copy does **not** change production by itself. To add or change a site:
+
+```bash
+scp -i ~/.ssh/<key> ./mercon_web.conf root@187.127.180.98:/etc/nginx/sites-available/mesiriweb.mercon.tech.conf
+ssh -i ~/.ssh/<key> root@187.127.180.98 \
+  "ln -sf /etc/nginx/sites-available/mesiriweb.mercon.tech.conf /etc/nginx/sites-enabled/mesiriweb.mercon.tech.conf && nginx -t && systemctl reload nginx"
+```
+
+For a new subdomain, also point a DNS A record at `187.127.180.98` first (propagation is usually near-instant), and provision TLS once DNS resolves:
+
+```bash
+ssh -i ~/.ssh/<key> root@187.127.180.98 \
+  "certbot --nginx -d <subdomain>.mercon.tech --non-interactive --agree-tos -m <your-email> --redirect"
+```
+
+Certbot rewrites the nginx config in place to add the `listen 443 ssl` block and the HTTP→HTTPS redirect. After running it, pull the updated config back into the repo so `mercon.conf`/`mercon_web.conf` stays in sync with what's actually live:
+
+```bash
+ssh -i ~/.ssh/<key> root@187.127.180.98 "cat /etc/nginx/sites-available/<subdomain>.mercon.tech.conf" > mercon_web.conf
+```
+
+---
+
+## Checking deploy / CI status from the terminal
+
+Use the [GitHub CLI](https://cli.github.com/) (`gh`) instead of switching to the browser — run from the repo root, it infers the repo from the git remote.
+
+```bash
+# List recent workflow runs on main (name, status, conclusion, commit, duration)
+gh run list --branch main --limit 10
+
+# Watch a run live
+gh run watch <run-id>
+
+# Full logs for a specific run
+gh run view <run-id> --log
+
+# Only the failed step's logs — the fastest way to diagnose a red run
+gh run view <run-id> --log-failed
+
+# Re-run a failed workflow without a new commit (useful for transient
+# network blips — e.g. the deploy step failing to reach the VPS)
+gh run rerun <run-id>
+
+# Manually trigger a deploy without pushing a commit
+gh workflow run "Deploy to Production" --ref main
+```
+
+If `Deploy to Production` fails specifically at the **Configure SSH** step (`ssh-keyscan` exits non-zero) while `CI` and `CI (Python runtime)` both pass, that's a connectivity problem between GitHub's runners and the VPS, not a code problem — check `journalctl`/`/var/log/auth.log` on the VPS for whether the connection attempt even arrived (if it didn't, it's a network-level block upstream of the box, e.g. a provider firewall/DDoS filter, not anything `sshd`-side); a `gh run rerun` is often enough if it was transient.
+
+---
+
 ## Migrations
 
 Migrations use **Alembic**. The migration chain lives in `backend/migrations/versions/`.
@@ -139,7 +215,7 @@ If you need to deploy without waiting for CI:
 # Actions → Deploy to Production → Run workflow → main
 ```
 
-Or directly on the VPS:
+Or directly on the VPS (backend only — this does not rebuild/redeploy either frontend, see below for that):
 
 ```bash
 ssh root@187.127.180.98
@@ -148,6 +224,15 @@ git pull origin main
 .venv/bin/uv pip install -e ".[infra,providers,workflow]" --quiet
 cd backend && PYTHONPATH=... .venv/bin/alembic upgrade head && cd ..
 systemctl restart mesiri
+```
+
+To manually deploy a frontend without CI, build it locally and `rsync` the `dist/` folder up:
+
+```bash
+# From the repo root, for either app
+pnpm --filter @mesiri/dashboard build      # or: pnpm --filter control-panel build
+rsync -avz --delete apps/dashboard/dist/ root@187.127.180.98:/var/www/mesiriweb/
+ssh root@187.127.180.98 "chown -R www-data:www-data /var/www/mesiriweb/"
 ```
 
 ---
@@ -187,6 +272,8 @@ cd /opt/mesiri/backend && PYTHONPATH=... .venv/bin/alembic current
     └── mesiri.service        ← systemd unit (installed to /etc/systemd)
 
 /var/www/mesiriadmin/         ← control panel static files (served by nginx)
-/etc/nginx/sites-available/mesiri.mercon.tech.conf   ← nginx config (from mercon.conf) — mercon.tech's root domain is a separate app on the same VPS
+/var/www/mesiriweb/           ← dashboard static files (served by nginx)
+/etc/nginx/sites-available/mesiri.mercon.tech.conf     ← nginx config (from mercon.conf) — mercon.tech's root domain is a separate app on the same VPS
+/etc/nginx/sites-available/mesiriweb.mercon.tech.conf  ← nginx config (from mercon_web.conf)
 /etc/systemd/system/mesiri.service  ← installed copy of infra/mesiri.service
 ```
