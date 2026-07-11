@@ -36,14 +36,24 @@
     "which project am i on",
     "which project am i in",
     "what project am i on",
+    "what projects am i on",
     "which project",
     "my project",
     "my projects",
+    "what are my projects",
+    "show my projects",
+    "tell me my projects",
+    "projects",
 
     "which site am i on",
     "what site am i on",
+    "what sites am i on",
     "which site",
     "my site",
-    "my sites"
+    "my sites",
+    "what are my sites",
+    "show my sites",
+    "tell me my sites",
+    "sites"
   ]
 }
