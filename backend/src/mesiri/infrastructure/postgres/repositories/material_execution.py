@@ -49,11 +49,15 @@ class PostgresMaterialExecutionRepository(MaterialExecutionRepository):
         from sqlalchemy import text
 
         row = (
-            await conn.execute(
-                text("SELECT status, result FROM idempotency_keys WHERE key = :key"),
-                {"key": key},
+            (
+                await conn.execute(
+                    text("SELECT status, result FROM idempotency_keys WHERE key = :key"),
+                    {"key": key},
+                )
             )
-        ).mappings().first()
+            .mappings()
+            .first()
+        )
         if row is None or row["status"] != "completed" or row["result"] is None:
             return None
         result_json = row["result"]

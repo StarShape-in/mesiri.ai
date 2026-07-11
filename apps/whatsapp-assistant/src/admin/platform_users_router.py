@@ -138,7 +138,9 @@ async def create_platform_user(
             )
         )
 
-    return PlatformUser(id=user_id, email=user_in.email, full_name=user_in.full_name, status="active")
+    return PlatformUser(
+        id=user_id, email=user_in.email, full_name=user_in.full_name, status="active"
+    )
 
 
 @router.patch("/{user_id}", response_model=PlatformUser)
@@ -173,7 +175,9 @@ async def update_platform_user(
                 raise HTTPException(status_code=400, detail=f"Invalid status: {update.status}")
             if update.status != "active":
                 if str(user_id) == admin.get("sub"):
-                    raise HTTPException(status_code=400, detail="Cannot deactivate your own account")
+                    raise HTTPException(
+                        status_code=400, detail="Cannot deactivate your own account"
+                    )
                 active_count = await conn.execute(
                     sa.select(sa.func.count())
                     .select_from(users_table)
@@ -194,7 +198,9 @@ async def update_platform_user(
             values["hashed_password"] = _hash_pw(update.new_password)
 
         if values:
-            await conn.execute(users_table.update().where(users_table.c.id == user_id).values(**values))
+            await conn.execute(
+                users_table.update().where(users_table.c.id == user_id).values(**values)
+            )
 
         final = await conn.execute(
             sa.select(

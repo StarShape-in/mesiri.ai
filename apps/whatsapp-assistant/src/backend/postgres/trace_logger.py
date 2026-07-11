@@ -74,9 +74,7 @@ class PostgresTraceLogger:
                         "id": str(uuid.uuid4()),
                         "correlation_id": correlation_id,
                         "stage": stage,
-                        "stage_payload": (
-                            json.dumps(stage_payload) if stage_payload else None
-                        ),
+                        "stage_payload": (json.dumps(stage_payload) if stage_payload else None),
                         "duration_ms": duration_ms,
                         "succeeded": succeeded,
                         "error_code": error_code,
@@ -86,7 +84,9 @@ class PostgresTraceLogger:
                     },
                 )
         except Exception:  # noqa: BLE001
-            _log.exception("trace_logger.log_stage failed correlation_id=%s stage=%s", correlation_id, stage)
+            _log.exception(
+                "trace_logger.log_stage failed correlation_id=%s stage=%s", correlation_id, stage
+            )
 
     async def log_provider_execution(
         self,
@@ -142,16 +142,20 @@ class PostgresTraceLogger:
 
         async with self._get_engine().connect() as conn:
             rows = (
-                await conn.execute(
-                    text(
-                        "SELECT stage, succeeded, duration_ms, error_code, error_message, "
-                        "severity, event_source, created_at "
-                        "FROM journey_traces WHERE correlation_id = :correlation_id "
-                        "ORDER BY created_at ASC"
-                    ),
-                    {"correlation_id": correlation_id},
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT stage, succeeded, duration_ms, error_code, error_message, "
+                            "severity, event_source, created_at "
+                            "FROM journey_traces WHERE correlation_id = :correlation_id "
+                            "ORDER BY created_at ASC"
+                        ),
+                        {"correlation_id": correlation_id},
+                    )
                 )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
         return [dict(row) for row in rows]
 
     async def get_provider_executions(self, correlation_id: str) -> list[dict[str, Any]]:
@@ -162,14 +166,18 @@ class PostgresTraceLogger:
 
         async with self._get_engine().connect() as conn:
             rows = (
-                await conn.execute(
-                    text(
-                        "SELECT stage, provider, operation, model, latency_ms, "
-                        "succeeded, error_code, created_at "
-                        "FROM provider_executions WHERE correlation_id = :correlation_id "
-                        "ORDER BY created_at ASC"
-                    ),
-                    {"correlation_id": correlation_id},
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT stage, provider, operation, model, latency_ms, "
+                            "succeeded, error_code, created_at "
+                            "FROM provider_executions WHERE correlation_id = :correlation_id "
+                            "ORDER BY created_at ASC"
+                        ),
+                        {"correlation_id": correlation_id},
+                    )
                 )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
         return [dict(row) for row in rows]

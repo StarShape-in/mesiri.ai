@@ -20,10 +20,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from mesiri_contracts.assistant.canonical_event import CanonicalEventType
 from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
 
-_EXAMPLES = (
-    '  • "50 bags of cement arrived"\n'
-    '  • "20 bags of cement used for the foundation"'
-)
+_EXAMPLES = '  • "50 bags of cement arrived"\n  • "20 bags of cement used for the foundation"'
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,9 +73,7 @@ CATEGORY_ROWS: tuple[ListRow, ...] = (
 # What to say once a category is picked -- deterministic, no AI involved (see
 # runtime/dependencies.py). Keyed by the same row ids as CATEGORY_ROWS.
 _CATEGORY_PROMPTS: dict[str, str] = {
-    "cat_material": (
-        f'Tell me about the material — for example:\n{_EXAMPLES}'
-    ),
+    "cat_material": (f"Tell me about the material — for example:\n{_EXAMPLES}"),
     "cat_equipment": 'Tell me about the equipment — for example:\n  • "JCB ran for 4 hours"',
     "cat_labour": 'Tell me the headcount — for example:\n  • "12 workers on site today"',
     "cat_expense": 'Tell me the expense — for example:\n  • "Paid 1500 to ABC Hardware"',
@@ -172,7 +167,9 @@ def render_no_projects_reply() -> str:
     return "You don't have any projects assigned yet. Ask your admin to add you to one first."
 
 
-def render_greeting_menu(*, timezone: str | None = None, is_first_message: bool = False) -> ReplySpec:
+def render_greeting_menu(
+    *, timezone: str | None = None, is_first_message: bool = False
+) -> ReplySpec:
     """The greeting + tappable category menu. Decision-independent (no
     PlannerDecisionV2 needed) so it can be called from two places: the AI
     path (render_direct_reply's UNRECOGNIZED case, below) and the

@@ -237,8 +237,20 @@ async def test_event_type_filter(
     clean_db,
 ):
     """event_type filters to entries of that exact type."""
-    await _insert_entry(test_engine, org_id=test_org, project_id=test_project, site_id=None, event_type="MaterialReceived")
-    await _insert_entry(test_engine, org_id=test_org, project_id=test_project, site_id=None, event_type="MaterialUsed")
+    await _insert_entry(
+        test_engine,
+        org_id=test_org,
+        project_id=test_project,
+        site_id=None,
+        event_type="MaterialReceived",
+    )
+    await _insert_entry(
+        test_engine,
+        org_id=test_org,
+        project_id=test_project,
+        site_id=None,
+        event_type="MaterialUsed",
+    )
 
     async with test_engine.begin() as conn:
         repo = PostgresTimelineReadRepository(conn)
@@ -255,15 +267,24 @@ async def test_date_range_filter(
 ):
     """date_from/date_to filter on occurred_at's date component."""
     await _insert_entry(
-        test_engine, org_id=test_org, project_id=test_project, site_id=None,
+        test_engine,
+        org_id=test_org,
+        project_id=test_project,
+        site_id=None,
         occurred_at=datetime.datetime(2026, 7, 1, tzinfo=datetime.UTC),
     )
     await _insert_entry(
-        test_engine, org_id=test_org, project_id=test_project, site_id=None,
+        test_engine,
+        org_id=test_org,
+        project_id=test_project,
+        site_id=None,
         occurred_at=datetime.datetime(2026, 7, 5, tzinfo=datetime.UTC),
     )
     await _insert_entry(
-        test_engine, org_id=test_org, project_id=test_project, site_id=None,
+        test_engine,
+        org_id=test_org,
+        project_id=test_project,
+        site_id=None,
         occurred_at=datetime.datetime(2026, 7, 10, tzinfo=datetime.UTC),
     )
 
@@ -286,7 +307,10 @@ async def test_pagination(
     """limit/offset paginate; total reflects the full filtered set, not the page."""
     for i in range(5):
         await _insert_entry(
-            test_engine, org_id=test_org, project_id=test_project, site_id=None,
+            test_engine,
+            org_id=test_org,
+            project_id=test_project,
+            site_id=None,
             occurred_at=datetime.datetime(2026, 7, 1 + i, tzinfo=datetime.UTC),
         )
 
@@ -308,10 +332,38 @@ async def test_day_summary_aggregation(
     day1_later = datetime.datetime(2026, 7, 1, 15, 0, tzinfo=datetime.UTC)
     day2 = datetime.datetime(2026, 7, 2, 9, 0, tzinfo=datetime.UTC)
 
-    await _insert_entry(test_engine, org_id=test_org, project_id=test_project, site_id=None, event_type="MaterialReceived", occurred_at=day1)
-    await _insert_entry(test_engine, org_id=test_org, project_id=test_project, site_id=None, event_type="MaterialReceived", occurred_at=day1_later)
-    await _insert_entry(test_engine, org_id=test_org, project_id=test_project, site_id=None, event_type="MaterialUsed", occurred_at=day1)
-    await _insert_entry(test_engine, org_id=test_org, project_id=test_project, site_id=None, event_type="MaterialReceived", occurred_at=day2)
+    await _insert_entry(
+        test_engine,
+        org_id=test_org,
+        project_id=test_project,
+        site_id=None,
+        event_type="MaterialReceived",
+        occurred_at=day1,
+    )
+    await _insert_entry(
+        test_engine,
+        org_id=test_org,
+        project_id=test_project,
+        site_id=None,
+        event_type="MaterialReceived",
+        occurred_at=day1_later,
+    )
+    await _insert_entry(
+        test_engine,
+        org_id=test_org,
+        project_id=test_project,
+        site_id=None,
+        event_type="MaterialUsed",
+        occurred_at=day1,
+    )
+    await _insert_entry(
+        test_engine,
+        org_id=test_org,
+        project_id=test_project,
+        site_id=None,
+        event_type="MaterialReceived",
+        occurred_at=day2,
+    )
 
     async with test_engine.begin() as conn:
         repo = PostgresTimelineReadRepository(conn)

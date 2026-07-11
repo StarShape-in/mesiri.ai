@@ -262,7 +262,9 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         if ctx is None:
             _log.info("context.sender_unregistered wa_id=%s", wa_id)
             await sender.send_text(wa_id, UNREGISTERED_MESSAGE)
-            await message_logger.log_reply(correlation_id=message.correlation_id, reply=UNREGISTERED_MESSAGE)
+            await message_logger.log_reply(
+                correlation_id=message.correlation_id, reply=UNREGISTERED_MESSAGE
+            )
             return
 
         if ctx.organization_id is None:
@@ -275,7 +277,9 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         if not ctx.org_active:
             _log.info("context.org_suspended org=%s", ctx.organization_id)
             await sender.send_text(wa_id, ORG_SUSPENDED_MESSAGE)
-            await message_logger.log_reply(correlation_id=message.correlation_id, reply=ORG_SUSPENDED_MESSAGE)
+            await message_logger.log_reply(
+                correlation_id=message.correlation_id, reply=ORG_SUSPENDED_MESSAGE
+            )
             return
 
         _log.info(
@@ -295,7 +299,9 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             handled = None
         if handled is not None:
             await sender.send_text(wa_id, handled.reply_text)
-            await message_logger.log_reply(correlation_id=message.correlation_id, reply=handled.reply_text)
+            await message_logger.log_reply(
+                correlation_id=message.correlation_id, reply=handled.reply_text
+            )
             return
 
         # Category-menu tap (from render_direct_reply's greeting list): a
@@ -310,7 +316,9 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             if hint:
                 await category_hint_store.set_hint(user_id=ctx.user_id, semantic_hint=hint)
             await sender.send_text(wa_id, category_prompt)
-            await message_logger.log_reply(correlation_id=message.correlation_id, reply=category_prompt)
+            await message_logger.log_reply(
+                correlation_id=message.correlation_id, reply=category_prompt
+            )
             return
 
         # Bare "hi"/"menu"/"help"/etc (see greeting_phrases.json): the AI

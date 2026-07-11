@@ -68,4 +68,3 @@ class ExtractionResult(BaseModel):
     provider: str | None = None
     model: str | None = None
     latency_ms: float | None = None
-

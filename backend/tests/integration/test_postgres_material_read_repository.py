@@ -330,7 +330,13 @@ async def test_stock_levels_arithmetic_and_joins(
                 id, organization_id, project_id, site_id, material_name, quantity, unit, occurred_date, created_by, created_at, updated_at
             ) VALUES (:id, :org_id, :project_id, :site_id, 'Cement', 100.0, 'bags', '2026-07-01', :user_id, now(), now())
             """),
-            {"id": uuid.uuid4(), "org_id": test_org, "project_id": test_project, "site_id": test_site, "user_id": test_user},
+            {
+                "id": uuid.uuid4(),
+                "org_id": test_org,
+                "project_id": test_project,
+                "site_id": test_site,
+                "user_id": test_user,
+            },
         )
         await conn.execute(
             sa.text("""
@@ -338,7 +344,13 @@ async def test_stock_levels_arithmetic_and_joins(
                 id, organization_id, project_id, site_id, material_name, quantity, unit, occurred_date, created_by, created_at, updated_at
             ) VALUES (:id, :org_id, :project_id, :site_id, 'Cement', 40.0, 'bags', '2026-07-02', :user_id, now(), now())
             """),
-            {"id": uuid.uuid4(), "org_id": test_org, "project_id": test_project, "site_id": test_site, "user_id": test_user},
+            {
+                "id": uuid.uuid4(),
+                "org_id": test_org,
+                "project_id": test_project,
+                "site_id": test_site,
+                "user_id": test_user,
+            },
         )
 
         # Material 2: Steel (receipts only, site_id is NULL)
@@ -349,7 +361,12 @@ async def test_stock_levels_arithmetic_and_joins(
                 id, organization_id, project_id, site_id, material_name, quantity, unit, occurred_date, created_by, created_at, updated_at
             ) VALUES (:id, :org_id, :project_id, NULL, 'Steel', 10.0, 'tons', '2026-07-01', :user_id, now(), now())
             """),
-            {"id": uuid.uuid4(), "org_id": test_org, "project_id": test_project, "user_id": test_user},
+            {
+                "id": uuid.uuid4(),
+                "org_id": test_org,
+                "project_id": test_project,
+                "user_id": test_user,
+            },
         )
 
         # Material 3: Sand (usage only, site_id is NULL)
@@ -360,7 +377,12 @@ async def test_stock_levels_arithmetic_and_joins(
                 id, organization_id, project_id, site_id, material_name, quantity, unit, occurred_date, created_by, created_at, updated_at
             ) VALUES (:id, :org_id, :project_id, NULL, 'Sand', 50.0, 'cum', '2026-07-01', :user_id, now(), now())
             """),
-            {"id": uuid.uuid4(), "org_id": test_org, "project_id": test_project, "user_id": test_user},
+            {
+                "id": uuid.uuid4(),
+                "org_id": test_org,
+                "project_id": test_project,
+                "user_id": test_user,
+            },
         )
 
     async with test_engine.begin() as conn:

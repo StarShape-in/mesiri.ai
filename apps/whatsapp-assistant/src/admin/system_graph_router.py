@@ -210,7 +210,9 @@ def _fast_paths() -> list[FastPathInfo]:
                 "pipeline is skipped entirely."
             ),
             example_messages=(
-                _PHRASE_SETS["confirm"][:2] + _PHRASE_SETS["reject"][:1] + _PHRASE_SETS["cancel"][:1]
+                _PHRASE_SETS["confirm"][:2]
+                + _PHRASE_SETS["reject"][:1]
+                + _PHRASE_SETS["cancel"][:1]
             ),
         ),
         FastPathInfo(
@@ -286,7 +288,13 @@ def _inventory_query_sample_reply() -> str:
         "collected_fields": {
             "material_name": "cement",
             "inventory_levels": [
-                {"material_name": "Cement", "unit": "bags", "current_stock": 30, "received": 50, "used": 20}
+                {
+                    "material_name": "Cement",
+                    "unit": "bags",
+                    "current_stock": 30,
+                    "received": 50,
+                    "used": 20,
+                }
             ],
         }
     }
@@ -370,7 +378,9 @@ def _hardcoded_replies() -> list[HardcodedReplyInfo]:
         )
 
     def _resume(status: WorkflowResumeStatus) -> WorkflowResumeResult:
-        return WorkflowResumeResult(status=status, workflow_instance_id="sample", correlation_id="sample")
+        return WorkflowResumeResult(
+            status=status, workflow_instance_id="sample", correlation_id="sample"
+        )
 
     def _execution(status: ExecutionStatus, **kw: object) -> ExecutionResult:
         return ExecutionResult(status=status, idempotency_key="sample", **kw)
@@ -384,8 +394,13 @@ def _hardcoded_replies() -> list[HardcodedReplyInfo]:
         org_active=True,
         projects=[
             ProjectSummary(
-                id="p1", name="Green Valley", location="East Zone", code="GV-01",
-                status="at_risk", progress=42, open_issues=1,
+                id="p1",
+                name="Green Valley",
+                location="East Zone",
+                code="GV-01",
+                status="at_risk",
+                progress=42,
+                open_issues=1,
             )
         ],
         sites=[SiteSummary(id="s1", name="East Zone Site")],
@@ -550,7 +565,9 @@ def _hardcoded_replies() -> list[HardcodedReplyInfo]:
             title="Execution — succeeded",
             source="interactions/response_handler.py:render_execution_reply()",
             trigger="User confirmed and the material dispatcher's domain write succeeded (also the CONFIRMED text for any workflow without a dispatcher).",
-            template=render_execution_reply(_execution(ExecutionStatus.SUCCEEDED, material_row_id="sample")),
+            template=render_execution_reply(
+                _execution(ExecutionStatus.SUCCEEDED, material_row_id="sample")
+            ),
         ),
         HardcodedReplyInfo(
             key="execution_rejected",
@@ -558,7 +575,9 @@ def _hardcoded_replies() -> list[HardcodedReplyInfo]:
             source="interactions/response_handler.py:render_execution_reply()",
             trigger="The domain layer rejected the confirmed action (a business rule failed).",
             template=render_execution_reply(
-                _execution(ExecutionStatus.REJECTED, rejection_reasons=["<reason from the domain layer>"])
+                _execution(
+                    ExecutionStatus.REJECTED, rejection_reasons=["<reason from the domain layer>"]
+                )
             ),
         ),
         HardcodedReplyInfo(
@@ -568,7 +587,7 @@ def _hardcoded_replies() -> list[HardcodedReplyInfo]:
             trigger="The dispatcher caught an unhandled exception during the domain write (mesiri.application.materials.dispatcher).",
             template=render_execution_reply(_execution(ExecutionStatus.FAILED)),
             flag=(
-                "Claims the write \"will retry automatically\" — no retry job or queue exists "
+                'Claims the write "will retry automatically" — no retry job or queue exists '
                 "anywhere in the codebase for a FAILED execution today; the workflow is left at "
                 "CONFIRMED (recoverable) but nothing currently retries it."
             ),
@@ -603,9 +622,21 @@ def _build_stages() -> list[PipelineStage]:
         summary="Turns any message into text + structured fields. The path depends on modality.",
         nodes=[
             StageNode(id="text", label="Text / interactive", description="Straight to extraction."),
-            StageNode(id="voice", label="Voice", description="Speech-to-text + translation, then extraction."),
-            StageNode(id="media", label="Image / document", description="Vision (OCR / description), then extraction."),
-            StageNode(id="extraction", label="Structured extraction", description="LLM pulls fields (material, quantity, amount…) and a semantic type."),
+            StageNode(
+                id="voice",
+                label="Voice",
+                description="Speech-to-text + translation, then extraction.",
+            ),
+            StageNode(
+                id="media",
+                label="Image / document",
+                description="Vision (OCR / description), then extraction.",
+            ),
+            StageNode(
+                id="extraction",
+                label="Structured extraction",
+                description="LLM pulls fields (material, quantity, amount…) and a semantic type.",
+            ),
         ],
     )
     canonicalization = PipelineStage(
@@ -723,7 +754,7 @@ def _build_pipeline_mermaid() -> str:
     for key in WORKFLOW_KEY_BY_EVENT.values():
         target = "reply" if key in _BUILDERS else "unsupported"
         lines.append(f"  wf_{_node_id(key.value)} --> {target}")
-    lines.append('  unsupported(["\'Not supported yet\' reply"])')
+    lines.append("  unsupported([\"'Not supported yet' reply\"])")
 
     return "\n".join(lines)
 
@@ -782,7 +813,9 @@ def _workflow_infos() -> list[WorkflowGraphInfo]:
                 node_names=_workflow_node_names(graph),
                 example_messages=examples.get(key.value, []),
                 mermaid=mermaid,
-                lifecycle_mermaid=_confirmation_lifecycle_mermaid() if key.value in _LIFECYCLE_WORKFLOWS else None,
+                lifecycle_mermaid=_confirmation_lifecycle_mermaid()
+                if key.value in _LIFECYCLE_WORKFLOWS
+                else None,
             )
         )
     return infos
@@ -856,7 +889,9 @@ async def simulate_message(
     try:
         modality = InputModality(body.modality)
     except ValueError:
-        raise HTTPException(status_code=400, detail=f"Unsupported modality: {body.modality}") from None
+        raise HTTPException(
+            status_code=400, detail=f"Unsupported modality: {body.modality}"
+        ) from None
     if modality not in (InputModality.TEXT, InputModality.INTERACTIVE):
         raise HTTPException(
             status_code=400,
@@ -867,7 +902,9 @@ async def simulate_message(
     container = get_container(request)
 
     def _reply(routed_via: str, text: str) -> SimulateResponse:
-        return SimulateResponse(dry_run=True, ran_as_wa_id=wa_id, routed_via=routed_via, replies=[text])
+        return SimulateResponse(
+            dry_run=True, ran_as_wa_id=wa_id, routed_via=routed_via, replies=[text]
+        )
 
     # --- Identity gate (M4) — same check the real webhook path runs first. ---
     ctx = await resolve_sender(container.actor_reader, wa_id)

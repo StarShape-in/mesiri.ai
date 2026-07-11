@@ -33,4 +33,3 @@ if os.path.isfile(_platform_py):
     _loader.exec_module(_mod)
     # Force-override whatever is in sys.modules (namespace pkg or nothing).
     sys.modules["platform"] = _mod
-

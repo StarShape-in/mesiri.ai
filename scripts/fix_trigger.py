@@ -43,18 +43,21 @@ def main():
     print(f"\nTriggers:\n{stdout.read().decode().strip()}")
 
     # Test: update a context_organizations row and check updated_at changes
-    cmd = "docker exec mesiri-postgres psql -U mesiri -d mesiri -c \"SELECT id, created_at, updated_at FROM context_organizations LIMIT 2;\""
+    cmd = 'docker exec mesiri-postgres psql -U mesiri -d mesiri -c "SELECT id, created_at, updated_at FROM context_organizations LIMIT 2;"'
     _, stdout, _ = client.exec_command(cmd, timeout=15)
     print(f"\nBefore update:\n{stdout.read().decode().strip()}")
 
-    cmd = "docker exec mesiri-postgres psql -U mesiri -d mesiri -c \"UPDATE context_organizations SET name = name WHERE id = (SELECT id FROM context_organizations LIMIT 1);\""
+    cmd = 'docker exec mesiri-postgres psql -U mesiri -d mesiri -c "UPDATE context_organizations SET name = name WHERE id = (SELECT id FROM context_organizations LIMIT 1);"'
     client.exec_command(cmd, timeout=15)
     import time
+
     time.sleep(0.5)
 
-    cmd = "docker exec mesiri-postgres psql -U mesiri -d mesiri -c \"SELECT id, created_at, updated_at FROM context_organizations LIMIT 2;\""
+    cmd = 'docker exec mesiri-postgres psql -U mesiri -d mesiri -c "SELECT id, created_at, updated_at FROM context_organizations LIMIT 2;"'
     _, stdout, _ = client.exec_command(cmd, timeout=15)
-    print(f"\nAfter update (updated_at should differ from created_at):\n{stdout.read().decode().strip()}")
+    print(
+        f"\nAfter update (updated_at should differ from created_at):\n{stdout.read().decode().strip()}"
+    )
 
     client.close()
     print("\n[OK] Done.")

@@ -21,11 +21,13 @@ def main() -> None:
     client.connect(HOST, username=USER, password=PASS)
 
     print("=== ALL TABLES ===")
-    print(run(
-        client,
-        "SELECT table_name FROM information_schema.tables "
-        "WHERE table_schema='public' ORDER BY table_name;",
-    ))
+    print(
+        run(
+            client,
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema='public' ORDER BY table_name;",
+        )
+    )
 
     print("=== ROW COUNTS PER TABLE ===")
     tables_query = (
@@ -42,25 +44,31 @@ def main() -> None:
         print(count.strip())
 
     print("\n=== MATERIAL RECEIPTS SCHEMA ===")
-    print(run(
-        client,
-        "SELECT column_name, data_type, is_nullable FROM information_schema.columns "
-        "WHERE table_name='material_receipts' ORDER BY ordinal_position;",
-    ))
+    print(
+        run(
+            client,
+            "SELECT column_name, data_type, is_nullable FROM information_schema.columns "
+            "WHERE table_name='material_receipts' ORDER BY ordinal_position;",
+        )
+    )
 
     print("=== MATERIAL USAGE SCHEMA ===")
-    print(run(
-        client,
-        "SELECT column_name, data_type, is_nullable FROM information_schema.columns "
-        "WHERE table_name='material_usage' ORDER BY ordinal_position;",
-    ))
+    print(
+        run(
+            client,
+            "SELECT column_name, data_type, is_nullable FROM information_schema.columns "
+            "WHERE table_name='material_usage' ORDER BY ordinal_position;",
+        )
+    )
 
     print("=== MATERIALS CATALOG SCHEMA ===")
-    print(run(
-        client,
-        "SELECT column_name, data_type, is_nullable FROM information_schema.columns "
-        "WHERE table_name='materials_catalog' ORDER BY ordinal_position;",
-    ))
+    print(
+        run(
+            client,
+            "SELECT column_name, data_type, is_nullable FROM information_schema.columns "
+            "WHERE table_name='materials_catalog' ORDER BY ordinal_position;",
+        )
+    )
 
     print("=== MATERIALS CATALOG ROWS ===")
     print(run(client, "SELECT * FROM materials_catalog LIMIT 10;"))

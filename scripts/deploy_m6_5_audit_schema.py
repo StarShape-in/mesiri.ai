@@ -41,13 +41,17 @@ def main() -> None:
 
     # G1: created_at on RBAC tables
     rbac_tables = [
-        "roles", "permissions", "role_permissions",
-        "membership_roles", "project_memberships", "site_memberships",
+        "roles",
+        "permissions",
+        "role_permissions",
+        "membership_roles",
+        "project_memberships",
+        "site_memberships",
     ]
     for table in rbac_tables:
         run(
             client,
-            f'docker exec mesiri-postgres psql -U mesiri -d mesiri -c '
+            f"docker exec mesiri-postgres psql -U mesiri -d mesiri -c "
             f'"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS created_at '
             f'timestamptz NOT NULL DEFAULT now();"',
         )
@@ -55,7 +59,7 @@ def main() -> None:
     # G2: created_at on external_identities
     run(
         client,
-        'docker exec mesiri-postgres psql -U mesiri -d mesiri -c '
+        "docker exec mesiri-postgres psql -U mesiri -d mesiri -c "
         '"ALTER TABLE external_identities ADD COLUMN IF NOT EXISTS created_at '
         'timestamptz NOT NULL DEFAULT now();"',
     )
@@ -63,30 +67,32 @@ def main() -> None:
     # G3: updated_at + trigger on context_* tables
     run(
         client,
-        'docker exec mesiri-postgres psql -U mesiri -d mesiri -c '
+        "docker exec mesiri-postgres psql -U mesiri -d mesiri -c "
         '"CREATE OR REPLACE FUNCTION set_updated_at() RETURNS trigger AS $$ '
         "BEGIN NEW.updated_at = now(); RETURN NEW; END; "
         '$$ LANGUAGE plpgsql;"',
     )
     context_tables = [
-        "context_organizations", "context_users",
-        "context_projects", "context_sites",
+        "context_organizations",
+        "context_users",
+        "context_projects",
+        "context_sites",
     ]
     for table in context_tables:
         run(
             client,
-            f'docker exec mesiri-postgres psql -U mesiri -d mesiri -c '
+            f"docker exec mesiri-postgres psql -U mesiri -d mesiri -c "
             f'"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS updated_at '
             f'timestamptz NOT NULL DEFAULT now();"',
         )
         run(
             client,
-            f'docker exec mesiri-postgres psql -U mesiri -d mesiri -c '
+            f"docker exec mesiri-postgres psql -U mesiri -d mesiri -c "
             f'"DROP TRIGGER IF EXISTS trg_{table}_updated ON {table};',
         )
         run(
             client,
-            f'docker exec mesiri-postgres psql -U mesiri -d mesiri -c '
+            f"docker exec mesiri-postgres psql -U mesiri -d mesiri -c "
             f'"CREATE TRIGGER trg_{table}_updated '
             f"BEFORE UPDATE ON {table} "
             f'FOR EACH ROW EXECUTE FUNCTION set_updated_at();"',
@@ -115,21 +121,21 @@ def main() -> None:
     )
     run(
         client,
-        'docker exec mesiri-postgres psql -U mesiri -d mesiri -c '
+        "docker exec mesiri-postgres psql -U mesiri -d mesiri -c "
         '"CREATE INDEX IF NOT EXISTS ix_inbound_messages_correlation_id '
-        "ON inbound_messages (correlation_id);\"",
+        'ON inbound_messages (correlation_id);"',
     )
     run(
         client,
-        'docker exec mesiri-postgres psql -U mesiri -d mesiri -c '
+        "docker exec mesiri-postgres psql -U mesiri -d mesiri -c "
         '"CREATE INDEX IF NOT EXISTS ix_inbound_messages_sender_wa_id '
-        "ON inbound_messages (sender_wa_id);\"",
+        'ON inbound_messages (sender_wa_id);"',
     )
     run(
         client,
-        'docker exec mesiri-postgres psql -U mesiri -d mesiri -c '
+        "docker exec mesiri-postgres psql -U mesiri -d mesiri -c "
         '"CREATE INDEX IF NOT EXISTS ix_inbound_messages_received_at '
-        "ON inbound_messages (received_at);\"",
+        'ON inbound_messages (received_at);"',
     )
 
     # G5: journey_traces table
@@ -151,21 +157,21 @@ def main() -> None:
     )
     run(
         client,
-        'docker exec mesiri-postgres psql -U mesiri -d mesiri -c '
+        "docker exec mesiri-postgres psql -U mesiri -d mesiri -c "
         '"CREATE INDEX IF NOT EXISTS ix_journey_traces_correlation_id '
-        "ON journey_traces (correlation_id);\"",
+        'ON journey_traces (correlation_id);"',
     )
     run(
         client,
-        'docker exec mesiri-postgres psql -U mesiri -d mesiri -c '
+        "docker exec mesiri-postgres psql -U mesiri -d mesiri -c "
         '"CREATE INDEX IF NOT EXISTS ix_journey_traces_correlation_stage '
-        "ON journey_traces (correlation_id, stage);\"",
+        'ON journey_traces (correlation_id, stage);"',
     )
 
     # Update alembic_version
     run(
         client,
-        'docker exec mesiri-postgres psql -U mesiri -d mesiri -c '
+        "docker exec mesiri-postgres psql -U mesiri -d mesiri -c "
         "\"UPDATE alembic_version SET version_num = '0210' WHERE version_num = '0200';\"",
     )
 
@@ -173,26 +179,26 @@ def main() -> None:
     print("\n=== Verification ===")
     run(
         client,
-        'docker exec mesiri-postgres psql -U mesiri -d mesiri -c '
+        "docker exec mesiri-postgres psql -U mesiri -d mesiri -c "
         '"SELECT version_num FROM alembic_version;"',
     )
     run(
         client,
-        'docker exec mesiri-postgres psql -U mesiri -d mesiri -c '
+        "docker exec mesiri-postgres psql -U mesiri -d mesiri -c "
         '"SELECT table_name FROM information_schema.tables WHERE table_name IN '
-        "(\'inbound_messages\', \'journey_traces\') ORDER BY table_name;\"",
+        "('inbound_messages', 'journey_traces') ORDER BY table_name;\"",
     )
     run(
         client,
-        'docker exec mesiri-postgres psql -U mesiri -d mesiri -c '
+        "docker exec mesiri-postgres psql -U mesiri -d mesiri -c "
         '"SELECT column_name FROM information_schema.columns '
-        "WHERE table_name=\'context_organizations\' AND column_name=\'updated_at\';\"",
+        "WHERE table_name='context_organizations' AND column_name='updated_at';\"",
     )
     run(
         client,
-        'docker exec mesiri-postgres psql -U mesiri -d mesiri -c '
+        "docker exec mesiri-postgres psql -U mesiri -d mesiri -c "
         '"SELECT column_name FROM information_schema.columns '
-        "WHERE table_name=\'roles\' AND column_name=\'created_at\';\"",
+        "WHERE table_name='roles' AND column_name='created_at';\"",
     )
 
     # 5. Restart uvicorn

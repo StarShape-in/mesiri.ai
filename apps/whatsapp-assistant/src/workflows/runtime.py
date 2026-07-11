@@ -267,7 +267,7 @@ class WorkflowRuntime:
 
         draft_action: DraftActionV2 | None = result_state.get("draft_action")
         pending_prompt: str | None = result_state.get("pending_prompt")
-        
+
         if pending_prompt is None:
             logger.error(
                 "workflow.incomplete_result workflow_key=%s workflow_instance_id=%s",
@@ -288,7 +288,7 @@ class WorkflowRuntime:
                 return WorkflowRunResult.failed(
                     workflow_key=workflow_key, correlation_id=event.correlation_id
                 )
-            
+
             return WorkflowRunResult.completed(
                 workflow_key=workflow_key,
                 correlation_id=event.correlation_id,
@@ -486,6 +486,7 @@ class WorkflowRuntime:
             workflow_instance_id=instance_id,
             correlation_id=state.correlation_id,
         )
+
 
 def log_workflow_run(result: WorkflowRunResult) -> None:
     """Log the WorkflowRunResult for development visibility (not user-facing)."""

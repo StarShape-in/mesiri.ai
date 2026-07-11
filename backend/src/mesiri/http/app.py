@@ -134,4 +134,3 @@ def create_app(lifecycle: AppLifecycle | None = None) -> FastAPI:
         _log.exception("organizations router not loaded: %s", exc)
 
     return app
-

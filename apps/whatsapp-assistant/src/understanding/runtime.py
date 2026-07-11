@@ -13,7 +13,9 @@ from understanding.pipeline import UnderstandingPipeline
 logger = logging.getLogger(__name__)
 
 
-def build_pipeline(object_storage: ObjectStoragePort, db: Any, redis_client: Any) -> UnderstandingPipeline:
+def build_pipeline(
+    object_storage: ObjectStoragePort, db: Any, redis_client: Any
+) -> UnderstandingPipeline:
     """Construct the understanding pipeline from configured providers."""
     from mesiri.bootstrap.settings import get_settings
     from mesiri_ai.resolver import DynamicAIProviderResolver

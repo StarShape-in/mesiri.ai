@@ -55,13 +55,9 @@ class PostgresTimelineReadRepository:
         if event_type is not None:
             where_clauses.append(_timeline_entries.c.event_type == event_type)
         if date_from is not None:
-            where_clauses.append(
-                sa.cast(_timeline_entries.c.occurred_at, sa.Date) >= date_from
-            )
+            where_clauses.append(sa.cast(_timeline_entries.c.occurred_at, sa.Date) >= date_from)
         if date_to is not None:
-            where_clauses.append(
-                sa.cast(_timeline_entries.c.occurred_at, sa.Date) <= date_to
-            )
+            where_clauses.append(sa.cast(_timeline_entries.c.occurred_at, sa.Date) <= date_to)
 
         count_stmt = sa.select(sa.func.count()).select_from(_timeline_entries).where(*where_clauses)
         total = (await self.conn.execute(count_stmt)).scalar_one()
@@ -92,13 +88,9 @@ class PostgresTimelineReadRepository:
         if site_id is not None:
             where_clauses.append(_timeline_entries.c.site_id == site_id)
         if date_from is not None:
-            where_clauses.append(
-                sa.cast(_timeline_entries.c.occurred_at, sa.Date) >= date_from
-            )
+            where_clauses.append(sa.cast(_timeline_entries.c.occurred_at, sa.Date) >= date_from)
         if date_to is not None:
-            where_clauses.append(
-                sa.cast(_timeline_entries.c.occurred_at, sa.Date) <= date_to
-            )
+            where_clauses.append(sa.cast(_timeline_entries.c.occurred_at, sa.Date) <= date_to)
 
         day_col = sa.cast(_timeline_entries.c.occurred_at, sa.Date).label("day")
         stmt = (

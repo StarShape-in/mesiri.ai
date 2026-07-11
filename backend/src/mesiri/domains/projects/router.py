@@ -249,6 +249,7 @@ async def get_project(
             raise HTTPException(status_code=403, detail="Access denied to this project")
 
     from mesiri.application.projects.dtos import ProjectDTO
+
     dto = ProjectDTO(
         id=row.id,
         organization_id=row.organization_id,
@@ -322,19 +323,14 @@ async def update_project(
         values["required_report_types"] = body.requiredReportTypes
 
     if values:
-        await conn.execute(
-            _projects.update()
-            .where(_projects.c.id == project_id)
-            .values(**values)
-        )
+        await conn.execute(_projects.update().where(_projects.c.id == project_id).values(**values))
 
     # Re-fetch
-    refetch = await conn.execute(
-        sa.select(_projects).where(_projects.c.id == project_id)
-    )
+    refetch = await conn.execute(sa.select(_projects).where(_projects.c.id == project_id))
     row = refetch.first()
 
     from mesiri.application.projects.dtos import ProjectDTO
+
     dto = ProjectDTO(
         id=row.id,
         organization_id=row.organization_id,
@@ -373,9 +369,7 @@ async def archive_project(
         raise HTTPException(status_code=404, detail="Project not found")
 
     await conn.execute(
-        _projects.update()
-        .where(_projects.c.id == project_id)
-        .values(status="archived")
+        _projects.update().where(_projects.c.id == project_id).values(status="archived")
     )
     return
 
@@ -484,15 +478,9 @@ async def update_site(
         values["status"] = body.status
 
     if values:
-        await conn.execute(
-            _sites.update()
-            .where(_sites.c.id == site_id)
-            .values(**values)
-        )
+        await conn.execute(_sites.update().where(_sites.c.id == site_id).values(**values))
 
-    refetch = await conn.execute(
-        sa.select(_sites).where(_sites.c.id == site_id)
-    )
+    refetch = await conn.execute(sa.select(_sites).where(_sites.c.id == site_id))
     row = refetch.first()
     return SiteResponse(
         id=row.id,
@@ -522,11 +510,7 @@ async def archive_site(
     if row is None:
         raise HTTPException(status_code=404, detail="Site not found")
 
-    await conn.execute(
-        _sites.update()
-        .where(_sites.c.id == site_id)
-        .values(status="archived")
-    )
+    await conn.execute(_sites.update().where(_sites.c.id == site_id).values(status="archived"))
     return
 
 
@@ -615,7 +599,9 @@ async def add_project_member(
         )
     except Exception as e:
         if "unique" in str(e).lower() or "23505" in str(e):
-            raise HTTPException(status_code=409, detail="User is already a member of this project") from e
+            raise HTTPException(
+                status_code=409, detail="User is already a member of this project"
+            ) from e
         raise
 
     return ProjectMemberResponse(

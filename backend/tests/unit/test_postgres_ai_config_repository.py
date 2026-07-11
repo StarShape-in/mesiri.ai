@@ -36,8 +36,18 @@ async def test_get_active_routes():
     routes = await repo.get_active_routes()
 
     assert routes == {
-        "voice": {"provider_id": "sarvam", "model": "saaras:v2.5", "fallback_provider_id": None, "fallback_model": None},
-        "extraction": {"provider_id": "gemini", "model": "gemini-2.5-flash", "fallback_provider_id": "deepseek", "fallback_model": "deepseek-chat"},
+        "voice": {
+            "provider_id": "sarvam",
+            "model": "saaras:v2.5",
+            "fallback_provider_id": None,
+            "fallback_model": None,
+        },
+        "extraction": {
+            "provider_id": "gemini",
+            "model": "gemini-2.5-flash",
+            "fallback_provider_id": "deepseek",
+            "fallback_model": "deepseek-chat",
+        },
     }
     assert conn.execute.call_count == 1
 
@@ -74,9 +84,9 @@ async def test_get_provider_secrets():
 async def test_update_active_route():
     conn = AsyncMock()
     repo = PostgresAIConfigRepository(conn)
-    
+
     await repo.update_active_route("voice", "fake", "fake-model")
-    
+
     # Ensure execute was called with upsert statement
     assert conn.execute.call_count == 1
 

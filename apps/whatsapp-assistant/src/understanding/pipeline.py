@@ -171,7 +171,9 @@ class UnderstandingPipeline:
             return
 
         extraction = await self._extraction.extract(
-            result.normalized_text, semantic_hint=semantic_hint, correlation_id=result.correlation_id
+            result.normalized_text,
+            semantic_hint=semantic_hint,
+            correlation_id=result.correlation_id,
         )
         self._apply_extraction(result, extraction, is_empty=False)
 
@@ -222,7 +224,9 @@ class UnderstandingPipeline:
             return
 
         extraction = await self._extraction.extract(
-            result.normalized_text, semantic_hint=semantic_hint, correlation_id=result.correlation_id
+            result.normalized_text,
+            semantic_hint=semantic_hint,
+            correlation_id=result.correlation_id,
         )
         self._apply_extraction(result, extraction, is_empty=False)
 

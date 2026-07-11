@@ -35,10 +35,7 @@ async def _columns(engine, table: str) -> set[str]:
     async with engine.connect() as conn:
         rows = (
             await conn.execute(
-                text(
-                    "SELECT column_name FROM information_schema.columns "
-                    "WHERE table_name = :t"
-                ),
+                text("SELECT column_name FROM information_schema.columns WHERE table_name = :t"),
                 {"t": table},
             )
         ).fetchall()
@@ -89,9 +86,18 @@ async def test_0210_inbound_messages_table_exists(engine) -> None:
         pytest.skip("database below 0210")
 
     expected_cols = {
-        "id", "correlation_id", "sender_wa_id", "message_type",
-        "raw_payload", "normalized_message", "body_text", "media_object_key",
-        "dedup_key", "received_at", "processed_at", "processing_status",
+        "id",
+        "correlation_id",
+        "sender_wa_id",
+        "message_type",
+        "raw_payload",
+        "normalized_message",
+        "body_text",
+        "media_object_key",
+        "dedup_key",
+        "received_at",
+        "processed_at",
+        "processing_status",
         "error_code",
     }
     cols = await _columns(engine, "inbound_messages")
@@ -103,8 +109,14 @@ async def test_0210_journey_traces_table_exists(engine) -> None:
     if await _db_rev(engine) < "0210":
         pytest.skip("database below 0210")
     expected_cols = {
-        "id", "correlation_id", "stage", "stage_payload",
-        "duration_ms", "succeeded", "error_code", "error_message",
+        "id",
+        "correlation_id",
+        "stage",
+        "stage_payload",
+        "duration_ms",
+        "succeeded",
+        "error_code",
+        "error_message",
         "created_at",
     }
     cols = await _columns(engine, "journey_traces")

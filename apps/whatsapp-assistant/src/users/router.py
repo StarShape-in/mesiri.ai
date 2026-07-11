@@ -675,8 +675,7 @@ async def list_user_whatsapp_messages(
         # Check target user
         user_res = await conn.execute(
             sa.select(users_table).where(
-                users_table.c.id == user_id,
-                users_table.c.organization_id == org_id
+                users_table.c.id == user_id, users_table.c.organization_id == org_id
             )
         )
         target_user = user_res.first()
@@ -687,7 +686,7 @@ async def list_user_whatsapp_messages(
         identities_res = await conn.execute(
             sa.select(external_identities_table.c.external_subject).where(
                 external_identities_table.c.user_id == user_id,
-                external_identities_table.c.provider == "whatsapp"
+                external_identities_table.c.provider == "whatsapp",
             )
         )
         wa_ids = [row.external_subject for row in identities_res.fetchall()]
@@ -778,7 +777,7 @@ async def list_user_whatsapp_messages(
             processing_status,
             error_code
         FROM inbound_messages
-        WHERE {' AND '.join(inbound_clauses)}
+        WHERE {" AND ".join(inbound_clauses)}
         """
 
         outbound_select = f"""
@@ -794,7 +793,7 @@ async def list_user_whatsapp_messages(
             'completed' AS processing_status,
             NULL AS error_code
         FROM inbound_messages
-        WHERE {' AND '.join(outbound_clauses)}
+        WHERE {" AND ".join(outbound_clauses)}
         """
 
         if direction == "inbound":
@@ -813,7 +812,15 @@ async def list_user_whatsapp_messages(
 
         count_query = f"SELECT COUNT(*) FROM ({query}) q"
 
-        rows = (await conn.execute(sa.text(full_query), {**sql_params, "limit": limit, "offset": offset})).mappings().all()
+        rows = (
+            (
+                await conn.execute(
+                    sa.text(full_query), {**sql_params, "limit": limit, "offset": offset}
+                )
+            )
+            .mappings()
+            .all()
+        )
         total = (await conn.execute(sa.text(count_query), sql_params)).scalar_one()
 
         correlation_ids = [row["correlation_id"] for row in rows]
@@ -874,7 +881,7 @@ async def list_user_whatsapp_messages(
         items = []
         for row in rows:
             cid = row["correlation_id"]
-            
+
             project_data = None
             site_data = None
             outcome_data = None
@@ -883,19 +890,17 @@ async def list_user_whatsapp_messages(
             if t_entry:
                 if t_entry.project_id and t_entry.project_id in projects_lookup:
                     project_data = MessageProjectResponse(
-                        id=t_entry.project_id,
-                        name=projects_lookup[t_entry.project_id]
+                        id=t_entry.project_id, name=projects_lookup[t_entry.project_id]
                     )
                 if t_entry.site_id and t_entry.site_id in sites_lookup:
                     site_data = MessageSiteResponse(
-                        id=t_entry.site_id,
-                        name=sites_lookup[t_entry.site_id]
+                        id=t_entry.site_id, name=sites_lookup[t_entry.site_id]
                     )
                 if t_entry.source_aggregate_type:
                     outcome_data = MessageOutcomeResponse(
                         record_type=t_entry.source_aggregate_type,
                         record_id=t_entry.source_aggregate_id,
-                        summary=t_entry.summary
+                        summary=t_entry.summary,
                     )
 
             i_entry = interaction_lookup.get(cid)
@@ -925,14 +930,16 @@ async def list_user_whatsapp_messages(
                     clarification_status=clar_status,
                     project=project_data,
                     site=site_data,
-                    outcome=outcome_data
+                    outcome=outcome_data,
                 )
             )
 
         return UserWhatsAppMessageListResponse(items=items, total=total)
 
 
-@router.get("/{user_id}/whatsapp/messages/{message_id}", response_model=UserWhatsAppMessageDetailResponse)
+@router.get(
+    "/{user_id}/whatsapp/messages/{message_id}", response_model=UserWhatsAppMessageDetailResponse
+)
 async def get_user_whatsapp_message_detail(
     user_id: uuid.UUID,
     message_id: str,
@@ -957,8 +964,7 @@ async def get_user_whatsapp_message_detail(
         # Check target user
         user_res = await conn.execute(
             sa.select(users_table).where(
-                users_table.c.id == user_id,
-                users_table.c.organization_id == org_id
+                users_table.c.id == user_id, users_table.c.organization_id == org_id
             )
         )
         target_user = user_res.first()
@@ -969,16 +975,14 @@ async def get_user_whatsapp_message_detail(
         identities_res = await conn.execute(
             sa.select(external_identities_table.c.external_subject).where(
                 external_identities_table.c.user_id == user_id,
-                external_identities_table.c.provider == "whatsapp"
+                external_identities_table.c.provider == "whatsapp",
             )
         )
         wa_ids = {row.external_subject for row in identities_res.fetchall()}
 
         # Fetch message detail
         msg_res = await conn.execute(
-            sa.select(inbound_messages_table).where(
-                inbound_messages_table.c.id == msg_uuid
-            )
+            sa.select(inbound_messages_table).where(inbound_messages_table.c.id == msg_uuid)
         )
         msg_row = msg_res.first()
         if not msg_row or msg_row.sender_wa_id not in wa_ids:
@@ -1006,9 +1010,7 @@ async def get_user_whatsapp_message_detail(
         if t_row:
             if t_row.project_id:
                 p_res = await conn.execute(
-                    sa.select(projects_table.c.name).where(
-                        projects_table.c.id == t_row.project_id
-                    )
+                    sa.select(projects_table.c.name).where(projects_table.c.id == t_row.project_id)
                 )
                 p_row = p_res.first()
                 if p_row:
@@ -1016,9 +1018,7 @@ async def get_user_whatsapp_message_detail(
 
             if t_row.site_id:
                 s_res = await conn.execute(
-                    sa.select(sites_table.c.name).where(
-                        sites_table.c.id == t_row.site_id
-                    )
+                    sa.select(sites_table.c.name).where(sites_table.c.id == t_row.site_id)
                 )
                 s_row = s_res.first()
                 if s_row:
@@ -1028,7 +1028,7 @@ async def get_user_whatsapp_message_detail(
                 outcome_data = MessageOutcomeResponse(
                     record_type=t_row.source_aggregate_type,
                     record_id=t_row.source_aggregate_id,
-                    summary=t_row.summary
+                    summary=t_row.summary,
                 )
 
         # Query interaction (clarification)
@@ -1047,9 +1047,9 @@ async def get_user_whatsapp_message_detail(
 
         # Query traces
         traces_res = await conn.execute(
-            sa.select(journey_traces_table).where(
-                journey_traces_table.c.correlation_id == cid
-            ).order_by(journey_traces_table.c.created_at.asc())
+            sa.select(journey_traces_table)
+            .where(journey_traces_table.c.correlation_id == cid)
+            .order_by(journey_traces_table.c.created_at.asc())
         )
         traces = [
             MessageTraceResponse(
@@ -1060,16 +1060,16 @@ async def get_user_whatsapp_message_detail(
                 error_message=r.error_message,
                 severity=r.severity or "info",
                 event_source=r.event_source or "pipeline_stage",
-                created_at=r.created_at
+                created_at=r.created_at,
             )
             for r in traces_res.fetchall()
         ]
 
         # Query provider executions
         pe_res = await conn.execute(
-            sa.select(provider_executions_table).where(
-                provider_executions_table.c.correlation_id == cid
-            ).order_by(provider_executions_table.c.created_at.asc())
+            sa.select(provider_executions_table)
+            .where(provider_executions_table.c.correlation_id == cid)
+            .order_by(provider_executions_table.c.created_at.asc())
         )
         providers = [
             MessageProviderExecutionResponse(
@@ -1080,7 +1080,7 @@ async def get_user_whatsapp_message_detail(
                 latency_ms=r.latency_ms,
                 succeeded=r.succeeded,
                 error_code=r.error_code,
-                created_at=r.created_at
+                created_at=r.created_at,
             )
             for r in pe_res.fetchall()
         ]
@@ -1104,6 +1104,5 @@ async def get_user_whatsapp_message_detail(
             site=site_data,
             outcome=outcome_data,
             traces=traces,
-            providers=providers
+            providers=providers,
         )
-

@@ -117,7 +117,6 @@ async def test_trace_logger_captures_all_stages_on_success():
     assert mlog.replies[0] == ("cor_logging_1", render_unsupported_reply())
 
 
-
 async def test_trace_logger_captures_context_failure():
     """When context resolution fails, the context stage is traced with succeeded=False."""
     # Use an unregistered sender → context resolution fails
@@ -189,6 +188,7 @@ async def test_trace_logger_captures_workflow_stage():
 
 async def test_logger_failure_does_not_break_pipeline():
     """A trace logger that raises must not break the inbound journey."""
+
     class ExplosiveTraceLogger:
         async def log_stage(self, **kwargs):  # noqa: ANN001
             raise RuntimeError("log DB is down")
@@ -301,8 +301,9 @@ async def test_no_loggers_does_not_break():
 
     assert isinstance(result.understanding, UnderstandingResult)
 
+
 async def test_voice_whoami_is_answered_without_extraction():
-    """"njaan aara" (or any spoken phrasing Sarvam translates to a recognized
+    """ "njaan aara" (or any spoken phrasing Sarvam translates to a recognized
     who-am-i phrase) must be answered — checked post-transcription since
     there's no text before Sarvam runs.
 
@@ -327,7 +328,9 @@ async def test_voice_whoami_is_answered_without_extraction():
     await storage.put_object("voice/whoami.ogg", b"<audio>")
     extraction = FakeExtractionProvider()
     pipeline = UnderstandingPipeline(
-        speech=FakeSpeechProvider(SpeechResult(transcript="njaan aara", translated_text="who am I")),
+        speech=FakeSpeechProvider(
+            SpeechResult(transcript="njaan aara", translated_text="who am I")
+        ),
         vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
         extraction=extraction,
         translation=FakeTranslationProvider(),

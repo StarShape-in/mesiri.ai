@@ -136,12 +136,16 @@ async def list_organization_users(
     conn: AsyncConnection = Depends(get_db_conn),
     _admin: dict = Depends(require_platform_admin),
 ):
-    org_exists = await conn.execute(select(OrganizationModel.id).where(OrganizationModel.id == org_id))
+    org_exists = await conn.execute(
+        select(OrganizationModel.id).where(OrganizationModel.id == org_id)
+    )
     if org_exists.first() is None:
         raise HTTPException(status_code=404, detail="Organization not found")
 
     result = await conn.execute(
-        select(_users).where(_users.c.organization_id == org_id).order_by(_users.c.created_at.desc())
+        select(_users)
+        .where(_users.c.organization_id == org_id)
+        .order_by(_users.c.created_at.desc())
     )
     return [
         OrganizationUserResponse(
@@ -168,7 +172,9 @@ async def list_organization_timeline(
     _admin: dict = Depends(require_platform_admin),
 ):
     """Cross-tenant activity feed for a single organization (platform admin view)."""
-    org_exists = await conn.execute(select(OrganizationModel.id).where(OrganizationModel.id == org_id))
+    org_exists = await conn.execute(
+        select(OrganizationModel.id).where(OrganizationModel.id == org_id)
+    )
     if org_exists.first() is None:
         raise HTTPException(status_code=404, detail="Organization not found")
 

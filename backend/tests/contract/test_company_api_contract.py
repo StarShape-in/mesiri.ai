@@ -121,6 +121,7 @@ async def auth_token(test_user: uuid.UUID, test_org: uuid.UUID) -> str:
 # CONTRACT TESTS — COMPANY PROFILE & SUMMARY
 # ============================================================================
 
+
 @pytest.mark.integration
 async def test_get_company_profile(
     client: AsyncClient,
@@ -182,6 +183,7 @@ async def test_get_company_summary_metrics(
 # CONTRACT TESTS — WHATSAPP MESSAGES LOGS
 # ============================================================================
 
+
 @pytest.mark.integration
 async def test_whatsapp_messages_endpoints(
     client: AsyncClient,
@@ -220,16 +222,16 @@ async def test_whatsapp_messages_endpoints(
         )
 
     headers = {"Authorization": f"Bearer {auth_token}"}
-    
+
     # 1. Test message list
     res = await client.get("/company/whatsapp/messages", headers=headers)
     assert res.status_code == 200
     list_data = res.json()
     assert list_data["total"] == 2  # 1 Inbound + 1 Outbound (assistant_reply is populated)
-    
+
     inbound_msg = [m for m in list_data["items"] if m["direction"] == "inbound"][0]
     outbound_msg = [m for m in list_data["items"] if m["direction"] == "outbound"][0]
-    
+
     assert inbound_msg["body"] == "Need concrete delivery details for project"
     assert outbound_msg["body"] == "I am looking up the concrete delivery details."
     assert inbound_msg["sender_wa_id"] == "15555550199"

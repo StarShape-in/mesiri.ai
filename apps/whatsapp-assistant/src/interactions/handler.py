@@ -176,9 +176,7 @@ class InteractionHandler:
             return None
         return render_greeting_menu(timezone=timezone)
 
-    def handle_whoami_trigger(
-        self, message: NormalizedMessage, actor: ActorIdentity
-    ) -> str | None:
+    def handle_whoami_trigger(self, message: NormalizedMessage, actor: ActorIdentity) -> str | None:
         """A bare "who am i"/"whoami"/"my profile"/etc (see
         workflows.who_am_i.phrases.json) -- deterministic identity-lookup fast
         path, no AI call, same principle as handle_greeting_trigger ("a plain

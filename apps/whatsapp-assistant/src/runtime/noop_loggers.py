@@ -27,8 +27,7 @@ class NoopMessageLogger:
         dedup_key: str,
         retry_of_id: str | None = None,
         organization_id: str | None = None,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     async def update_context(
         self,
@@ -37,21 +36,15 @@ class NoopMessageLogger:
         organization_id: str | None = None,
         project_id: str | None = None,
         site_id: str | None = None,
-    ) -> None:
-        ...
+    ) -> None: ...
 
+    async def mark_completed(self, *, correlation_id: str) -> None: ...
 
-    async def mark_completed(self, *, correlation_id: str) -> None:
-        ...
+    async def mark_failed(self, *, correlation_id: str, error_code: str) -> None: ...
 
-    async def mark_failed(self, *, correlation_id: str, error_code: str) -> None:
-        ...
+    async def log_reply(self, *, correlation_id: str, reply: str) -> None: ...
 
-    async def log_reply(self, *, correlation_id: str, reply: str) -> None:
-        ...
-
-    async def update_body_text(self, *, correlation_id: str, body_text: str) -> None:
-        ...
+    async def update_body_text(self, *, correlation_id: str, body_text: str) -> None: ...
 
 
 class NoopTraceLogger:
@@ -67,8 +60,7 @@ class NoopTraceLogger:
         error_message: str | None = None,
         severity: str = "info",
         event_source: str = "pipeline_stage",
-    ) -> None:
-        ...
+    ) -> None: ...
 
     async def log_provider_execution(
         self,
@@ -81,8 +73,7 @@ class NoopTraceLogger:
         latency_ms: float | None,
         succeeded: bool,
         error_code: str | None = None,
-    ) -> None:
-        ...
+    ) -> None: ...
 
 
 @dataclass
@@ -99,7 +90,6 @@ class ReceivedMessage:
     organization_id: str | None = None
     project_id: str | None = None
     site_id: str | None = None
-
 
 
 @dataclass
@@ -157,7 +147,6 @@ class RecordingMessageLogger:
                     r.project_id = project_id
                 if site_id is not None:
                     r.site_id = site_id
-
 
     async def mark_completed(self, *, correlation_id: str) -> None:
         self.completed.append(correlation_id)

@@ -43,7 +43,9 @@ def _decision(
 
 def test_clarify_names_a_single_missing_field_in_plain_words():
     reply = render_clarify_reply(
-        _decision(PlannerDecisionType.CLARIFY, CanonicalEventType.CLARIFICATION_REQUIRED, ["quantity"])
+        _decision(
+            PlannerDecisionType.CLARIFY, CanonicalEventType.CLARIFICATION_REQUIRED, ["quantity"]
+        )
     )
     assert "how much" in reply
     assert "quantity" not in reply  # schema names must not leak to the user
@@ -163,9 +165,7 @@ def test_unsupported_is_distinct_from_not_understood():
 
 
 def test_project_picker_lists_every_project_with_prefixed_row_ids():
-    reply = render_project_picker(
-        [("prj_1", "Site A", "Kochi"), ("prj_2", "Site B", None)]
-    )
+    reply = render_project_picker([("prj_1", "Site A", "Kochi"), ("prj_2", "Site B", None)])
     assert reply.list_rows is not None
     assert [row.id for row in reply.list_rows] == ["proj_prj_1", "proj_prj_2"]
     assert [row.title for row in reply.list_rows] == ["Site A", "Site B"]

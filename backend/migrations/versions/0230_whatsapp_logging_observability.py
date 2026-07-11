@@ -14,6 +14,7 @@ Revision ID: 0230
 Revises: 0220
 Create Date: 2026-07-10
 """
+
 from __future__ import annotations
 
 import sqlalchemy as sa
@@ -48,9 +49,16 @@ def upgrade() -> None:
         sa.Column("latency_ms", sa.Float(), nullable=True),
         sa.Column("succeeded", sa.Boolean(), server_default=sa.true(), nullable=False),
         sa.Column("error_code", sa.String(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
     )
-    op.create_index("ix_provider_executions_correlation_id", "provider_executions", ["correlation_id"])
+    op.create_index(
+        "ix_provider_executions_correlation_id", "provider_executions", ["correlation_id"]
+    )
     op.create_index("ix_provider_executions_provider", "provider_executions", ["provider"])
     op.create_index("ix_provider_executions_created_at", "provider_executions", ["created_at"])
 
@@ -59,9 +67,13 @@ def upgrade() -> None:
         "inbound_messages",
         sa.Column("raw_payload_captured", sa.Boolean(), server_default=sa.false(), nullable=False),
     )
-    op.add_column("inbound_messages", sa.Column("acknowledged_at", sa.DateTime(timezone=True), nullable=True))
+    op.add_column(
+        "inbound_messages", sa.Column("acknowledged_at", sa.DateTime(timezone=True), nullable=True)
+    )
     op.add_column("inbound_messages", sa.Column("acknowledged_by", sa.String(), nullable=True))
-    op.add_column("inbound_messages", sa.Column("retry_of_id", sa.UUID(as_uuid=True), nullable=True))
+    op.add_column(
+        "inbound_messages", sa.Column("retry_of_id", sa.UUID(as_uuid=True), nullable=True)
+    )
     op.add_column("inbound_messages", sa.Column("assistant_reply", sa.Text(), nullable=True))
 
 

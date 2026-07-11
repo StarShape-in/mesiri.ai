@@ -50,7 +50,9 @@ def render_execution_reply(result: ExecutionResult) -> str:
     return "⚠️ Something went wrong — we'll retry automatically."
 
 
-def render_workflow_run_reply(result: WorkflowRunResult, *, pending_prompt: str | None = None) -> str:
+def render_workflow_run_reply(
+    result: WorkflowRunResult, *, pending_prompt: str | None = None
+) -> str:
     """Reply to send after a workflow run.
 
     ``pending_prompt`` is the text produced by the workflow graph — passed in

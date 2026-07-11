@@ -4,6 +4,7 @@ Revision ID: 0240
 Revises: 0230
 Create Date: 2026-07-10
 """
+
 from __future__ import annotations
 
 import sqlalchemy as sa
@@ -22,7 +23,12 @@ def upgrade() -> None:
         sa.Column("capability", sa.String(), primary_key=True),
         sa.Column("provider_id", sa.String(), nullable=False),
         sa.Column("model", sa.String(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
     )
 
     # Seed default active routes
@@ -40,7 +46,12 @@ def upgrade() -> None:
         sa.Column("provider_id", sa.String(), primary_key=True),
         sa.Column("api_key", sa.String(), nullable=False),
         sa.Column("base_url", sa.String(), nullable=True),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
     )
 
 

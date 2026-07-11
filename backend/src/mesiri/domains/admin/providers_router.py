@@ -324,4 +324,3 @@ async def check_provider(
         return {"id": provider_id, "ok": False, "error": "unknown provider", "latency_ms": None}
 
     return {"id": provider_id, "ok": ok, "error": error, "latency_ms": round(latency_ms, 1)}
-

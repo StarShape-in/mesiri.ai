@@ -186,7 +186,9 @@ class WhatsAppReceiver:
                     event_source="unhandled_exception",
                 )
             except Exception:  # noqa: BLE001
-                logger.exception("Failed to record ingress failure trace for message %s", message_id)
+                logger.exception(
+                    "Failed to record ingress failure trace for message %s", message_id
+                )
 
     async def _download_media_if_required(
         self,

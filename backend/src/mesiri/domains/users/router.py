@@ -126,15 +126,11 @@ async def create_user(
         )
 
     # Check for duplicate email within this org
-    existing = await conn.execute(
-        sa.select(_users.c.id).where(_users.c.email == body.email)
-    )
+    existing = await conn.execute(sa.select(_users.c.id).where(_users.c.email == body.email))
     if existing.first():
         raise HTTPException(status_code=409, detail="A user with this email already exists")
 
-    hashed_password = _bcrypt.hashpw(
-        body.password.encode(), _bcrypt.gensalt()
-    ).decode()
+    hashed_password = _bcrypt.hashpw(body.password.encode(), _bcrypt.gensalt()).decode()
 
     new_id = uuid.uuid4()
     await conn.execute(
@@ -361,4 +357,3 @@ async def delete_user(
                 detail="User cannot be deleted because they own historical records. Please deactivate or suspend their account instead.",
             ) from exc
         raise HTTPException(status_code=500, detail=f"Database error: {str(exc)}") from exc
-

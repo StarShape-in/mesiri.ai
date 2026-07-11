@@ -24,9 +24,7 @@ def generate_inventory_reply(state: WorkflowGraphState) -> dict:
 
     if not levels:
         if material_name:
-            return {
-                "pending_prompt": f"I don't have any recorded stock for {material_name} yet."
-            }
+            return {"pending_prompt": f"I don't have any recorded stock for {material_name} yet."}
         return {"pending_prompt": "I don't have any recorded material stock yet."}
 
     if material_name and len(levels) == 1:

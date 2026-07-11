@@ -17,6 +17,7 @@ async def get_db_conn(request: Request) -> AsyncIterator[AsyncConnection]:
         # Fallback to creating/connecting database on the fly if needed
         from mesiri.bootstrap.settings import get_settings
         from mesiri.infrastructure.postgres.database import PostgresDatabase
+
         settings = get_settings()
         postgres = PostgresDatabase(settings.postgres)
         await postgres.connect()

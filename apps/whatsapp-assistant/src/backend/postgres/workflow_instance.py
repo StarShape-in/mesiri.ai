@@ -127,7 +127,9 @@ async def transition_on_connection(
     """
     from sqlalchemy import text
 
-    terminal = new_state.phase.value  # confirmed | rejected | cancelled | completed | execution_rejected
+    terminal = (
+        new_state.phase.value
+    )  # confirmed | rejected | cancelled | completed | execution_rejected
     status = "completed" if terminal == "confirmed" else terminal
     result = await conn.execute(
         text(
@@ -155,11 +157,15 @@ async def get_by_id_on_connection(conn, workflow_instance_id: str) -> LoadedWork
     from sqlalchemy import text
 
     row = (
-        await conn.execute(
-            text("SELECT state, version FROM workflow_instances WHERE id = :id"),
-            {"id": uuid.UUID(workflow_instance_id)},
+        (
+            await conn.execute(
+                text("SELECT state, version FROM workflow_instances WHERE id = :id"),
+                {"id": uuid.UUID(workflow_instance_id)},
+            )
         )
-    ).mappings().first()
+        .mappings()
+        .first()
+    )
     if row is None:
         return None
     state = WorkflowStateV2.model_validate_json(_as_json_text(row["state"]))

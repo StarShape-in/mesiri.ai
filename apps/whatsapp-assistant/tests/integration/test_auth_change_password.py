@@ -54,7 +54,11 @@ async def _seed_user(test_engine: AsyncEngine, *, password: str) -> uuid.UUID:
                 "role, status, created_at, updated_at) "
                 "VALUES (:id, NULL, :email, :hashed, 'Test User', 'ADMIN', 'active', now(), now())"
             ),
-            {"id": user_id, "email": f"{user_id}@example.com", "hashed": auth_router._hash_pw(password)},
+            {
+                "id": user_id,
+                "email": f"{user_id}@example.com",
+                "hashed": auth_router._hash_pw(password),
+            },
         )
     return user_id
 
@@ -74,7 +78,9 @@ async def test_change_password_rejects_wrong_current_password(test_engine: Async
 
     with pytest.raises(HTTPException) as exc:
         await auth_router.change_password(
-            auth_router.ChangePassword(current_password="wrong-password", new_password="new-password-1"),
+            auth_router.ChangePassword(
+                current_password="wrong-password", new_password="new-password-1"
+            ),
             authorization=f"Bearer {_token_for(user_id)}",
         )
     assert exc.value.status_code == 401
@@ -84,7 +90,9 @@ async def test_change_password_persists_new_hash(test_engine: AsyncEngine, clean
     user_id = await _seed_user(test_engine, password="correct-password")
 
     await auth_router.change_password(
-        auth_router.ChangePassword(current_password="correct-password", new_password="new-password-1"),
+        auth_router.ChangePassword(
+            current_password="correct-password", new_password="new-password-1"
+        ),
         authorization=f"Bearer {_token_for(user_id)}",
     )
 

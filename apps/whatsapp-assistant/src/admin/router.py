@@ -261,7 +261,12 @@ async def delete_organization(org_id: uuid.UUID, _admin: dict = Depends(require_
             )
 
         # Parents of the above (materials_catalog, finance_accounts, etc).
-        for table in ("finance_accounts", "labour_attendance", "materials_catalog", "workflow_instances"):
+        for table in (
+            "finance_accounts",
+            "labour_attendance",
+            "materials_catalog",
+            "workflow_instances",
+        ):
             await conn.execute(
                 sa.text(f"DELETE FROM {table} WHERE organization_id = :org_id"), params
             )

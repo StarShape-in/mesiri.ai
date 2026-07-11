@@ -100,7 +100,9 @@ def _render_reply(
         WorkflowRunStatus.BLOCKED_PENDING_CONFIRMATION,
     ):
         return ReplySpec(
-            text=render_workflow_run_reply(workflow_run, pending_prompt=workflow_run.pending_prompt),
+            text=render_workflow_run_reply(
+                workflow_run, pending_prompt=workflow_run.pending_prompt
+            ),
             buttons=CONFIRM_BUTTONS,
         )
 
@@ -122,9 +124,7 @@ def _render_reply(
         if decision.decision_type is PlannerDecisionType.DIRECT_REPLY:
             # is_first_message detection isn't wired yet (would need a message-
             # history check) -- defaults to the lighter "returning user" copy.
-            return render_direct_reply(
-                decision, timezone=resolved.timezone if resolved else None
-            )
+            return render_direct_reply(decision, timezone=resolved.timezone if resolved else None)
 
     # Context resolution failed, understanding was UNUSABLE, the workflow run
     # FAILED, or the planner said IGNORE. Never fall through to format_reply():
@@ -161,36 +161,46 @@ async def process_inbound_message(
     t0 = time.perf_counter()
     try:
         understanding = await pipeline.understand(message, semantic_hint=semantic_hint)
-        await _safe(tlog.log_stage(
-            correlation_id=correlation_id,
-            stage="understanding",
-            stage_payload=understanding.model_dump(mode="json"),
-            duration_ms=int((time.perf_counter() - t0) * 1000),
-            succeeded=True,
-        ))
-        if understanding.transcript:
-            await _safe(mlog.update_body_text(correlation_id=correlation_id, body_text=understanding.transcript))
-        for execution in understanding.provider_executions:
-            await _safe(tlog.log_provider_execution(
+        await _safe(
+            tlog.log_stage(
                 correlation_id=correlation_id,
                 stage="understanding",
-                provider=execution.provider,
-                operation=execution.operation,
-                model=execution.model,
-                latency_ms=execution.latency_ms,
-                succeeded=execution.succeeded,
-                error_code=execution.error_code,
-            ))
+                stage_payload=understanding.model_dump(mode="json"),
+                duration_ms=int((time.perf_counter() - t0) * 1000),
+                succeeded=True,
+            )
+        )
+        if understanding.transcript:
+            await _safe(
+                mlog.update_body_text(
+                    correlation_id=correlation_id, body_text=understanding.transcript
+                )
+            )
+        for execution in understanding.provider_executions:
+            await _safe(
+                tlog.log_provider_execution(
+                    correlation_id=correlation_id,
+                    stage="understanding",
+                    provider=execution.provider,
+                    operation=execution.operation,
+                    model=execution.model,
+                    latency_ms=execution.latency_ms,
+                    succeeded=execution.succeeded,
+                    error_code=execution.error_code,
+                )
+            )
     except Exception as exc:
-        await _safe(tlog.log_stage(
-            correlation_id=correlation_id,
-            stage="understanding",
-            stage_payload=None,
-            duration_ms=int((time.perf_counter() - t0) * 1000),
-            succeeded=False,
-            error_code=type(exc).__name__,
-            error_message=str(exc),
-        ))
+        await _safe(
+            tlog.log_stage(
+                correlation_id=correlation_id,
+                stage="understanding",
+                stage_payload=None,
+                duration_ms=int((time.perf_counter() - t0) * 1000),
+                succeeded=False,
+                error_code=type(exc).__name__,
+                error_message=str(exc),
+            )
+        )
         await _safe(mlog.mark_failed(correlation_id=correlation_id, error_code=type(exc).__name__))
         raise
 
@@ -210,7 +220,7 @@ async def process_inbound_message(
     # of normalized_text, the translation); reading Understanding's own
     # answer makes that whole bug class structurally impossible, not just
     # fixed for today.
-    # Note: WHOAMI_QUESTION fast-path has been removed to allow a full 
+    # Note: WHOAMI_QUESTION fast-path has been removed to allow a full
     # LangGraph workflow to process identity lookups with AI-generated replies.
 
     # --- Slow-path interaction dispatch (correction / confirm / reject from classifier) ---
@@ -260,31 +270,37 @@ async def process_inbound_message(
         resolved = result.unwrap()
         if context_debug:
             log_resolved_context(resolved)
-        await _safe(tlog.log_stage(
-            correlation_id=correlation_id,
-            stage="context",
-            stage_payload=resolved.model_dump(mode="json"),
-            duration_ms=int((time.perf_counter() - t0) * 1000),
-            succeeded=True,
-        ))
-        if message_logger:
-            await _safe(message_logger.update_context(
+        await _safe(
+            tlog.log_stage(
                 correlation_id=correlation_id,
-                organization_id=resolved.organization_id,
-                project_id=resolved.project_id,
-                site_id=resolved.site_id,
-            ))
-
+                stage="context",
+                stage_payload=resolved.model_dump(mode="json"),
+                duration_ms=int((time.perf_counter() - t0) * 1000),
+                succeeded=True,
+            )
+        )
+        if message_logger:
+            await _safe(
+                message_logger.update_context(
+                    correlation_id=correlation_id,
+                    organization_id=resolved.organization_id,
+                    project_id=resolved.project_id,
+                    site_id=resolved.site_id,
+                )
+            )
 
         # --- Canonicalization stage ---
         t0 = time.perf_counter()
         try:
             canonical_event = build_canonical_event(understanding, resolved)
-            
-            # Inject the loaded actor profile into the canonical event so the 
+
+            # Inject the loaded actor profile into the canonical event so the
             # WHO_AM_I workflow has the data it needs to generate a reply
             # without breaking the rule against workflows querying the database.
-            if canonical_event.event_type is CanonicalEventType.IDENTITY_LOOKUP_REQUESTED and actor is not None:
+            if (
+                canonical_event.event_type is CanonicalEventType.IDENTITY_LOOKUP_REQUESTED
+                and actor is not None
+            ):
                 canonical_event.fields["actor_profile"] = {
                     "full_name": actor.full_name,
                     "role": actor.role,
@@ -298,7 +314,10 @@ async def process_inbound_message(
             # workflow: it must not touch the database itself, so the read
             # happens here (the wiring layer) and the result is injected as
             # plain, already-scoped data before the graph ever runs.
-            if canonical_event.event_type is CanonicalEventType.INVENTORY_QUERY_ASKED and inventory_query is not None:
+            if (
+                canonical_event.event_type is CanonicalEventType.INVENTORY_QUERY_ASKED
+                and inventory_query is not None
+            ):
                 canonical_event.fields["inventory_levels"] = await inventory_query.query(
                     organization_id=canonical_event.organization_id,
                     project_id=canonical_event.project_id,
@@ -308,24 +327,30 @@ async def process_inbound_message(
 
             if context_debug:
                 log_canonical_event(canonical_event)
-            await _safe(tlog.log_stage(
-                correlation_id=correlation_id,
-                stage="canonicalization",
-                stage_payload=canonical_event.model_dump(mode="json"),
-                duration_ms=int((time.perf_counter() - t0) * 1000),
-                succeeded=True,
-            ))
+            await _safe(
+                tlog.log_stage(
+                    correlation_id=correlation_id,
+                    stage="canonicalization",
+                    stage_payload=canonical_event.model_dump(mode="json"),
+                    duration_ms=int((time.perf_counter() - t0) * 1000),
+                    succeeded=True,
+                )
+            )
         except Exception as exc:
-            await _safe(tlog.log_stage(
-                correlation_id=correlation_id,
-                stage="canonicalization",
-                stage_payload=None,
-                duration_ms=int((time.perf_counter() - t0) * 1000),
-                succeeded=False,
-                error_code=type(exc).__name__,
-                error_message=str(exc),
-            ))
-            await _safe(mlog.mark_failed(correlation_id=correlation_id, error_code=type(exc).__name__))
+            await _safe(
+                tlog.log_stage(
+                    correlation_id=correlation_id,
+                    stage="canonicalization",
+                    stage_payload=None,
+                    duration_ms=int((time.perf_counter() - t0) * 1000),
+                    succeeded=False,
+                    error_code=type(exc).__name__,
+                    error_message=str(exc),
+                )
+            )
+            await _safe(
+                mlog.mark_failed(correlation_id=correlation_id, error_code=type(exc).__name__)
+            )
             raise
 
         # --- Project-selection gate ---
@@ -358,24 +383,30 @@ async def process_inbound_message(
                 planner_decision = planner.decide(canonical_event)
                 if context_debug:
                     log_planner_decision(planner_decision)
-                await _safe(tlog.log_stage(
-                    correlation_id=correlation_id,
-                    stage="planner",
-                    stage_payload=planner_decision.model_dump(mode="json"),
-                    duration_ms=int((time.perf_counter() - t0) * 1000),
-                    succeeded=True,
-                ))
+                await _safe(
+                    tlog.log_stage(
+                        correlation_id=correlation_id,
+                        stage="planner",
+                        stage_payload=planner_decision.model_dump(mode="json"),
+                        duration_ms=int((time.perf_counter() - t0) * 1000),
+                        succeeded=True,
+                    )
+                )
             except Exception as exc:
-                await _safe(tlog.log_stage(
-                    correlation_id=correlation_id,
-                    stage="planner",
-                    stage_payload=None,
-                    duration_ms=int((time.perf_counter() - t0) * 1000),
-                    succeeded=False,
-                    error_code=type(exc).__name__,
-                    error_message=str(exc),
-                ))
-                await _safe(mlog.mark_failed(correlation_id=correlation_id, error_code=type(exc).__name__))
+                await _safe(
+                    tlog.log_stage(
+                        correlation_id=correlation_id,
+                        stage="planner",
+                        stage_payload=None,
+                        duration_ms=int((time.perf_counter() - t0) * 1000),
+                        succeeded=False,
+                        error_code=type(exc).__name__,
+                        error_message=str(exc),
+                    )
+                )
+                await _safe(
+                    mlog.mark_failed(correlation_id=correlation_id, error_code=type(exc).__name__)
+                )
                 raise
 
             if planner_decision.decision_type is PlannerDecisionType.START_WORKFLOW:
@@ -385,39 +416,49 @@ async def process_inbound_message(
                     workflow_run = await workflow_runtime.start(planner_decision, canonical_event)
                     if context_debug:
                         log_workflow_run(workflow_run)
-                    await _safe(tlog.log_stage(
-                        correlation_id=correlation_id,
-                        stage="workflow",
-                        stage_payload={
-                            "status": workflow_run.status.value,
-                            "workflow_key": workflow_run.workflow_key.value,
-                            "workflow_instance_id": workflow_run.workflow_instance_id,
-                        },
-                        duration_ms=int((time.perf_counter() - t0) * 1000),
-                        succeeded=True,
-                    ))
+                    await _safe(
+                        tlog.log_stage(
+                            correlation_id=correlation_id,
+                            stage="workflow",
+                            stage_payload={
+                                "status": workflow_run.status.value,
+                                "workflow_key": workflow_run.workflow_key.value,
+                                "workflow_instance_id": workflow_run.workflow_instance_id,
+                            },
+                            duration_ms=int((time.perf_counter() - t0) * 1000),
+                            succeeded=True,
+                        )
+                    )
                 except Exception as exc:
-                    await _safe(tlog.log_stage(
-                        correlation_id=correlation_id,
-                        stage="workflow",
-                        stage_payload=None,
-                        duration_ms=int((time.perf_counter() - t0) * 1000),
-                        succeeded=False,
-                        error_code=type(exc).__name__,
-                        error_message=str(exc),
-                    ))
-                    await _safe(mlog.mark_failed(correlation_id=correlation_id, error_code=type(exc).__name__))
+                    await _safe(
+                        tlog.log_stage(
+                            correlation_id=correlation_id,
+                            stage="workflow",
+                            stage_payload=None,
+                            duration_ms=int((time.perf_counter() - t0) * 1000),
+                            succeeded=False,
+                            error_code=type(exc).__name__,
+                            error_message=str(exc),
+                        )
+                    )
+                    await _safe(
+                        mlog.mark_failed(
+                            correlation_id=correlation_id, error_code=type(exc).__name__
+                        )
+                    )
                     raise
     else:
         error_code = result.error.error_code if result.error else "unknown"
-        await _safe(tlog.log_stage(
-            correlation_id=correlation_id,
-            stage="context",
-            stage_payload=None,
-            duration_ms=int((time.perf_counter() - t0) * 1000),
-            succeeded=False,
-            error_code=error_code,
-        ))
+        await _safe(
+            tlog.log_stage(
+                correlation_id=correlation_id,
+                stage="context",
+                stage_payload=None,
+                duration_ms=int((time.perf_counter() - t0) * 1000),
+                succeeded=False,
+                error_code=error_code,
+            )
+        )
         _log.warning(
             "context.resolution_failed correlation_id=%s error_code=%s",
             correlation_id,
@@ -487,9 +528,7 @@ async def resume_pending_report_with_project(
 
     event = await pending_report_store.pop_pending(user_id=actor_user_id)
     if event is None:
-        return ReplySpec(
-            text="That selection expired — please resend your report."
-        )
+        return ReplySpec(text="That selection expired — please resend your report.")
 
     project_id = row_id.removeprefix(_PROJECT_ROW_PREFIX)
     event = event.model_copy(update={"project_id": project_id})

@@ -397,7 +397,11 @@ class MaterialOutflowCreate(BaseModel):
 
 
 async def _resolve_material_id(
-    conn: AsyncConnection, organization_id: uuid.UUID, material_name: str, unit: str, created_by: uuid.UUID
+    conn: AsyncConnection,
+    organization_id: uuid.UUID,
+    material_name: str,
+    unit: str,
+    created_by: uuid.UUID,
 ) -> uuid.UUID:
     catalog_repo = PostgresMaterialCatalogRepository(conn)
     material = await catalog_repo.get_or_create_by_name(
@@ -414,7 +418,9 @@ async def create_inflow(
 ):
     """Log a material receipt/inflow (web or mobile direct entry)."""
     if not is_valid_receipt_reason(body.movement_reason):
-        raise HTTPException(status_code=422, detail=f"Invalid inflow movement_reason: {body.movement_reason}")
+        raise HTTPException(
+            status_code=422, detail=f"Invalid inflow movement_reason: {body.movement_reason}"
+        )
     if body.movement_reason in ADJUSTMENT_REASONS and not role_can_adjust(auth_context.role):
         raise HTTPException(status_code=403, detail="Not authorized to record adjustment movements")
     if body.quantity <= 0:
@@ -422,7 +428,9 @@ async def create_inflow(
 
     _authorize_write(auth_context, body.project_id, body.site_id)
     if body.site_id is not None:
-        await _assert_site_in_project(conn, auth_context.organization_id, body.project_id, body.site_id)
+        await _assert_site_in_project(
+            conn, auth_context.organization_id, body.project_id, body.site_id
+        )
 
     material_name = body.material_name.strip()
     unit = body.unit.strip()
@@ -482,7 +490,9 @@ async def create_outflow(
 ):
     """Log a material usage/outflow (web or mobile direct entry)."""
     if not is_valid_usage_reason(body.movement_reason):
-        raise HTTPException(status_code=422, detail=f"Invalid outflow movement_reason: {body.movement_reason}")
+        raise HTTPException(
+            status_code=422, detail=f"Invalid outflow movement_reason: {body.movement_reason}"
+        )
     if body.movement_reason in ADJUSTMENT_REASONS and not role_can_adjust(auth_context.role):
         raise HTTPException(status_code=403, detail="Not authorized to record adjustment movements")
     if body.quantity <= 0:
@@ -490,7 +500,9 @@ async def create_outflow(
 
     _authorize_write(auth_context, body.project_id, body.site_id)
     if body.site_id is not None:
-        await _assert_site_in_project(conn, auth_context.organization_id, body.project_id, body.site_id)
+        await _assert_site_in_project(
+            conn, auth_context.organization_id, body.project_id, body.site_id
+        )
 
     material_name = body.material_name.strip()
     unit = body.unit.strip()

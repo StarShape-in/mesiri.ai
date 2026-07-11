@@ -59,8 +59,7 @@ G5_SQL = """CREATE TABLE IF NOT EXISTS journey_traces (
 def exec_sql(client, sql):
     # Use single-quoted heredoc to avoid shell escaping issues
     cmd = (
-        f"docker exec mesiri-postgres psql -U mesiri -d mesiri "
-        f"-c \"{sql.replace(chr(34), chr(39))}\""
+        f'docker exec mesiri-postgres psql -U mesiri -d mesiri -c "{sql.replace(chr(34), chr(39))}"'
     )
     _, stdout, stderr = client.exec_command(cmd, timeout=15)
     out = stdout.read().decode().strip()
@@ -78,7 +77,10 @@ def main():
 
     # Pull latest code
     print("\n-- git pull --")
-    _, stdout, stderr = client.exec_command("cd /opt/mesiri && git fetch origin main && git reset --hard origin/main && git clean -fd", timeout=30)
+    _, stdout, stderr = client.exec_command(
+        "cd /opt/mesiri && git fetch origin main && git reset --hard origin/main && git clean -fd",
+        timeout=30,
+    )
     print(stdout.read().decode().strip()[-200:])
 
     # Apply SQLs
@@ -93,11 +95,17 @@ def main():
     # G3: context table columns + triggers
     print("\n-- G3 context updated_at + triggers --")
     for table in CONTEXT_TABLES:
-        out, err = exec_sql(client, f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();")
+        out, err = exec_sql(
+            client,
+            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();",
+        )
         if out:
             print(f"  {table}: {out[:60]}")
         out, err = exec_sql(client, f"DROP TRIGGER IF EXISTS trg_{table}_updated ON {table};")
-        out, err = exec_sql(client, f"CREATE TRIGGER trg_{table}_updated BEFORE UPDATE ON {table} FOR EACH ROW EXECUTE FUNCTION set_updated_at();")
+        out, err = exec_sql(
+            client,
+            f"CREATE TRIGGER trg_{table}_updated BEFORE UPDATE ON {table} FOR EACH ROW EXECUTE FUNCTION set_updated_at();",
+        )
         if out:
             print(f"  {table} trigger: {out[:60]}")
 
@@ -115,7 +123,7 @@ def main():
         "dedup_key varchar NOT NULL UNIQUE, "
         "received_at timestamptz NOT NULL DEFAULT now(), "
         "processed_at timestamptz, "
-        "processing_status varchar NOT NULL DEFAULT '\'pending\'', "
+        "processing_status varchar NOT NULL DEFAULT ''pending'', "
         "error_code varchar);'"
     )
     _, stdout, stderr = client.exec_command(cmd, timeout=15)
@@ -157,18 +165,29 @@ def main():
 
     # Update alembic version
     print("\n-- Update alembic_version to 0210 --")
-    out, err = exec_sql(client, "UPDATE alembic_version SET version_num = '0210' WHERE version_num = '0200';")
+    out, err = exec_sql(
+        client, "UPDATE alembic_version SET version_num = '0210' WHERE version_num = '0200';"
+    )
     print(f"  {out}")
 
     # Verify
     print("\n-- Verify --")
     out, err = exec_sql(client, "SELECT version_num FROM alembic_version;")
     print(f"  alembic: {out}")
-    out, err = exec_sql(client, "SELECT COUNT(*) FROM information_schema.tables WHERE table_name IN ('inbound_messages','journey_traces');")
+    out, err = exec_sql(
+        client,
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name IN ('inbound_messages','journey_traces');",
+    )
     print(f"  new tables: {out}")
-    out, err = exec_sql(client, "SELECT column_name FROM information_schema.columns WHERE table_name='context_organizations' AND column_name='updated_at';")
+    out, err = exec_sql(
+        client,
+        "SELECT column_name FROM information_schema.columns WHERE table_name='context_organizations' AND column_name='updated_at';",
+    )
     print(f"  context updated_at: {out}")
-    out, err = exec_sql(client, "SELECT column_name FROM information_schema.columns WHERE table_name='roles' AND column_name='created_at';")
+    out, err = exec_sql(
+        client,
+        "SELECT column_name FROM information_schema.columns WHERE table_name='roles' AND column_name='created_at';",
+    )
     print(f"  roles created_at: {out}")
 
     # Restart uvicorn

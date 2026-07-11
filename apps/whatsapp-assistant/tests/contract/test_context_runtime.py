@@ -112,12 +112,12 @@ async def test_inbound_journey_produces_resolved_context():
 
     result = await process_inbound_message(
         message,
-actor_user_id=canon(seed.USER_ENGINEER),
+        actor_user_id=canon(seed.USER_ENGINEER),
         pipeline=pipeline,
         context_resolver=context_resolver,
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
-interaction_handler=InteractionHandler(_workflow_runtime()),
+        interaction_handler=InteractionHandler(_workflow_runtime()),
         send_text=capture_send,
     )
 
@@ -166,12 +166,12 @@ async def test_inbound_journey_never_sends_the_developer_diagnostic():
 
     await process_inbound_message(
         message,
-actor_user_id=canon(seed.USER_ENGINEER),
+        actor_user_id=canon(seed.USER_ENGINEER),
         pipeline=pipeline,
         context_resolver=_resolver(),
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
-interaction_handler=InteractionHandler(_workflow_runtime()),
+        interaction_handler=InteractionHandler(_workflow_runtime()),
         send_text=capture_send,
     )
 
@@ -197,12 +197,12 @@ async def test_inbound_journey_unknown_user_still_sends_reply():
 
     result = await process_inbound_message(
         message,
-actor_user_id="wa_unregistered_999",
+        actor_user_id="wa_unregistered_999",
         pipeline=pipeline,
         context_resolver=context_resolver,
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
-interaction_handler=InteractionHandler(_workflow_runtime()),
+        interaction_handler=InteractionHandler(_workflow_runtime()),
         send_text=capture_send,
     )
 
@@ -270,12 +270,12 @@ async def test_inbound_journey_starts_workflow_and_replies_with_confirmation_pro
 
     result = await process_inbound_message(
         message,
-actor_user_id=canon(seed.USER_ENGINEER),
+        actor_user_id=canon(seed.USER_ENGINEER),
         pipeline=pipeline,
         context_resolver=context_resolver,
         planner=Planner(),
         workflow_runtime=workflow_runtime,
-interaction_handler=InteractionHandler(workflow_runtime),
+        interaction_handler=InteractionHandler(workflow_runtime),
         send_text=capture_send_text,
         send_button=capture_send_button,
     )
@@ -366,12 +366,12 @@ async def test_inbound_journey_blocks_new_workflow_while_confirmation_pending():
 
     result = await process_inbound_message(
         message,
-actor_user_id=canon(seed.USER_ENGINEER),
+        actor_user_id=canon(seed.USER_ENGINEER),
         pipeline=_material_pipeline(),
         context_resolver=context_resolver,
         planner=Planner(),
         workflow_runtime=workflow_runtime,
-interaction_handler=InteractionHandler(workflow_runtime),
+        interaction_handler=InteractionHandler(workflow_runtime),
         send_text=capture_send_text,
         send_button=capture_send_button,
     )
@@ -425,12 +425,12 @@ async def test_context_debug_logs_resolved_context(caplog):
 
     await process_inbound_message(
         message,
-actor_user_id=canon(seed.USER_ENGINEER),
+        actor_user_id=canon(seed.USER_ENGINEER),
         pipeline=_pipeline(),
         context_resolver=_resolver(),
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
-interaction_handler=InteractionHandler(_workflow_runtime()),
+        interaction_handler=InteractionHandler(_workflow_runtime()),
         send_text=_noop_send_text,
         context_debug=True,
     )
@@ -452,12 +452,12 @@ async def test_context_debug_logs_canonical_event(caplog):
 
     await process_inbound_message(
         message,
-actor_user_id=canon(seed.USER_ENGINEER),
+        actor_user_id=canon(seed.USER_ENGINEER),
         pipeline=_pipeline(),
         context_resolver=_resolver(),
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
-interaction_handler=InteractionHandler(_workflow_runtime()),
+        interaction_handler=InteractionHandler(_workflow_runtime()),
         send_text=_noop_send_text,
         context_debug=True,
     )
@@ -478,12 +478,12 @@ async def test_context_debug_logs_planner_decision(caplog):
 
     await process_inbound_message(
         message,
-actor_user_id=canon(seed.USER_ENGINEER),
+        actor_user_id=canon(seed.USER_ENGINEER),
         pipeline=_pipeline(),
         context_resolver=_resolver(),
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
-interaction_handler=InteractionHandler(_workflow_runtime()),
+        interaction_handler=InteractionHandler(_workflow_runtime()),
         send_text=_noop_send_text,
         context_debug=True,
     )
@@ -505,12 +505,12 @@ async def test_context_debug_logs_workflow_run(caplog):
 
     await process_inbound_message(
         message,
-actor_user_id=canon(seed.USER_ENGINEER),
+        actor_user_id=canon(seed.USER_ENGINEER),
         pipeline=_pipeline(),
         context_resolver=_resolver(),
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
-interaction_handler=InteractionHandler(_workflow_runtime()),
+        interaction_handler=InteractionHandler(_workflow_runtime()),
         send_text=_noop_send_text,
         context_debug=True,
     )
@@ -527,12 +527,12 @@ async def test_reply_is_sent_once_to_the_sender():
 
     await process_inbound_message(
         message,
-actor_user_id=canon(seed.USER_ENGINEER),
+        actor_user_id=canon(seed.USER_ENGINEER),
         pipeline=_pipeline(),
         context_resolver=_resolver(),
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
-interaction_handler=InteractionHandler(_workflow_runtime()),
+        interaction_handler=InteractionHandler(_workflow_runtime()),
         send_text=send_text,
     )
 
@@ -570,12 +570,12 @@ async def test_voice_reply_gets_the_same_reply_a_text_message_would():
 
     result = await process_inbound_message(
         message,
-actor_user_id=canon(seed.USER_ENGINEER),
+        actor_user_id=canon(seed.USER_ENGINEER),
         pipeline=pipeline,
         context_resolver=_resolver(),
         planner=Planner(),
         workflow_runtime=_workflow_runtime(),
-interaction_handler=InteractionHandler(_workflow_runtime()),
+        interaction_handler=InteractionHandler(_workflow_runtime()),
         send_text=capture_send_text,
     )
 

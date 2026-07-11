@@ -184,5 +184,7 @@ async def test_list_platform_users_excludes_tenant_admins(test_engine: AsyncEngi
         assert "tenant-admin@example.com" not in emails
     finally:
         async with test_engine.begin() as conn:
-            await conn.execute(sa.text("DELETE FROM users WHERE organization_id = :id"), {"id": org_id})
+            await conn.execute(
+                sa.text("DELETE FROM users WHERE organization_id = :id"), {"id": org_id}
+            )
             await conn.execute(sa.text("DELETE FROM organizations WHERE id = :id"), {"id": org_id})

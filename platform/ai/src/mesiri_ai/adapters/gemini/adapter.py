@@ -34,7 +34,7 @@ _VISION_PROMPT = (
 _EXTRACTION_PROMPT = (
     "Extract structured construction data from the text. Return strict JSON with "
     'keys: "semantic_type" (expense|equipment_usage|material_update|labour_update|'
-    'general_site_update|general_question|whoami_question|inventory_query|unknown), '
+    "general_site_update|general_question|whoami_question|inventory_query|unknown), "
     '"fields" (object), "missing_fields" (array), '
     '"field_confidences" (object of field->0..1). '
     "Never invent values. quantity is always a plain number: strip approximation "

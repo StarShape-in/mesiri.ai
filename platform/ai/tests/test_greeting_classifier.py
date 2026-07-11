@@ -31,13 +31,17 @@ def test_does_not_match_a_word_containing_a_phrase_as_a_substring():
     """Token matching, not substring matching, for single-word phrases --
     "hire" must not match "hi", mirroring classifier.py's "no in now" rule."""
     assert is_greeting_trigger("hire someone for the site") is False
-    assert is_greeting_trigger("start the equipment now") is False  # "start" is a full token here though
+    assert (
+        is_greeting_trigger("start the equipment now") is False
+    )  # "start" is a full token here though
     assert is_greeting_trigger("restart the pump") is False
 
 
 def test_does_not_match_a_real_material_report():
     assert is_greeting_trigger("50 bags of cement arrived") is False
-    assert is_greeting_trigger("hi, 20 bags used for foundation") is False  # real content alongside "hi"
+    assert (
+        is_greeting_trigger("hi, 20 bags used for foundation") is False
+    )  # real content alongside "hi"
 
 
 @pytest.mark.parametrize("text", [None, "", "   "])

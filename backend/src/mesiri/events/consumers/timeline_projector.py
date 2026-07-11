@@ -79,9 +79,15 @@ AGGREGATE_TABLES: dict[str, sa.Table] = {
 
 # Extension point: a new event type's human summary is one entry here.
 EVENT_SUMMARY_BUILDERS: dict[str, Callable[[dict[str, Any]], str]] = {
-    "MaterialReceived": lambda p: f"{p.get('quantity')} {p.get('unit')} of {p.get('material_name')} received",
-    "MaterialUsed": lambda p: f"{p.get('quantity')} {p.get('unit')} of {p.get('material_name')} used",
-    "MaterialMovementCorrected": lambda p: f"Material movement corrected ({p.get('movement_reason')})",
+    "MaterialReceived": lambda p: (
+        f"{p.get('quantity')} {p.get('unit')} of {p.get('material_name')} received"
+    ),
+    "MaterialUsed": lambda p: (
+        f"{p.get('quantity')} {p.get('unit')} of {p.get('material_name')} used"
+    ),
+    "MaterialMovementCorrected": lambda p: (
+        f"Material movement corrected ({p.get('movement_reason')})"
+    ),
 }
 
 
@@ -130,16 +136,20 @@ async def project_pending_events(conn: AsyncConnection, batch_size: int = 100) -
         source = None
         if source_table is not None:
             source = (
-                await conn.execute(
-                    sa.select(
-                        source_table.c.organization_id,
-                        source_table.c.project_id,
-                        source_table.c.site_id,
-                        source_table.c.occurred_date,
-                        source_table.c.occurred_time,
-                    ).where(source_table.c.id == row["aggregate_id"])
+                (
+                    await conn.execute(
+                        sa.select(
+                            source_table.c.organization_id,
+                            source_table.c.project_id,
+                            source_table.c.site_id,
+                            source_table.c.occurred_date,
+                            source_table.c.occurred_time,
+                        ).where(source_table.c.id == row["aggregate_id"])
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
 
         if source is None:
             # Source row not found (shouldn't happen in practice — defensive).

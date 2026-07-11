@@ -220,15 +220,17 @@ async def test_basic_projection(
     assert count == 1
 
     async with test_engine.begin() as conn:
-        entry = (
-            await conn.execute(sa.text("SELECT * FROM timeline_entries"))
-        ).mappings().first()
+        entry = (await conn.execute(sa.text("SELECT * FROM timeline_entries"))).mappings().first()
         outbox_row = (
-            await conn.execute(
-                sa.text("SELECT published_at FROM outbox_events WHERE id = :id"),
-                {"id": outbox_id},
+            (
+                await conn.execute(
+                    sa.text("SELECT published_at FROM outbox_events WHERE id = :id"),
+                    {"id": outbox_id},
+                )
             )
-        ).mappings().first()
+            .mappings()
+            .first()
+        )
 
     assert entry is not None
     assert entry["organization_id"] == test_org
@@ -266,9 +268,7 @@ async def test_already_published_rows_are_skipped(
     assert count == 0
 
     async with test_engine.begin() as conn:
-        total = (
-            await conn.execute(sa.text("SELECT count(*) FROM timeline_entries"))
-        ).scalar_one()
+        total = (await conn.execute(sa.text("SELECT count(*) FROM timeline_entries"))).scalar_one()
     assert total == 0
 
 
@@ -307,12 +307,16 @@ async def test_batch_size_and_ordering(
 
     async with test_engine.begin() as conn:
         published = (
-            await conn.execute(
-                sa.text(
-                    "SELECT id FROM outbox_events WHERE published_at IS NOT NULL ORDER BY created_at"
+            (
+                await conn.execute(
+                    sa.text(
+                        "SELECT id FROM outbox_events WHERE published_at IS NOT NULL ORDER BY created_at"
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
     # The 3 oldest (first inserted) rows are the ones published.
     assert list(published) == outbox_ids[:3]
 
@@ -336,11 +340,15 @@ async def test_missing_source_row_is_marked_published_without_timeline_entry(
 
     async with test_engine.begin() as conn:
         outbox_row = (
-            await conn.execute(
-                sa.text("SELECT published_at FROM outbox_events WHERE id = :id"),
-                {"id": outbox_id},
+            (
+                await conn.execute(
+                    sa.text("SELECT published_at FROM outbox_events WHERE id = :id"),
+                    {"id": outbox_id},
+                )
             )
-        ).mappings().first()
+            .mappings()
+            .first()
+        )
         total_entries = (
             await conn.execute(sa.text("SELECT count(*) FROM timeline_entries"))
         ).scalar_one()
@@ -374,8 +382,10 @@ async def test_unknown_event_type_projects_with_fallback_summary(
 
     async with test_engine.begin() as conn:
         entry = (
-            await conn.execute(sa.text("SELECT summary, event_type FROM timeline_entries"))
-        ).mappings().first()
+            (await conn.execute(sa.text("SELECT summary, event_type FROM timeline_entries")))
+            .mappings()
+            .first()
+        )
     assert entry["event_type"] == "SomeFutureEventType"
     assert entry["summary"]  # non-empty fallback, doesn't raise
 

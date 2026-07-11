@@ -60,7 +60,6 @@ class MessageLogger(Protocol):
         ...
 
 
-
 class TraceLogger(Protocol):
     """Best-effort per-stage pipeline trace."""
 

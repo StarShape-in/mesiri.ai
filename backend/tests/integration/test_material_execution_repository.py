@@ -207,20 +207,29 @@ async def test_persist_success_writes_row_outbox_and_completes_workflow(
         project=test_project,
     )
     confirmed = _confirmed_action(
-        workflow_instance_id=workflow_instance_id, org=test_org, user=test_user, project=test_project
+        workflow_instance_id=workflow_instance_id,
+        org=test_org,
+        user=test_user,
+        project=test_project,
     )
-    handler = ExecuteConfirmedMaterialActionHandler(db=db, repo=PostgresMaterialExecutionRepository())
+    handler = ExecuteConfirmedMaterialActionHandler(
+        db=db, repo=PostgresMaterialExecutionRepository()
+    )
 
     result = await handler.handle(confirmed)
 
     assert result.status is ExecutionStatus.SUCCEEDED
     async with test_engine.connect() as conn:
         receipt = (
-            await conn.execute(
-                sa.text("SELECT material_name, quantity FROM material_receipts WHERE id = :id"),
-                {"id": uuid.UUID(result.material_row_id)},
+            (
+                await conn.execute(
+                    sa.text("SELECT material_name, quantity FROM material_receipts WHERE id = :id"),
+                    {"id": uuid.UUID(result.material_row_id)},
+                )
             )
-        ).mappings().first()
+            .mappings()
+            .first()
+        )
         assert receipt is not None
         assert receipt["material_name"] == "cement"
 
@@ -273,13 +282,17 @@ async def test_validation_rejection_rolls_back_no_domain_row_and_transitions_exe
         draft_action=draft,
         confirmed_by_user_id=str(test_user),
     )
-    handler = ExecuteConfirmedMaterialActionHandler(db=db, repo=PostgresMaterialExecutionRepository())
+    handler = ExecuteConfirmedMaterialActionHandler(
+        db=db, repo=PostgresMaterialExecutionRepository()
+    )
 
     result = await handler.handle(confirmed)
 
     assert result.status is ExecutionStatus.REJECTED
     async with test_engine.connect() as conn:
-        row_count = (await conn.execute(sa.text("SELECT COUNT(*) FROM material_receipts"))).scalar_one()
+        row_count = (
+            await conn.execute(sa.text("SELECT COUNT(*) FROM material_receipts"))
+        ).scalar_one()
         assert row_count == 0
 
         phase = (
@@ -313,17 +326,26 @@ async def test_concurrent_duplicate_execution_writes_exactly_one_row(
         project=test_project,
     )
     confirmed = _confirmed_action(
-        workflow_instance_id=workflow_instance_id, org=test_org, user=test_user, project=test_project
+        workflow_instance_id=workflow_instance_id,
+        org=test_org,
+        user=test_user,
+        project=test_project,
     )
-    handler_a = ExecuteConfirmedMaterialActionHandler(db=db, repo=PostgresMaterialExecutionRepository())
-    handler_b = ExecuteConfirmedMaterialActionHandler(db=db, repo=PostgresMaterialExecutionRepository())
+    handler_a = ExecuteConfirmedMaterialActionHandler(
+        db=db, repo=PostgresMaterialExecutionRepository()
+    )
+    handler_b = ExecuteConfirmedMaterialActionHandler(
+        db=db, repo=PostgresMaterialExecutionRepository()
+    )
 
     results = await asyncio.gather(handler_a.handle(confirmed), handler_b.handle(confirmed))
 
     statuses = sorted(r.status for r in results)
     assert statuses == sorted([ExecutionStatus.SUCCEEDED, ExecutionStatus.ALREADY_EXECUTED])
     async with test_engine.connect() as conn:
-        row_count = (await conn.execute(sa.text("SELECT COUNT(*) FROM material_receipts"))).scalar_one()
+        row_count = (
+            await conn.execute(sa.text("SELECT COUNT(*) FROM material_receipts"))
+        ).scalar_one()
         assert row_count == 1
 
 
@@ -346,7 +368,9 @@ async def test_recovery_replays_crashed_confirmed_instance_and_is_idempotent_on_
         user=test_user,
         project=test_project,
     )
-    handler = ExecuteConfirmedMaterialActionHandler(db=db, repo=PostgresMaterialExecutionRepository())
+    handler = ExecuteConfirmedMaterialActionHandler(
+        db=db, repo=PostgresMaterialExecutionRepository()
+    )
 
     first_pass = await recover_confirmed_instances(db, handler, MATERIAL_WORKFLOW_KEYS)
     second_pass = await recover_confirmed_instances(db, handler, MATERIAL_WORKFLOW_KEYS)
@@ -356,7 +380,9 @@ async def test_recovery_replays_crashed_confirmed_instance_and_is_idempotent_on_
     # Second sweep finds nothing to recover: the instance is no longer CONFIRMED.
     assert second_pass == []
     async with test_engine.connect() as conn:
-        row_count = (await conn.execute(sa.text("SELECT COUNT(*) FROM material_receipts"))).scalar_one()
+        row_count = (
+            await conn.execute(sa.text("SELECT COUNT(*) FROM material_receipts"))
+        ).scalar_one()
         assert row_count == 1
         phase = (
             await conn.execute(

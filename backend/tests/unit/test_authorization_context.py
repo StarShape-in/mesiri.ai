@@ -163,7 +163,10 @@ class TestResolveSiteScope:
         policy = AccessPolicy(
             mode="custom_projects",
             projects=[
-                {"projectId": str(project_id), "siteAccess": {"mode": "custom_sites", "siteIds": []}}
+                {
+                    "projectId": str(project_id),
+                    "siteAccess": {"mode": "custom_sites", "siteIds": []},
+                }
             ],
         )
         scope = resolve_site_scope(policy, project_id)
@@ -194,9 +197,7 @@ class TestResolveSiteScope:
         project_id = uuid.uuid4()
         policy = AccessPolicy(
             mode="custom_projects",
-            projects=[
-                {"projectId": str(project_id), "siteAccess": {"mode": "invalid_mode"}}
-            ],
+            projects=[{"projectId": str(project_id), "siteAccess": {"mode": "invalid_mode"}}],
         )
         scope = resolve_site_scope(policy, project_id)
 

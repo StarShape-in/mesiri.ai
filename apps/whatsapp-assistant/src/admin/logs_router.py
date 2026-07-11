@@ -212,5 +212,7 @@ async def retry_message(
     )
     new_correlation_id = await receiver.replay(detail["raw_payload"], retry_of_id=message_id)
     if new_correlation_id is None:
-        raise HTTPException(status_code=502, detail="Retry failed before the message could be reprocessed")
+        raise HTTPException(
+            status_code=502, detail="Retry failed before the message could be reprocessed"
+        )
     return RetryResponse(correlation_id=new_correlation_id)

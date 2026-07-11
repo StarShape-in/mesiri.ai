@@ -60,25 +60,25 @@ def main() -> None:
         escaped = sql.replace("'", "'\\''")
         run(
             client,
-            f'docker exec mesiri-postgres psql -U mesiri -d mesiri -c \'{escaped}\'',
+            f"docker exec mesiri-postgres psql -U mesiri -d mesiri -c '{escaped}'",
         )
 
     # 6. Verify
     run(
         client,
-        'docker exec mesiri-postgres psql -U mesiri -d mesiri -c '
+        "docker exec mesiri-postgres psql -U mesiri -d mesiri -c "
         '"SELECT version_num FROM alembic_version;"',
     )
     run(
         client,
-        'docker exec mesiri-postgres psql -U mesiri -d mesiri -c '
+        "docker exec mesiri-postgres psql -U mesiri -d mesiri -c "
         '"SELECT column_name, data_type, is_nullable, column_default '
         "FROM information_schema.columns WHERE table_name='workflow_instances' "
         "AND column_name='version';\"",
     )
     run(
         client,
-        'docker exec mesiri-postgres psql -U mesiri -d mesiri -c '
+        "docker exec mesiri-postgres psql -U mesiri -d mesiri -c "
         '"SELECT indexname FROM pg_indexes '
         "WHERE tablename='workflow_instances' AND indexname LIKE 'uq_workflow%';\"",
     )

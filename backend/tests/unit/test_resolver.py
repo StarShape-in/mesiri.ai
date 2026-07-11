@@ -15,6 +15,7 @@ class FakeSettings:
     class Section:
         def __init__(self, api_key=None, model="default-model", base_url=None):
             from pydantic import SecretStr
+
             self.api_key = SecretStr(api_key) if api_key else None
             self.model = model
             self.base_url = base_url
@@ -23,7 +24,9 @@ class FakeSettings:
 
     def __init__(self):
         self.gemini = self.Section(api_key="gemini-key", model="gemini-default")
-        self.deepseek = self.Section(api_key="ds-key", model="ds-default", base_url="https://api.deepseek.com")
+        self.deepseek = self.Section(
+            api_key="ds-key", model="ds-default", base_url="https://api.deepseek.com"
+        )
         self.sarvam = self.Section(api_key="sarvam-key", model="saaras:v2.5")
 
 
@@ -33,7 +36,7 @@ async def test_resolver_falls_back_to_env_settings():
     db = MagicMock()
     if hasattr(db, "transaction"):
         del db.transaction
-    
+
     redis = AsyncMock()
     redis.get.return_value = None
 
@@ -52,7 +55,7 @@ async def test_resolver_uses_redis_cache():
     settings = FakeSettings()
     db = MagicMock()
     redis = AsyncMock()
-    
+
     cached_config = {
         "routing": {
             "voice": {"provider_id": "fake", "model": ""},
@@ -62,7 +65,7 @@ async def test_resolver_uses_redis_cache():
         },
         "secrets": {
             "gemini": {"api_key": "cached-gemini", "base_url": None},
-        }
+        },
     }
     redis.get.return_value = json.dumps(cached_config)
 
@@ -83,7 +86,7 @@ async def test_resolver_queries_database_on_redis_cache_miss():
 
     db = MagicMock()
     conn = AsyncMock()
-    
+
     active_routes = {
         "voice": {"provider_id": "fake", "model": ""},
         "extraction": {"provider_id": "deepseek", "model": "deepseek-custom"},
@@ -95,6 +98,7 @@ async def test_resolver_queries_database_on_redis_cache_miss():
     class AsyncContextManagerMock:
         async def __aenter__(self):
             return conn
+
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             pass
 
@@ -107,7 +111,7 @@ async def test_resolver_queries_database_on_redis_cache_miss():
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(
             "mesiri.infrastructure.postgres.repositories.ai_config.PostgresAIConfigRepository",
-            lambda c: mock_repo_instance
+            lambda c: mock_repo_instance,
         )
 
         resolver = DynamicAIProviderResolver(db, redis, settings)
@@ -143,7 +147,9 @@ async def test_generate_json_falls_back_to_gemini_even_when_extraction_routes_el
             return '[{"intent": "correction", "segment_text": "40 bags"}]'
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr("mesiri_ai.resolver._build_gemini_provider", lambda *a, **kw: FakeGeminiProvider())
+        mp.setattr(
+            "mesiri_ai.resolver._build_gemini_provider", lambda *a, **kw: FakeGeminiProvider()
+        )
         result = await resolver.generate_json("sys prompt", "user prompt", correlation_id="cor_1")
 
     assert result == '[{"intent": "correction", "segment_text": "40 bags"}]'

@@ -12,6 +12,7 @@ Revision ID: 0210
 Revises: 0200
 Create Date: 2026-07-09
 """
+
 from __future__ import annotations
 
 import sqlalchemy as sa
@@ -97,7 +98,12 @@ def upgrade() -> None:
         sa.Column("body_text", sa.Text(), nullable=True),
         sa.Column("media_object_key", sa.String(), nullable=True),
         sa.Column("dedup_key", sa.String(), nullable=False, unique=True),
-        sa.Column("received_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "received_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.Column("processed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("processing_status", sa.String(), server_default="pending", nullable=False),
         sa.Column("error_code", sa.String(), nullable=True),
@@ -117,10 +123,17 @@ def upgrade() -> None:
         sa.Column("succeeded", sa.Boolean(), nullable=False),
         sa.Column("error_code", sa.String(), nullable=True),
         sa.Column("error_message", sa.Text(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
     )
     op.create_index("ix_journey_traces_correlation_id", "journey_traces", ["correlation_id"])
-    op.create_index("ix_journey_traces_correlation_stage", "journey_traces", ["correlation_id", "stage"])
+    op.create_index(
+        "ix_journey_traces_correlation_stage", "journey_traces", ["correlation_id", "stage"]
+    )
 
 
 def downgrade() -> None:

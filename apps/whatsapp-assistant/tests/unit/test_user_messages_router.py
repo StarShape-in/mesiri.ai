@@ -62,7 +62,9 @@ class FakeResult:
         return self.rows[0] if self.rows else 0
 
     def mappings(self) -> FakeMappings:
-        return FakeMappings([dict(r) if hasattr(r, "_fields") or isinstance(r, dict) else r for r in self.rows])
+        return FakeMappings(
+            [dict(r) if hasattr(r, "_fields") or isinstance(r, dict) else r for r in self.rows]
+        )
 
 
 class FakeMappings:
@@ -95,6 +97,7 @@ class FakeEngine:
 class AsyncContextManager:
     async def __aenter__(self):
         pass
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         pass
 
@@ -110,6 +113,7 @@ def _app(select_results: list[Any]) -> FastAPI:
 def patch_get_engine(monkeypatch):
     # Patch get_engine inside users.router
     import users.router
+
     monkeypatch.setattr(users.router, "get_engine", lambda: patch_get_engine.engine)
 
 
@@ -135,7 +139,7 @@ async def test_list_messages_rejects_cross_org_admin(monkeypatch):
     async with await _client(app) as client:
         resp = await client.get(
             f"/users/{USER_ID}/whatsapp/messages",
-            headers={"Authorization": f"Bearer {_token(org=str(OTHER_ORG_ID))}"}
+            headers={"Authorization": f"Bearer {_token(org=str(OTHER_ORG_ID))}"},
         )
     assert resp.status_code == 404
     assert resp.json()["detail"] == "User not found"
@@ -151,7 +155,7 @@ async def test_list_messages_returns_empty_when_no_identities(monkeypatch):
     async with await _client(app) as client:
         resp = await client.get(
             f"/users/{USER_ID}/whatsapp/messages",
-            headers={"Authorization": f"Bearer {_token(org=str(ORG_ID))}"}
+            headers={"Authorization": f"Bearer {_token(org=str(ORG_ID))}"},
         )
     assert resp.status_code == 200
     data = resp.json()
@@ -173,7 +177,7 @@ async def test_list_messages_with_data(monkeypatch):
         "occurred_at": datetime.now(UTC).isoformat(),
         "direction": "inbound",
         "processing_status": "completed",
-        "error_code": None
+        "error_code": None,
     }
     # 1. user lookup
     # 2. identities lookup
@@ -181,19 +185,12 @@ async def test_list_messages_with_data(monkeypatch):
     # 4. messages count (UNION SELECT COUNT(*)...)
     # 5. timeline entries lookup -> empty list
     # 6. interactions lookup -> empty list
-    app = _app([
-        [user_row],
-        [identity_row],
-        [message_row],
-        [1],
-        [],
-        []
-    ])
+    app = _app([[user_row], [identity_row], [message_row], [1], [], []])
     patch_get_engine.engine = app.state.engine
     async with await _client(app) as client:
         resp = await client.get(
             f"/users/{USER_ID}/whatsapp/messages",
-            headers={"Authorization": f"Bearer {_token(org=str(ORG_ID))}"}
+            headers={"Authorization": f"Bearer {_token(org=str(ORG_ID))}"},
         )
     assert resp.status_code == 200
     data = resp.json()
@@ -211,7 +208,7 @@ async def test_get_message_detail_cross_org_reject(monkeypatch):
     async with await _client(app) as client:
         resp = await client.get(
             f"/users/{USER_ID}/whatsapp/messages/22222222-2222-4222-8222-222222222222",
-            headers={"Authorization": f"Bearer {_token(org=str(OTHER_ORG_ID))}"}
+            headers={"Authorization": f"Bearer {_token(org=str(OTHER_ORG_ID))}"},
         )
     assert resp.status_code == 404
     assert resp.json()["detail"] == "User not found"

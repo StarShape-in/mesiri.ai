@@ -168,17 +168,29 @@ class PostgresMaterialReadRepository:
     ) -> tuple[list[dict], int]:
         """List material receipts (inflows) matching parameters, with total count."""
         where_clauses = _receipt_where(
-            organization_id, project_ids, site_id, material_id, material_name,
-            movement_reason, source, recorded_by_user_id, date_from, date_to,
+            organization_id,
+            project_ids,
+            site_id,
+            material_id,
+            material_name,
+            movement_reason,
+            source,
+            recorded_by_user_id,
+            date_from,
+            date_to,
         )
 
-        count_stmt = sa.select(sa.func.count()).select_from(_material_receipts).where(*where_clauses)
+        count_stmt = (
+            sa.select(sa.func.count()).select_from(_material_receipts).where(*where_clauses)
+        )
         total = (await self.conn.execute(count_stmt)).scalar_one()
 
         stmt = (
             sa.select(_material_receipts)
             .where(*where_clauses)
-            .order_by(_material_receipts.c.occurred_date.desc(), _material_receipts.c.created_at.desc())
+            .order_by(
+                _material_receipts.c.occurred_date.desc(), _material_receipts.c.created_at.desc()
+            )
             .limit(limit)
             .offset(offset)
         )
@@ -212,8 +224,16 @@ class PostgresMaterialReadRepository:
     ) -> tuple[list[dict], int]:
         """List material usages (outflows) matching parameters, with total count."""
         where_clauses = _usage_where(
-            organization_id, project_ids, site_id, material_id, material_name,
-            movement_reason, source, recorded_by_user_id, date_from, date_to,
+            organization_id,
+            project_ids,
+            site_id,
+            material_id,
+            material_name,
+            movement_reason,
+            source,
+            recorded_by_user_id,
+            date_from,
+            date_to,
         )
 
         count_stmt = sa.select(sa.func.count()).select_from(_material_usage).where(*where_clauses)
@@ -318,28 +338,40 @@ class PostgresMaterialReadRepository:
             usage_cte.c.total_used, 0
         )
         # postgres GREATEST() ignores NULL args and only returns NULL if all are NULL
-        last_movement_at = sa.func.greatest(receipts_cte.c.last_receipt_at, usage_cte.c.last_usage_at)
+        last_movement_at = sa.func.greatest(
+            receipts_cte.c.last_receipt_at, usage_cte.c.last_usage_at
+        )
 
-        select_stmt = sa.select(
-            sa.func.coalesce(receipts_cte.c.organization_id, usage_cte.c.organization_id).label("organization_id"),
-            sa.func.coalesce(receipts_cte.c.project_id, usage_cte.c.project_id).label("project_id"),
-            sa.func.coalesce(receipts_cte.c.site_id, usage_cte.c.site_id).label("site_id"),
-            sa.func.coalesce(receipts_cte.c.material_id, usage_cte.c.material_id).label("material_id"),
-            sa.func.coalesce(receipts_cte.c.material_name, usage_cte.c.material_name).label("material_name"),
-            sa.func.coalesce(receipts_cte.c.unit, usage_cte.c.unit).label("unit"),
-            sa.func.coalesce(receipts_cte.c.total_received, 0).label("total_received"),
-            sa.func.coalesce(usage_cte.c.total_used, 0).label("total_used"),
-            current_stock.label("current_stock"),
-            last_movement_at.label("last_movement_at"),
-            sa.case(
-                (current_stock < 0, "NEGATIVE_STOCK"),
-                (current_stock == 0, "OUT_OF_STOCK"),
-                else_="AVAILABLE",
-            ).label("stock_state"),
-        ).select_from(
-            receipts_cte.join(usage_cte, join_cond, full=True)
-        ).order_by(
-            sa.func.coalesce(receipts_cte.c.material_name, usage_cte.c.material_name).asc()
+        select_stmt = (
+            sa.select(
+                sa.func.coalesce(receipts_cte.c.organization_id, usage_cte.c.organization_id).label(
+                    "organization_id"
+                ),
+                sa.func.coalesce(receipts_cte.c.project_id, usage_cte.c.project_id).label(
+                    "project_id"
+                ),
+                sa.func.coalesce(receipts_cte.c.site_id, usage_cte.c.site_id).label("site_id"),
+                sa.func.coalesce(receipts_cte.c.material_id, usage_cte.c.material_id).label(
+                    "material_id"
+                ),
+                sa.func.coalesce(receipts_cte.c.material_name, usage_cte.c.material_name).label(
+                    "material_name"
+                ),
+                sa.func.coalesce(receipts_cte.c.unit, usage_cte.c.unit).label("unit"),
+                sa.func.coalesce(receipts_cte.c.total_received, 0).label("total_received"),
+                sa.func.coalesce(usage_cte.c.total_used, 0).label("total_used"),
+                current_stock.label("current_stock"),
+                last_movement_at.label("last_movement_at"),
+                sa.case(
+                    (current_stock < 0, "NEGATIVE_STOCK"),
+                    (current_stock == 0, "OUT_OF_STOCK"),
+                    else_="AVAILABLE",
+                ).label("stock_state"),
+            )
+            .select_from(receipts_cte.join(usage_cte, join_cond, full=True))
+            .order_by(
+                sa.func.coalesce(receipts_cte.c.material_name, usage_cte.c.material_name).asc()
+            )
         )
 
         res = await self.conn.execute(select_stmt)
@@ -407,7 +439,9 @@ class PostgresMaterialReadRepository:
             order_by=[combined.c.occurred_date.asc(), combined.c.created_at.asc()]
         )
 
-        with_balance = sa.select(combined, running_balance.label("running_balance")).cte("ledger_with_balance")
+        with_balance = sa.select(combined, running_balance.label("running_balance")).cte(
+            "ledger_with_balance"
+        )
 
         total = (
             await self.conn.execute(sa.select(sa.func.count()).select_from(with_balance))
@@ -444,7 +478,9 @@ class PostgresMaterialCatalogRepository:
         if is_active is not None:
             where_clauses.append(_materials_catalog.c.is_active == is_active)
 
-        count_stmt = sa.select(sa.func.count()).select_from(_materials_catalog).where(*where_clauses)
+        count_stmt = (
+            sa.select(sa.func.count()).select_from(_materials_catalog).where(*where_clauses)
+        )
         total = (await self.conn.execute(count_stmt)).scalar_one()
 
         stmt = (
@@ -511,5 +547,10 @@ class PostgresMaterialCatalogRepository:
         if existing is not None:
             return existing
         return await self.create(
-            organization_id, name, default_unit=default_unit, category=None, sku=None, created_by=created_by
+            organization_id,
+            name,
+            default_unit=default_unit,
+            category=None,
+            sku=None,
+            created_by=created_by,
         )

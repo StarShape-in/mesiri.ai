@@ -34,9 +34,7 @@ def _build_gemini_provider(config: dict, model: str, env_settings: Any):
     secret = config["secrets"].get("gemini", {})
     api_key = secret.get("api_key")
     if not api_key:
-        raise MesiriError.configuration(
-            "Gemini API Key is not configured.", code="CONFIG_MISSING"
-        )
+        raise MesiriError.configuration("Gemini API Key is not configured.", code="CONFIG_MISSING")
     settings = GeminiSettings(
         api_key=SecretStr(api_key),
         model=model or env_settings.gemini.model,
@@ -80,9 +78,7 @@ def _build_sarvam_provider(config: dict, env_settings: Any):
     secret = config["secrets"].get("sarvam", {})
     api_key = secret.get("api_key")
     if not api_key:
-        raise MesiriError.configuration(
-            "Sarvam API Key is not configured.", code="CONFIG_MISSING"
-        )
+        raise MesiriError.configuration("Sarvam API Key is not configured.", code="CONFIG_MISSING")
     settings = SarvamSettings(
         api_key=SecretStr(api_key),
         timeout_seconds=env_settings.sarvam.timeout_seconds,
@@ -247,6 +243,7 @@ class DynamicAIProviderResolver:
                 )
             # fake
             from mesiri_ai.fakes import FakeSpeechProvider
+
             return await FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH).transcribe(
                 audio, language_hint=language_hint, correlation_id=correlation_id
             )
@@ -290,6 +287,7 @@ class DynamicAIProviderResolver:
                     text, semantic_hint=semantic_hint, correlation_id=correlation_id
                 )
             from mesiri_ai.fakes import FakeExtractionProvider
+
             return await FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION).extract(
                 text, semantic_hint=semantic_hint, correlation_id=correlation_id
             )
@@ -358,6 +356,7 @@ class DynamicAIProviderResolver:
                     image, mime_type=mime_type, hint=hint, correlation_id=correlation_id
                 )
             from mesiri_ai.fakes import FakeVisionProvider
+
             return await FakeVisionProvider(fixtures.VALID_RECEIPT_VISION).analyze_image(
                 image, mime_type=mime_type, hint=hint, correlation_id=correlation_id
             )
@@ -396,6 +395,7 @@ class DynamicAIProviderResolver:
                 provider = _build_deepseek_provider(config, mdl, self._settings)
                 return await provider.translate_to_english(text, correlation_id=correlation_id)
             from mesiri_ai.fakes import FakeTranslationProvider
+
             return await FakeTranslationProvider().translate_to_english(
                 text, correlation_id=correlation_id
             )

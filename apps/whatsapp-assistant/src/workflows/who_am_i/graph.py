@@ -16,5 +16,5 @@ def build_who_am_i_graph() -> Any:
     graph.add_node("generate_identity_reply", generate_identity_reply)
     graph.add_edge(START, "generate_identity_reply")
     graph.add_edge("generate_identity_reply", END)
-    
+
     return graph.compile()

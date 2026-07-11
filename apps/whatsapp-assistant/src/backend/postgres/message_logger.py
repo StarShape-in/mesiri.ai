@@ -102,6 +102,7 @@ class PostgresMessageLogger:
         site_id: str | None = None,
     ) -> None:
         from sqlalchemy import text
+
         try:
             async with self._get_engine().begin() as conn:
                 updates = []
@@ -126,7 +127,6 @@ class PostgresMessageLogger:
                     )
         except Exception:  # noqa: BLE001
             _log.exception("message_logger.update_context failed correlation_id=%s", correlation_id)
-
 
     async def mark_completed(self, *, correlation_id: str) -> None:
         from sqlalchemy import text
@@ -187,7 +187,10 @@ class PostgresMessageLogger:
         """
         from sqlalchemy import String, bindparam, text
 
-        where = ["(:wa_id IS NULL OR sender_wa_id = :wa_id)", "(:status IS NULL OR processing_status = :status)"]
+        where = [
+            "(:wa_id IS NULL OR sender_wa_id = :wa_id)",
+            "(:status IS NULL OR processing_status = :status)",
+        ]
         params: dict[str, Any] = {"wa_id": wa_id, "status": status, "limit": limit}
         bind_types = [bindparam("wa_id", type_=String), bindparam("status", type_=String)]
 
@@ -228,10 +231,7 @@ class PostgresMessageLogger:
             rows = (await conn.execute(stmt, params)).mappings().all()
             total: int | None = None
             if not is_live_cursor:
-                count_query = (
-                    "SELECT COUNT(*) FROM inbound_messages "
-                    f"WHERE {' AND '.join(where)}"
-                )
+                count_query = f"SELECT COUNT(*) FROM inbound_messages WHERE {' AND '.join(where)}"
                 count_stmt = text(count_query).bindparams(*bind_types)
                 count_params = {k: v for k, v in params.items() if k not in ("limit", "offset")}
                 total = (await conn.execute(count_stmt, count_params)).scalar_one()
@@ -244,17 +244,21 @@ class PostgresMessageLogger:
 
         async with self._get_engine().connect() as conn:
             row = (
-                await conn.execute(
-                    text(
-                        "SELECT id, correlation_id, sender_wa_id, message_type, "
-                        "body_text, raw_payload, normalized_message, media_object_key, "
-                        "processing_status, error_code, received_at, processed_at, "
-                        "raw_payload_captured, acknowledged_at, acknowledged_by, retry_of_id, assistant_reply "
-                        "FROM inbound_messages WHERE id = :id"
-                    ),
-                    {"id": uuid.UUID(message_id)},
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT id, correlation_id, sender_wa_id, message_type, "
+                            "body_text, raw_payload, normalized_message, media_object_key, "
+                            "processing_status, error_code, received_at, processed_at, "
+                            "raw_payload_captured, acknowledged_at, acknowledged_by, retry_of_id, assistant_reply "
+                            "FROM inbound_messages WHERE id = :id"
+                        ),
+                        {"id": uuid.UUID(message_id)},
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
         return dict(row) if row is not None else None
 
     async def acknowledge(self, *, message_id: str, acknowledged_by: str) -> bool:
@@ -303,4 +307,6 @@ class PostgresMessageLogger:
                     {"correlation_id": correlation_id, "body_text": body_text},
                 )
         except Exception:  # noqa: BLE001
-            _log.exception("message_logger.update_body_text failed correlation_id=%s", correlation_id)
+            _log.exception(
+                "message_logger.update_body_text failed correlation_id=%s", correlation_id
+            )

@@ -145,7 +145,9 @@ def _auth(token: str) -> dict:
 
 async def test_create_material_and_org_isolation(client, test_engine, test_org, admin_ctx):
     resp = await client.post(
-        "/materials", json={"name": "Cement", "default_unit": "bags"}, headers=_auth(admin_ctx["token"])
+        "/materials",
+        json={"name": "Cement", "default_unit": "bags"},
+        headers=_auth(admin_ctx["token"]),
     )
     assert resp.status_code == 201
     assert resp.json()["name"] == "Cement"
@@ -195,7 +197,9 @@ async def test_valid_inflow_then_outflow_derives_inventory(client, admin_ctx):
         "movement_reason": "CONSUMED",
         "occurred_date": str(datetime.date.today()),
     }
-    resp = await client.post("/materials/outflows", json=out_body, headers=_auth(admin_ctx["token"]))
+    resp = await client.post(
+        "/materials/outflows", json=out_body, headers=_auth(admin_ctx["token"])
+    )
     assert resp.status_code == 201
 
     resp = await client.get(
@@ -220,7 +224,9 @@ async def test_outflow_exceeding_stock_surfaces_negative(client, admin_ctx):
         "movement_reason": "CONSUMED",
         "occurred_date": str(datetime.date.today()),
     }
-    resp = await client.post("/materials/outflows", json=out_body, headers=_auth(admin_ctx["token"]))
+    resp = await client.post(
+        "/materials/outflows", json=out_body, headers=_auth(admin_ctx["token"])
+    )
     assert resp.status_code == 201
 
     resp = await client.get(
@@ -298,7 +304,9 @@ async def test_inaccessible_project_rejected(client, test_engine, test_org):
     assert resp.status_code == 403
 
 
-async def test_adjustment_reason_forbidden_for_non_elevated_role(client, test_engine, test_org, admin_ctx):
+async def test_adjustment_reason_forbidden_for_non_elevated_role(
+    client, test_engine, test_org, admin_ctx
+):
     site_engineer = await _make_user(test_engine, test_org, "site_engineer")
     async with test_engine.begin() as conn:
         await conn.execute(
@@ -338,7 +346,9 @@ async def test_reversal_creates_offsetting_movement_and_preserves_original(clien
     )
     assert resp.status_code == 201
 
-    original = await client.get(f"/materials/inflows/{receipt_id}", headers=_auth(admin_ctx["token"]))
+    original = await client.get(
+        f"/materials/inflows/{receipt_id}", headers=_auth(admin_ctx["token"])
+    )
     assert original.status_code == 200
     assert original.json()["quantity"] == "100.00"
     assert original.json()["movement_reason"] == "RECEIVED"
@@ -353,7 +363,9 @@ async def test_reversal_creates_offsetting_movement_and_preserves_original(clien
 
 async def test_ledger_running_balance(client, admin_ctx):
     material_resp = await client.post(
-        "/materials", json={"name": "Cement", "default_unit": "bags"}, headers=_auth(admin_ctx["token"])
+        "/materials",
+        json={"name": "Cement", "default_unit": "bags"},
+        headers=_auth(admin_ctx["token"]),
     )
     material_id = material_resp.json()["id"]
 

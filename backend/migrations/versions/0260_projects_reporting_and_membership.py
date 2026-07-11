@@ -4,6 +4,7 @@ Revision ID: 0260
 Revises: 0250
 Create Date: 2026-07-11
 """
+
 from __future__ import annotations
 
 import sqlalchemy as sa
@@ -28,7 +29,9 @@ def upgrade() -> None:
     )
     op.add_column(
         "projects",
-        sa.Column("auto_generate_dpr", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+        sa.Column(
+            "auto_generate_dpr", sa.Boolean(), nullable=False, server_default=sa.text("false")
+        ),
     )
     op.add_column(
         "projects",
