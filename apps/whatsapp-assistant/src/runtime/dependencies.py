@@ -18,6 +18,7 @@ from ingress.receiver import InMemoryNormalizedMessageStore, WhatsAppReceiver
 from runtime.logging_ports import MessageLogger, TraceLogger
 
 if TYPE_CHECKING:
+    from backend.ports import ActorReader
     from context.resolver import ContextResolver
     from interactions import InteractionHandler
     from mesiri.infrastructure.postgres.database import PostgresDatabase
@@ -64,6 +65,11 @@ class AppContainer:
     planner: Planner
     workflow_runtime: WorkflowRuntime
     interaction_handler: InteractionHandler
+    # Identity gate reader (M4). Exposed for the same reason as `pipeline` --
+    # the control-plane test harness (admin/system_graph_router.py) replays
+    # the exact same pre-pipeline fast-path order as _on_normalized below,
+    # which starts with resolve_sender(actor_reader, wa_id).
+    actor_reader: ActorReader
     # redis_client is either a real RedisClient (when MESIRI_REDIS__HOST is set)
     # or FakeRedis for local/test.  Both expose connect() / disconnect() so the
     # lifespan handler can manage the lifecycle without special-casing.
@@ -329,6 +335,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         context_resolver=context_resolver,
         pipeline=pipeline,
         planner=planner,
+        actor_reader=actor_reader,
         workflow_runtime=workflow_runtime,
         interaction_handler=interaction_handler,
         redis_client=redis_client,

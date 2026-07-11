@@ -60,10 +60,29 @@ class WorkflowGraphInfo(BaseModel):
     node_names: list[str] = []
     example_messages: list[str] = []
     mermaid: str | None = None
+    # Only set for workflows that reach a confirmation prompt with a real
+    # execution dispatcher wired (today: material.receipt / material.usage).
+    # Shows what happens AFTER the draft — confirm/reject/cancel/correct and
+    # the resulting execution outcome — which the 2-node build graph alone
+    # doesn't capture.
+    lifecycle_mermaid: str | None = None
+
+
+class FastPathInfo(BaseModel):
+    """A deterministic, pre-AI reply path (runtime/dependencies.py's
+    _on_normalized). These never touch the understanding pipeline — matched
+    against static phrase lists, not model output — so they're shown
+    separately from the AI-routed workflows above."""
+
+    key: str
+    title: str
+    description: str
+    example_messages: list[str] = []
 
 
 class SystemGraphResponse(BaseModel):
     mermaid: str
+    fast_paths: list[FastPathInfo]
     stages: list[PipelineStage]
     workflows: list[WorkflowGraphInfo]
 
@@ -78,6 +97,11 @@ class SimulateRequest(BaseModel):
 class SimulateResponse(BaseModel):
     dry_run: bool = True
     ran_as_wa_id: str
+    # Which check produced the reply — mirrors runtime/dependencies.py's
+    # _on_normalized order: identity_gate -> confirmation_fast_path ->
+    # category_tap -> greeting_trigger -> whoami_trigger -> ai_pipeline.
+    # Everything before ai_pipeline is deterministic and never touches a model.
+    routed_via: str
     replies: list[str]
     understanding: dict | None = None
     resolved_context: dict | None = None
@@ -93,6 +117,11 @@ def _node_id(value: str) -> str:
     """Mermaid-safe node id."""
     return value.replace(".", "_").replace("-", "_")
 
+
+# Workflows whose confirmation reply reaches a real ExecutionDispatcher today
+# (see MaterialExecutionDispatcher) — the only ones _confirmation_lifecycle_
+# mermaid actually applies to.
+_LIFECYCLE_WORKFLOWS: set[str] = {"material.receipt", "material.usage"}
 
 _WORKFLOW_TITLES: dict[str, str] = {
     "material.receipt": "Material Receipt",
@@ -125,6 +154,95 @@ def _example_messages_by_workflow() -> dict[str, list[str]]:
         "expense.submit": _quoted(_CATEGORY_PROMPTS.get("cat_expense", "")),
         "site.update": ["Concrete pour finished on the 3rd floor"],
     }
+
+
+def _fast_paths() -> list[FastPathInfo]:
+    """The deterministic checks that run before the AI pipeline is ever
+    touched, in the exact order runtime/dependencies.py's _on_normalized
+    runs them. Phrase examples are imported from the same JSON-backed
+    vocabulary the real classifiers use — never hand-duplicated."""
+    from channel.replies import CATEGORY_ROWS
+    from interactions.classifier import _PHRASE_SETS
+    from mesiri_ai.greeting_classifier import _GREETING_PHRASES
+    from mesiri_ai.whoami_classifier import _WHOAMI_PHRASES
+
+    return [
+        FastPathInfo(
+            key="confirmation_resume",
+            title="Confirmation reply",
+            description=(
+                "When the user has a workflow awaiting confirmation, a reply matching "
+                "confirm/reject/cancel vocabulary resumes it immediately — the AI "
+                "pipeline is skipped entirely."
+            ),
+            example_messages=(
+                _PHRASE_SETS["confirm"][:2] + _PHRASE_SETS["reject"][:1] + _PHRASE_SETS["cancel"][:1]
+            ),
+        ),
+        FastPathInfo(
+            key="category_tap",
+            title="Category menu tap",
+            description=(
+                "Tapping a row on the WhatsApp category menu (Material / Equipment / "
+                "Labour / Expense) sends a deterministic prompt for that category — "
+                "no AI call, the row id is matched verbatim."
+            ),
+            example_messages=[r.title for r in CATEGORY_ROWS],
+        ),
+        FastPathInfo(
+            key="greeting_trigger",
+            title="Greeting / menu",
+            description=(
+                "A bare greeting or menu word opens the tappable category menu — "
+                "matched against a static phrase list, never AI-classified."
+            ),
+            example_messages=sorted(_GREETING_PHRASES)[:6],
+        ),
+        FastPathInfo(
+            key="whoami_trigger",
+            title="Who am I",
+            description=(
+                "A bare identity question returns the caller's name/role/org/"
+                "projects/sites directly from the already-resolved identity — "
+                "no AI call."
+            ),
+            example_messages=sorted(_WHOAMI_PHRASES)[:6],
+        ),
+    ]
+
+
+def _confirmation_lifecycle_mermaid() -> str:
+    """What happens after a workflow's draft/confirmation prompt, generated
+    from the real enums that drive it (interactions.intent.InteractionIntent,
+    workflows.runtime.WorkflowResumeStatus, and the execution outcome from
+    mesiri_contracts.application.results.execution_result.ExecutionStatus).
+    Only reachable for workflows with a real ExecutionDispatcher wired —
+    today, that's the material dispatcher only, so this is attached to
+    material.receipt / material.usage."""
+    from interactions.intent import InteractionIntent
+    from mesiri_contracts.application.results.execution_result import ExecutionStatus
+    from workflows.runtime import WorkflowResumeStatus
+
+    return "\n".join(
+        [
+            "flowchart TD",
+            '  draft["Draft built — confirmation prompt sent"]',
+            f'  draft -->|"{InteractionIntent.CONFIRM.value}"| confirmed["{WorkflowResumeStatus.CONFIRMED.value}"]',
+            f'  draft -->|"{InteractionIntent.REJECT.value}"| rejected["{WorkflowResumeStatus.REJECTED.value}"]',
+            f'  draft -->|"{InteractionIntent.CANCEL.value}"| cancelled["{WorkflowResumeStatus.CANCELLED.value}"]',
+            f'  draft -->|"{InteractionIntent.CORRECTION.value} (LLM-classified)"| corrected["Draft fields updated"]',
+            "  corrected --> draft",
+            f'  draft -->|"{InteractionIntent.AMBIGUOUS.value}"| reprompt["Ask user to restate"]',
+            "  reprompt --> draft",
+            f'  draft -->|"{InteractionIntent.UNRELATED.value}"| newmsg["Treated as a fresh message"]',
+            '  confirmed --> dispatch["Material dispatcher executes the domain write"]',
+            f'  dispatch -->|success| succeeded["{ExecutionStatus.SUCCEEDED.value}"]',
+            f'  dispatch -->|"duplicate delivery"| already["{ExecutionStatus.ALREADY_EXECUTED.value}"]',
+            f'  dispatch -->|failure| failed["{ExecutionStatus.FAILED.value}"]',
+            '  rejected --> doneReply["Reply: cancelled"]',
+            "  cancelled --> doneReply",
+        ]
+    )
 
 
 def _workflow_node_names(graph: object | None) -> list[str]:
@@ -332,6 +450,7 @@ def _workflow_infos() -> list[WorkflowGraphInfo]:
                 node_names=_workflow_node_names(graph),
                 example_messages=examples.get(key.value, []),
                 mermaid=mermaid,
+                lifecycle_mermaid=_confirmation_lifecycle_mermaid() if key.value in _LIFECYCLE_WORKFLOWS else None,
             )
         )
     return infos
@@ -344,6 +463,7 @@ def _workflow_infos() -> list[WorkflowGraphInfo]:
 async def get_system_graph(_admin: dict = Depends(require_platform_admin)):
     return SystemGraphResponse(
         mermaid=_build_pipeline_mermaid(),
+        fast_paths=_fast_paths(),
         stages=_build_stages(),
         workflows=_workflow_infos(),
     )
@@ -380,9 +500,20 @@ async def simulate_message(
     request: Request,
     _admin: dict = Depends(require_platform_admin),
 ):
-    """Run one message through the real pipeline as the chosen user, capturing the
-    reply instead of sending it to WhatsApp. Side-effect-free (no confirmation is
-    auto-sent, so nothing is persisted)."""
+    """Run one message exactly as a real inbound WhatsApp message would,
+    capturing replies instead of sending them. Replicates
+    runtime/dependencies.py's _on_normalized order — the identity gate, then
+    each deterministic fast path (confirmation resume, category tap, greeting,
+    whoami), and only then the AI pipeline — so testing "who am i" or "hi"
+    here shows the same deterministic reply a real user would get, not an
+    AI-pipeline detour. Side-effect-free: no confirmation is auto-sent, so
+    nothing is persisted, and no message/trace logging happens (dry run)."""
+    from context.live_identity import (
+        NO_ORG_MESSAGE,
+        ORG_SUSPENDED_MESSAGE,
+        UNREGISTERED_MESSAGE,
+        resolve_sender,
+    )
     from mesiri_contracts.assistant.enums import InputModality
     from mesiri_contracts.assistant.normalized_message import NormalizedMessage, SenderInfo
     from mesiri_contracts.common.ids import new_id
@@ -400,8 +531,19 @@ async def simulate_message(
         )
 
     wa_id = await _lookup_user_wa_id(body.organization_id, body.user_id)
-
     container = get_container(request)
+
+    def _reply(routed_via: str, text: str) -> SimulateResponse:
+        return SimulateResponse(dry_run=True, ran_as_wa_id=wa_id, routed_via=routed_via, replies=[text])
+
+    # --- Identity gate (M4) — same check the real webhook path runs first. ---
+    ctx = await resolve_sender(container.actor_reader, wa_id)
+    if ctx is None:
+        return _reply("identity_gate", UNREGISTERED_MESSAGE)
+    if ctx.organization_id is None:
+        return _reply("identity_gate", NO_ORG_MESSAGE.format(name=ctx.full_name))
+    if not ctx.org_active:
+        return _reply("identity_gate", ORG_SUSPENDED_MESSAGE)
 
     message = NormalizedMessage(
         message_id=new_id("sim"),
@@ -412,6 +554,28 @@ async def simulate_message(
         metadata={"simulated": True},
     )
 
+    # --- Deterministic fast paths, in the exact order _on_normalized runs them. ---
+    handled = await container.interaction_handler.handle_fast_path(ctx.user_id, message)
+    if handled is not None:
+        return _reply("confirmation_fast_path", handled.reply_text)
+
+    category_prompt = container.interaction_handler.handle_category_tap(message)
+    if category_prompt is not None:
+        return _reply("category_tap", category_prompt)
+
+    greeting_reply = container.interaction_handler.handle_greeting_trigger(message)
+    if greeting_reply is not None:
+        text = greeting_reply.text
+        if greeting_reply.list_rows:
+            options = "\n".join(f"  • {r.title}" for r in greeting_reply.list_rows)
+            text = f"{text}\n{options}"
+        return _reply("greeting_trigger", text)
+
+    whoami_text = container.interaction_handler.handle_whoami_trigger(message, ctx)
+    if whoami_text is not None:
+        return _reply("whoami_trigger", whoami_text)
+
+    # --- Nothing deterministic matched: the real AI pipeline. ---
     captured: list[str] = []
 
     async def _capture_text(_to: str, text: str) -> None:
@@ -423,7 +587,7 @@ async def simulate_message(
 
     result = await process_inbound_message(
         message,
-        actor_user_id=str(body.user_id),
+        actor_user_id=ctx.user_id,
         pipeline=container.pipeline,
         context_resolver=container.context_resolver,
         planner=container.planner,
@@ -441,6 +605,7 @@ async def simulate_message(
     return SimulateResponse(
         dry_run=True,
         ran_as_wa_id=wa_id,
+        routed_via="ai_pipeline",
         replies=captured,
         understanding=_dump(result.understanding),
         resolved_context=_dump(result.resolved_context),
