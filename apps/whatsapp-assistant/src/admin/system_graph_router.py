@@ -221,9 +221,11 @@ def _fast_paths() -> list[FastPathInfo]:
             key="whoami_trigger",
             title="Who am I",
             description=(
-                "A bare identity question returns the caller's name/role/org/"
-                "projects/sites directly from the already-resolved identity — "
-                "no AI call."
+                "A bare identity question (matched against this English phrase list) "
+                "returns the caller's name/role/org/projects/sites directly — no AI call. "
+                "A non-English identity question that misses this list still gets answered "
+                "correctly: Understanding re-checks after translation and routes it to the "
+                "same reply via the AI pipeline (see 'Who-am-I identity summary' below)."
             ),
             example_messages=sorted(_WHOAMI_PHRASES)[:6],
         ),
@@ -269,8 +271,8 @@ def _hardcoded_replies() -> list[HardcodedReplyInfo]:
     real source functions/constants wherever construction is cheap (so this
     can never drift from what actually ships) — never hand-retyped strings.
     `flag` calls out entries that are misleading or leftover dev scaffolding,
-    found by reading the source: whoami_reply() ships a literal "this is a
-    test reply" disclaimer in production, and render_execution_reply's FAILED
+    found by reading the source: the general-question canned reply never
+    actually answers the question asked, and render_execution_reply's FAILED
     case claims an automatic retry that no code anywhere implements."""
     from backend.ports import ActorIdentity, ProjectSummary, SiteSummary
     from channel.replies import (
@@ -355,13 +357,13 @@ def _hardcoded_replies() -> list[HardcodedReplyInfo]:
             key="whoami_reply",
             title="Who-am-I identity summary",
             source="context/live_identity.py:whoami_reply()",
-            trigger='"who am i" fast path (see the Fast paths section above).',
-            template=whoami_reply(sample_actor),
-            flag=(
-                'Ships a literal "(this is a test whoami reply — will be replaced by real '
-                "understanding replies)\" disclaimer in the production reply — leftover dev "
-                "scaffolding, not a bug in the logic itself."
+            trigger=(
+                "SemanticType.WHOAMI_QUESTION — set either by the pre-pipeline fast path "
+                "(English phrase list, see Fast paths above) or, as a fallback, by "
+                "Understanding's own post-translation check inside the AI pipeline "
+                "(so a non-English identity question is still recognized)."
             ),
+            template=whoami_reply(sample_actor),
         ),
         # --- Direct / fallback replies (channel/replies.py) ---
         HardcodedReplyInfo(
@@ -834,6 +836,13 @@ async def simulate_message(
         send_text=_capture_text,
         send_list=_capture_list,
         context_debug=False,
+        # actor=ctx mirrors runtime/dependencies.py's real call: without it, a
+        # non-English whoami question that only Understanding's post-
+        # translation check catches (see understanding/pipeline.py) would
+        # reach here with semantic_type=WHOAMI_QUESTION but never get
+        # answered, since process_inbound_message only builds that reply when
+        # actor is not None.
+        actor=ctx,
         # No loggers: this is a dry run, not a real inbound message.
     )
 
