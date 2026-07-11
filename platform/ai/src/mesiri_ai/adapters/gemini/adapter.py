@@ -123,6 +123,7 @@ class GeminiProvider:
             document_classification=data.get("document_classification"),
             description=data.get("description"),
             raw_fields=data.get("fields", {}) or {},
+            provider=self.provider,
             model=self._settings.model,
             latency_ms=latency_ms,
         )
@@ -140,6 +141,7 @@ class GeminiProvider:
             field_confidences={
                 k: float(v) for k, v in (data.get("field_confidences", {}) or {}).items()
             },
+            provider=self.provider,
             model=self._settings.model,
             latency_ms=latency_ms,
         )
@@ -166,6 +168,7 @@ class GeminiProvider:
         return TranslationResult(
             translated_text=data.get("translated_text", text),
             detected_language=data.get("detected_language"),
+            provider=self.provider,
             model=self._settings.model,
             latency_ms=latency_ms,
         )
@@ -186,6 +189,7 @@ class GeminiProvider:
             transcript=text.strip(),
             detected_language=None,
             translated_text=text.strip(),
+            provider=self.provider,
             model=self._settings.model,
             latency_ms=latency_ms,
         )

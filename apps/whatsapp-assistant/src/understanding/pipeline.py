@@ -123,7 +123,7 @@ class UnderstandingPipeline:
 
         result.provider_executions.append(
             ProviderExecution(
-                provider=getattr(self._translation, "provider", "unknown"),
+                provider=translation.provider or getattr(self._translation, "provider", "unknown"),
                 operation="translate",
                 model=translation.model,
                 latency_ms=translation.latency_ms,
@@ -144,7 +144,7 @@ class UnderstandingPipeline:
         result.normalized_text = speech.translated_text or speech.transcript
         result.provider_executions.append(
             ProviderExecution(
-                provider="sarvam",
+                provider=speech.provider or "sarvam",
                 operation="speech_to_text_translate",
                 model=speech.model,
                 latency_ms=speech.latency_ms,
@@ -179,7 +179,7 @@ class UnderstandingPipeline:
         result.normalized_text = vision.description
         result.provider_executions.append(
             ProviderExecution(
-                provider="gemini",
+                provider=vision.provider or "gemini",
                 operation="analyze_image",
                 model=vision.model,
                 latency_ms=vision.latency_ms,
@@ -236,7 +236,7 @@ class UnderstandingPipeline:
         result.warnings.extend(extraction.warnings)
         result.provider_executions.append(
             ProviderExecution(
-                provider=getattr(self._extraction, "provider", "unknown"),
+                provider=extraction.provider or getattr(self._extraction, "provider", "unknown"),
                 operation="extract",
                 model=extraction.model,
                 latency_ms=extraction.latency_ms,

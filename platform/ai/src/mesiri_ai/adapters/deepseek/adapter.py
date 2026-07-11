@@ -84,6 +84,7 @@ class DeepSeekExtractionProvider:
             field_confidences={
                 k: float(v) for k, v in (data.get("field_confidences", {}) or {}).items()
             },
+            provider=self.provider,
             model=self._s.model,
             latency_ms=latency_ms,
         )
@@ -134,6 +135,7 @@ class DeepSeekExtractionProvider:
         return TranslationResult(
             translated_text=data.get("translated_text", text),
             detected_language=data.get("detected_language"),
+            provider=self.provider,
             model=self._s.model,
             latency_ms=latency_ms,
         )

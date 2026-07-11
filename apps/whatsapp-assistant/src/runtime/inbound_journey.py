@@ -346,9 +346,9 @@ async def process_inbound_message(
         if reply.list_rows and send_list is not None:
             await send_list(
                 message.sender.wa_id,
-                reply.text,
-                reply.list_button_label or "Choose one",
-                reply.list_rows,
+                body=reply.text,
+                button_label=reply.list_button_label or "Choose one",
+                rows=reply.list_rows,
             )
         elif reply.list_rows:
             # No list-sending capability wired (e.g. a caller that only needs

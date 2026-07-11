@@ -93,6 +93,19 @@ class RedisClient:
         except Exception as exc:  # noqa: BLE001
             raise map_redis_error(exc) from exc
 
+    async def delete(self, key: str) -> None:
+        """Delete a raw (non-namespaced) key.
+
+        Callers that share a key with non-namespaced readers/writers (e.g.
+        DynamicAIProviderResolver's own get/set on "mesiri:ai:config") must
+        delete that exact key, not a namespaced variant.
+        """
+        client = self._require_client
+        try:
+            await client.delete(key)
+        except Exception as exc:  # noqa: BLE001
+            raise map_redis_error(exc) from exc
+
 
 class FakeRedis:
     """In-memory Redis stand-in for scenarios/tests (no TTL expiry emulation)."""
@@ -125,3 +138,6 @@ class FakeRedis:
     async def check_health(self) -> None:
         if self.fail_health or not self._connected:
             raise map_redis_error(ConnectionError("fake redis unavailable"))
+
+    async def delete(self, key: str) -> None:
+        self._store.pop(key, None)
