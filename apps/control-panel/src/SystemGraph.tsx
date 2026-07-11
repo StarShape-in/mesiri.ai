@@ -11,6 +11,7 @@ import {
   Circle,
   Send,
   FlaskConical,
+  Cpu,
 } from 'lucide-react';
 import mermaid from 'mermaid';
 import { api } from './api';
@@ -55,11 +56,24 @@ interface OrgUser {
   role: string | null;
   whatsapp_number: string | null;
 }
+interface ProviderExecution {
+  provider: string;
+  operation: string;
+  model: string | null;
+  latency_ms: number | null;
+  succeeded: boolean;
+  error_code: string | null;
+}
 interface SimulateResponse {
   dry_run: boolean;
   ran_as_wa_id: string;
   replies: string[];
-  understanding: { semantic_type?: string; transcript?: string; translated_text?: string } | null;
+  understanding: {
+    semantic_type?: string;
+    transcript?: string;
+    translated_text?: string;
+    provider_executions?: ProviderExecution[];
+  } | null;
   resolved_context: unknown | null;
   canonical_event: { event_type?: string } | null;
   planner_decision: { decision_type?: string; workflow_key?: string } | null;
@@ -397,6 +411,53 @@ const SystemGraph = () => {
                 ) : (
                   <div style={{ fontSize: '13px', color: 'var(--neutral-500)' }}>(no reply produced)</div>
                 )}
+
+                <div style={{ marginTop: 'var(--space-4)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 'var(--space-2)' }}>
+                    <Cpu size={14} style={{ color: 'var(--neutral-500)' }} />
+                    <span style={{ fontWeight: 600, fontSize: '13px' }}>AI providers used</span>
+                  </div>
+                  {(() => {
+                    const executions = result.understanding?.provider_executions ?? [];
+                    if (executions.length === 0) {
+                      return <div style={{ fontSize: '12px', color: 'var(--neutral-500)', fontStyle: 'italic' }}>No AI provider calls executed.</div>;
+                    }
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', background: 'var(--neutral-50, #fafafa)', border: '1px solid var(--neutral-200, #e5e5e5)', borderRadius: 'var(--radius-sm)', padding: 'var(--space-3)' }}>
+                        {executions.map((p, i) => (
+                          <div
+                            key={i}
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'flex-start',
+                              borderBottom: i < executions.length - 1 ? '1px solid var(--neutral-200, #e5e5e5)' : 'none',
+                              paddingBottom: i < executions.length - 1 ? 'var(--space-2)' : 0,
+                            }}
+                          >
+                            <div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                                <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--neutral-800, #333)' }}>{p.provider}</span>
+                                <span style={{ fontSize: '11px', color: 'var(--neutral-500)' }}>({p.operation})</span>
+                              </div>
+                              {p.model && (
+                                <div style={{ fontSize: '11px', color: 'var(--neutral-500)', marginTop: '2px', fontFamily: 'monospace' }}>{p.model}</div>
+                              )}
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+                              <span className={`badge ${p.succeeded ? 'badge-success' : 'badge-error'}`} style={{ fontSize: '10px', padding: '1px 6px' }}>
+                                {p.succeeded ? 'Success' : p.error_code || 'Fail'}
+                              </span>
+                              {p.latency_ms !== null && (
+                                <span style={{ fontSize: '11px', fontFamily: 'monospace', color: 'var(--neutral-500)' }}>{p.latency_ms.toFixed(0)}ms</span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
 
                 <details style={{ marginTop: 'var(--space-3)' }}>
                   <summary style={{ cursor: 'pointer', fontSize: '13px', fontWeight: 500, color: 'var(--neutral-600)' }}>How it was routed</summary>
