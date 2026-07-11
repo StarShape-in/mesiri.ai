@@ -7,6 +7,7 @@ import UserDetails from '@/pages/UserDetails'
 import Projects from '@/pages/Projects'
 import ProjectDetails from '@/pages/ProjectDetails'
 import FieldReportsPage from '@/pages/FieldReportsPage'
+import MaterialsPage from '@/pages/MaterialsPage'
 import { OperationalPlaceholder } from '@/components/operational-placeholder'
 
 function IndexRedirect() {
@@ -26,7 +27,8 @@ export default function App() {
         <Route path="projects" element={<Projects />} />
         <Route path="projects/:id" element={<ProjectDetails />} />
         <Route path="field-reports" element={<FieldReportsPage />} />
-        
+        <Route path="materials" element={<MaterialsPage />} />
+
         {/* Reusable Operational Shared Placeholders */}
         <Route path="timeline" element={<OperationalPlaceholder title="Timeline" />} />
         <Route path="analytics" element={<OperationalPlaceholder title="Analytics" />} />

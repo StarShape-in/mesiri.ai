@@ -47,3 +47,25 @@ def validate(cmd: RecordMaterialReceiptCommand | RecordMaterialUsageCommand) -> 
     if isinstance(cmd, RecordMaterialReceiptCommand):
         return validate_receipt(cmd)
     return validate_usage(cmd)
+
+
+# ---------------------------------------------------------------------------
+# Movement reason rules (dashboard Materials surface — direct web writes)
+# ---------------------------------------------------------------------------
+RECEIPT_REASONS = ("RECEIVED", "TRANSFER_IN", "RETURN_IN", "ADJUSTMENT_IN")
+USAGE_REASONS = ("CONSUMED", "TRANSFER_OUT", "RETURN_TO_VENDOR", "WASTAGE", "ADJUSTMENT_OUT")
+ADJUSTMENT_REASONS = ("ADJUSTMENT_IN", "ADJUSTMENT_OUT")
+ADJUSTMENT_ROLES = ("ADMIN", "PROJECT_MANAGER")
+
+
+def is_valid_receipt_reason(reason: str) -> bool:
+    return reason in RECEIPT_REASONS
+
+
+def is_valid_usage_reason(reason: str) -> bool:
+    return reason in USAGE_REASONS
+
+
+def role_can_adjust(role: str) -> bool:
+    """Corrections/adjustments are restricted to elevated roles."""
+    return role.upper() in ADJUSTMENT_ROLES

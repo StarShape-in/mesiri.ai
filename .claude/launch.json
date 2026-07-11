@@ -7,6 +7,20 @@
       "runtimeArgs": ["run", "web", "--", "--port", "8090"],
       "port": 8090,
       "cwd": "apps/mobile"
+    },
+    {
+      "name": "dashboard",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--", "--port", "5173"],
+      "port": 5173,
+      "cwd": "apps/dashboard"
+    },
+    {
+      "name": "control-panel",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--", "--port", "5174"],
+      "port": 5174,
+      "cwd": "apps/control-panel"
     }
   ]
 }

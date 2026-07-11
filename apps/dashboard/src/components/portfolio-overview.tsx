@@ -8,8 +8,6 @@ import {
   Loader2,
   Search,
   Settings2,
-  PackagePlus,
-  PackageMinus,
   Activity,
   History,
   CheckCircle2,
@@ -27,29 +25,10 @@ import { useAuth } from '@/lib/AuthContext'
 import { fetchProjectsFull, type Project } from '@/lib/projects'
 import { fetchTodayFieldActivity, fetchPortfolioTimeline } from '@/lib/portfolio'
 import { timeAgo, cn } from '@/lib/utils'
-
-const STATUS_BADGES = {
-  success: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20',
-  warning: 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20',
-  critical: 'bg-rose-500/10 text-rose-700 dark:text-rose-400 border-rose-500/20',
-  neutral: 'bg-muted text-muted-foreground border-border',
-} as const
-
-function statusBadgeClass(status: string) {
-  return STATUS_BADGES[status as keyof typeof STATUS_BADGES] || STATUS_BADGES.neutral
-}
+import { FIELD_ACTIVITY_META, describeEventType, statusBadgeClass } from '@/lib/field-activity'
 
 function isActiveProject(p: Project) {
   return p.status !== 'archived' && p.status !== 'on_hold' && p.status !== 'neutral'
-}
-
-const FIELD_ACTIVITY_META: Record<string, { label: string; slug: string; icon: typeof PackagePlus }> = {
-  MaterialReceived: { label: 'Material In', slug: 'material-in', icon: PackagePlus },
-  MaterialUsed: { label: 'Material Out', slug: 'material-out', icon: PackageMinus },
-}
-
-function describeEventType(eventType: string): string {
-  return FIELD_ACTIVITY_META[eventType]?.label ?? eventType.replace(/([a-z])([A-Z])/g, '$1 $2')
 }
 
 export function PortfolioOverview() {
@@ -78,7 +57,7 @@ export function PortfolioOverview() {
     refetch: refetchFieldActivity,
   } = useQuery({
     queryKey: ['portfolio-field-activity-today'],
-    queryFn: fetchTodayFieldActivity,
+    queryFn: () => fetchTodayFieldActivity(),
     staleTime: 60_000,
   })
 

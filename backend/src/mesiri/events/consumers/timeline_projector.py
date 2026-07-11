@@ -81,6 +81,7 @@ AGGREGATE_TABLES: dict[str, sa.Table] = {
 EVENT_SUMMARY_BUILDERS: dict[str, Callable[[dict[str, Any]], str]] = {
     "MaterialReceived": lambda p: f"{p.get('quantity')} {p.get('unit')} of {p.get('material_name')} received",
     "MaterialUsed": lambda p: f"{p.get('quantity')} {p.get('unit')} of {p.get('material_name')} used",
+    "MaterialMovementCorrected": lambda p: f"Material movement corrected ({p.get('movement_reason')})",
 }
 
 

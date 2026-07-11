@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Routes, Route, NavLink } from 'react-router-dom';
+import { Routes, Route, NavLink, useNavigate } from 'react-router-dom';
 import {
   Building2,
   LayoutDashboard,
@@ -22,6 +22,7 @@ import SettingsPage from './Settings';
 import PlatformUsers from './PlatformUsers';
 import Providers from './Providers';
 import SystemGraph from './SystemGraph';
+import OrganizationDetail from './OrganizationDetail';
 
 const Sidebar = () => (
   <div className="sidebar">
@@ -132,6 +133,7 @@ interface Organization {
 }
 
 const Organizations = () => {
+  const navigate = useNavigate();
   const [orgs, setOrgs] = useState<Organization[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -220,7 +222,12 @@ const Organizations = () => {
                   </span>
                 </td>
                 <td style={{ textAlign: 'right' }}>
-                  <button style={{ background: 'none', border: 'none', color: 'var(--neutral-600)', fontWeight: 500, cursor: 'pointer', fontSize: '13px' }}>Manage</button>
+                  <button
+                    style={{ background: 'none', border: 'none', color: 'var(--neutral-600)', fontWeight: 500, cursor: 'pointer', fontSize: '13px' }}
+                    onClick={() => navigate(`/organizations/${org.id}`)}
+                  >
+                    Manage
+                  </button>
                 </td>
               </tr>
             ))}
@@ -293,6 +300,7 @@ function AppLayout() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/organizations" element={<Organizations />} />
+            <Route path="/organizations/:id" element={<OrganizationDetail />} />
             <Route path="/logs" element={<Logs />} />
             <Route path="/providers" element={<Providers />} />
             <Route path="/system-graph" element={<SystemGraph />} />

@@ -11,6 +11,7 @@ import {
   ClipboardList,
   DollarSign,
   Wallet,
+  Boxes,
 } from 'lucide-react'
 import { NavLink, Link, useLocation } from 'react-router-dom'
 import {
@@ -45,6 +46,7 @@ const NAV_ITEMS: NavItem[] = [
   { title: 'Gallery', url: '/gallery', icon: ImageIcon },
   { title: 'Reports', url: '/reports', icon: FileText },
   { title: 'Field Reports', url: '/field-reports', icon: ClipboardList },
+  { title: 'Materials', url: '/materials', icon: Boxes },
   { title: 'Expenses', url: '/expenses', icon: DollarSign },
   { title: 'Petty Cash', url: '/petty-cash', icon: Wallet },
   { title: 'Projects & Sites', url: '/projects', icon: Building2, requiredRole: 'ADMIN' },

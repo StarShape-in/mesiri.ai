@@ -88,6 +88,34 @@ export async function fetchSites(projectId: string): Promise<SiteItem[]> {
   return res.data.map((s) => ({ id: s.id, name: s.name, projectId: s.project_id }))
 }
 
+export interface SiteOverviewFieldActivityItem {
+  eventType: string
+  count: number
+}
+
+export interface SiteOverviewTimelineEntry {
+  id: string
+  eventType: string
+  summary: string
+  occurredAt: string
+}
+
+export interface SiteOverviewData {
+  site: { id: string; name: string; status: string }
+  project: { id: string; name: string; location: string | null; requiredReportTypes: string[] | null }
+  reportingToday: boolean
+  lastActivityAt: string | null
+  fieldActivityToday: SiteOverviewFieldActivityItem[]
+  recentActivity: SiteOverviewTimelineEntry[]
+}
+
+/** Single aggregated read for the Site Scope Overview page — see backend
+ * GET /projects/{project_id}/sites/{site_id}/overview. */
+export async function fetchSiteOverview(projectId: string, siteId: string): Promise<SiteOverviewData> {
+  const res = await api.get<SiteOverviewData>(`/projects/${projectId}/sites/${siteId}/overview`)
+  return res.data
+}
+
 export async function fetchSitesFull(projectId: string): Promise<Site[]> {
   const res = await api.get<Array<{ id: string; name: string; project_id: string; status: string }>>(
     `/projects/${projectId}/sites`

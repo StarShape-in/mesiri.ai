@@ -1,0 +1,296 @@
+import { api } from './api'
+
+// Typed boundary for the /materials domain — Material catalog, Inflows
+// (receipts), Outflows (usage), aggregated Inventory, and the per-site,
+// per-material movement Ledger. See backend/src/mesiri/domains/materials
+// for the source of truth on shapes and authorization rules.
+
+export interface MaterialCatalog {
+  id: string
+  organization_id: string
+  name: string
+  default_unit: string | null
+  category: string | null
+  sku: string | null
+  is_active: boolean
+}
+
+export interface MaterialCatalogListResponse {
+  items: MaterialCatalog[]
+  total: number
+}
+
+export type InflowReason = 'RECEIVED' | 'TRANSFER_IN' | 'RETURN_IN' | 'ADJUSTMENT_IN'
+export type OutflowReason = 'CONSUMED' | 'TRANSFER_OUT' | 'RETURN_TO_VENDOR' | 'WASTAGE' | 'ADJUSTMENT_OUT'
+
+export interface MaterialReceipt {
+  id: string
+  organization_id: string
+  project_id: string
+  site_id: string | null
+  material_name: string
+  quantity: string
+  unit: string
+  unit_cost: string | null
+  total_cost: string | null
+  supplier: string | null
+  occurred_date: string
+  occurred_time: string | null
+  correlation_id: string | null
+  source: string
+  occurred_date_source: string | null
+  material_id: string | null
+  movement_reason: InflowReason
+  notes: string | null
+  reverses_movement_id: string | null
+  created_at: string
+  created_by: string | null
+  updated_at: string | null
+  updated_by: string | null
+}
+
+export interface MaterialUsage {
+  id: string
+  organization_id: string
+  project_id: string
+  site_id: string | null
+  material_name: string
+  quantity: string
+  unit: string
+  work_item: string | null
+  occurred_date: string
+  occurred_time: string | null
+  correlation_id: string | null
+  source: string
+  occurred_date_source: string | null
+  material_id: string | null
+  movement_reason: OutflowReason
+  notes: string | null
+  reverses_movement_id: string | null
+  created_at: string
+  created_by: string | null
+  updated_at: string | null
+  updated_by: string | null
+}
+
+// Client-side merged shape for "one movement" rendering (used by the
+// details sheet caller and any UI that treats inflow/outflow uniformly).
+export type MaterialMovement =
+  | ({ direction: 'IN' } & MaterialReceipt)
+  | ({ direction: 'OUT' } & MaterialUsage)
+
+export interface MaterialMovementListResponse<T> {
+  items: T[]
+  total: number
+}
+
+export interface MovementFilters {
+  project_id?: string
+  site_id?: string
+  material_id?: string
+  material_name?: string
+  movement_reason?: string
+  source?: string
+  recorded_by_user_id?: string
+  date_from?: string
+  date_to?: string
+  limit?: number
+  offset?: number
+}
+
+export type StockState = 'AVAILABLE' | 'OUT_OF_STOCK' | 'NEGATIVE_STOCK'
+
+export interface MaterialStock {
+  organization_id: string
+  project_id: string
+  site_id: string
+  material_id: string
+  material_name: string
+  unit: string
+  total_received: string
+  total_used: string
+  current_stock: string
+  last_movement_at: string | null
+  stock_state: StockState
+}
+
+export interface LedgerEntry {
+  id: string
+  direction: 'IN' | 'OUT'
+  movement_reason: string
+  quantity: string
+  unit: string
+  occurred_date: string
+  occurred_time: string | null
+  source: string
+  notes: string | null
+  context: string | null
+  reverses_movement_id: string | null
+  created_by: string | null
+  created_at: string
+  running_balance: string
+}
+
+export interface LedgerResponse {
+  items: LedgerEntry[]
+  total: number
+  current_balance: string
+  unit: string
+}
+
+// ---------------------------------------------------------------------
+// Material catalog
+// ---------------------------------------------------------------------
+
+export interface MaterialCatalogFilters {
+  search?: string
+  is_active?: boolean
+  limit?: number
+  offset?: number
+}
+
+export async function fetchMaterials(
+  filters: MaterialCatalogFilters = {}
+): Promise<MaterialCatalogListResponse> {
+  const res = await api.get<MaterialCatalogListResponse>('/materials', { params: filters })
+  return res.data
+}
+
+export async function createMaterial(payload: {
+  name: string
+  default_unit?: string
+  category?: string
+  sku?: string
+}): Promise<MaterialCatalog> {
+  const res = await api.post<MaterialCatalog>('/materials', payload)
+  return res.data
+}
+
+// ---------------------------------------------------------------------
+// Inflows (receipts)
+// ---------------------------------------------------------------------
+
+export async function fetchInflows(
+  filters: MovementFilters = {}
+): Promise<MaterialMovementListResponse<MaterialReceipt>> {
+  const res = await api.get<MaterialMovementListResponse<MaterialReceipt>>('/materials/inflows', {
+    params: filters,
+  })
+  return res.data
+}
+
+export async function fetchInflow(id: string): Promise<MaterialReceipt> {
+  const res = await api.get<MaterialReceipt>(`/materials/inflows/${id}`)
+  return res.data
+}
+
+export interface CreateInflowPayload {
+  project_id: string
+  site_id?: string
+  material_name: string
+  quantity: string | number
+  unit: string
+  movement_reason?: InflowReason
+  supplier?: string
+  notes?: string
+  occurred_date: string
+}
+
+export async function createInflow(payload: CreateInflowPayload): Promise<{ id: string; status: string }> {
+  const res = await api.post<{ id: string; status: string }>('/materials/inflows', payload)
+  return res.data
+}
+
+export async function reverseInflow(
+  id: string,
+  payload: { reason_note?: string; occurred_date?: string } = {}
+): Promise<{ id: string; status: string }> {
+  const res = await api.post<{ id: string; status: string }>(`/materials/inflows/${id}/reverse`, payload)
+  return res.data
+}
+
+// ---------------------------------------------------------------------
+// Outflows (usage)
+// ---------------------------------------------------------------------
+
+export async function fetchOutflows(
+  filters: MovementFilters = {}
+): Promise<MaterialMovementListResponse<MaterialUsage>> {
+  const res = await api.get<MaterialMovementListResponse<MaterialUsage>>('/materials/outflows', {
+    params: filters,
+  })
+  return res.data
+}
+
+export async function fetchOutflow(id: string): Promise<MaterialUsage> {
+  const res = await api.get<MaterialUsage>(`/materials/outflows/${id}`)
+  return res.data
+}
+
+export interface CreateOutflowPayload {
+  project_id: string
+  site_id?: string
+  material_name: string
+  quantity: string | number
+  unit: string
+  movement_reason?: OutflowReason
+  work_item?: string
+  notes?: string
+  occurred_date: string
+}
+
+export async function createOutflow(payload: CreateOutflowPayload): Promise<{ id: string; status: string }> {
+  const res = await api.post<{ id: string; status: string }>('/materials/outflows', payload)
+  return res.data
+}
+
+export async function reverseOutflow(
+  id: string,
+  payload: { reason_note?: string; occurred_date?: string } = {}
+): Promise<{ id: string; status: string }> {
+  const res = await api.post<{ id: string; status: string }>(`/materials/outflows/${id}/reverse`, payload)
+  return res.data
+}
+
+// ---------------------------------------------------------------------
+// Inventory + Ledger
+// ---------------------------------------------------------------------
+
+export interface InventoryFilters {
+  project_id?: string
+  site_id?: string
+  material_id?: string
+}
+
+export async function fetchInventory(filters: InventoryFilters = {}): Promise<MaterialStock[]> {
+  const res = await api.get<MaterialStock[]>('/materials/inventory', { params: filters })
+  return res.data
+}
+
+export async function fetchLedger(
+  siteId: string,
+  materialId: string,
+  params: { limit?: number; offset?: number } = {}
+): Promise<LedgerResponse> {
+  const res = await api.get<LedgerResponse>(`/materials/ledger/${siteId}/${materialId}`, { params })
+  return res.data
+}
+
+// Reasons that require ADMIN/PROJECT_MANAGER to submit — see backend
+// authorization rules on POST /materials/inflows and /materials/outflows.
+export const ADJUSTMENT_REASONS = new Set(['ADJUSTMENT_IN', 'ADJUSTMENT_OUT'])
+
+export const INFLOW_REASONS: Array<{ value: InflowReason; label: string }> = [
+  { value: 'RECEIVED', label: 'Received' },
+  { value: 'TRANSFER_IN', label: 'Transfer In' },
+  { value: 'RETURN_IN', label: 'Return In' },
+  { value: 'ADJUSTMENT_IN', label: 'Adjustment In' },
+]
+
+export const OUTFLOW_REASONS: Array<{ value: OutflowReason; label: string }> = [
+  { value: 'CONSUMED', label: 'Consumed' },
+  { value: 'TRANSFER_OUT', label: 'Transfer Out' },
+  { value: 'RETURN_TO_VENDOR', label: 'Return To Vendor' },
+  { value: 'WASTAGE', label: 'Wastage' },
+  { value: 'ADJUSTMENT_OUT', label: 'Adjustment Out' },
+]

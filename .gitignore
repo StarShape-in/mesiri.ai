@@ -29,6 +29,7 @@ uv.lock
 
 # Build artifacts
 build/
+.expo/
 
 # IDE
 .vscode/
