@@ -22,7 +22,6 @@ Platform-admin only. Two capabilities:
 from __future__ import annotations
 
 import re
-import time
 import uuid
 from datetime import UTC, datetime
 
@@ -299,7 +298,7 @@ def _workflow_infos() -> list[WorkflowGraphInfo]:
     semantic_by_event: dict[CanonicalEventType, SemanticType] = {
         e: s for s, e in _SIMPLE_EVENT_TYPE.items()
     }
-    for direction, e in _MATERIAL_DIRECTION_EVENT_TYPE.items():
+    for e in _MATERIAL_DIRECTION_EVENT_TYPE.values():
         semantic_by_event[e] = SemanticType.MATERIAL_UPDATE
 
     examples = _example_messages_by_workflow()
