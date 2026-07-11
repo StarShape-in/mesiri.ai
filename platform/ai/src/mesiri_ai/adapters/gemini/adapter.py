@@ -34,7 +34,7 @@ _VISION_PROMPT = (
 _EXTRACTION_PROMPT = (
     "Extract structured construction data from the text. Return strict JSON with "
     'keys: "semantic_type" (expense|equipment_usage|material_update|labour_update|'
-    'general_site_update|general_question|unknown), "fields" (object), '
+    'general_site_update|general_question|whoami_question|unknown), "fields" (object), '
     '"missing_fields" (array), "field_confidences" (object of field->0..1). '
     "Never invent values.\n\n"
     "Field schema per semantic_type (only include keys you actually found):\n"
@@ -48,7 +48,8 @@ _EXTRACTION_PROMPT = (
     '(e.g. "20 bags of cement used for the foundation").\n'
     "- labour_update: headcount, trade, hours, contractor\n"
     "- general_site_update: summary, activity, location, weather\n"
-    "- general_question: question, topic"
+    "- general_question: question, topic\n"
+    "- whoami_question: question"
 )
 
 

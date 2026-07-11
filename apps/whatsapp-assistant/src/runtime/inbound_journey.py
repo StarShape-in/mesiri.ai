@@ -23,12 +23,11 @@ from channel.replies import (
     render_understanding_failed_reply,
     render_unsupported_reply,
 )
-from context.live_identity import whoami_reply
 from context.resolver import ContextResolver
 from context.runtime import log_resolved_context
 from interactions.handler import InteractionHandler
 from interactions.response_handler import render_workflow_run_reply
-from mesiri_contracts.assistant.enums import SemanticType
+from mesiri_contracts.assistant.canonical_event import CanonicalEventType
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage
 from mesiri_contracts.assistant.planner_decision import PlannerDecisionType
 from mesiri_contracts.assistant.understanding_result import UnderstandingResult
@@ -184,27 +183,13 @@ async def process_inbound_message(
     # caller didn't wire one in (e.g. some tests), in which case this simply
     # doesn't fire.
     #
-    # Reads understanding.semantic_type -- set deterministically by
-    # understanding/pipeline.py's own is_whoami_trigger check -- rather than
-    # re-running that classifier here on raw text. Two independent copies of
     # "which text field do I check" is exactly what caused a real bug (the
     # duplicate here checked transcript, the original-language text, instead
     # of normalized_text, the translation); reading Understanding's own
     # answer makes that whole bug class structurally impossible, not just
     # fixed for today.
-    if actor is not None:
-        if understanding.semantic_type is SemanticType.WHOAMI_QUESTION:
-            reply_text = whoami_reply(actor)
-            await send_text(message.sender.wa_id, reply_text)
-            await _safe(mlog.log_reply(correlation_id=correlation_id, reply=reply_text))
-            return JourneyResult(
-                understanding=understanding,
-                resolved_context=None,
-                canonical_event=None,
-                planner_decision=None,
-                workflow_run=None,
-                workflow_resume=None,
-            )
+    # Note: WHOAMI_QUESTION fast-path has been removed to allow a full 
+    # LangGraph workflow to process identity lookups with AI-generated replies.
 
     # --- Slow-path interaction dispatch (correction / confirm / reject from classifier) ---
     workflow_resume: WorkflowResumeResult | None = None
@@ -264,6 +249,19 @@ async def process_inbound_message(
         t0 = time.perf_counter()
         try:
             canonical_event = build_canonical_event(understanding, resolved)
+            
+            # Inject the loaded actor profile into the canonical event so the 
+            # WHO_AM_I workflow has the data it needs to generate a reply
+            # without breaking the rule against workflows querying the database.
+            if canonical_event.event_type is CanonicalEventType.IDENTITY_LOOKUP_REQUESTED and actor is not None:
+                canonical_event.fields["actor_profile"] = {
+                    "full_name": actor.full_name,
+                    "role": actor.role,
+                    "org_name": actor.org_name,
+                    "projects": [p.model_dump() for p in actor.projects] if actor.projects else [],
+                    "sites": [s.model_dump() for s in actor.sites] if actor.sites else [],
+                }
+
             if context_debug:
                 log_canonical_event(canonical_event)
             await _safe(tlog.log_stage(

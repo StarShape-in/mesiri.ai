@@ -18,4 +18,5 @@ WORKFLOW_KEY_BY_EVENT: dict[CanonicalEventType, WorkflowKey] = {
     CanonicalEventType.EQUIPMENT_USAGE_REQUESTED: WorkflowKey.EQUIPMENT_USAGE,
     CanonicalEventType.LABOUR_ATTENDANCE_REQUESTED: WorkflowKey.LABOUR_ATTENDANCE,
     CanonicalEventType.GENERAL_SITE_UPDATE_REQUESTED: WorkflowKey.SITE_UPDATE,
+    CanonicalEventType.IDENTITY_LOOKUP_REQUESTED: WorkflowKey.WHO_AM_I,
 }
