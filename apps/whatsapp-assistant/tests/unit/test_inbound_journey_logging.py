@@ -298,7 +298,6 @@ async def test_no_loggers_does_not_break():
 
     assert isinstance(result.understanding, UnderstandingResult)
 
-
 async def test_voice_whoami_is_answered_without_extraction():
     """"njaan aara" (or any spoken phrasing Sarvam translates to a recognized
     who-am-i phrase) must be answered — checked post-transcription since
