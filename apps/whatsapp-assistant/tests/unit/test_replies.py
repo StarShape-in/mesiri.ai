@@ -12,6 +12,8 @@ from channel.replies import (
     render_category_prompt,
     render_clarify_reply,
     render_direct_reply,
+    render_no_projects_reply,
+    render_project_picker,
     render_understanding_failed_reply,
     render_unsupported_reply,
 )
@@ -158,3 +160,23 @@ def test_unsupported_is_distinct_from_not_understood():
     message sends them rephrasing a message that was never the problem."""
     assert render_unsupported_reply() != render_understanding_failed_reply()
     assert "couldn't make out" not in render_unsupported_reply()
+
+
+def test_project_picker_lists_every_project_with_prefixed_row_ids():
+    reply = render_project_picker(
+        [("prj_1", "Site A", "Kochi"), ("prj_2", "Site B", None)]
+    )
+    assert reply.list_rows is not None
+    assert [row.id for row in reply.list_rows] == ["proj_prj_1", "proj_prj_2"]
+    assert [row.title for row in reply.list_rows] == ["Site A", "Site B"]
+
+
+def test_project_picker_caps_at_ten_rows():
+    projects = [(f"prj_{i}", f"Project {i}", None) for i in range(15)]
+    reply = render_project_picker(projects)
+    assert reply.list_rows is not None
+    assert len(reply.list_rows) == 10
+
+
+def test_no_projects_reply_is_distinct_from_the_picker():
+    assert render_no_projects_reply() != render_project_picker([]).text

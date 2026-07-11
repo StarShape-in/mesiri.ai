@@ -21,14 +21,19 @@ from channel.replies import (
     ReplySpec,
     render_clarify_reply,
     render_direct_reply,
+    render_no_projects_reply,
+    render_project_picker,
     render_understanding_failed_reply,
     render_unsupported_reply,
 )
 from context.resolver import ContextResolver
 from context.runtime import log_resolved_context
 from interactions.handler import InteractionHandler
+from interactions.pending_report import PendingReportStore
 from interactions.response_handler import render_workflow_run_reply
 from mesiri_contracts.assistant.canonical_event import CanonicalEventType
+from mesiri_contracts.assistant.canonical_event import IntentCompleteness as _IntentCompleteness
+from mesiri_contracts.assistant.enums import InputModality
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage
 from mesiri_contracts.assistant.planner_decision import PlannerDecisionType
 from mesiri_contracts.assistant.understanding_result import UnderstandingResult
@@ -39,6 +44,7 @@ from planner import Planner, log_planner_decision
 from runtime.inventory_query import MaterialInventoryQueryService
 from runtime.logging_ports import MessageLogger, TraceLogger
 from runtime.noop_loggers import NoopMessageLogger, NoopTraceLogger
+from runtime.reply_dispatch import send_reply_spec
 from understanding.pipeline import UnderstandingPipeline
 from workflows import (
     WorkflowResumeResult,
@@ -145,6 +151,7 @@ async def process_inbound_message(
     actor: ActorIdentity | None = None,
     inventory_query: MaterialInventoryQueryService | None = None,
     semantic_hint: str | None = None,
+    pending_report_store: PendingReportStore | None = None,
 ) -> JourneyResult:
     mlog: MessageLogger = message_logger or NoopMessageLogger()
     tlog: TraceLogger = trace_logger or NoopTraceLogger()
@@ -247,6 +254,7 @@ async def process_inbound_message(
     resolved: ResolvedContextV2 | None = None
     canonical_event: CanonicalEventV2 | None = None
     planner_decision: PlannerDecisionV2 | None = None
+    project_picker_reply: ReplySpec | None = None
 
     if result.is_ok:
         resolved = result.unwrap()
@@ -312,54 +320,47 @@ async def process_inbound_message(
             await _safe(mlog.mark_failed(correlation_id=correlation_id, error_code=type(exc).__name__))
             raise
 
-        # --- Planner stage ---
-        t0 = time.perf_counter()
-        try:
-            planner_decision = planner.decide(canonical_event)
-            if context_debug:
-                log_planner_decision(planner_decision)
-            await _safe(tlog.log_stage(
-                correlation_id=correlation_id,
-                stage="planner",
-                stage_payload=planner_decision.model_dump(mode="json"),
-                duration_ms=int((time.perf_counter() - t0) * 1000),
-                succeeded=True,
-            ))
-        except Exception as exc:
-            await _safe(tlog.log_stage(
-                correlation_id=correlation_id,
-                stage="planner",
-                stage_payload=None,
-                duration_ms=int((time.perf_counter() - t0) * 1000),
-                succeeded=False,
-                error_code=type(exc).__name__,
-                error_message=str(exc),
-            ))
-            await _safe(mlog.mark_failed(correlation_id=correlation_id, error_code=type(exc).__name__))
-            raise
+        # --- Project-selection gate ---
+        # A report can be otherwise complete (material_name/quantity/unit all
+        # present -> ACTIONABLE) but still have no project attached -- the
+        # sender has access to more than one project and none is active/
+        # default (see context/resolver.py's single-project convenience,
+        # which only auto-picks when there's exactly one). Recording it
+        # anyway would silently attach it to the wrong project, or fail late
+        # at domain validation after the user already tapped Yes (the
+        # original bug report this fixes). Ask which project instead, and
+        # hold the report so the tap can resume it with project_id filled in.
+        if (
+            canonical_event.completeness is _IntentCompleteness.ACTIONABLE
+            and canonical_event.project_id is None
+            and pending_report_store is not None
+        ):
+            if actor is not None and actor.projects:
+                await pending_report_store.set_pending(user_id=actor_user_id, event=canonical_event)
+                project_picker_reply = render_project_picker(
+                    [(p.id, p.name, p.location) for p in actor.projects]
+                )
+            else:
+                project_picker_reply = ReplySpec(text=render_no_projects_reply())
 
-        if planner_decision.decision_type is PlannerDecisionType.START_WORKFLOW:
-            # --- Workflow stage ---
+        if project_picker_reply is None:
+            # --- Planner stage ---
             t0 = time.perf_counter()
             try:
-                workflow_run = await workflow_runtime.start(planner_decision, canonical_event)
+                planner_decision = planner.decide(canonical_event)
                 if context_debug:
-                    log_workflow_run(workflow_run)
+                    log_planner_decision(planner_decision)
                 await _safe(tlog.log_stage(
                     correlation_id=correlation_id,
-                    stage="workflow",
-                    stage_payload={
-                        "status": workflow_run.status.value,
-                        "workflow_key": workflow_run.workflow_key.value,
-                        "workflow_instance_id": workflow_run.workflow_instance_id,
-                    },
+                    stage="planner",
+                    stage_payload=planner_decision.model_dump(mode="json"),
                     duration_ms=int((time.perf_counter() - t0) * 1000),
                     succeeded=True,
                 ))
             except Exception as exc:
                 await _safe(tlog.log_stage(
                     correlation_id=correlation_id,
-                    stage="workflow",
+                    stage="planner",
                     stage_payload=None,
                     duration_ms=int((time.perf_counter() - t0) * 1000),
                     succeeded=False,
@@ -368,6 +369,37 @@ async def process_inbound_message(
                 ))
                 await _safe(mlog.mark_failed(correlation_id=correlation_id, error_code=type(exc).__name__))
                 raise
+
+            if planner_decision.decision_type is PlannerDecisionType.START_WORKFLOW:
+                # --- Workflow stage ---
+                t0 = time.perf_counter()
+                try:
+                    workflow_run = await workflow_runtime.start(planner_decision, canonical_event)
+                    if context_debug:
+                        log_workflow_run(workflow_run)
+                    await _safe(tlog.log_stage(
+                        correlation_id=correlation_id,
+                        stage="workflow",
+                        stage_payload={
+                            "status": workflow_run.status.value,
+                            "workflow_key": workflow_run.workflow_key.value,
+                            "workflow_instance_id": workflow_run.workflow_instance_id,
+                        },
+                        duration_ms=int((time.perf_counter() - t0) * 1000),
+                        succeeded=True,
+                    ))
+                except Exception as exc:
+                    await _safe(tlog.log_stage(
+                        correlation_id=correlation_id,
+                        stage="workflow",
+                        stage_payload=None,
+                        duration_ms=int((time.perf_counter() - t0) * 1000),
+                        succeeded=False,
+                        error_code=type(exc).__name__,
+                        error_message=str(exc),
+                    ))
+                    await _safe(mlog.mark_failed(correlation_id=correlation_id, error_code=type(exc).__name__))
+                    raise
     else:
         error_code = result.error.error_code if result.error else "unknown"
         await _safe(tlog.log_stage(
@@ -388,32 +420,20 @@ async def process_inbound_message(
     # workflow_resume's own reply was already sent and logged earlier, at the
     # slow-path interaction dispatch above -- _render_reply returns None for
     # that case specifically so it isn't sent (or logged) a second time here.
-    reply = _render_reply(workflow_run, workflow_resume, planner_decision, resolved)
+    # project_picker_reply, when set, always wins: the report is being held
+    # pending a project choice, so nothing from planner/workflow ran this turn.
+    reply = project_picker_reply or _render_reply(
+        workflow_run, workflow_resume, planner_decision, resolved
+    )
 
     if reply is not None:
-        if reply.buttons and send_button is not None:
-            await send_button(message.sender.wa_id, body=reply.text, buttons=reply.buttons)
-        elif reply.buttons:
-            # No button-sending capability wired -- degrade gracefully to
-            # plain text rather than dropping the confirmation prompt.
-            # Production always wires send_button; this is not the primary UX.
-            options = " / ".join(row.title for row in reply.buttons)
-            await send_text(message.sender.wa_id, f"{reply.text}\n\nReply {options}")
-        elif reply.list_rows and send_list is not None:
-            await send_list(
-                message.sender.wa_id,
-                body=reply.text,
-                button_label=reply.list_button_label or "Choose one",
-                rows=reply.list_rows,
-            )
-        elif reply.list_rows:
-            # No list-sending capability wired (e.g. a caller that only needs
-            # plain text) -- degrade gracefully rather than dropping the menu.
-            # Production always wires send_list; this is not the primary UX.
-            options = "\n".join(f"  • {row.title}" for row in reply.list_rows)
-            await send_text(message.sender.wa_id, f"{reply.text}\n{options}")
-        else:
-            await send_text(message.sender.wa_id, reply.text)
+        await send_reply_spec(
+            reply,
+            message.sender.wa_id,
+            send_text=send_text,
+            send_list=send_list,
+            send_button=send_button,
+        )
         await _safe(mlog.log_reply(correlation_id=correlation_id, reply=reply.text))
 
     await _safe(mlog.mark_completed(correlation_id=correlation_id))
@@ -426,3 +446,49 @@ async def process_inbound_message(
         workflow_run=workflow_run,
         workflow_resume=workflow_resume,
     )
+
+
+_PROJECT_ROW_PREFIX = "proj_"
+
+
+async def resume_pending_report_with_project(
+    message: NormalizedMessage,
+    actor_user_id: str,
+    *,
+    pending_report_store: PendingReportStore,
+    planner: Planner,
+    workflow_runtime: WorkflowRuntime,
+) -> ReplySpec | None:
+    """Resume a report that was held by the project-selection gate above, now
+    that the user tapped which project it belongs to.
+
+    ``actor_user_id`` is the resolved canonical user_id (the same key the
+    gate stored the pending report under) -- not message.sender.wa_id, which
+    is the raw phone number the identity gate has already resolved past by
+    the time this runs.
+
+    Returns None for anything that isn't a "proj_*" list-row tap, so the
+    caller falls through to the normal journey exactly like the other
+    fast-path checks (category tap, greeting, whoami).
+    """
+    if message.modality is not InputModality.INTERACTIVE:
+        return None
+    row_id = message.metadata.get("interactive_reply_id")
+    if not row_id or not row_id.startswith(_PROJECT_ROW_PREFIX):
+        return None
+
+    event = await pending_report_store.pop_pending(user_id=actor_user_id)
+    if event is None:
+        return ReplySpec(
+            text="That selection expired — please resend your report."
+        )
+
+    project_id = row_id.removeprefix(_PROJECT_ROW_PREFIX)
+    event = event.model_copy(update={"project_id": project_id})
+
+    decision = planner.decide(event)
+    workflow_run: WorkflowRunResult | None = None
+    if decision.decision_type is PlannerDecisionType.START_WORKFLOW:
+        workflow_run = await workflow_runtime.start(decision, event)
+
+    return _render_reply(workflow_run, None, decision, None)

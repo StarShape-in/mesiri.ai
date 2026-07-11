@@ -115,6 +115,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from context.runtime import build_context_resolver
     from interactions import build_interaction_handler
     from interactions.category_hint import CategoryHintStore
+    from interactions.pending_report import PendingReportStore
     from mesiri.application.materials.dispatcher import MaterialExecutionDispatcher
     from mesiri.application.materials.handlers import ExecuteConfirmedMaterialActionHandler
     from mesiri.bootstrap.settings import get_settings as _get_backend_settings
@@ -124,7 +125,8 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         PostgresMaterialExecutionRepository,
     )
     from planner import Planner
-    from runtime.inbound_journey import process_inbound_message
+    from runtime.inbound_journey import process_inbound_message, resume_pending_report_with_project
+    from runtime.reply_dispatch import send_reply_spec
     from understanding.runtime import build_pipeline
     from workflows import WorkflowRegistry, WorkflowRuntime
 
@@ -149,6 +151,10 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     # Ephemeral category-tap hint (see interactions/category_hint.py) -- same
     # redis_client as the active context store, never authoritative.
     category_hint_store = CategoryHintStore(redis_client)
+    # Holds a report awaiting a project pick (see interactions/pending_report.py
+    # and runtime/inbound_journey.py's project-selection gate) -- same
+    # redis_client, same never-authoritative principle.
+    pending_report_store = PendingReportStore(redis_client)
 
     # M8: the one transaction Material command execution runs in. connect()/
     # disconnect() happen in the lifespan handler (runtime/lifecycle.py), same
@@ -338,6 +344,31 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             )
             return
 
+        # A tap on the project-picker list sent by the project-selection gate
+        # (runtime/inbound_journey.py, when a report was otherwise complete
+        # but no project could be resolved) -- resumes the held report with
+        # the chosen project_id and runs planner/workflow directly, same
+        # principle as the other interactive fast paths above.
+        project_reply = await resume_pending_report_with_project(
+            message,
+            ctx.user_id,
+            pending_report_store=pending_report_store,
+            planner=planner,
+            workflow_runtime=workflow_runtime,
+        )
+        if project_reply is not None:
+            await send_reply_spec(
+                project_reply,
+                wa_id,
+                send_text=sender.send_text,
+                send_list=sender.send_list,
+                send_button=sender.send_button,
+            )
+            await message_logger.log_reply(
+                correlation_id=message.correlation_id, reply=project_reply.text
+            )
+            return
+
         semantic_hint = await category_hint_store.pop_hint(user_id=ctx.user_id)
         await process_inbound_message(
             message,
@@ -356,6 +387,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             message_logger=message_logger,
             trace_logger=trace_logger,
             inventory_query=inventory_query,
+            pending_report_store=pending_report_store,
         )
 
     receiver = WhatsAppReceiver(

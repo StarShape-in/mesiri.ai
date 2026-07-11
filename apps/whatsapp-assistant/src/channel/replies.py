@@ -149,6 +149,29 @@ def render_clarify_reply(decision: PlannerDecisionV2) -> str:
     return f"Almost there — I still need {asked}."
 
 
+def render_project_picker(projects: list[tuple[str, str, str | None]]) -> ReplySpec:
+    """Ask which project a report belongs to. ``projects`` is a list of
+    (project_id, name, location) -- plain tuples, not backend.ports.ProjectSummary,
+    so this module stays within the channel/ dependency rule (mesiri_contracts.*
+    only). Row id is "proj_{project_id}", matched verbatim by the caller that
+    resumes the pending report once one is tapped."""
+    rows = tuple(
+        ListRow(f"proj_{project_id}", name, location or "")
+        for project_id, name, location in projects[:10]
+    )
+    return ReplySpec(
+        text="Which project is this for?",
+        list_button_label="Choose project",
+        list_rows=rows,
+    )
+
+
+def render_no_projects_reply() -> str:
+    """The sender has no project to attach a report to at all -- distinct from
+    the picker case so the message doesn't imply tapping will help."""
+    return "You don't have any projects assigned yet. Ask your admin to add you to one first."
+
+
 def render_greeting_menu(*, timezone: str | None = None, is_first_message: bool = False) -> ReplySpec:
     """The greeting + tappable category menu. Decision-independent (no
     PlannerDecisionV2 needed) so it can be called from two places: the AI
