@@ -41,13 +41,26 @@ class ListRow:
 class ReplySpec:
     """What to send back, decoupled from how. `list_rows` is only ever set
     for the category-menu reply (see render_direct_reply's UNRECOGNIZED
-    case); every other reply is plain text with `list_rows=None`. The
-    caller (runtime/inbound_journey.py) picks send_text vs send_list based
-    on which is populated -- render_* functions never touch the transport."""
+    case); `buttons` is only ever set for a workflow confirmation prompt
+    (see runtime/inbound_journey.py's _render_reply). At most one of the two
+    is ever populated. The caller (runtime/inbound_journey.py) picks
+    send_text vs send_list vs send_button based on which is set --
+    render_* functions never touch the transport."""
 
     text: str
     list_button_label: str | None = None
     list_rows: tuple[ListRow, ...] | None = None
+    buttons: tuple[ListRow, ...] | None = None
+
+
+# The two reply buttons shown under every "Confirm this record?" prompt.
+# Tapping one normalizes to NormalizedMessage.text = the title ("Yes"/"No"),
+# which interactions/classifier.py already recognizes -- no new classification
+# logic needed, only the send side.
+CONFIRM_BUTTONS: tuple[ListRow, ...] = (
+    ListRow("confirm_yes", "Yes"),
+    ListRow("confirm_no", "No"),
+)
 
 
 # The four v1 domain modules, per the locked architecture scope (Material ·

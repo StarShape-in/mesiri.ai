@@ -62,22 +62,33 @@ _USED_SYNONYMS = {
 
 
 def _normalize_material_fields(fields: dict) -> dict:
-    """Map common provider aliases onto canonical material field names."""
+    """Map common provider aliases onto canonical material field names.
+
+    Every alias key consumed here is popped from the result, not just copied --
+    otherwise both the raw alias (``material``, ``event``) and the canonical
+    name (``material_name``, ``direction``) end up in the same dict and both
+    show up, duplicated, in the confirmation text the user sees."""
     out = dict(fields)
-    if not out.get("material_name") and out.get("material"):
-        out["material_name"] = out["material"]
+    material_alias = out.pop("material", None)
+    if not out.get("material_name") and material_alias:
+        out["material_name"] = material_alias
 
     direction = str(out.get("direction", "")).strip().lower()
+    # The provider may have put a synonym directly in `direction`, or used a
+    # different key entirely (`event`/`action`/`status`) instead of the exact
+    # "received"/"used" the extraction prompt asks for -- check all of them
+    # for known vocabulary before giving up as unrecognized. Popped either
+    # way: an alias key that didn't resolve to a known direction is noise,
+    # not a field the confirmation prompt should ever display.
+    event_alias = out.pop("event", None)
+    action_alias = out.pop("action", None)
+    status_alias = out.pop("status", None)
     if direction not in ("received", "used"):
-        # The provider may have put a synonym directly in `direction`, or used
-        # a different key entirely (`event`/`action`/`status`) instead of the
-        # exact "received"/"used" the extraction prompt asks for -- check all
-        # of them for known vocabulary before giving up as unrecognized.
         candidates = (
             direction,
-            str(out.get("event", "")).strip().lower(),
-            str(out.get("action", "")).strip().lower(),
-            str(out.get("status", "")).strip().lower(),
+            str(event_alias or "").strip().lower(),
+            str(action_alias or "").strip().lower(),
+            str(status_alias or "").strip().lower(),
         )
         for value in candidates:
             if value in _RECEIVED_SYNONYMS:

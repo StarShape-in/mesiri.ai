@@ -30,7 +30,10 @@ _EXTRACTION_PROMPT = (
     '"fields" (object of extracted values), '
     '"missing_fields" (array of expected-but-absent keys), '
     '"field_confidences" (object mapping each field to 0..1). '
-    "Never invent values; if unsure, omit or list under missing_fields.\n\n"
+    "Never invent values; if unsure, omit or list under missing_fields. quantity is "
+    'always a plain number: strip approximation words like "almost", "about", '
+    '"around", "roughly", "nearly" and extract the number stated (e.g. "almost 70 '
+    'bags" -> quantity 70).\n\n'
     "Field schema per semantic_type (only include keys you actually found):\n"
     "- expense: amount, currency, vendor, category, description, paid_to, occurred_on\n"
     "- equipment_usage: equipment_name, duration_hours, operator, activity\n"

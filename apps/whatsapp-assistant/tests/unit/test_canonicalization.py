@@ -78,6 +78,13 @@ def test_material_provider_aliases_normalize_to_receipt_actionable():
     assert event.completeness is IntentCompleteness.ACTIONABLE
     assert event.fields["material_name"] == "UltraTech cement"
     assert event.fields["direction"] == "received"
+    # The raw provider aliases must be popped, not just copied alongside the
+    # canonical names -- otherwise the confirmation prompt (which lists every
+    # field in event.fields) shows "material" and "material_name" as two
+    # separate, duplicated lines for the same value.
+    assert "material" not in event.fields
+    assert "event" not in event.fields
+    assert event.fields["direction"] == "received"
 
 
 def test_material_received_maps_to_receipt_requested_actionable():

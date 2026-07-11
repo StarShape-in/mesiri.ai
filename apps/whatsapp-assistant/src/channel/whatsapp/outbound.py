@@ -24,6 +24,8 @@ _LIST_BUTTON_MAX_CHARS = 20
 _LIST_ROW_TITLE_MAX_CHARS = 24
 _LIST_ROW_DESCRIPTION_MAX_CHARS = 72
 _LIST_MAX_ROWS = 10
+_REPLY_BUTTON_TITLE_MAX_CHARS = 20
+_REPLY_BUTTON_MAX_COUNT = 3
 
 
 class WhatsAppSender:
@@ -110,6 +112,49 @@ class WhatsAppSender:
         if footer:
             interactive["footer"] = {"text": footer}
 
+        return await self._send(to_wa_id, {"type": "interactive", "interactive": interactive})
+
+    async def send_button(
+        self,
+        to_wa_id: str,
+        *,
+        body: str,
+        buttons: list[ListRow],
+    ) -> bool:
+        """Send up to 3 tappable quick-reply buttons (e.g. Yes/No confirmation).
+
+        Returns True on success. Meta Cloud API limits: max 3 buttons,
+        20-char titles -- enforced here rather than trusted from the caller,
+        same reasoning as send_list.
+        """
+        if not buttons:
+            logger.error("send_button called with no buttons to %s", to_wa_id)
+            return False
+        if len(buttons) > _REPLY_BUTTON_MAX_COUNT:
+            logger.warning(
+                "send_button to %s had %d buttons, truncating to %d",
+                to_wa_id,
+                len(buttons),
+                _REPLY_BUTTON_MAX_COUNT,
+            )
+            buttons = buttons[:_REPLY_BUTTON_MAX_COUNT]
+
+        interactive: dict = {
+            "type": "button",
+            "body": {"text": body},
+            "action": {
+                "buttons": [
+                    {
+                        "type": "reply",
+                        "reply": {
+                            "id": button.id,
+                            "title": button.title[:_REPLY_BUTTON_TITLE_MAX_CHARS],
+                        },
+                    }
+                    for button in buttons
+                ]
+            },
+        }
         return await self._send(to_wa_id, {"type": "interactive", "interactive": interactive})
 
     async def _send(self, to_wa_id: str, message_fields: dict) -> bool:

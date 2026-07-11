@@ -16,6 +16,7 @@ from typing import Any
 from backend.ports import ActorIdentity
 from canonicalization import build_canonical_event, log_canonical_event
 from channel.replies import (
+    CONFIRM_BUTTONS,
     ListRow,
     ReplySpec,
     render_clarify_reply,
@@ -81,14 +82,23 @@ def _render_reply(
     no answer is indistinguishable from Mesiri being down.
 
     Only render_direct_reply's UNRECOGNIZED case ever sets list_rows on the
-    returned ReplySpec (the greeting/category menu) -- every other branch is
-    plain text, wrapped here so callers only ever handle one return shape.
+    returned ReplySpec (the greeting/category menu). STARTED and
+    BLOCKED_PENDING_CONFIRMATION are the only two statuses that are actually
+    asking the user to confirm something -- those get Yes/No buttons.
+    COMPLETED (who_am_i, inventory_query) is informational, nothing to
+    confirm, so it stays plain text. Every other branch is plain text too,
+    wrapped here so callers only ever handle one return shape.
     """
     if workflow_run is not None and workflow_run.status in (
         WorkflowRunStatus.STARTED,
-        WorkflowRunStatus.COMPLETED,
         WorkflowRunStatus.BLOCKED_PENDING_CONFIRMATION,
     ):
+        return ReplySpec(
+            text=render_workflow_run_reply(workflow_run, pending_prompt=workflow_run.pending_prompt),
+            buttons=CONFIRM_BUTTONS,
+        )
+
+    if workflow_run is not None and workflow_run.status is WorkflowRunStatus.COMPLETED:
         return ReplySpec(
             text=render_workflow_run_reply(workflow_run, pending_prompt=workflow_run.pending_prompt)
         )
@@ -128,6 +138,7 @@ async def process_inbound_message(
     interaction_handler: InteractionHandler,
     send_text: Callable[[str, str], Awaitable[Any]],
     send_list: Callable[[str, str, str, tuple[ListRow, ...]], Awaitable[Any]] | None = None,
+    send_button: Callable[[str, str, tuple[ListRow, ...]], Awaitable[Any]] | None = None,
     context_debug: bool = False,
     message_logger: MessageLogger | None = None,
     trace_logger: TraceLogger | None = None,
@@ -380,7 +391,15 @@ async def process_inbound_message(
     reply = _render_reply(workflow_run, workflow_resume, planner_decision, resolved)
 
     if reply is not None:
-        if reply.list_rows and send_list is not None:
+        if reply.buttons and send_button is not None:
+            await send_button(message.sender.wa_id, reply.text, reply.buttons)
+        elif reply.buttons:
+            # No button-sending capability wired -- degrade gracefully to
+            # plain text rather than dropping the confirmation prompt.
+            # Production always wires send_button; this is not the primary UX.
+            options = " / ".join(row.title for row in reply.buttons)
+            await send_text(message.sender.wa_id, f"{reply.text}\n\nReply {options}")
+        elif reply.list_rows and send_list is not None:
             await send_list(
                 message.sender.wa_id,
                 body=reply.text,

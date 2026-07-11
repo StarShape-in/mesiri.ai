@@ -37,7 +37,9 @@ _EXTRACTION_PROMPT = (
     'general_site_update|general_question|whoami_question|inventory_query|unknown), '
     '"fields" (object), "missing_fields" (array), '
     '"field_confidences" (object of field->0..1). '
-    "Never invent values.\n\n"
+    "Never invent values. quantity is always a plain number: strip approximation "
+    'words like "almost", "about", "around", "roughly", "nearly" and extract the '
+    'number stated (e.g. "almost 70 bags" -> quantity 70).\n\n'
     "Field schema per semantic_type (only include keys you actually found):\n"
     "- expense: amount, currency, vendor, category, description, paid_to, occurred_on\n"
     "- equipment_usage: equipment_name, duration_hours, operator, activity\n"

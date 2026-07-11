@@ -331,6 +331,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             interaction_handler=interaction_handler,
             send_text=sender.send_text,
             send_list=sender.send_list,
+            send_button=sender.send_button,
             context_debug=settings.context_debug,
             message_logger=message_logger,
             trace_logger=trace_logger,
