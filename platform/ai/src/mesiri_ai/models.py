@@ -23,6 +23,7 @@ class SpeechResult(BaseModel):
     transcript: str
     detected_language: str | None = None
     translated_text: str | None = None
+    provider: str | None = None
     model: str | None = None
     latency_ms: float | None = None
 
@@ -34,6 +35,7 @@ class TranslationResult(BaseModel):
     source_language: str | None = None
     detected_language: str | None = None
     target_language: str = "en"
+    provider: str | None = None
     model: str | None = None
     latency_ms: float | None = None
 
@@ -44,6 +46,7 @@ class VisionResult(BaseModel):
     document_classification: str | None = None
     description: str | None = None
     raw_fields: dict[str, Any] = Field(default_factory=dict)
+    provider: str | None = None
     model: str | None = None
     latency_ms: float | None = None
 
@@ -62,6 +65,7 @@ class ExtractionResult(BaseModel):
     missing_fields: list[str] = Field(default_factory=list)
     field_confidences: dict[str, float] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
+    provider: str | None = None
     model: str | None = None
     latency_ms: float | None = None
 

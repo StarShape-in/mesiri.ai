@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { LucideIcon } from 'lucide-react-native';
+import { useTheme, useStyles } from '../../src/theme';
 
 type EmptyStateProps = {
   message: string;
@@ -8,31 +9,34 @@ type EmptyStateProps = {
 };
 
 export function EmptyState({ message, Icon }: EmptyStateProps) {
+  const { theme } = useTheme();
+  const styles = useStyles(createStyles);
+
   return (
     <View style={styles.container}>
-      {Icon && <Icon size={24} color="#A3A3A3" strokeWidth={1.5} style={styles.icon} />}
+      {Icon && <Icon size={26} color={theme.colors.textMuted} strokeWidth={1.5} style={styles.icon} />}
       <Text style={styles.message}>{message}</Text>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: any) => StyleSheet.create({
   container: {
-    padding: 24,
+    padding: theme.spacing.space6,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#FAFAFA',
-    borderRadius: 14,
+    backgroundColor: theme.colors.backgroundSubtle,
+    borderRadius: theme.radius.lg,
     borderWidth: 1,
-    borderColor: 'rgba(15,15,15,0.04)',
+    borderColor: theme.colors.borderSubtle,
   },
   icon: {
-    marginBottom: 8,
+    marginBottom: theme.spacing.space2,
   },
   message: {
-    fontSize: 14,
-    color: '#737373',
-    fontWeight: '500',
+    fontSize: theme.typography.sizeSm,
+    color: theme.colors.textSecondary,
+    fontWeight: theme.typography.weightMedium,
     textAlign: 'center',
   },
 });

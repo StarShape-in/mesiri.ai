@@ -37,12 +37,14 @@ export function TimelineFilterChips({ activeKey, onChange }: TimelineFilterChips
 const createStyles = (theme: any) => StyleSheet.create({
   container: {
     paddingHorizontal: theme.spacing.space4,
-    paddingVertical: theme.spacing.space2,
-    gap: 8,
+    paddingVertical: theme.spacing.space3,
+    gap: 10,
   },
   chip: {
-    paddingHorizontal: theme.spacing.space3,
-    paddingVertical: 6,
+    minHeight: 36,
+    paddingHorizontal: theme.spacing.space4,
+    paddingVertical: 9,
+    justifyContent: 'center',
     borderRadius: theme.radius.full,
     borderWidth: 1,
     borderColor: theme.colors.borderDefault,
@@ -53,7 +55,7 @@ const createStyles = (theme: any) => StyleSheet.create({
     borderColor: theme.colors.textPrimary,
   },
   chipText: {
-    fontSize: 12,
+    fontSize: theme.typography.sizeSm,
     fontWeight: theme.typography.weightMedium,
     color: theme.colors.textSecondary,
   },

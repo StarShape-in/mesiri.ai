@@ -602,7 +602,8 @@ const createStyles = (theme: any) => StyleSheet.create({
   },
   contentContainer: {
     paddingHorizontal: theme.spacing.space4,
-    paddingBottom: 40,
+    paddingTop: theme.spacing.space2,
+    paddingBottom: 96,
   },
   fab: {
     position: 'absolute',

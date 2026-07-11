@@ -93,6 +93,14 @@ class OrganizationProvision(BaseModel):
     admin_password: str
 
 
+class OrgUserResponse(BaseModel):
+    id: uuid.UUID
+    full_name: str | None = None
+    email: str | None = None
+    role: str | None = None
+    whatsapp_number: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -121,6 +129,38 @@ async def list_organizations(_admin: dict = Depends(require_platform_admin)):
             status=row.status,
             created_at=row.created_at,
             updated_at=row.updated_at,
+        )
+        for row in rows
+    ]
+
+
+@router.get("/{org_id}/users", response_model=list[OrgUserResponse])
+async def list_organization_users(
+    org_id: uuid.UUID, _admin: dict = Depends(require_platform_admin)
+):
+    """Users belonging to one org — powers the "run as" picker in the control-plane
+    test harness (admin/system_graph_router.py). Only users with a
+    whatsapp_number can actually be simulated; the caller marks the rest as
+    untestable."""
+    engine = get_engine()
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            sa.select(
+                users_table.c.id,
+                users_table.c.full_name,
+                users_table.c.email,
+                users_table.c.role,
+                users_table.c.whatsapp_number,
+            ).where(users_table.c.organization_id == org_id)
+        )
+        rows = result.fetchall()
+    return [
+        OrgUserResponse(
+            id=row.id,
+            full_name=row.full_name,
+            email=row.email,
+            role=row.role,
+            whatsapp_number=row.whatsapp_number,
         )
         for row in rows
     ]

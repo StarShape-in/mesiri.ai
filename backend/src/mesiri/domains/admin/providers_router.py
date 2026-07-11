@@ -243,10 +243,19 @@ async def update_ai_config(
                     provider_id=provider, api_key=existing_key or "", base_url=secret.base_url
                 )
 
-    # 3. Invalidate Redis cache
+    # 3. Invalidate Redis cache. Best-effort: the DB write above already
+    # succeeded, so a cache-layer failure here must not surface as a 500 for
+    # a config save that actually went through.
     redis = _get_redis_client(request)
     if redis:
-        await redis.delete("mesiri:ai:config")
+        try:
+            await redis.delete("mesiri:ai:config")
+        except Exception:  # noqa: BLE001
+            import logging
+
+            logging.getLogger("mesiri.admin").warning(
+                "Failed to invalidate mesiri:ai:config cache", exc_info=True
+            )
 
     return {"status": "ok"}
 

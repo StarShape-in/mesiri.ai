@@ -14,6 +14,8 @@ from ..models import ExtractionResult
 
 @runtime_checkable
 class StructuredExtractionProvider(Protocol):
+    provider: str
+
     async def extract(
         self,
         text: str,

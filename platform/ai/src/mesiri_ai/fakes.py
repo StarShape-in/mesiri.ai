@@ -68,6 +68,8 @@ class FakeVisionProvider:
 
 
 class FakeExtractionProvider:
+    provider = "fake"
+
     def __init__(
         self,
         result: ExtractionResult | None = None,
@@ -93,6 +95,8 @@ class FakeExtractionProvider:
 
 
 class FakeTranslationProvider:
+    provider = "fake"
+
     def __init__(
         self,
         result: TranslationResult | None = None,

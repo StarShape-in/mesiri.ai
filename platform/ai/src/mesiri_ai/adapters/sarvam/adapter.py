@@ -89,6 +89,7 @@ class SarvamSpeechProvider:
             transcript=_field("transcript") or "",
             detected_language=_field("language_code"),
             translated_text=_field("transcript"),  # translate endpoint returns English
+            provider=self.provider,
             model=_TRANSLATE_MODEL,
             latency_ms=latency_ms,
         )
