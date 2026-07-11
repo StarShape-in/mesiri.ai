@@ -191,18 +191,20 @@ class WorkflowRuntime:
         # workflow. If one is pending, block the new one and re-show its prompt
         # rather than piling up ambiguous confirmations. (The partial unique index
         # in Postgres is the hard guarantee; this is the friendly pre-check.)
-        existing = await self._repo.get_awaiting_confirmation(event.user_id)
-        if existing is not None and existing.state.pending_prompt:
-            logger.info(
-                "workflow.blocked_pending_confirmation user=%s existing=%s",
-                event.user_id,
-                existing.state.workflow_instance_id,
-            )
-            return WorkflowRunResult.blocked_pending_confirmation(
-                workflow_key=workflow_key,
-                correlation_id=event.correlation_id,
-                pending_prompt=existing.state.pending_prompt,
-            )
+        # Informational workflows like WHO_AM_I are exempt.
+        if workflow_key is not WorkflowKey.WHO_AM_I:
+            existing = await self._repo.get_awaiting_confirmation(event.user_id)
+            if existing is not None and existing.state.pending_prompt:
+                logger.info(
+                    "workflow.blocked_pending_confirmation user=%s existing=%s",
+                    event.user_id,
+                    existing.state.workflow_instance_id,
+                )
+                return WorkflowRunResult.blocked_pending_confirmation(
+                    workflow_key=workflow_key,
+                    correlation_id=event.correlation_id,
+                    pending_prompt=existing.state.pending_prompt,
+                )
 
         # Look up the graph BEFORE minting any identity: an unmapped key must
         # never generate an orphaned workflow_instance_id.
