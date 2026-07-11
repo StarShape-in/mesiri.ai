@@ -21,7 +21,6 @@ import importlib.machinery
 import importlib.util
 import os
 import sys
-
 import sysconfig
 
 _stdlib_dir = sysconfig.get_path("stdlib")
