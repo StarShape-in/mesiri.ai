@@ -517,13 +517,14 @@ interaction_handler=InteractionHandler(_workflow_runtime()),
     send_text.assert_awaited_once_with(message.sender.wa_id, render_unsupported_reply())
 
 
-async def test_voice_reply_echoes_translation_instead_of_the_normal_reply():
-    """TEMPORARY (voice transcription testing): a voice message's reply is the
-    transcribed/translated text itself, not the normal templated reply --
-    even when that normal reply would have been NO_GRAPH (as it is here:
+async def test_voice_reply_gets_the_same_reply_a_text_message_would():
+    """Voice used to get a TEMPORARY override -- the raw transcript/translation
+    echoed back, never the real reply -- to make transcription itself directly
+    visible for testing. That override is gone now that voice is confirmed
+    solid: a voice message flows through _render_reply exactly like text does.
     MALAYALAM_JCB_SPEECH resolves to EQUIPMENT_USAGE, which has no fake graph
-    registered). Remove this test alongside the override in inbound_journey.py
-    once voice is confirmed solid.
+    registered here, so this is NO_GRAPH -- same outcome the TEXT/NO_GRAPH
+    test above asserts, just arriving via voice instead of text.
     """
     message = _message(
         modality=InputModality.VOICE,
@@ -556,4 +557,4 @@ interaction_handler=InteractionHandler(_workflow_runtime()),
     )
 
     assert result.understanding.translated_text == "The JCB ran for 4 hours"
-    assert sent_texts == [(message.sender.wa_id, "The JCB ran for 4 hours")]
+    assert sent_texts == [(message.sender.wa_id, render_unsupported_reply())]
