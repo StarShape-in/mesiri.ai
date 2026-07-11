@@ -1,5 +1,5 @@
-import { LayoutDashboard, Building2, LogOut } from 'lucide-react'
-import { NavLink } from 'react-router-dom'
+import { LayoutDashboard, Building2, LogOut, Users, ArrowLeft } from 'lucide-react'
+import { NavLink, Link, useLocation } from 'react-router-dom'
 import {
   Sidebar,
   SidebarContent,
@@ -25,26 +25,47 @@ type NavItem = {
    * entry to scopes where it makes sense (e.g. cross-project views only
    * make sense in Portfolio scope). */
   requiredScope?: ScopeKind
+  requiredRole?: string
 }
 
-const NAV_ITEMS: NavItem[] = [{ title: 'Overview', url: '/', icon: LayoutDashboard }]
+const NAV_ITEMS: NavItem[] = [
+  { title: 'Overview', url: '/', icon: LayoutDashboard },
+  { title: 'Projects & Sites', url: '/projects', icon: Building2, requiredRole: 'ADMIN' },
+  { title: 'Users', url: '/users', icon: Users, requiredRole: 'ADMIN' },
+]
 
 export function AppSidebar() {
   const { me } = useAuth()
   const allowed = useAllowedScopes()
 
   const visibleItems = NAV_ITEMS.filter(
-    (item) => !item.requiredScope || allowed.includes(item.requiredScope)
+    (item) =>
+      (!item.requiredScope || allowed.includes(item.requiredScope)) &&
+      (!item.requiredRole || me?.role === item.requiredRole)
   )
+
+  const location = useLocation()
+  const showBackButton = location.pathname.startsWith('/projects/') || location.pathname.startsWith('/users/')
 
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader>
-        <div className="flex items-center gap-2 px-2 py-1.5">
-          <Building2 className="size-5" />
-          <span className="font-semibold group-data-[collapsible=icon]:hidden">
-            {me?.organization_name ?? 'Mesiri'}
-          </span>
+        <div className="flex items-center justify-between px-2 py-1.5">
+          <div className="flex items-center gap-2">
+            <Building2 className="size-5" />
+            <span className="font-semibold group-data-[collapsible=icon]:hidden">
+              {me?.organization_name ?? 'Mesiri'}
+            </span>
+          </div>
+          {showBackButton && (
+            <Link
+              to={location.pathname.startsWith('/users/') ? '/users' : '/projects'}
+              className="text-muted-foreground hover:text-foreground transition-colors group-data-[collapsible=icon]:hidden size-7 flex items-center justify-center hover:bg-muted rounded"
+              title="Back"
+            >
+              <ArrowLeft className="size-4" />
+            </Link>
+          )}
         </div>
       </SidebarHeader>
       <SidebarContent>

@@ -8,6 +8,7 @@ import {
 import { Bar, BarChart, CartesianGrid, XAxis } from 'recharts'
 import { Activity, TrendingUp, Users } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { KpiCard } from '@/components/ui/kpi-card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -103,48 +104,34 @@ export default function Overview() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div>
-        <h2 className="text-lg font-semibold">Welcome back{me?.full_name ? `, ${me.full_name}` : ''}</h2>
-        <p className="text-sm text-muted-foreground">
-          {scope.mode === 'portfolio'
-            ? 'Organization-wide view across all projects.'
-            : scope.mode === 'project'
-              ? `Viewing ${scope.projectName}.`
-              : `Viewing ${scope.siteName} (${scope.projectName}).`}
-        </p>
-      </div>
-
       <div className="grid gap-4 md:grid-cols-3">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Activity</CardTitle>
-            <Activity className="size-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="font-mono text-2xl font-bold tabular-nums">109</div>
-            <p className="text-xs text-muted-foreground">this week</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Growth</CardTitle>
-            <TrendingUp className="size-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="font-mono text-2xl font-bold tabular-nums">+12%</div>
-            <p className="text-xs text-muted-foreground">vs last week</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Team</CardTitle>
-            <Users className="size-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="font-mono text-2xl font-bold tabular-nums">{me?.organization_name ? 1 : 0}</div>
-            <p className="text-xs text-muted-foreground">organization</p>
-          </CardContent>
-        </Card>
+        <KpiCard
+          title="Activity"
+          value="109"
+          description="this week"
+          icon={<Activity className="size-4" />}
+          trend="up"
+          trendValue="+12.3%"
+          chartData={[15, 24, 21, 32, 28, 41, 38, 48, 44, 52]}
+        />
+        <KpiCard
+          title="Growth"
+          value="+12%"
+          description="vs last week"
+          icon={<TrendingUp className="size-4" />}
+          trend="up"
+          trendValue="+4.1%"
+          chartData={[12, 14, 13, 16, 15, 18, 17, 20, 19, 22]}
+        />
+        <KpiCard
+          title="Team"
+          value={me?.organization_name ? 1 : 0}
+          description="organization"
+          icon={<Users className="size-4" />}
+          trend="neutral"
+          trendValue="stable"
+          chartData={[1, 1, 1, 1, 1, 1, 1, 1, 1, 1]}
+        />
       </div>
 
       <Card>

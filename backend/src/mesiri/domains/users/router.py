@@ -328,3 +328,37 @@ async def update_user_access(
         .values(access_policy=policy.model_dump())
     )
     return policy
+
+
+@router.delete("/{user_id}", status_code=204)
+async def delete_user(
+    user_id: uuid.UUID,
+    admin: dict = Depends(require_admin),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    org_id = admin.get("org")
+    result = await conn.execute(
+        sa.select(_users.c.id).where(
+            _users.c.id == user_id,
+            _users.c.organization_id == org_id,
+        )
+    )
+    if result.first() is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    try:
+        await conn.execute(
+            _users.delete().where(
+                _users.c.id == user_id,
+                _users.c.organization_id == org_id,
+            )
+        )
+    except Exception as exc:
+        msg = str(exc).lower()
+        if "foreign key" in msg or "violates" in msg or "constraint" in msg or "23503" in msg:
+            raise HTTPException(
+                status_code=409,
+                detail="User cannot be deleted because they own historical records. Please deactivate or suspend their account instead.",
+            ) from exc
+        raise HTTPException(status_code=500, detail=f"Database error: {str(exc)}") from exc
+

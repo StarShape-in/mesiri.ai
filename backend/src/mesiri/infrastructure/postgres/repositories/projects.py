@@ -36,6 +36,10 @@ class PostgresProjectRepository(ProjectRepository):
             sa.Column("status", sa.String),
             sa.Column("progress", sa.Integer),
             sa.Column("open_issues", sa.Integer),
+            sa.Column("reporting_timezone", sa.String),
+            sa.Column("reporting_cutoff_time", sa.String),
+            sa.Column("auto_generate_dpr", sa.Boolean),
+            sa.Column("required_report_types", sa.JSON),
         )
 
     async def list_projects_by_scope(
@@ -71,6 +75,10 @@ class PostgresProjectRepository(ProjectRepository):
             self._projects.c.status,
             self._projects.c.progress,
             self._projects.c.open_issues,
+            self._projects.c.reporting_timezone,
+            self._projects.c.reporting_cutoff_time,
+            self._projects.c.auto_generate_dpr,
+            self._projects.c.required_report_types,
         ).where(self._projects.c.organization_id == organization_id)
 
         # Add project ID filter for custom access scope
@@ -97,6 +105,10 @@ class PostgresProjectRepository(ProjectRepository):
                 status=row.status or "on_track",
                 progress=row.progress or 0,
                 open_issues=row.open_issues or 0,
+                reporting_timezone=row.reporting_timezone or "UTC",
+                reporting_cutoff_time=row.reporting_cutoff_time or "18:00",
+                auto_generate_dpr=bool(row.auto_generate_dpr),
+                required_report_types=row.required_report_types or None,
             )
             for row in rows
         ]
