@@ -392,7 +392,7 @@ async def process_inbound_message(
 
     if reply is not None:
         if reply.buttons and send_button is not None:
-            await send_button(message.sender.wa_id, reply.text, reply.buttons)
+            await send_button(message.sender.wa_id, body=reply.text, buttons=reply.buttons)
         elif reply.buttons:
             # No button-sending capability wired -- degrade gracefully to
             # plain text rather than dropping the confirmation prompt.

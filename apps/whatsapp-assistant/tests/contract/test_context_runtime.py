@@ -265,7 +265,7 @@ async def test_inbound_journey_starts_workflow_and_replies_with_confirmation_pro
     async def capture_send_text(wa_id: str, body: str) -> None:
         sent_texts.append((wa_id, body))
 
-    async def capture_send_button(wa_id: str, body: str, buttons: tuple) -> None:
+    async def capture_send_button(wa_id: str, *, body: str, buttons: tuple) -> None:
         sent_buttons.append((wa_id, body, buttons))
 
     result = await process_inbound_message(
@@ -361,7 +361,7 @@ async def test_inbound_journey_blocks_new_workflow_while_confirmation_pending():
     async def capture_send_text(wa_id: str, body: str) -> None:
         sent_texts.append(body)
 
-    async def capture_send_button(wa_id: str, body: str, buttons: tuple) -> None:
+    async def capture_send_button(wa_id: str, *, body: str, buttons: tuple) -> None:
         sent_buttons.append((wa_id, body, buttons))
 
     result = await process_inbound_message(
