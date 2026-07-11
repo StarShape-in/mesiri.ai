@@ -33,4 +33,12 @@ class SemanticType(str, Enum):
     LABOUR_UPDATE = "labour_update"
     GENERAL_SITE_UPDATE = "general_site_update"
     GENERAL_QUESTION = "general_question"
+    # A deterministically recognized "who am i"/"my profile"/etc (see
+    # mesiri_ai.whoami_classifier) -- distinct from GENERAL_QUESTION/UNKNOWN
+    # so the answer is the caller's own identity summary, not the generic
+    # capability reply or an undifferentiated "didn't understand". Set
+    # without an AI call; the reply itself is still built downstream
+    # (runtime/inbound_journey.py), since it needs the resolved
+    # ActorIdentity, which Understanding must not know about.
+    WHOAMI_QUESTION = "whoami_question"
     UNKNOWN = "unknown"

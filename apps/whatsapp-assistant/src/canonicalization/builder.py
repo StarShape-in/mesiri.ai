@@ -37,18 +37,55 @@ def _missing_required(event_type: CanonicalEventType, fields: dict) -> list[str]
     return [name for name in required if not fields.get(name)]
 
 
+_RECEIVED_SYNONYMS = {
+    "arrival",
+    "arrived",
+    "received",
+    "receive",
+    "delivery",
+    "delivered",
+    "deliver",
+    "brought",
+    "inward",
+}
+_USED_SYNONYMS = {
+    "used",
+    "use",
+    "usage",
+    "consumed",
+    "consume",
+    "applied",
+    "utilized",
+    "utilised",
+    "outward",
+}
+
+
 def _normalize_material_fields(fields: dict) -> dict:
     """Map common provider aliases onto canonical material field names."""
     out = dict(fields)
     if not out.get("material_name") and out.get("material"):
         out["material_name"] = out["material"]
+
     direction = str(out.get("direction", "")).strip().lower()
-    if not direction:
-        event = str(out.get("event", "")).strip().lower()
-        if event in {"arrival", "arrived", "received", "delivery", "delivered"}:
-            out["direction"] = "received"
-        elif event in {"used", "usage", "consumed"}:
-            out["direction"] = "used"
+    if direction not in ("received", "used"):
+        # The provider may have put a synonym directly in `direction`, or used
+        # a different key entirely (`event`/`action`/`status`) instead of the
+        # exact "received"/"used" the extraction prompt asks for -- check all
+        # of them for known vocabulary before giving up as unrecognized.
+        candidates = (
+            direction,
+            str(out.get("event", "")).strip().lower(),
+            str(out.get("action", "")).strip().lower(),
+            str(out.get("status", "")).strip().lower(),
+        )
+        for value in candidates:
+            if value in _RECEIVED_SYNONYMS:
+                out["direction"] = "received"
+                break
+            if value in _USED_SYNONYMS:
+                out["direction"] = "used"
+                break
     return out
 
 
