@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Cloud, Server, Trash2 } from 'lucide-react';
+import { ArrowLeft, Cloud, Server, Trash2, X } from 'lucide-react';
 import { api } from './api';
 
 interface Organization {
@@ -12,13 +12,20 @@ interface Organization {
   created_at: string;
 }
 
+interface ProjectAccessGrant {
+  project_id: string;
+  project_name: string;
+  site_access: string;
+}
+
 interface OrgUser {
   id: string;
-  email: string;
-  full_name: string;
-  role: string;
-  status: string;
-  created_at: string | null;
+  email: string | null;
+  full_name: string | null;
+  role: string | null;
+  whatsapp_number: string | null;
+  access_mode: string;
+  project_access: ProjectAccessGrant[];
 }
 
 interface TimelineEntry {
@@ -45,6 +52,7 @@ export default function OrganizationDetail() {
   const [tab, setTab] = useState<Tab>('users');
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
+  const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -79,6 +87,22 @@ export default function OrganizationDetail() {
         setError(err.response?.data?.detail || 'Failed to delete organization');
         setDeleting(false);
       });
+  };
+
+  const handleDeleteUser = (user: OrgUser) => {
+    if (!id) return;
+    const confirmed = window.confirm(
+      `Remove ${user.full_name || user.email || user.id} from this organization?`
+    );
+    if (!confirmed) return;
+
+    setDeletingUserId(user.id);
+    setError(null);
+    api
+      .delete(`/admin/organizations/${id}/users/${user.id}`)
+      .then(() => setUsers((prev) => prev.filter((u) => u.id !== user.id)))
+      .catch((err) => setError(err.response?.data?.detail || 'Failed to remove user'))
+      .finally(() => setDeletingUserId(null));
   };
 
   if (loading) {
@@ -173,22 +197,45 @@ export default function OrganizationDetail() {
                 <th>Name</th>
                 <th>Email</th>
                 <th>Role</th>
-                <th>Status</th>
-                <th>Created</th>
+                <th>WhatsApp</th>
+                <th>Project &amp; Site Access</th>
+                <th style={{ textAlign: 'right' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {users.length === 0 ? (
-                <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--neutral-500)' }}>No users in this organization.</td></tr>
+                <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--neutral-500)' }}>No users in this organization.</td></tr>
               ) : (
                 users.map((u) => (
                   <tr key={u.id}>
-                    <td style={{ fontWeight: 500, color: 'var(--neutral-900)' }}>{u.full_name}</td>
-                    <td>{u.email}</td>
-                    <td style={{ textTransform: 'capitalize' }}>{u.role}</td>
-                    <td><span className={`badge ${statusBadgeClass(u.status)}`}>{u.status}</span></td>
-                    <td style={{ fontSize: '13px', color: 'var(--neutral-500)' }}>
-                      {u.created_at ? new Date(u.created_at).toLocaleDateString() : '—'}
+                    <td style={{ fontWeight: 500, color: 'var(--neutral-900)' }}>{u.full_name || '—'}</td>
+                    <td>{u.email || '—'}</td>
+                    <td style={{ textTransform: 'capitalize' }}>{(u.role || '').toLowerCase()}</td>
+                    <td style={{ fontSize: '13px', color: 'var(--neutral-500)' }}>{u.whatsapp_number || 'Not mapped'}</td>
+                    <td style={{ fontSize: '13px' }}>
+                      {u.access_mode === 'all_projects' ? (
+                        <span className="badge badge-info">All Projects</span>
+                      ) : u.project_access.length === 0 ? (
+                        <span style={{ color: 'var(--neutral-500)' }}>No projects assigned</span>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                          {u.project_access.map((grant) => (
+                            <div key={grant.project_id}>
+                              <span style={{ fontWeight: 500 }}>{grant.project_name}</span>
+                              <span style={{ color: 'var(--neutral-500)' }}> — {grant.site_access}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <button
+                        style={{ background: 'none', border: 'none', color: 'var(--error)', fontWeight: 500, cursor: 'pointer', fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                        onClick={() => handleDeleteUser(u)}
+                        disabled={deletingUserId === u.id}
+                      >
+                        <X size={13} /> {deletingUserId === u.id ? 'Removing…' : 'Remove'}
+                      </button>
                     </td>
                   </tr>
                 ))

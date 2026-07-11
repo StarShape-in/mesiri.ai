@@ -70,6 +70,24 @@ users_table = sa.Table(
     sa.Column("full_name", sa.String),
     sa.Column("role", sa.String),
     sa.Column("whatsapp_number", sa.String),
+    sa.Column("access_policy", sa.JSON),
+)
+
+projects_table = sa.Table(
+    "projects",
+    metadata,
+    sa.Column("id", sa.UUID, primary_key=True),
+    sa.Column("organization_id", sa.UUID),
+    sa.Column("name", sa.String),
+)
+
+sites_table = sa.Table(
+    "sites",
+    metadata,
+    sa.Column("id", sa.UUID, primary_key=True),
+    sa.Column("project_id", sa.UUID),
+    sa.Column("organization_id", sa.UUID),
+    sa.Column("name", sa.String),
 )
 
 
@@ -95,12 +113,20 @@ class OrganizationProvision(BaseModel):
     admin_password: str
 
 
+class ProjectAccessGrant(BaseModel):
+    project_id: uuid.UUID
+    project_name: str
+    site_access: str
+
+
 class OrgUserResponse(BaseModel):
     id: uuid.UUID
     full_name: str | None = None
     email: str | None = None
     role: str | None = None
     whatsapp_number: str | None = None
+    access_mode: str = "custom_projects"
+    project_access: list[ProjectAccessGrant] = []
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +185,16 @@ async def get_organization(org_id: uuid.UUID, _admin: dict = Depends(require_pla
 
 @router.delete("/{org_id}", status_code=204)
 async def delete_organization(org_id: uuid.UUID, _admin: dict = Depends(require_platform_admin)):
+    """Hard-delete a tenant and every row scoped to it.
+
+    Deletion order matters: every domain table below has a plain FK straight
+    to organizations.id/users.id (no ON DELETE CASCADE), so children must go
+    before parents. `sites` and `project_members` cascade automatically when
+    `projects` is deleted (their FK is ondelete="CASCADE"). The
+    material_receipts/material_usage reverses_movement_id columns form a
+    self-referencing cycle between the two tables, so both are nulled out
+    before either is deleted.
+    """
     engine = get_engine()
     async with engine.begin() as conn:
         result = await conn.execute(
@@ -166,6 +202,72 @@ async def delete_organization(org_id: uuid.UUID, _admin: dict = Depends(require_
         )
         if result.first() is None:
             raise HTTPException(status_code=404, detail="Organization not found")
+
+        params = {"org_id": org_id}
+
+        # Break the material_receipts <-> material_usage reversal cycle first.
+        await conn.execute(
+            sa.text(
+                "UPDATE material_receipts SET reverses_movement_id = NULL "
+                "WHERE organization_id = :org_id"
+            ),
+            params,
+        )
+        await conn.execute(
+            sa.text(
+                "UPDATE material_usage SET reverses_movement_id = NULL "
+                "WHERE organization_id = :org_id"
+            ),
+            params,
+        )
+
+        # Interactions reference users.id and (nullably) workflow_instances.id —
+        # delete before either.
+        await conn.execute(
+            sa.text(
+                "DELETE FROM interactions WHERE user_id IN "
+                "(SELECT id FROM users WHERE organization_id = :org_id)"
+            ),
+            params,
+        )
+
+        # Detail rows referencing finance_accounts/labour_attendance.
+        await conn.execute(
+            sa.text(
+                "DELETE FROM finance_account_transactions WHERE account_id IN "
+                "(SELECT id FROM finance_accounts WHERE organization_id = :org_id)"
+            ),
+            params,
+        )
+        await conn.execute(
+            sa.text(
+                "DELETE FROM labour_attendance_entries WHERE attendance_id IN "
+                "(SELECT id FROM labour_attendance WHERE organization_id = :org_id)"
+            ),
+            params,
+        )
+
+        # Org-scoped event/ledger tables (also reference projects/sites, which
+        # must still exist at this point).
+        for table in (
+            "material_receipts",
+            "material_usage",
+            "equipment_events",
+            "expenses",
+            "timeline_entries",
+        ):
+            await conn.execute(
+                sa.text(f"DELETE FROM {table} WHERE organization_id = :org_id"), params
+            )
+
+        # Parents of the above (materials_catalog, finance_accounts, etc).
+        for table in ("finance_accounts", "labour_attendance", "materials_catalog", "workflow_instances"):
+            await conn.execute(
+                sa.text(f"DELETE FROM {table} WHERE organization_id = :org_id"), params
+            )
+
+        # Projects cascade-deletes sites and project_members (ondelete="CASCADE").
+        await conn.execute(sa.text("DELETE FROM projects WHERE organization_id = :org_id"), params)
 
         await conn.execute(users_table.delete().where(users_table.c.organization_id == org_id))
         await conn.execute(organizations_table.delete().where(organizations_table.c.id == org_id))
@@ -219,19 +321,104 @@ async def list_organization_users(
                 users_table.c.email,
                 users_table.c.role,
                 users_table.c.whatsapp_number,
+                users_table.c.access_policy,
             ).where(users_table.c.organization_id == org_id)
         )
         rows = result.fetchall()
-    return [
-        OrgUserResponse(
-            id=row.id,
-            full_name=row.full_name,
-            email=row.email,
-            role=row.role,
-            whatsapp_number=row.whatsapp_number,
+
+        project_rows = await conn.execute(
+            sa.select(projects_table.c.id, projects_table.c.name).where(
+                projects_table.c.organization_id == org_id
+            )
         )
-        for row in rows
-    ]
+        project_names = {row.id: row.name for row in project_rows.fetchall()}
+
+        site_rows = await conn.execute(
+            sa.select(sites_table.c.id, sites_table.c.name).where(
+                sites_table.c.organization_id == org_id
+            )
+        )
+        site_names = {row.id: row.name for row in site_rows.fetchall()}
+
+    users = []
+    for row in rows:
+        policy = row.access_policy or {}
+        mode = policy.get("mode") or "custom_projects"
+        grants: list[ProjectAccessGrant] = []
+        for grant in policy.get("projects") or []:
+            if not isinstance(grant, dict):
+                continue
+            try:
+                project_uuid = uuid.UUID(str(grant.get("projectId")))
+            except (TypeError, ValueError):
+                continue
+
+            site_access = grant.get("siteAccess") or {}
+            if site_access.get("mode") == "all_sites":
+                site_label = "All Sites"
+            else:
+                site_ids = site_access.get("siteIds") or []
+                names = []
+                for site_id in site_ids:
+                    try:
+                        names.append(site_names.get(uuid.UUID(str(site_id)), str(site_id)))
+                    except (TypeError, ValueError):
+                        continue
+                site_label = ", ".join(names) if names else "No Sites"
+
+            grants.append(
+                ProjectAccessGrant(
+                    project_id=project_uuid,
+                    project_name=project_names.get(project_uuid, str(project_uuid)),
+                    site_access=site_label,
+                )
+            )
+
+        users.append(
+            OrgUserResponse(
+                id=row.id,
+                full_name=row.full_name,
+                email=row.email,
+                role=row.role,
+                whatsapp_number=row.whatsapp_number,
+                access_mode=mode,
+                project_access=grants,
+            )
+        )
+    return users
+
+
+@router.delete("/{org_id}/users/{user_id}", status_code=204)
+async def delete_organization_user(
+    org_id: uuid.UUID, user_id: uuid.UUID, _admin: dict = Depends(require_platform_admin)
+):
+    engine = get_engine()
+    async with engine.begin() as conn:
+        result = await conn.execute(
+            sa.select(users_table.c.id).where(
+                users_table.c.id == user_id, users_table.c.organization_id == org_id
+            )
+        )
+        if result.first() is None:
+            raise HTTPException(status_code=404, detail="User not found in this organization")
+
+        try:
+            await conn.execute(
+                users_table.delete().where(
+                    users_table.c.id == user_id, users_table.c.organization_id == org_id
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            msg = str(exc).lower()
+            if "foreign key" in msg or "violates" in msg or "constraint" in msg or "23503" in msg:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "User cannot be deleted because they own historical records "
+                        "(materials, finance, timeline, etc). Deactivate them instead."
+                    ),
+                ) from exc
+            raise HTTPException(status_code=500, detail=f"Database error: {exc}") from exc
 
 
 @router.post("/provision", response_model=OrganizationResponse)
