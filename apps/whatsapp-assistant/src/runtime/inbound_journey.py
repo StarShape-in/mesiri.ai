@@ -296,10 +296,18 @@ async def _run_project_gate(
             return render_project_picker([(p.id, p.name, p.location) for p in actor.projects])
         return ReplySpec(text=render_no_projects_reply())
     except Exception:
+        # Must fail CLOSED, not open: project_id is required by domain
+        # validation (validation.py's "project is not resolved"), unlike the
+        # material/unit gates above where letting an unresolved field through
+        # is safe. Silently proceeding here would let the user tap Yes on a
+        # confirmation that's guaranteed to fail two steps later instead of
+        # failing honestly right now.
         _log.exception(
             "project_selection_gate.failed correlation_id=%s", canonical_event.correlation_id
         )
-        return None
+        return ReplySpec(
+            text="Sorry, something went wrong picking your project — please resend your report."
+        )
 
 
 async def _plan_and_run(
