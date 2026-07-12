@@ -18,7 +18,9 @@ from .identity_bridge import (
     context_user_id,
 )
 
-EntityType = Literal["organization", "user", "project", "site"]
+_ORG_WIDE_ROLES = {"ADMIN"}
+
+EntityType = Literal["organization", "user", "project", "site", "membership"]
 WHATSAPP_PROVIDER = "whatsapp"
 
 
@@ -64,6 +66,12 @@ class IdentityProjectionService:
                 self._project_project(conn, canonical_id)
             elif entity_type == "site":
                 self._project_site(conn, canonical_id)
+            elif entity_type == "membership":
+                # canonical_id is the affected user_id here, not a membership
+                # row id -- memberships are a set per user, so the natural
+                # sync unit is "this user's whole membership set", same as
+                # _project_user syncs one user's whole profile.
+                self._project_membership(conn, canonical_id)
 
     def reconcile_all(self) -> ReconcileReport:
         report = ReconcileReport()
@@ -105,6 +113,19 @@ class IdentityProjectionService:
                     report.sites += 1
                 except Exception as exc:  # noqa: BLE001
                     report.errors.append(f"site {row['id']}: {exc}")
+
+            # One sync unit per user with at least one project_members row --
+            # a user with none has nothing to project (an empty membership
+            # set is the correct, deny-by-default outcome, not an error).
+            member_user_rows = conn.execute(
+                text("SELECT DISTINCT user_id FROM project_members")
+            ).mappings()
+            for row in member_user_rows:
+                try:
+                    self._project_membership(conn, row["user_id"])
+                    report.memberships += 1
+                except Exception as exc:  # noqa: BLE001
+                    report.errors.append(f"membership {row['user_id']}: {exc}")
 
         return report
 
@@ -279,3 +300,108 @@ class IdentityProjectionService:
                 "canonical_id": canonical_id,
             },
         )
+
+    def _project_membership(self, conn, canonical_user_id: UUID) -> None:
+        """Sync one user's whole project/site membership set into
+        project_memberships/site_memberships -- the tables context_resolver
+        (M4) actually authorizes against. Without this, project_members/
+        site_members (control-plane) and project_memberships/site_memberships
+        (context layer) are the same two disconnected mechanisms the
+        project/site membership audit flagged: rows exist in the former,
+        the latter (queried by the WhatsApp assistant) stays permanently
+        empty, so every report resolves to no authorized project at all.
+
+        A user's org-wide role (see _ORG_WIDE_ROLES) grants every project in
+        their org, all sites -- the same bypass AuthorizationService applies
+        on the REST side, kept in sync so a project created after this user's
+        last sync is still visible without needing a fresh project_members
+        row per admin per project.
+
+        Full replace (delete then reinsert), not a diff -- membership is a
+        set, and the set can shrink (a project/site removed via the
+        dashboard) as easily as it can grow. Runs inside the same
+        transaction as the caller (project_one/reconcile_all's `with
+        self._engine.begin()`), so a mid-sync failure can't leave a user with
+        a half-updated membership set.
+        """
+        ctx_user_id = context_user_id(canonical_user_id)
+        conn.execute(
+            text("DELETE FROM project_memberships WHERE user_id = :user_id"),
+            {"user_id": ctx_user_id},
+        )
+        conn.execute(
+            text("DELETE FROM site_memberships WHERE user_id = :user_id"),
+            {"user_id": ctx_user_id},
+        )
+
+        user_row = (
+            conn.execute(
+                text("SELECT organization_id, role FROM users WHERE id = :id"),
+                {"id": canonical_user_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if user_row is None:
+            return  # user deleted between the write and this projection; nothing to sync
+
+        if (user_row["role"] or "").upper() in _ORG_WIDE_ROLES:
+            memberships = [
+                {"project_id": row["id"], "site_access_mode": "all_sites"}
+                for row in conn.execute(
+                    text("SELECT id FROM projects WHERE organization_id = :org_id"),
+                    {"org_id": user_row["organization_id"]},
+                ).mappings()
+            ]
+        else:
+            memberships = list(
+                conn.execute(
+                    text(
+                        "SELECT project_id, site_access_mode FROM project_members "
+                        "WHERE user_id = :user_id"
+                    ),
+                    {"user_id": canonical_user_id},
+                ).mappings()
+            )
+
+        for member in memberships:
+            project_id = member["project_id"]
+            ctx_project_id = context_project_id(project_id)
+            conn.execute(
+                text(
+                    "INSERT INTO project_memberships (user_id, project_id) "
+                    "VALUES (:user_id, :project_id) ON CONFLICT DO NOTHING"
+                ),
+                {"user_id": ctx_user_id, "project_id": ctx_project_id},
+            )
+
+            if member["site_access_mode"] == "all_sites":
+                site_id_rows = conn.execute(
+                    text("SELECT id FROM context_sites WHERE project_id = :ctx_project_id"),
+                    {"ctx_project_id": ctx_project_id},
+                ).mappings()
+                for site_row in site_id_rows:
+                    conn.execute(
+                        text(
+                            "INSERT INTO site_memberships (user_id, site_id) "
+                            "VALUES (:user_id, :site_id) ON CONFLICT DO NOTHING"
+                        ),
+                        {"user_id": ctx_user_id, "site_id": site_row["id"]},
+                    )
+            else:
+                explicit_site_rows = conn.execute(
+                    text(
+                        "SELECT sm.site_id FROM site_members sm "
+                        "JOIN sites s ON s.id = sm.site_id "
+                        "WHERE sm.user_id = :user_id AND s.project_id = :project_id"
+                    ),
+                    {"user_id": canonical_user_id, "project_id": project_id},
+                ).mappings()
+                for site_row in explicit_site_rows:
+                    conn.execute(
+                        text(
+                            "INSERT INTO site_memberships (user_id, site_id) "
+                            "VALUES (:user_id, :site_id) ON CONFLICT DO NOTHING"
+                        ),
+                        {"user_id": ctx_user_id, "site_id": context_site_id(site_row["site_id"])},
+                    )

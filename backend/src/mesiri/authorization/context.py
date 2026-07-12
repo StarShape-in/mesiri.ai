@@ -6,7 +6,7 @@ status, and resolved access scope for resources like projects and sites.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
@@ -155,6 +155,14 @@ class AuthorizationContext:
     status: str
     access_policy: AccessPolicy
     project_scope: ProjectAccessScope
+    # Precomputed per-project site scope, keyed by project_id -- resolved
+    # once in AuthorizationService.resolve_from_jwt (which has the DB
+    # connection) rather than here, since this is a frozen, DB-free
+    # dataclass. Source of truth is project_members.site_access_mode /
+    # site_members (see AuthorizationService), not access_policy -- the
+    # access_policy field above is now informational only (surfaced via
+    # GET /me for backward compatibility), no longer authoritative.
+    site_scopes: dict[UUID, SiteAccessScope] = field(default_factory=dict)
 
     @property
     def is_active(self) -> bool:
@@ -162,5 +170,10 @@ class AuthorizationContext:
         return self.status == "active"
 
     def site_scope_for_project(self, project_id: UUID) -> SiteAccessScope:
-        """Resolve this user's site access scope for a specific project."""
-        return resolve_site_scope(self.access_policy, project_id)
+        """This user's site access scope for a specific project.
+
+        Deny-by-default (empty custom scope) for a project not present in
+        site_scopes -- mirrors the pre-existing resolve_site_scope contract
+        for an unresolved/inaccessible project.
+        """
+        return self.site_scopes.get(project_id, SiteAccessScope(mode="custom_sites", site_ids=set()))

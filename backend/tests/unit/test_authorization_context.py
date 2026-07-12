@@ -281,7 +281,10 @@ class TestAuthorizationContext:
         with pytest.raises((AttributeError, TypeError)):
             ctx.status = "suspended"  # type: ignore
 
-    def test_site_scope_for_project_delegates_to_resolve_site_scope(self):
+    def test_site_scope_for_project_reads_precomputed_site_scopes(self):
+        """site_scope_for_project looks up the precomputed site_scopes dict
+        (resolved upfront by AuthorizationService from project_members/
+        site_members) -- access_policy is no longer consulted here at all."""
         project_id = uuid.uuid4()
         site_id = uuid.uuid4()
         ctx = AuthorizationContext(
@@ -289,16 +292,9 @@ class TestAuthorizationContext:
             organization_id=uuid.uuid4(),
             role="admin",
             status="active",
-            access_policy=AccessPolicy(
-                mode="custom_projects",
-                projects=[
-                    {
-                        "projectId": str(project_id),
-                        "siteAccess": {"mode": "custom_sites", "siteIds": [str(site_id)]},
-                    }
-                ],
-            ),
+            access_policy=AccessPolicy(mode="custom_projects", projects=[]),
             project_scope=ProjectAccessScope(mode="custom_projects", project_ids={project_id}),
+            site_scopes={project_id: SiteAccessScope(mode="custom_sites", site_ids={site_id})},
         )
 
         scope = ctx.site_scope_for_project(project_id)

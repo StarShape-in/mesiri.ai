@@ -81,6 +81,28 @@ sites_table = sa.Table(
     sa.Column("status", sa.String),
 )
 
+project_members_table = sa.Table(
+    "project_members",
+    sa.MetaData(),
+    sa.Column("id", sa.UUID, primary_key=True),
+    sa.Column("project_id", sa.UUID),
+    sa.Column("user_id", sa.UUID),
+    sa.Column("role", sa.String),
+)
+
+# Minimal shim -- only the columns this router needs (email/full_name/status
+# for rendering a member row, organization_id to scope user lookups). See
+# users/router.py for the fuller shim used by user-management endpoints.
+users_table = sa.Table(
+    "users",
+    sa.MetaData(),
+    sa.Column("id", sa.UUID, primary_key=True),
+    sa.Column("organization_id", sa.UUID),
+    sa.Column("email", sa.String),
+    sa.Column("full_name", sa.String),
+    sa.Column("status", sa.String),
+)
+
 
 # ---------------------------------------------------------------------------
 # Schemas — shaped for the mobile ProjectHealthCard.
@@ -119,6 +141,19 @@ class SiteResponse(BaseModel):
 class SiteCreate(BaseModel):
     name: str
     status: str = "active"
+
+
+class ProjectMemberResponse(BaseModel):
+    userId: uuid.UUID
+    email: str
+    fullName: str
+    role: str
+    status: str
+
+
+class ProjectMemberAdd(BaseModel):
+    userId: uuid.UUID
+    role: str = "SITE_ENGINEER"
 
 
 def _to_response(row) -> ProjectResponse:
@@ -324,3 +359,153 @@ async def create_project(project_in: ProjectCreate, payload: dict = Depends(get_
         openIssues=0,
         reportingRatio=None,
     )
+
+
+# ---------------------------------------------------------------------------
+# Project members -- the source of truth AuthorizationService and the
+# WhatsApp context resolver both now read (see project/site membership audit
+# and context/identity_projection.py's _project_membership). These endpoints
+# were previously only defined in backend/src/mesiri/domains/projects/router
+# .py, a router that is never mounted by the app actually deployed in
+# production (this one) -- the dashboard's Project Members tab has been
+# calling a 404 the whole time. Same URL paths and response shape as that
+# router's ProjectMemberResponse/ProjectMemberAdd, so the dashboard needs no
+# changes.
+# ---------------------------------------------------------------------------
+def _to_member_response(row) -> ProjectMemberResponse:
+    return ProjectMemberResponse(
+        userId=row.user_id,
+        email=row.email,
+        fullName=row.full_name,
+        role=row.role,
+        status=row.status,
+    )
+
+
+@router.get("/{project_id}/members", response_model=list[ProjectMemberResponse])
+async def list_project_members(project_id: uuid.UUID, payload: dict = Depends(get_current_user)):
+    org_id = payload.get("org")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="User has no organization")
+
+    engine = get_engine()
+    async with engine.connect() as conn:
+        project_result = await conn.execute(
+            sa.select(projects_table.c.id).where(
+                projects_table.c.id == project_id,
+                projects_table.c.organization_id == org_id,
+            )
+        )
+        if project_result.first() is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        result = await conn.execute(
+            sa.select(
+                project_members_table.c.user_id,
+                project_members_table.c.role,
+                users_table.c.email,
+                users_table.c.full_name,
+                users_table.c.status,
+            )
+            .select_from(
+                project_members_table.join(
+                    users_table, users_table.c.id == project_members_table.c.user_id
+                )
+            )
+            .where(project_members_table.c.project_id == project_id)
+        )
+        rows = result.fetchall()
+
+    return [_to_member_response(r) for r in rows]
+
+
+@router.post("/{project_id}/members", response_model=ProjectMemberResponse, status_code=201)
+async def add_project_member(
+    project_id: uuid.UUID,
+    body: ProjectMemberAdd,
+    payload: dict = Depends(get_current_user),
+):
+    if (payload.get("role") or "").upper() != "ADMIN":
+        raise HTTPException(status_code=403, detail="Admin access required to add member")
+    org_id = payload.get("org")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="User has no organization")
+
+    engine = get_engine()
+    async with engine.begin() as conn:
+        project_result = await conn.execute(
+            sa.select(projects_table.c.id).where(
+                projects_table.c.id == project_id,
+                projects_table.c.organization_id == org_id,
+            )
+        )
+        if project_result.first() is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        user_result = await conn.execute(
+            sa.select(users_table).where(
+                users_table.c.id == body.userId,
+                users_table.c.organization_id == org_id,
+            )
+        )
+        user_row = user_result.first()
+        if user_row is None:
+            raise HTTPException(status_code=404, detail="User not found in organization")
+
+        try:
+            await conn.execute(
+                project_members_table.insert().values(
+                    id=uuid.uuid4(),
+                    project_id=project_id,
+                    user_id=body.userId,
+                    role=body.role,
+                )
+            )
+        except Exception as exc:
+            if "unique" in str(exc).lower() or "23505" in str(exc):
+                raise HTTPException(
+                    status_code=409, detail="User is already a member of this project"
+                ) from exc
+            raise
+
+    await project_entity("membership", body.userId)
+    return ProjectMemberResponse(
+        userId=user_row.id,
+        email=user_row.email,
+        fullName=user_row.full_name,
+        role=body.role,
+        status=user_row.status,
+    )
+
+
+@router.delete("/{project_id}/members/{user_id}", status_code=204)
+async def remove_project_member(
+    project_id: uuid.UUID,
+    user_id: uuid.UUID,
+    payload: dict = Depends(get_current_user),
+):
+    if (payload.get("role") or "").upper() != "ADMIN":
+        raise HTTPException(status_code=403, detail="Admin access required to remove member")
+    org_id = payload.get("org")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="User has no organization")
+
+    engine = get_engine()
+    async with engine.begin() as conn:
+        project_result = await conn.execute(
+            sa.select(projects_table.c.id).where(
+                projects_table.c.id == project_id,
+                projects_table.c.organization_id == org_id,
+            )
+        )
+        if project_result.first() is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        await conn.execute(
+            project_members_table.delete().where(
+                project_members_table.c.project_id == project_id,
+                project_members_table.c.user_id == user_id,
+            )
+        )
+
+    await project_entity("membership", user_id)

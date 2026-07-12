@@ -20,6 +20,13 @@ from .context import (
     resolve_site_scope,
 )
 
+# Org-level roles that bypass explicit project_members rows entirely --
+# the SQL-native equivalent of access_policy's "all_projects" mode. Mirrors
+# the existing role.upper() == "ADMIN" bypass already used for action-level
+# checks elsewhere (e.g. domains/projects/router.py's require_admin-style
+# inline checks), now also applied at scope-resolution time.
+_ORG_WIDE_ROLES = {"ADMIN"}
+
 
 class AuthorizationService:
     """Service for resolving authorization context from JWT claims."""
@@ -84,11 +91,16 @@ class AuthorizationService:
         if user_status != "active":
             raise HTTPException(status_code=401, detail=f"User account is {user_status}")
 
-        # Parse and validate access policy
+        # access_policy is parsed only for GET /me backward compatibility --
+        # it is no longer authoritative for scope resolution (see
+        # project/site membership audit: this JSONB column and project_members
+        # used to be two disconnected sources of truth; project_members +
+        # site_members is now the only one consulted below).
         access_policy = AccessPolicy.from_db_json(row.access_policy)
 
-        # Resolve project access scope
-        project_scope = self._resolve_project_scope(access_policy, org_id)
+        # Resolve project access scope from project_members (+ role bypass)
+        project_scope = await self._resolve_project_scope(row.role, user_id, org_id)
+        site_scopes = await self._resolve_site_scopes(project_scope, user_id, org_id)
 
         return AuthorizationContext(
             user_id=row.id,
@@ -97,40 +109,100 @@ class AuthorizationService:
             status=user_status,
             access_policy=access_policy,
             project_scope=project_scope,
+            site_scopes=site_scopes,
         )
 
-    def _resolve_project_scope(
+    async def _resolve_project_scope(
         self,
-        access_policy: AccessPolicy,
+        role: str,
+        user_id: UUID,
         org_id: UUID,
     ) -> ProjectAccessScope:
-        """Resolve project access scope from access policy.
+        """Resolve project access scope from project_members (+ org-wide role bypass).
 
         Rules:
-        - all_projects mode: grants access to all projects in organization
-        - custom_projects mode: grants access only to explicitly listed projects
-        - Empty custom projects list: grants access to zero projects
-
-        Returns:
-            ProjectAccessScope with mode and explicit project IDs if custom
+        - An org-wide role (currently just ADMIN) grants access to every
+          project in the organization, present and future -- the SQL-native
+          equivalent of access_policy's old "all_projects" mode, without
+          needing a project_members row per project per admin.
+        - Otherwise: access is exactly the set of projects this user has an
+          explicit project_members row for, scoped to this organization.
+        - No project_members rows: zero projects (deny-by-default, same as
+          the old empty custom_projects list).
         """
-        if access_policy.mode == "all_projects":
-            # User has access to all org projects; no need to list them
+        if role.upper() in _ORG_WIDE_ROLES:
             return ProjectAccessScope(mode="all_projects", project_ids=set())
 
-        # custom_projects mode: extract explicit project IDs
-        project_ids: set[UUID] = set()
-        for project_grant in access_policy.projects:
-            if isinstance(project_grant, dict):
-                project_id_str = project_grant.get("projectId")
-                if project_id_str:
-                    try:
-                        project_ids.add(UUID(project_id_str))
-                    except (ValueError, TypeError):
-                        # Malformed project ID; skip it
-                        pass
-
+        rows = await self._conn.execute(
+            sa.text(
+                "SELECT pm.project_id FROM project_members pm "
+                "JOIN projects p ON p.id = pm.project_id "
+                "WHERE pm.user_id = :user_id AND p.organization_id = :org_id"
+            ),
+            {"user_id": user_id, "org_id": org_id},
+        )
+        project_ids = {r.project_id for r in rows.fetchall()}
         return ProjectAccessScope(mode="custom_projects", project_ids=project_ids)
+
+    async def _resolve_site_scopes(
+        self,
+        project_scope: ProjectAccessScope,
+        user_id: UUID,
+        org_id: UUID,
+    ) -> dict[UUID, SiteAccessScope]:
+        """Resolve per-project site access scope for every project this user
+        can reach, from project_members.site_access_mode + site_members.
+
+        Precomputed upfront (rather than lazily per project_id) so
+        AuthorizationContext.site_scope_for_project stays a pure, DB-free
+        dataclass method -- matching how project_scope is already fully
+        resolved before the context is constructed.
+        """
+        if project_scope.grants_all_org_projects:
+            # Org-wide role bypass: every project, all sites -- mirrors the
+            # old "all_projects implies all_sites for every project" rule.
+            rows = await self._conn.execute(
+                sa.text("SELECT id FROM projects WHERE organization_id = :org_id"),
+                {"org_id": org_id},
+            )
+            return {
+                r.id: SiteAccessScope(mode="all_sites", site_ids=set()) for r in rows.fetchall()
+            }
+
+        if not project_scope.project_ids:
+            return {}
+
+        member_rows = await self._conn.execute(
+            sa.text(
+                "SELECT project_id, site_access_mode FROM project_members "
+                "WHERE user_id = :user_id AND project_id IN :project_ids"
+            ).bindparams(sa.bindparam("project_ids", expanding=True)),
+            {"user_id": user_id, "project_ids": list(project_scope.project_ids)},
+        )
+        site_scopes: dict[UUID, SiteAccessScope] = {}
+        custom_site_project_ids: list[UUID] = []
+        for r in member_rows.fetchall():
+            if r.site_access_mode == "custom_sites":
+                custom_site_project_ids.append(r.project_id)
+            else:
+                site_scopes[r.project_id] = SiteAccessScope(mode="all_sites", site_ids=set())
+
+        if custom_site_project_ids:
+            explicit_sites: dict[UUID, set[UUID]] = {pid: set() for pid in custom_site_project_ids}
+            site_rows = await self._conn.execute(
+                sa.text(
+                    "SELECT s.project_id, sm.site_id FROM site_members sm "
+                    "JOIN sites s ON s.id = sm.site_id "
+                    "WHERE sm.user_id = :user_id AND s.project_id IN :project_ids"
+                ).bindparams(sa.bindparam("project_ids", expanding=True)),
+                {"user_id": user_id, "project_ids": custom_site_project_ids},
+            )
+            for r in site_rows.fetchall():
+                explicit_sites[r.project_id].add(r.site_id)
+            for pid, site_ids in explicit_sites.items():
+                site_scopes[pid] = SiteAccessScope(mode="custom_sites", site_ids=site_ids)
+
+        return site_scopes
 
     @staticmethod
     def _resolve_site_scope(access_policy: AccessPolicy, project_id: UUID) -> SiteAccessScope:
