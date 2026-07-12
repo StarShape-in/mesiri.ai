@@ -15,11 +15,15 @@ only spelling normalization.
 `unit_id` is added to material_receipts, material_usage, and
 materials_catalog.default_unit_id as a NULLABLE FK and backfilled from the
 existing free-text `unit`/`default_unit` values via the same alias map used to
-seed unit_aliases. Any value that fails to map aborts the migration loudly
-(raises) rather than silently leaving rows unresolved — forces a manual
-review of the alias list against real data before this runs against
-production. A later migration (0310) tightens unit_id to NOT NULL once all
-write paths are updated to require it.
+seed unit_aliases. Any value that fails to map against the known alias list
+(production data includes regional-language unit text, e.g. Malayalam) gets
+a fallback units_of_measure row auto-created from the raw text, rather than
+aborting the migration — a mid-migration abort leaves a deploy half-applied
+(new code on disk, old schema still live, service never restarted; see the
+deploy workflow's health-check/rollback path, which only runs if migrations
+succeed). Fallback units are logged during the migration for later
+review/cleanup. A later migration (0310) tightens unit_id to NOT NULL once
+all write paths are updated to require it.
 
 Revision ID: 0290
 Revises: 0280
@@ -58,9 +62,11 @@ _UNITS: list[tuple[str, str]] = [
 ]
 
 # canonical code -> alias texts (lowercased). Mirrors the two hardcoded
-# _UNIT_ALIASES dicts being retired by this feature.
+# _UNIT_ALIASES dicts being retired by this feature, plus regional-language
+# spellings observed in real WhatsApp reports (e.g. Malayalam "ചാക്ക്" =
+# sack/bag) — this codebase's users report in more than English.
 _ALIASES: dict[str, list[str]] = {
-    "bags": ["bag", "sack", "sacks"],
+    "bags": ["bag", "sack", "sacks", "ചാക്ക്"],
     "kg": ["kgs", "kilogram", "kilograms"],
     "tons": ["ton", "tonne", "tonnes"],
     "litres": ["litre", "liter", "liters", "ltr"],
@@ -155,6 +161,17 @@ def upgrade() -> None:
     op.create_index("ix_material_receipts_unit_id", "material_receipts", ["unit_id"])
     op.create_index("ix_material_usage_unit_id", "material_usage", ["unit_id"])
 
+    # Any value still unmapped after the known alias list is a real spelling/
+    # language variant this migration didn't anticipate (production data has
+    # included regional-language unit text, e.g. Malayalam). Rather than
+    # aborting the whole migration on unknown production data — which leaves
+    # the deploy half-applied (new code checked out, old schema still live,
+    # service never restarted; see the deploy workflow's health-check/
+    # rollback path, which is never reached if this migration raises) — treat
+    # the raw text itself as a new fallback unit: create a units_of_measure
+    # row + self-alias for it (visible in the migration log for later
+    # cleanup/renaming, e.g. via the catalogue admin surface), then map to
+    # it. This guarantees the migration always completes in one deploy.
     for table, unit_col, target_col in (
         ("material_receipts", "unit", "unit_id"),
         ("material_usage", "unit", "unit_id"),
@@ -174,12 +191,51 @@ def upgrade() -> None:
                 f"WHERE {unit_col} IS NOT NULL AND {unit_col} <> '' AND {target_col} IS NULL"
             )
         ).fetchall()
-        if unmapped:
-            values = ", ".join(repr(row[0]) for row in unmapped)
+        for (raw_value,) in unmapped:
+            fallback_code = raw_value.strip().lower()
+            fallback_unit_id = conn.execute(
+                sa.text("SELECT id FROM units_of_measure WHERE code = :code"),
+                {"code": fallback_code},
+            ).scalar()
+            if fallback_unit_id is None:
+                fallback_unit_id = uuid.uuid4()
+                conn.execute(
+                    sa.text(
+                        "INSERT INTO units_of_measure (id, code, display_name) "
+                        "VALUES (:id, :code, :display_name)"
+                    ),
+                    {"id": fallback_unit_id, "code": fallback_code, "display_name": raw_value.strip()},
+                )
+                print(  # noqa: T201 - deliberately surfaced in deploy log for follow-up cleanup
+                    f"Migration 0290: created fallback unit {fallback_code!r} for "
+                    f"{table}.{unit_col} value {raw_value!r} (no existing alias matched)"
+                )
+            conn.execute(
+                sa.text(
+                    "INSERT INTO unit_aliases (id, unit_id, alias_text) VALUES (:id, :unit_id, :alias_text) "
+                    "ON CONFLICT (alias_text) DO NOTHING"
+                ),
+                {"id": uuid.uuid4(), "unit_id": fallback_unit_id, "alias_text": fallback_code},
+            )
+
+        conn.execute(
+            sa.text(
+                f"UPDATE {table} t SET {target_col} = a.unit_id "  # noqa: S608
+                "FROM unit_aliases a "
+                f"WHERE lower(trim(t.{unit_col})) = a.alias_text "
+                f"AND t.{target_col} IS NULL"
+            )
+        )
+        still_unmapped = conn.execute(
+            sa.text(
+                f"SELECT COUNT(*) FROM {table} "  # noqa: S608
+                f"WHERE {unit_col} IS NOT NULL AND {unit_col} <> '' AND {target_col} IS NULL"
+            )
+        ).scalar_one()
+        if still_unmapped:
             raise RuntimeError(
-                f"Migration 0290: {table}.{unit_col} has values with no unit_aliases match: "
-                f"{values}. Add these to the alias seed list (or units_of_measure directly) "
-                "and re-run — refusing to silently leave rows unresolved."
+                f"Migration 0290: {still_unmapped} {table} rows still unmapped after fallback "
+                f"unit creation — this should be unreachable; investigate {table}.{unit_col} data."
             )
 
 
