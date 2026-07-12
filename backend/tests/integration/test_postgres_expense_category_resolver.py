@@ -130,7 +130,7 @@ async def test_unmatched_category_text_falls_back_to_uncategorized_not_rejected(
 ):
     """An AI-guessed category that doesn't match any real category must not
     reject the expense -- it degrades to the default bucket instead."""
-    async with engine.connect() as conn:
+    async with engine.begin() as conn:
         resolver = PostgresExpenseCategoryResolver()
         result = await resolver.resolve(
             conn, _command(scenario, category_text="something the AI made up")
@@ -147,7 +147,7 @@ async def test_unmatched_category_text_falls_back_to_uncategorized_not_rejected(
 
 
 async def test_no_category_at_all_falls_back_to_uncategorized(engine: AsyncEngine, scenario: dict):
-    async with engine.connect() as conn:
+    async with engine.begin() as conn:
         resolver = PostgresExpenseCategoryResolver()
         result = await resolver.resolve(conn, _command(scenario))
     assert result.reasons == []
@@ -157,7 +157,7 @@ async def test_no_category_at_all_falls_back_to_uncategorized(engine: AsyncEngin
 async def test_get_or_create_default_is_idempotent(engine: AsyncEngine, scenario: dict):
     """Two concurrent-ish first-uses must land on the same "Uncategorized"
     row, not create duplicates (ON CONFLICT DO NOTHING on org+name)."""
-    async with engine.connect() as conn:
+    async with engine.begin() as conn:
         repo = PostgresExpenseCategoryRepository(conn)
         first = await repo.get_or_create_default(scenario["org_id"], created_by=scenario["user_id"])
         second = await repo.get_or_create_default(scenario["org_id"], created_by=scenario["user_id"])
