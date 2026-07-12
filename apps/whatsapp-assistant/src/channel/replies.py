@@ -70,10 +70,20 @@ CATEGORY_ROWS: tuple[ListRow, ...] = (
     ListRow("cat_expense", "Expense", "Petty cash spent"),
 )
 
+# Dedicated (not the shared _EXAMPLES above) -- the category prompt gets its
+# own tap, so it can afford two clearly labeled examples instead of _EXAMPLES'
+# compact bullet pair, which stays as-is for the broader intro/fallback
+# contexts that reuse it below.
+_MATERIAL_EXAMPLES = (
+    "📦 *Material* — tell me what happened.\n\n"
+    '*Arrived*\n"50 bags of cement arrived"\n\n'
+    '*Used*\n"20 bags of cement used for the foundation"'
+)
+
 # What to say once a category is picked -- deterministic, no AI involved (see
 # runtime/dependencies.py). Keyed by the same row ids as CATEGORY_ROWS.
 _CATEGORY_PROMPTS: dict[str, str] = {
-    "cat_material": (f"Tell me about the material — for example:\n{_EXAMPLES}"),
+    "cat_material": _MATERIAL_EXAMPLES,
     "cat_equipment": 'Tell me about the equipment — for example:\n  • "JCB ran for 4 hours"',
     "cat_labour": 'Tell me the headcount — for example:\n  • "12 workers on site today"',
     "cat_expense": 'Tell me the expense — for example:\n  • "Paid 1500 to ABC Hardware"',
