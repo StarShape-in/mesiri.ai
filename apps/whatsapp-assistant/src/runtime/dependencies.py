@@ -332,7 +332,10 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             row_id = message.metadata.get("interactive_reply_id")
             hint = CATEGORY_SEMANTIC_HINT.get(row_id) if row_id else None
             if hint:
-                await category_hint_store.set_hint(user_id=ctx.user_id, semantic_hint=hint)
+                try:
+                    await category_hint_store.set_hint(user_id=ctx.user_id, semantic_hint=hint)
+                except Exception:  # noqa: BLE001 — a hint is a nudge, never worth losing the reply
+                    _log.exception("category_hint.set_failed user=%s", ctx.user_id)
             await sender.send_text(wa_id, category_prompt)
             await message_logger.log_reply(
                 correlation_id=message.correlation_id, reply=category_prompt
