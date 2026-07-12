@@ -168,7 +168,7 @@ class PostgresProjectRepository(_EngineMixin):
     ) -> list[Project]:
         rows = await self._rows(
             "SELECT id, organization_id, name, is_active FROM context_projects "
-            f"WHERE lower(name) = lower(:name) AND id IN ({_AUTHORIZED_PROJECT_IDS}) ORDER BY id",
+            f"WHERE name ILIKE '%' || :name || '%' AND id IN ({_AUTHORIZED_PROJECT_IDS}) ORDER BY id",
             {"name": name.strip(), "org": organization_id, "u": user_id},
         )
         return [_project(r) for r in rows]

@@ -35,19 +35,21 @@ _EXTRACTION_PROMPT = (
     '"around", "roughly", "nearly" and extract the number stated (e.g. "almost 70 '
     'bags" -> quantity 70).\n\n'
     "Field schema per semantic_type (only include keys you actually found):\n"
-    "- expense: amount, currency, vendor, category, description, paid_to, occurred_on\n"
-    "- equipment_usage: equipment_name, duration_hours, operator, activity\n"
-    "- material_update: material_name, quantity, unit, direction, work_item. "
+    "Note: For ALL semantic types, if the text mentions a specific project, site, or location by name (e.g. 'project alpha', 'at the main site'), extract it as 'project_name'.\n"
+    "- expense: amount, currency, vendor, category, description, paid_to, occurred_on, project_name\n"
+    "- equipment_usage: equipment_name, duration_hours, operator, activity, project_name\n"
+    "- material_update: material_name, quantity, unit, direction, work_item, project_name. "
     'direction MUST be exactly "received" or "used" -- never any other word. '
     'Use "received" when material arrived, was delivered, or was brought to site '
     '(e.g. "50 bags of cement arrived", "cement delivered today"). '
     'Use "used" when material was consumed, used, or applied to work '
     '(e.g. "20 bags of cement used for the foundation"). '
+    'If no direction is explicitly stated (e.g. "record 50 bags of cement"), default to "used". '
     "work_item is only for used material: the activity or task it was used for "
     '(e.g. "slabing the footing area", "column casting"). Omit work_item entirely '
     "for received material.\n"
-    "- labour_update: headcount, trade, hours, contractor\n"
-    "- general_site_update: summary, activity, location, weather\n"
+    "- labour_update: headcount, trade, hours, contractor, project_name\n"
+    "- general_site_update: summary, activity, location, weather, project_name\n"
     "- general_question: question, topic\n"
     "- inventory_query: material_name (omit material_name if asking about all "
     'materials, e.g. "show inventory"). Use this type for questions about how '
