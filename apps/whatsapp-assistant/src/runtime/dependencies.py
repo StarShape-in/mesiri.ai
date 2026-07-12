@@ -386,6 +386,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             actor_user_id=ctx.user_id,
             actor=ctx,
             semantic_hint=semantic_hint,
+            category_hint_store=category_hint_store,
             pipeline=pipeline,
             context_resolver=context_resolver,
             planner=planner,

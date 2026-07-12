@@ -28,6 +28,7 @@ from channel.replies import (
 )
 from context.resolver import ContextResolver
 from context.runtime import log_resolved_context
+from interactions.category_hint import CategoryHintStore
 from interactions.handler import InteractionHandler
 from interactions.pending_report import PendingReportStore
 from interactions.response_handler import render_workflow_run_reply
@@ -152,6 +153,7 @@ async def process_inbound_message(
     inventory_query: MaterialInventoryQueryService | None = None,
     semantic_hint: str | None = None,
     pending_report_store: PendingReportStore | None = None,
+    category_hint_store: CategoryHintStore | None = None,
 ) -> JourneyResult:
     mlog: MessageLogger = message_logger or NoopMessageLogger()
     tlog: TraceLogger = trace_logger or NoopTraceLogger()
@@ -436,6 +438,22 @@ async def process_inbound_message(
                     workflow_run = await workflow_runtime.start(planner_decision, canonical_event)
                     if context_debug:
                         log_workflow_run(workflow_run)
+                    # Answering an inventory question ("how much cement is left?")
+                    # means the next message is very likely a report about that
+                    # same material ("40 bags of cement used...") -- bias the
+                    # next message's extraction toward material_update the same
+                    # way a category-menu tap does, so it doesn't fall through
+                    # to the generic greeting/category menu and force a manual
+                    # re-selection. Pop-once TTL (category_hint.py) means it
+                    # only ever affects the very next message.
+                    if (
+                        workflow_run.status is WorkflowRunStatus.COMPLETED
+                        and canonical_event.event_type is CanonicalEventType.INVENTORY_QUERY_ASKED
+                        and category_hint_store is not None
+                    ):
+                        await category_hint_store.set_hint(
+                            user_id=actor_user_id, semantic_hint="material_update"
+                        )
                     await _safe(
                         tlog.log_stage(
                             correlation_id=correlation_id,

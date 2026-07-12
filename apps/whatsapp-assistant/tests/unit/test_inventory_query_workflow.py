@@ -21,10 +21,10 @@ def test_generate_inventory_reply_single_material():
     result = generate_inventory_reply(state)
     prompt = result["pending_prompt"]
 
-    assert "cement" in prompt
-    assert "30 bags in stock" in prompt
-    assert "50 received" in prompt
-    assert "20 used" in prompt
+    assert "Cement" in prompt
+    assert "In stock: 30 bags" in prompt
+    assert "Received  50 bags" in prompt
+    assert "Used      20 bags" in prompt
 
 
 def test_generate_inventory_reply_all_materials():
@@ -52,8 +52,8 @@ def test_generate_inventory_reply_all_materials():
     result = generate_inventory_reply(state)
     prompt = result["pending_prompt"]
 
-    assert "cement" in prompt
-    assert "steel" in prompt
+    assert "Cement" in prompt
+    assert "Steel" in prompt
     assert "30 bags" in prompt
     assert "100 kg" in prompt
 
@@ -90,6 +90,6 @@ def test_fractional_quantity_formats_without_trailing_zero():
     }
     result = generate_inventory_reply(state)
     prompt = result["pending_prompt"]
-    assert "10 kg in stock" in prompt
-    assert "12.5 received" in prompt
-    assert "2.5 used" in prompt
+    assert "In stock: 10 kg" in prompt
+    assert "Received  12.5 kg" in prompt
+    assert "Used      2.5 kg" in prompt

@@ -581,3 +581,51 @@ async def test_voice_reply_gets_the_same_reply_a_text_message_would():
 
     assert result.understanding.translated_text == "The JCB ran for 4 hours"
     assert sent_texts == [(message.sender.wa_id, render_unsupported_reply())]
+
+
+async def test_inventory_query_answer_sets_a_material_hint_for_the_next_message():
+    """Answering "how much cement is left?" should quietly bias the very next
+    message toward material_update, so a follow-up like "40 bags used" doesn't
+    fall through to the generic category menu."""
+    message = _message(text="how much cement is left?")
+    pipeline = UnderstandingPipeline(
+        speech=FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
+        vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
+        extraction=FakeExtractionProvider(
+            ExtractionResult(
+                semantic_type="inventory_query",
+                fields={"material_name": "cement"},
+                model="fake-gemini",
+                latency_ms=90.0,
+            )
+        ),
+        translation=FakeTranslationProvider(),
+        object_storage=FakeObjectStorage(),
+    )
+    graph = FakeCompiledGraph({"draft_action": None, "pending_prompt": "cement: 30 bags"})
+    workflow_runtime = _workflow_runtime({WorkflowKey.MATERIAL_INVENTORY_QUERY: graph})
+
+    hints_set: list[tuple[str, str]] = []
+
+    class _FakeHintStore:
+        async def set_hint(self, *, user_id: str, semantic_hint: str) -> None:
+            hints_set.append((user_id, semantic_hint))
+
+    async def capture_send_text(wa_id: str, body: str) -> None:
+        pass
+
+    result = await process_inbound_message(
+        message,
+        actor_user_id=canon(seed.USER_ENGINEER),
+        pipeline=pipeline,
+        context_resolver=_resolver(),
+        planner=Planner(),
+        workflow_runtime=workflow_runtime,
+        interaction_handler=InteractionHandler(workflow_runtime),
+        send_text=capture_send_text,
+        category_hint_store=_FakeHintStore(),
+    )
+
+    assert result.workflow_run is not None
+    assert result.workflow_run.status is WorkflowRunStatus.COMPLETED
+    assert hints_set == [(canon(seed.USER_ENGINEER), "material_update")]

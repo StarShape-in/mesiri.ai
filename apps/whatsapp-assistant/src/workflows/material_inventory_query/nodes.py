@@ -30,14 +30,17 @@ def generate_inventory_reply(state: WorkflowGraphState) -> dict:
     if material_name and len(levels) == 1:
         level = levels[0]
         lines = [
-            f"{level['material_name']}: {_fmt(level['current_stock'])} {level['unit']} in stock",
-            f"({_fmt(level['received'])} received, {_fmt(level['used'])} used)",
+            f"📦 {level['material_name'].title()}",
+            f"In stock: {_fmt(level['current_stock'])} {level['unit']}",
+            "",
+            f"Received  {_fmt(level['received'])} {level['unit']}",
+            f"Used      {_fmt(level['used'])} {level['unit']}",
         ]
         return {"pending_prompt": "\n".join(lines)}
 
-    lines = ["*Current inventory*", ""]
+    lines = ["📦 *Current inventory*", ""]
     for level in levels:
         lines.append(
-            f"   • {level['material_name']}: {_fmt(level['current_stock'])} {level['unit']}"
+            f"{level['material_name'].title()} — {_fmt(level['current_stock'])} {level['unit']}"
         )
     return {"pending_prompt": "\n".join(lines)}
