@@ -43,6 +43,14 @@ async def test_engine():
 async def clean_db(test_engine: AsyncEngine):
     """Clean test tables before each test."""
     async with test_engine.begin() as conn:
+        await conn.execute(sa.text("DELETE FROM expense_payments"))
+        await conn.execute(sa.text("DELETE FROM expense_attachments"))
+        await conn.execute(sa.text("DELETE FROM budget_allocations"))
+        await conn.execute(sa.text("DELETE FROM budgets"))
+        await conn.execute(sa.text("DELETE FROM money_transactions"))
+        await conn.execute(sa.text("DELETE FROM expenses"))
+        await conn.execute(sa.text("DELETE FROM money_accounts"))
+        await conn.execute(sa.text("DELETE FROM expense_categories"))
         await conn.execute(sa.text("DELETE FROM sites"))
         await conn.execute(sa.text("DELETE FROM projects"))
         await conn.execute(sa.text("DELETE FROM users"))
