@@ -177,6 +177,41 @@ def render_no_projects_reply() -> str:
     return "You don't have any projects assigned yet. Ask your admin to add you to one first."
 
 
+def render_material_picker(candidates: list[tuple[str, str]]) -> ReplySpec:
+    """Ask which catalog material a report refers to -- either because the
+    reported name matched more than one active entry ("cement" -> OPC/PPC
+    Cement) or none at all (falls back to the org's whole active catalog so
+    there's still something to pick from). ``candidates`` is (material_id,
+    name) pairs. Row id is "mat_{material_id}", matched verbatim by
+    resume_pending_report_with_material once one is tapped."""
+    rows = tuple(ListRow(f"mat_{material_id}", name) for material_id, name in candidates[:10])
+    return ReplySpec(
+        text="Which material do you mean?",
+        list_button_label="Choose material",
+        list_rows=rows,
+    )
+
+
+def render_material_not_found_reply(name: str) -> str:
+    """No catalog material matched at all and the org's catalog is empty --
+    distinct from the picker case for the same reason render_no_projects_reply
+    is: tapping won't help, there's nothing to choose from."""
+    return f'I couldn\'t find "{name}" in the materials catalog. Ask your admin to add it first.'
+
+
+def render_unit_mismatch_reply(*, material_name: str, unit_id: str, unit_display: str) -> ReplySpec:
+    """The reported unit doesn't match `material_name`'s Stock Unit (or wasn't
+    recognized at all) -- ask a single yes/no clarification naming the
+    material's actual unit, never a free-standing list of every unit in the
+    system (a material only ever has one valid unit in V1, so a global picker
+    would let the user pick something incompatible). Row ids "unit_yes_{id}"/
+    "unit_no", matched verbatim by resume_pending_report_with_unit."""
+    return ReplySpec(
+        text=f"{material_name} is tracked in {unit_display} — record this as {unit_display}?",
+        buttons=(ListRow(f"unit_yes_{unit_id}", "Yes"), ListRow("unit_no", "No")),
+    )
+
+
 def render_greeting_menu(
     *, timezone: str | None = None, is_first_message: bool = False
 ) -> ReplySpec:

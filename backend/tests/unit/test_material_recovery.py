@@ -9,7 +9,11 @@ from __future__ import annotations
 
 import pytest
 
-from mesiri.application.materials.fakes import FakeDatabase, FakeMaterialExecutionRepository
+from mesiri.application.materials.fakes import (
+    FakeDatabase,
+    FakeMaterialExecutionRepository,
+    FakeMaterialResolver,
+)
 from mesiri.application.materials.handlers import ExecuteConfirmedMaterialActionHandler
 from mesiri.application.materials.recovery import (
     MATERIAL_WORKFLOW_KEYS,
@@ -75,7 +79,9 @@ async def test_recovery_only_processes_scoped_workflow_keys(monkeypatch: pytest.
     )
 
     material_repo = FakeMaterialExecutionRepository()
-    handler = ExecuteConfirmedMaterialActionHandler(db=FakeDatabase(), repo=material_repo)
+    handler = ExecuteConfirmedMaterialActionHandler(
+        db=FakeDatabase(), repo=material_repo, resolver=FakeMaterialResolver()
+    )
 
     results = await recover_confirmed_instances(
         db=FakeDatabase(), handler=handler, workflow_keys=MATERIAL_WORKFLOW_KEYS
@@ -100,7 +106,9 @@ async def test_recovery_replays_confirmed_instance_idempotently(monkeypatch: pyt
     )
 
     material_repo = FakeMaterialExecutionRepository()
-    handler = ExecuteConfirmedMaterialActionHandler(db=FakeDatabase(), repo=material_repo)
+    handler = ExecuteConfirmedMaterialActionHandler(
+        db=FakeDatabase(), repo=material_repo, resolver=FakeMaterialResolver()
+    )
 
     first = await recover_confirmed_instances(
         db=FakeDatabase(), handler=handler, workflow_keys=MATERIAL_WORKFLOW_KEYS
@@ -137,7 +145,7 @@ async def test_recovery_skips_confirmed_row_without_draft_action(monkeypatch: py
     )
 
     handler = ExecuteConfirmedMaterialActionHandler(
-        db=FakeDatabase(), repo=FakeMaterialExecutionRepository()
+        db=FakeDatabase(), repo=FakeMaterialExecutionRepository(), resolver=FakeMaterialResolver()
     )
     results = await recover_confirmed_instances(
         db=FakeDatabase(), handler=handler, workflow_keys=MATERIAL_WORKFLOW_KEYS

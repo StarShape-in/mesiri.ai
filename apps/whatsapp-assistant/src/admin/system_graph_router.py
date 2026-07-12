@@ -982,6 +982,9 @@ async def simulate_message(
         # Real stock levels for the material.inventory_query workflow — without
         # this it would always report "no recorded stock" regardless of reality.
         inventory_query=container.inventory_query,
+        # Real catalog/units lookups so the material/unit resolution gate
+        # actually runs in this dry run too, not just in production.
+        catalog_query=container.catalog_query,
         # No loggers: this is a dry run, not a real inbound message.
     )
 

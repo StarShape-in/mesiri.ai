@@ -21,9 +21,12 @@ from channel.replies import (
     ReplySpec,
     render_clarify_reply,
     render_direct_reply,
+    render_material_not_found_reply,
+    render_material_picker,
     render_no_projects_reply,
     render_project_picker,
     render_understanding_failed_reply,
+    render_unit_mismatch_reply,
     render_unsupported_reply,
 )
 from context.resolver import ContextResolver
@@ -44,6 +47,7 @@ from mesiri_contracts.assistant.v2.resolved_context import ResolvedContextV2
 from planner import Planner, log_planner_decision
 from runtime.inventory_query import MaterialInventoryQueryService
 from runtime.logging_ports import MessageLogger, TraceLogger
+from runtime.material_catalog_query import MaterialCatalogQueryService
 from runtime.noop_loggers import NoopMessageLogger, NoopTraceLogger
 from runtime.reply_dispatch import send_reply_spec
 from understanding.pipeline import UnderstandingPipeline
@@ -134,6 +138,173 @@ def _render_reply(
     return ReplySpec(text=render_understanding_failed_reply())
 
 
+_MATERIAL_EVENT_TYPES = frozenset(
+    {
+        CanonicalEventType.MATERIAL_RECEIPT_REQUESTED,
+        CanonicalEventType.MATERIAL_USAGE_REQUESTED,
+    }
+)
+
+
+async def _run_material_unit_gates(
+    canonical_event: CanonicalEventV2,
+    *,
+    catalog_query: MaterialCatalogQueryService,
+    pending_report_store: PendingReportStore,
+    actor_user_id: str,
+) -> ReplySpec | None:
+    """Resolve material_id/unit_id against materials_catalog/units_of_measure
+    before the report can proceed to the project gate or planner.
+
+    Mutates `canonical_event.fields` in place once resolved. Returns a
+    ReplySpec (and holds the event in `pending_report_store`) when the report
+    must pause for a clarifying tap -- ambiguous or unmatched material, or a
+    reported unit that doesn't match the material's Stock Unit. Returns None
+    once both resolve (or if there's nothing to resolve, e.g. no material_name
+    at all -- canonicalization's own missing-field check already covers that
+    case with CLARIFICATION_REQUIRED).
+
+    Never raises: a lookup failure degrades to "let it through unresolved"
+    (None) rather than dropping the reply entirely, same principle as the
+    project-selection gate below.
+    """
+    material_id = canonical_event.fields.get("material_id")
+    material: dict | None = None
+
+    if material_id is None:
+        name = canonical_event.fields.get("material_name")
+        if not name:
+            return None
+        try:
+            candidates = await catalog_query.find_materials(
+                organization_id=canonical_event.organization_id, name=name
+            )
+            if not candidates:
+                candidates = await catalog_query.list_active_materials(
+                    organization_id=canonical_event.organization_id
+                )
+        except Exception:
+            _log.exception(
+                "material_gate.lookup_failed correlation_id=%s", canonical_event.correlation_id
+            )
+            return None
+
+        if len(candidates) == 1:
+            material = candidates[0]
+            canonical_event.fields["material_id"] = str(material["id"])
+        else:
+            await pending_report_store.set_pending(user_id=actor_user_id, event=canonical_event)
+            if not candidates:
+                return ReplySpec(text=render_material_not_found_reply(name))
+            return render_material_picker([(str(c["id"]), c["name"]) for c in candidates])
+    else:
+        try:
+            material = await catalog_query.get_material(
+                organization_id=canonical_event.organization_id, material_id=material_id
+            )
+        except Exception:
+            _log.exception(
+                "material_gate.lookup_failed correlation_id=%s", canonical_event.correlation_id
+            )
+            return None
+        if material is None or not material["is_active"]:
+            return ReplySpec(text="That material is no longer available — please resend your report.")
+
+    stock_unit_id = material.get("default_unit_id")
+    if stock_unit_id is None:
+        # No Stock Unit configured on this material yet -- nothing to enforce
+        # against (pre-migration catalog entries, or a not-yet-fully-set-up
+        # material). Let it through rather than blocking every report.
+        return None
+
+    unit_id = canonical_event.fields.get("unit_id")
+    if unit_id is not None:
+        return None  # already resolved (e.g. a resumed "yes" tap)
+
+    unit_text = canonical_event.fields.get("unit")
+    if not unit_text:
+        # Omitted entirely -- default to the material's Stock Unit and let the
+        # normal confirmation prompt surface it as a field the user can still
+        # reject via "NO", rather than adding another clarifying turn.
+        canonical_event.fields["unit_id"] = str(stock_unit_id)
+        return None
+
+    try:
+        resolved_unit = await catalog_query.resolve_unit(unit_text)
+    except Exception:
+        _log.exception(
+            "unit_gate.lookup_failed correlation_id=%s", canonical_event.correlation_id
+        )
+        return None
+
+    if resolved_unit is not None and str(resolved_unit["id"]) == str(stock_unit_id):
+        canonical_event.fields["unit_id"] = str(stock_unit_id)
+        return None
+
+    # Either the reported unit text didn't resolve to anything, or it resolved
+    # to a real-but-different unit -- both are a Stock Unit mismatch. Ask,
+    # scoped to this material's one valid unit only (never a global picker
+    # that would let an incompatible unit through).
+    try:
+        stock_unit = await catalog_query.get_unit(str(stock_unit_id))
+    except Exception:
+        _log.exception(
+            "unit_gate.lookup_failed correlation_id=%s", canonical_event.correlation_id
+        )
+        return None
+    await pending_report_store.set_pending(user_id=actor_user_id, event=canonical_event)
+    return render_unit_mismatch_reply(
+        material_name=material["name"],
+        unit_id=str(stock_unit_id),
+        unit_display=stock_unit["display_name"] if stock_unit else "the correct unit",
+    )
+
+
+async def _run_project_gate(
+    canonical_event: CanonicalEventV2,
+    *,
+    actor: ActorIdentity | None,
+    actor_user_id: str,
+    pending_report_store: PendingReportStore,
+) -> ReplySpec | None:
+    """Ask which project a report belongs to, when it's otherwise ACTIONABLE
+    but has no project_id -- factored out of process_inbound_message so the
+    material/unit resume functions below can re-run this same gate after
+    they resolve their own field, instead of assuming project must already
+    be fine (see module docstring on gate re-running)."""
+    if canonical_event.completeness is not _IntentCompleteness.ACTIONABLE:
+        return None
+    if canonical_event.project_id is not None:
+        return None
+    try:
+        if actor is not None and actor.projects:
+            await pending_report_store.set_pending(user_id=actor_user_id, event=canonical_event)
+            return render_project_picker([(p.id, p.name, p.location) for p in actor.projects])
+        return ReplySpec(text=render_no_projects_reply())
+    except Exception:
+        _log.exception(
+            "project_selection_gate.failed correlation_id=%s", canonical_event.correlation_id
+        )
+        return None
+
+
+async def _plan_and_run(
+    event: CanonicalEventV2,
+    *,
+    planner: Planner,
+    workflow_runtime: WorkflowRuntime,
+) -> ReplySpec | None:
+    """Run the planner and, if it starts a workflow, the workflow -- shared by
+    the first-pass journey below and every resume_pending_report_with_*
+    function, so a resumed report goes through the exact same decision path
+    a first-pass ACTIONABLE report would."""
+    decision = planner.decide(event)
+    workflow_run: WorkflowRunResult | None = None
+    if decision.decision_type is PlannerDecisionType.START_WORKFLOW:
+        workflow_run = await workflow_runtime.start(decision, event)
+    return _render_reply(workflow_run, None, decision, None)
+
+
 async def process_inbound_message(
     message: NormalizedMessage,
     actor_user_id: str,
@@ -151,6 +322,7 @@ async def process_inbound_message(
     trace_logger: TraceLogger | None = None,
     actor: ActorIdentity | None = None,
     inventory_query: MaterialInventoryQueryService | None = None,
+    catalog_query: MaterialCatalogQueryService | None = None,
     semantic_hint: str | None = None,
     pending_report_store: PendingReportStore | None = None,
     category_hint_store: CategoryHintStore | None = None,
@@ -266,7 +438,7 @@ async def process_inbound_message(
     resolved: ResolvedContextV2 | None = None
     canonical_event: CanonicalEventV2 | None = None
     planner_decision: PlannerDecisionV2 | None = None
-    project_picker_reply: ReplySpec | None = None
+    held_reply: ReplySpec | None = None
 
     if result.is_ok:
         resolved = result.unwrap()
@@ -375,6 +547,27 @@ async def process_inbound_message(
             )
             raise
 
+        # --- Material/unit resolution gate ---
+        # A material report can be otherwise complete (material_name/quantity/
+        # unit all present -> ACTIONABLE) but the reported material/unit text
+        # is still free text at this point -- resolve it against the catalog/
+        # units_of_measure before the project gate or planner ever see it, so
+        # an ambiguous ("cement" -> OPC/PPC) or Stock-Unit-mismatched report
+        # is caught here, not as a late domain-validation failure after the
+        # user already tapped Yes. See _run_material_unit_gates above.
+        if (
+            canonical_event.completeness is _IntentCompleteness.ACTIONABLE
+            and canonical_event.event_type in _MATERIAL_EVENT_TYPES
+            and catalog_query is not None
+            and pending_report_store is not None
+        ):
+            held_reply = await _run_material_unit_gates(
+                canonical_event,
+                catalog_query=catalog_query,
+                pending_report_store=pending_report_store,
+                actor_user_id=actor_user_id,
+            )
+
         # --- Project-selection gate ---
         # A report can be otherwise complete (material_name/quantity/unit all
         # present -> ACTIONABLE) but still have no project attached -- the
@@ -385,32 +578,15 @@ async def process_inbound_message(
         # at domain validation after the user already tapped Yes (the
         # original bug report this fixes). Ask which project instead, and
         # hold the report so the tap can resume it with project_id filled in.
-        if (
-            canonical_event.completeness is _IntentCompleteness.ACTIONABLE
-            and canonical_event.project_id is None
-            and pending_report_store is not None
-        ):
-            try:
-                if actor is not None and actor.projects:
-                    await pending_report_store.set_pending(
-                        user_id=actor_user_id, event=canonical_event
-                    )
-                    project_picker_reply = render_project_picker(
-                        [(p.id, p.name, p.location) for p in actor.projects]
-                    )
-                else:
-                    project_picker_reply = ReplySpec(text=render_no_projects_reply())
-            except Exception:
-                # Redis being unavailable here must never take down the whole
-                # reply -- degrade to the normal journey (project stays
-                # unresolved, same as before this gate existed) rather than
-                # leaving the sender with no response at all.
-                _log.exception(
-                    "project_selection_gate.failed correlation_id=%s", correlation_id
-                )
-                project_picker_reply = None
+        if held_reply is None and pending_report_store is not None:
+            held_reply = await _run_project_gate(
+                canonical_event,
+                actor=actor,
+                actor_user_id=actor_user_id,
+                pending_report_store=pending_report_store,
+            )
 
-        if project_picker_reply is None:
+        if held_reply is None:
             # --- Planner stage ---
             t0 = time.perf_counter()
             try:
@@ -519,9 +695,10 @@ async def process_inbound_message(
     # workflow_resume's own reply was already sent and logged earlier, at the
     # slow-path interaction dispatch above -- _render_reply returns None for
     # that case specifically so it isn't sent (or logged) a second time here.
-    # project_picker_reply, when set, always wins: the report is being held
-    # pending a project choice, so nothing from planner/workflow ran this turn.
-    reply = project_picker_reply or _render_reply(
+    # held_reply, when set, always wins: the report is being held pending a
+    # material/unit/project clarification, so nothing from planner/workflow
+    # ran this turn.
+    reply = held_reply or _render_reply(
         workflow_run, workflow_resume, planner_decision, resolved
     )
 
@@ -583,9 +760,109 @@ async def resume_pending_report_with_project(
     project_id = row_id.removeprefix(_PROJECT_ROW_PREFIX)
     event = event.model_copy(update={"project_id": project_id})
 
-    decision = planner.decide(event)
-    workflow_run: WorkflowRunResult | None = None
-    if decision.decision_type is PlannerDecisionType.START_WORKFLOW:
-        workflow_run = await workflow_runtime.start(decision, event)
+    # Project is the last gate in the chain, so nothing else needs re-running
+    # here -- straight to planner/workflow.
+    return await _plan_and_run(event, planner=planner, workflow_runtime=workflow_runtime)
 
-    return _render_reply(workflow_run, None, decision, None)
+
+_MATERIAL_ROW_PREFIX = "mat_"
+_UNIT_YES_ROW_PREFIX = "unit_yes_"
+_UNIT_NO_ROW_ID = "unit_no"
+
+
+async def resume_pending_report_with_material(
+    message: NormalizedMessage,
+    actor_user_id: str,
+    *,
+    pending_report_store: PendingReportStore,
+    catalog_query: MaterialCatalogQueryService,
+    planner: Planner,
+    workflow_runtime: WorkflowRuntime,
+    actor: ActorIdentity | None = None,
+) -> ReplySpec | None:
+    """Resume a report held by the material-resolution gate, now that the user
+    tapped which catalog material it refers to.
+
+    Re-runs the remaining gate chain (unit, then project) rather than jumping
+    straight to planner -- material resolving doesn't guarantee unit does too
+    (see _run_material_unit_gates: a resolved material_id with no unit_id yet
+    still needs the Stock Unit check to run). Mirrors
+    resume_pending_report_with_project's shape otherwise.
+    """
+    if message.modality is not InputModality.INTERACTIVE:
+        return None
+    row_id = message.metadata.get("interactive_reply_id")
+    if not row_id or not row_id.startswith(_MATERIAL_ROW_PREFIX):
+        return None
+
+    event = await pending_report_store.pop_pending(user_id=actor_user_id)
+    if event is None:
+        return ReplySpec(text="That selection expired — please resend your report.")
+
+    material_id = row_id.removeprefix(_MATERIAL_ROW_PREFIX)
+    event.fields["material_id"] = material_id
+
+    held_reply = await _run_material_unit_gates(
+        event,
+        catalog_query=catalog_query,
+        pending_report_store=pending_report_store,
+        actor_user_id=actor_user_id,
+    )
+    if held_reply is not None:
+        return held_reply
+
+    held_reply = await _run_project_gate(
+        event, actor=actor, actor_user_id=actor_user_id, pending_report_store=pending_report_store
+    )
+    if held_reply is not None:
+        return held_reply
+
+    return await _plan_and_run(event, planner=planner, workflow_runtime=workflow_runtime)
+
+
+async def resume_pending_report_with_unit(
+    message: NormalizedMessage,
+    actor_user_id: str,
+    *,
+    pending_report_store: PendingReportStore,
+    catalog_query: MaterialCatalogQueryService,
+    planner: Planner,
+    workflow_runtime: WorkflowRuntime,
+    actor: ActorIdentity | None = None,
+) -> ReplySpec | None:
+    """Resume a report held by the unit-mismatch clarification, now that the
+    user confirmed or declined the material's Stock Unit.
+
+    "No" doesn't silently fall back to anything -- there's only one valid
+    unit for this material in V1 (no unit conversion), so declining means the
+    report can't be recorded as stated; the user is asked to resend it
+    correctly rather than the assistant guessing.
+    """
+    if message.modality is not InputModality.INTERACTIVE:
+        return None
+    row_id = message.metadata.get("interactive_reply_id")
+    if not row_id:
+        return None
+    if row_id == _UNIT_NO_ROW_ID:
+        # Must still pop -- a stale pending report must never resurrect later.
+        await pending_report_store.pop_pending(user_id=actor_user_id)
+        return ReplySpec(
+            text="No problem — please resend the report with the correct unit."
+        )
+    if not row_id.startswith(_UNIT_YES_ROW_PREFIX):
+        return None
+
+    event = await pending_report_store.pop_pending(user_id=actor_user_id)
+    if event is None:
+        return ReplySpec(text="That selection expired — please resend your report.")
+
+    unit_id = row_id.removeprefix(_UNIT_YES_ROW_PREFIX)
+    event.fields["unit_id"] = unit_id
+
+    held_reply = await _run_project_gate(
+        event, actor=actor, actor_user_id=actor_user_id, pending_report_store=pending_report_store
+    )
+    if held_reply is not None:
+        return held_reply
+
+    return await _plan_and_run(event, planner=planner, workflow_runtime=workflow_runtime)

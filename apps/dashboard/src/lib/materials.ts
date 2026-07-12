@@ -10,6 +10,10 @@ export interface MaterialCatalog {
   organization_id: string
   name: string
   default_unit: string | null
+  // The material's Stock Unit — every receipt/outflow for this material must
+  // use this unit_id; no unit conversion, and it can't change once the
+  // material has any recorded movement (see backend PATCH /materials/{id}).
+  default_unit_id: string
   category: string | null
   sku: string | null
   is_active: boolean
@@ -18,6 +22,17 @@ export interface MaterialCatalog {
 export interface MaterialCatalogListResponse {
   items: MaterialCatalog[]
   total: number
+}
+
+export interface UnitOfMeasure {
+  id: string
+  code: string
+  display_name: string
+  is_active: boolean
+}
+
+export interface UnitsOfMeasureListResponse {
+  items: UnitOfMeasure[]
 }
 
 export type InflowReason = 'RECEIVED' | 'TRANSFER_IN' | 'RETURN_IN' | 'ADJUSTMENT_IN'
@@ -31,6 +46,7 @@ export interface MaterialReceipt {
   material_name: string
   quantity: string
   unit: string
+  unit_id: string
   unit_cost: string | null
   total_cost: string | null
   supplier: string | null
@@ -57,6 +73,7 @@ export interface MaterialUsage {
   material_name: string
   quantity: string
   unit: string
+  unit_id: string
   work_item: string | null
   occurred_date: string
   occurred_time: string | null
@@ -156,13 +173,41 @@ export async function fetchMaterials(
   return res.data
 }
 
+export async function fetchMaterial(id: string): Promise<MaterialCatalog> {
+  const res = await api.get<MaterialCatalog>(`/materials/${id}`)
+  return res.data
+}
+
 export async function createMaterial(payload: {
   name: string
-  default_unit?: string
+  default_unit_id: string
   category?: string
   sku?: string
 }): Promise<MaterialCatalog> {
   const res = await api.post<MaterialCatalog>('/materials', payload)
+  return res.data
+}
+
+export async function updateMaterial(
+  id: string,
+  payload: {
+    name?: string
+    default_unit_id?: string
+    category?: string
+    sku?: string
+    is_active?: boolean
+  }
+): Promise<MaterialCatalog> {
+  const res = await api.patch<MaterialCatalog>(`/materials/${id}`, payload)
+  return res.data
+}
+
+export async function setMaterialActive(id: string, isActive: boolean): Promise<MaterialCatalog> {
+  return updateMaterial(id, { is_active: isActive })
+}
+
+export async function fetchUnitsOfMeasure(): Promise<UnitsOfMeasureListResponse> {
+  const res = await api.get<UnitsOfMeasureListResponse>('/materials/units-of-measure')
   return res.data
 }
 
@@ -187,9 +232,9 @@ export async function fetchInflow(id: string): Promise<MaterialReceipt> {
 export interface CreateInflowPayload {
   project_id: string
   site_id?: string
-  material_name: string
+  material_id: string
+  unit_id: string
   quantity: string | number
-  unit: string
   movement_reason?: InflowReason
   supplier?: string
   notes?: string
@@ -230,9 +275,9 @@ export async function fetchOutflow(id: string): Promise<MaterialUsage> {
 export interface CreateOutflowPayload {
   project_id: string
   site_id?: string
-  material_name: string
+  material_id: string
+  unit_id: string
   quantity: string | number
-  unit: string
   movement_reason?: OutflowReason
   work_item?: string
   notes?: string

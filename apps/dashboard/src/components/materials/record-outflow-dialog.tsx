@@ -36,9 +36,8 @@ export function RecordOutflowDialog({ open, onOpenChange, scope }: RecordOutflow
 
   const [projectId, setProjectId] = React.useState(scopedProjectId)
   const [siteId, setSiteId] = React.useState(scopedSiteId)
-  const [materialName, setMaterialName] = React.useState('')
+  const [materialId, setMaterialId] = React.useState('')
   const [quantity, setQuantity] = React.useState('')
-  const [unit, setUnit] = React.useState('')
   const [reason, setReason] = React.useState<OutflowReason>('CONSUMED')
   const [occurredDate, setOccurredDate] = React.useState(todayIso())
   const [workItem, setWorkItem] = React.useState('')
@@ -53,9 +52,8 @@ export function RecordOutflowDialog({ open, onOpenChange, scope }: RecordOutflow
     if (open) {
       setProjectId(scopedProjectId)
       setSiteId(scopedSiteId)
-      setMaterialName('')
+      setMaterialId('')
       setQuantity('')
-      setUnit('')
       setReason('CONSUMED')
       setOccurredDate(todayIso())
       setWorkItem('')
@@ -87,22 +85,16 @@ export function RecordOutflowDialog({ open, onOpenChange, scope }: RecordOutflow
     staleTime: 60_000,
   })
 
-  const handleMaterialChange = (value: string) => {
-    setMaterialName(value)
-    const match = catalog?.items.find((m) => m.name.toLowerCase() === value.toLowerCase())
-    if (match?.default_unit && !unit) {
-      setUnit(match.default_unit)
-    }
-  }
+  const selectedMaterial = catalog?.items.find((m) => m.id === materialId)
 
   const mutation = useMutation({
     mutationFn: () =>
       createOutflow({
         project_id: projectId,
         site_id: siteId || undefined,
-        material_name: materialName.trim(),
+        material_id: materialId,
+        unit_id: selectedMaterial!.default_unit_id,
         quantity,
-        unit: unit.trim(),
         movement_reason: reason,
         work_item: workItem.trim() || undefined,
         notes: notes.trim() || undefined,
@@ -125,17 +117,13 @@ export function RecordOutflowDialog({ open, onOpenChange, scope }: RecordOutflow
       setError('Project is required.')
       return
     }
-    if (!materialName.trim()) {
-      setError('Material name is required.')
+    if (!materialId || !selectedMaterial) {
+      setError('Material is required.')
       return
     }
     const qty = Number(quantity)
     if (!quantity || Number.isNaN(qty) || qty <= 0) {
       setError('Quantity must be a positive number.')
-      return
-    }
-    if (!unit.trim()) {
-      setError('Unit is required.')
       return
     }
     mutation.mutate()
@@ -204,20 +192,24 @@ export function RecordOutflowDialog({ open, onOpenChange, scope }: RecordOutflow
           </div>
 
           <div className="grid gap-1.5">
-            <Label htmlFor="materialNameOut">Material</Label>
-            <Input
-              id="materialNameOut"
-              list="outflow-material-catalog"
-              value={materialName}
-              onChange={(e) => handleMaterialChange(e.target.value)}
-              placeholder="e.g. Portland Cement"
-              required
-            />
-            <datalist id="outflow-material-catalog">
-              {catalog?.items.map((m) => (
-                <option key={m.id} value={m.name} />
-              ))}
-            </datalist>
+            <Label>Material</Label>
+            <Select value={materialId} onValueChange={setMaterialId}>
+              <SelectTrigger className="h-9">
+                <SelectValue placeholder="Select material from catalog" />
+              </SelectTrigger>
+              <SelectContent>
+                {catalog?.items.map((m) => (
+                  <SelectItem key={m.id} value={m.id}>
+                    {m.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {catalog && catalog.items.length === 0 && (
+              <p className="text-muted-foreground">
+                No materials in the catalog yet — ask an admin to add one first.
+              </p>
+            )}
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -234,8 +226,10 @@ export function RecordOutflowDialog({ open, onOpenChange, scope }: RecordOutflow
               />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="unitOut">Unit</Label>
-              <Input id="unitOut" value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="e.g. bags, m3, kg" required />
+              <Label>Unit</Label>
+              {/* Read-only: a material's Stock Unit is fixed (no conversion) --
+                  see materials_catalog.default_unit_id. */}
+              <Input value={selectedMaterial?.default_unit ?? ''} disabled placeholder="Select a material" />
             </div>
           </div>
 

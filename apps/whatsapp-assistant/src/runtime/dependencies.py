@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from mesiri.infrastructure.postgres.database import PostgresDatabase
     from planner import Planner
     from runtime.inventory_query import MaterialInventoryQueryService
+    from runtime.material_catalog_query import MaterialCatalogQueryService
     from understanding.pipeline import UnderstandingPipeline
     from workflows import WorkflowRuntime
 
@@ -74,6 +75,9 @@ class AppContainer:
     # Read-only inventory lookups for the material.inventory_query workflow.
     # Exposed for the same reason as pipeline/actor_reader above.
     inventory_query: MaterialInventoryQueryService
+    # Read-only catalog/units-of-measure lookups for the material/unit
+    # resolution gate. Exposed for the same reason as inventory_query above.
+    catalog_query: MaterialCatalogQueryService
     # redis_client is either a real RedisClient (when MESIRI_REDIS__HOST is set)
     # or FakeRedis for local/test.  Both expose connect() / disconnect() so the
     # lifespan handler can manage the lifecycle without special-casing.
@@ -118,6 +122,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from interactions.pending_report import PendingReportStore
     from mesiri.application.materials.dispatcher import MaterialExecutionDispatcher
     from mesiri.application.materials.handlers import ExecuteConfirmedMaterialActionHandler
+    from mesiri.application.materials.resolution import PostgresMaterialResolver
     from mesiri.bootstrap.settings import get_settings as _get_backend_settings
     from mesiri.infrastructure.objectstorage import build_object_storage
     from mesiri.infrastructure.postgres.database import PostgresDatabase
@@ -125,7 +130,12 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         PostgresMaterialExecutionRepository,
     )
     from planner import Planner
-    from runtime.inbound_journey import process_inbound_message, resume_pending_report_with_project
+    from runtime.inbound_journey import (
+        process_inbound_message,
+        resume_pending_report_with_material,
+        resume_pending_report_with_project,
+        resume_pending_report_with_unit,
+    )
     from runtime.reply_dispatch import send_reply_spec
     from understanding.runtime import build_pipeline
     from workflows import WorkflowRegistry, WorkflowRuntime
@@ -171,7 +181,9 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         registry=workflow_registry, repo=PostgresWorkflowInstanceRepository()
     )
     material_execution_handler = ExecuteConfirmedMaterialActionHandler(
-        db=material_db, repo=PostgresMaterialExecutionRepository()
+        db=material_db,
+        repo=PostgresMaterialExecutionRepository(),
+        resolver=PostgresMaterialResolver(),
     )
     material_dispatcher = MaterialExecutionDispatcher(material_execution_handler)
     # Read-only inventory lookups for the material.inventory_query workflow --
@@ -180,6 +192,12 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from runtime.inventory_query import MaterialInventoryQueryService
 
     inventory_query = MaterialInventoryQueryService(material_db)
+    # Read-only catalog/units-of-measure lookups for the material/unit
+    # resolution gate -- same reasoning and same material_db as
+    # inventory_query above. See runtime/material_catalog_query.py.
+    from runtime.material_catalog_query import MaterialCatalogQueryService
+
+    catalog_query = MaterialCatalogQueryService(material_db)
     # Slow-path interaction classifier: while a confirmation is pending, a
     # message that isn't a plain "yes"/"no" (e.g. "40 bags of cement" instead
     # of the drafted 50) needs an LLM to recognize it as a CORRECTION rather
@@ -355,6 +373,57 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             )
             return
 
+        # A tap on the material picker sent by the material-resolution gate
+        # (runtime/inbound_journey.py, ambiguous/unmatched material name) --
+        # resumes with material_id filled in and re-runs the remaining gates
+        # (unit, then project) rather than assuming those are settled.
+        material_reply = await resume_pending_report_with_material(
+            message,
+            ctx.user_id,
+            pending_report_store=pending_report_store,
+            catalog_query=catalog_query,
+            planner=planner,
+            workflow_runtime=workflow_runtime,
+            actor=ctx,
+        )
+        if material_reply is not None:
+            await send_reply_spec(
+                material_reply,
+                wa_id,
+                send_text=sender.send_text,
+                send_list=sender.send_list,
+                send_button=sender.send_button,
+            )
+            await message_logger.log_reply(
+                correlation_id=message.correlation_id, reply=material_reply.text
+            )
+            return
+
+        # A Yes/No tap on the Stock Unit mismatch clarification -- resumes
+        # with unit_id filled in (or tells the sender to resend on "No") and
+        # re-runs the project gate before planner/workflow.
+        unit_reply = await resume_pending_report_with_unit(
+            message,
+            ctx.user_id,
+            pending_report_store=pending_report_store,
+            catalog_query=catalog_query,
+            planner=planner,
+            workflow_runtime=workflow_runtime,
+            actor=ctx,
+        )
+        if unit_reply is not None:
+            await send_reply_spec(
+                unit_reply,
+                wa_id,
+                send_text=sender.send_text,
+                send_list=sender.send_list,
+                send_button=sender.send_button,
+            )
+            await message_logger.log_reply(
+                correlation_id=message.correlation_id, reply=unit_reply.text
+            )
+            return
+
         # A tap on the project-picker list sent by the project-selection gate
         # (runtime/inbound_journey.py, when a report was otherwise complete
         # but no project could be resolved) -- resumes the held report with
@@ -399,6 +468,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             message_logger=message_logger,
             trace_logger=trace_logger,
             inventory_query=inventory_query,
+            catalog_query=catalog_query,
             pending_report_store=pending_report_store,
         )
 
@@ -421,6 +491,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         planner=planner,
         actor_reader=actor_reader,
         inventory_query=inventory_query,
+        catalog_query=catalog_query,
         workflow_runtime=workflow_runtime,
         interaction_handler=interaction_handler,
         redis_client=redis_client,

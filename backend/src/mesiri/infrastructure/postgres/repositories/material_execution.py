@@ -12,12 +12,14 @@ workflow_instances SQL here — that table's SQL stays owned by one file.
 
 from __future__ import annotations
 
+import datetime
 import json
 import uuid
 from typing import TYPE_CHECKING
 
 from backend.postgres.workflow_instance import get_by_id_on_connection, transition_on_connection
 from mesiri.application.materials.repository import MaterialCommand, MaterialExecutionRepository
+from mesiri.domains.materials.posting import post_material_movement
 from mesiri_contracts.application.commands.material import (
     RecordMaterialReceiptCommand,
 )
@@ -95,25 +97,39 @@ class PostgresMaterialExecutionRepository(MaterialExecutionRepository):
             assert existing is not None
             return as_replay(existing)
 
+        if cmd.material_id is None or cmd.unit_id is None:
+            raise RuntimeError(
+                "persist_success called with unresolved material_id/unit_id — "
+                "the Handler must resolve these before calling persist_success"
+            )
+        material_id = uuid.UUID(cmd.material_id)
+        unit_id = uuid.UUID(cmd.unit_id)
+        project_id = _optional_uuid(cmd.project_id)
+        site_id = _optional_uuid(cmd.site_id)
+        occurred_at = datetime.datetime.combine(cmd.occurred_date, datetime.time.min)
+
         row_id = uuid.uuid4()
         if isinstance(cmd, RecordMaterialReceiptCommand):
             await conn.execute(
                 text(
                     "INSERT INTO material_receipts "
                     "(id, organization_id, project_id, site_id, material_name, quantity, unit, "
-                    "supplier, occurred_date, occurred_date_source, correlation_id, created_by) "
+                    "unit_id, material_id, supplier, occurred_date, occurred_date_source, "
+                    "correlation_id, created_by) "
                     "VALUES (:id, :organization_id, :project_id, :site_id, :material_name, "
-                    ":quantity, :unit, :supplier, :occurred_date, :occurred_date_source, "
-                    ":correlation_id, :created_by)"
+                    ":quantity, :unit, :unit_id, :material_id, :supplier, :occurred_date, "
+                    ":occurred_date_source, :correlation_id, :created_by)"
                 ),
                 {
                     "id": row_id,
                     "organization_id": uuid.UUID(cmd.organization_id),
-                    "project_id": _optional_uuid(cmd.project_id),
-                    "site_id": _optional_uuid(cmd.site_id),
+                    "project_id": project_id,
+                    "site_id": site_id,
                     "material_name": cmd.material_name,
                     "quantity": cmd.quantity,
                     "unit": cmd.unit,
+                    "unit_id": unit_id,
+                    "material_id": material_id,
                     "supplier": cmd.supplier,
                     "occurred_date": cmd.occurred_date,
                     "occurred_date_source": cmd.occurred_date_source,
@@ -122,24 +138,28 @@ class PostgresMaterialExecutionRepository(MaterialExecutionRepository):
                 },
             )
             aggregate_type, event_type = "material_receipt", "MaterialReceived"
+            movement_type, source_type = "RECEIPT", "material_receipt"
         else:
             await conn.execute(
                 text(
                     "INSERT INTO material_usage "
                     "(id, organization_id, project_id, site_id, material_name, quantity, unit, "
-                    "work_item, occurred_date, occurred_date_source, correlation_id, created_by) "
+                    "unit_id, material_id, work_item, occurred_date, occurred_date_source, "
+                    "correlation_id, created_by) "
                     "VALUES (:id, :organization_id, :project_id, :site_id, :material_name, "
-                    ":quantity, :unit, :work_item, :occurred_date, :occurred_date_source, "
-                    ":correlation_id, :created_by)"
+                    ":quantity, :unit, :unit_id, :material_id, :work_item, :occurred_date, "
+                    ":occurred_date_source, :correlation_id, :created_by)"
                 ),
                 {
                     "id": row_id,
                     "organization_id": uuid.UUID(cmd.organization_id),
-                    "project_id": _optional_uuid(cmd.project_id),
-                    "site_id": _optional_uuid(cmd.site_id),
+                    "project_id": project_id,
+                    "site_id": site_id,
                     "material_name": cmd.material_name,
                     "quantity": cmd.quantity,
                     "unit": cmd.unit,
+                    "unit_id": unit_id,
+                    "material_id": material_id,
                     "work_item": cmd.work_item,
                     "occurred_date": cmd.occurred_date,
                     "occurred_date_source": cmd.occurred_date_source,
@@ -148,6 +168,25 @@ class PostgresMaterialExecutionRepository(MaterialExecutionRepository):
                 },
             )
             aggregate_type, event_type = "material_usage", "MaterialUsed"
+            movement_type, source_type = "ISSUE", "material_usage"
+
+        if project_id is None:
+            raise RuntimeError("project_id is required to post a material_movement")
+        await post_material_movement(
+            conn,
+            movement_type=movement_type,
+            material_id=material_id,
+            unit_id=unit_id,
+            quantity=cmd.quantity,
+            organization_id=uuid.UUID(cmd.organization_id),
+            project_id=project_id,
+            site_id=site_id,
+            occurred_at=occurred_at,
+            source_type=source_type,
+            source_id=row_id,
+            recorded_by_user_id=uuid.UUID(cmd.created_by),
+            idempotency_key=cmd.idempotency_key,
+        )
 
         payload = {
             "material_name": cmd.material_name,

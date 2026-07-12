@@ -21,6 +21,7 @@ from mesiri_contracts.application.results.execution_result import (
 from mesiri_contracts.context.enums import WorkflowPhase
 
 from .repository import MaterialCommand, MaterialExecutionRepository
+from .resolution import MaterialResolver, ResolutionResult
 
 
 class FakeDatabase:
@@ -96,6 +97,27 @@ class FakeMaterialExecutionRepository(MaterialExecutionRepository):
         state, version = row
         new_state = state.model_copy(update={"phase": new_phase})
         await self._workflow_repo.transition(workflow_instance_id, version, new_state)
+
+
+class FakeMaterialResolver(MaterialResolver):
+    """Always resolves successfully to a deterministic (material_id, unit_id) pair,
+    derived from cmd.material_name/unit so different names/units in the same test
+    get different (but stable) ids. No catalog/DB involved."""
+
+    async def resolve(self, conn: Any, cmd: MaterialCommand) -> ResolutionResult:
+        material_id = uuid.uuid5(uuid.NAMESPACE_DNS, f"material:{cmd.material_name.strip().lower()}")
+        unit_id = uuid.uuid5(uuid.NAMESPACE_DNS, f"unit:{cmd.unit.strip().lower()}")
+        return ResolutionResult(material_id=material_id, unit_id=unit_id, reasons=[])
+
+
+class RejectingMaterialResolver(MaterialResolver):
+    """Always rejects with the given reasons — for testing the resolution-failure path."""
+
+    def __init__(self, reasons: list[str]) -> None:
+        self._reasons = reasons
+
+    async def resolve(self, conn: Any, cmd: MaterialCommand) -> ResolutionResult:
+        return ResolutionResult(material_id=None, unit_id=None, reasons=self._reasons)
 
 
 class PersistSuccessRaisesRepository(MaterialExecutionRepository):

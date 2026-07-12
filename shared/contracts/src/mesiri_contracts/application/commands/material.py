@@ -42,6 +42,13 @@ class RecordMaterialReceiptCommand(BaseModel):
     unit: str
     supplier: str | None = None
 
+    # Populated once the WhatsApp assistant's deterministic resolution gates
+    # (or the Handler's defense-in-depth resolver, see application/materials/
+    # handlers.py) have matched material_name/unit against materials_catalog/
+    # units_of_measure. None until resolved.
+    material_id: CanonicalUuid | None = None
+    unit_id: CanonicalUuid | None = None
+
     occurred_date: date
     occurred_date_source: str = "inferred_at_confirmation"
 
@@ -67,6 +74,9 @@ class RecordMaterialUsageCommand(BaseModel):
     quantity: Decimal
     unit: str
     work_item: str | None = None
+
+    material_id: CanonicalUuid | None = None
+    unit_id: CanonicalUuid | None = None
 
     occurred_date: date
     occurred_date_source: str = "inferred_at_confirmation"

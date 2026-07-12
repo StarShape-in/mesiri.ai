@@ -28,11 +28,14 @@ from mesiri.domains.materials.validation import (
     is_valid_usage_reason,
     role_can_adjust,
 )
+from mesiri.domains.materials.posting import post_material_movement
 from mesiri.domains.projects.router import get_auth_context
 from mesiri.infrastructure.postgres.dependency import get_db_conn
 from mesiri.infrastructure.postgres.repositories.materials import (
+    MaterialMovementsRepository,
     PostgresMaterialCatalogRepository,
     PostgresMaterialReadRepository,
+    UnitsOfMeasureRepository,
 )
 
 router = APIRouter(prefix="/materials", tags=["materials"])
@@ -132,9 +135,17 @@ def _authorize_write(
 # ---------------------------------------------------------------------------
 class MaterialCatalogCreate(BaseModel):
     name: str
-    default_unit: str | None = None
+    default_unit_id: uuid.UUID
     category: str | None = None
     sku: str | None = None
+
+
+class MaterialCatalogUpdate(BaseModel):
+    name: str | None = None
+    default_unit_id: uuid.UUID | None = None
+    category: str | None = None
+    sku: str | None = None
+    is_active: bool | None = None
 
 
 @router.get("", response_model=MaterialCatalogListResponse)
@@ -158,16 +169,31 @@ async def list_materials(
     return {"items": items, "total": total}
 
 
+@router.get("/units-of-measure")
+async def list_units_of_measure(
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """List the fixed global units of measure — read-only, no per-org CRUD."""
+    repo = UnitsOfMeasureRepository(conn)
+    return {"items": await repo.list_active()}
+
+
 @router.post("", response_model=MaterialCatalogResponse, status_code=201)
 async def create_material(
     body: MaterialCatalogCreate,
     auth_context: AuthorizationContext = Depends(get_auth_context),
     conn: AsyncConnection = Depends(get_db_conn),
 ):
-    """Create a Material catalog entry (organization-scoped name)."""
+    """Create a Material catalog entry (organization-scoped name) with its Stock Unit."""
     name = body.name.strip()
     if not name:
         raise HTTPException(status_code=422, detail="name is required")
+    units_repo = UnitsOfMeasureRepository(conn)
+    unit = await units_repo.get_by_id(body.default_unit_id)
+    if unit is None or not unit["is_active"]:
+        raise HTTPException(status_code=422, detail="default_unit_id is not a valid active unit")
+
     repo = PostgresMaterialCatalogRepository(conn)
     existing = await repo.get_by_name(auth_context.organization_id, name)
     if existing is not None:
@@ -179,11 +205,55 @@ async def create_material(
     return await repo.create(
         organization_id=auth_context.organization_id,
         name=name,
-        default_unit=body.default_unit.strip() if body.default_unit else None,
+        default_unit=unit["code"],
+        default_unit_id=unit["id"],
         category=body.category.strip() if body.category else None,
         sku=body.sku.strip() if body.sku else None,
         created_by=auth_context.user_id,
     )
+
+
+@router.patch("/{material_id}", response_model=MaterialCatalogResponse)
+async def update_material(
+    material_id: uuid.UUID,
+    body: MaterialCatalogUpdate,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Update a Material catalog entry. Stock Unit (default_unit_id) cannot change
+    once any movement references this material — the unit a material is tracked
+    in is fixed for its lifetime in V1 (no unit conversion)."""
+    repo = PostgresMaterialCatalogRepository(conn)
+    existing = await repo.get_by_id(auth_context.organization_id, material_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Material not found")
+
+    default_unit_id = body.default_unit_id
+    if default_unit_id is not None and default_unit_id != existing["default_unit_id"]:
+        if await repo.has_movements(material_id):
+            raise HTTPException(
+                status_code=409,
+                detail="Stock Unit cannot change: this material already has recorded movements",
+            )
+        units_repo = UnitsOfMeasureRepository(conn)
+        unit = await units_repo.get_by_id(default_unit_id)
+        if unit is None or not unit["is_active"]:
+            raise HTTPException(status_code=422, detail="default_unit_id is not a valid active unit")
+
+    name = body.name.strip() if body.name else None
+    updated = await repo.update(
+        auth_context.organization_id,
+        material_id,
+        name=name,
+        default_unit_id=default_unit_id,
+        category=body.category,
+        sku=body.sku,
+        is_active=body.is_active,
+        updated_by=auth_context.user_id,
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Material not found")
+    return updated
 
 
 # ---------------------------------------------------------------------------
@@ -375,9 +445,9 @@ async def get_material_ledger(
 class MaterialInflowCreate(BaseModel):
     project_id: uuid.UUID
     site_id: uuid.UUID | None = None
-    material_name: str
+    material_id: uuid.UUID
+    unit_id: uuid.UUID
     quantity: Decimal
-    unit: str
     movement_reason: str = "RECEIVED"
     supplier: str | None = None
     notes: str | None = None
@@ -387,27 +457,43 @@ class MaterialInflowCreate(BaseModel):
 class MaterialOutflowCreate(BaseModel):
     project_id: uuid.UUID
     site_id: uuid.UUID | None = None
-    material_name: str
+    material_id: uuid.UUID
+    unit_id: uuid.UUID
     quantity: Decimal
-    unit: str
     movement_reason: str = "CONSUMED"
     work_item: str | None = None
     notes: str | None = None
     occurred_date: datetime.date
 
 
-async def _resolve_material_id(
+async def _resolve_and_validate_material_unit(
     conn: AsyncConnection,
     organization_id: uuid.UUID,
-    material_name: str,
-    unit: str,
-    created_by: uuid.UUID,
-) -> uuid.UUID:
+    material_id: uuid.UUID,
+    unit_id: uuid.UUID,
+) -> tuple[dict, dict]:
+    """Look up the catalog material and unit by id and enforce the material's
+    Stock Unit (materials_catalog.default_unit_id) — no free-text creation,
+    no unit substitution. Raises HTTPException on any mismatch."""
     catalog_repo = PostgresMaterialCatalogRepository(conn)
-    material = await catalog_repo.get_or_create_by_name(
-        organization_id, material_name, default_unit=unit, created_by=created_by
-    )
-    return material["id"]
+    material = await catalog_repo.get_by_id(organization_id, material_id)
+    if material is None or not material["is_active"]:
+        raise HTTPException(status_code=422, detail="material_id is not a valid active catalog entry")
+
+    units_repo = UnitsOfMeasureRepository(conn)
+    unit = await units_repo.get_by_id(unit_id)
+    if unit is None or not unit["is_active"]:
+        raise HTTPException(status_code=422, detail="unit_id is not a valid active unit")
+
+    if material["default_unit_id"] is not None and unit["id"] != material["default_unit_id"]:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"unit_id does not match {material['name']}'s Stock Unit "
+                f"(expected {material['default_unit']}); no unit conversion is supported"
+            ),
+        )
+    return material, unit
 
 
 @router.post("/inflows", status_code=201)
@@ -432,38 +518,51 @@ async def create_inflow(
             conn, auth_context.organization_id, body.project_id, body.site_id
         )
 
-    material_name = body.material_name.strip()
-    unit = body.unit.strip()
-    material_id = await _resolve_material_id(
-        conn, auth_context.organization_id, material_name, unit, auth_context.user_id
+    material, unit = await _resolve_and_validate_material_unit(
+        conn, auth_context.organization_id, body.material_id, body.unit_id
     )
 
     row_id = uuid.uuid4()
     await conn.execute(
         text(
             "INSERT INTO material_receipts "
-            "(id, organization_id, project_id, site_id, material_name, quantity, unit, "
+            "(id, organization_id, project_id, site_id, material_name, quantity, unit, unit_id, "
             "supplier, occurred_date, occurred_date_source, source, movement_reason, notes, "
             "material_id, created_by) "
             "VALUES (:id, :organization_id, :project_id, :site_id, :material_name, "
-            ":quantity, :unit, :supplier, :occurred_date, 'reported', 'web', :movement_reason, "
-            ":notes, :material_id, :created_by)"
+            ":quantity, :unit, :unit_id, :supplier, :occurred_date, 'reported', 'web', "
+            ":movement_reason, :notes, :material_id, :created_by)"
         ),
         {
             "id": row_id,
             "organization_id": auth_context.organization_id,
             "project_id": body.project_id,
             "site_id": body.site_id,
-            "material_name": material_name,
+            "material_name": material["name"],
             "quantity": body.quantity,
-            "unit": unit,
+            "unit": unit["code"],
+            "unit_id": unit["id"],
             "supplier": body.supplier.strip() if body.supplier else None,
             "occurred_date": body.occurred_date,
             "movement_reason": body.movement_reason,
             "notes": body.notes.strip() if body.notes else None,
-            "material_id": material_id,
+            "material_id": material["id"],
             "created_by": auth_context.user_id,
         },
+    )
+    await post_material_movement(
+        conn,
+        movement_type="RECEIPT",
+        material_id=material["id"],
+        unit_id=unit["id"],
+        quantity=body.quantity,
+        organization_id=auth_context.organization_id,
+        project_id=body.project_id,
+        site_id=body.site_id,
+        occurred_at=datetime.datetime.combine(body.occurred_date, datetime.time.min),
+        source_type="material_receipt",
+        source_id=row_id,
+        recorded_by_user_id=auth_context.user_id,
     )
     await _publish_outbox_event(
         conn,
@@ -471,9 +570,9 @@ async def create_inflow(
         aggregate_id=row_id,
         event_type="MaterialReceived",
         payload={
-            "material_name": material_name,
+            "material_name": material["name"],
             "quantity": str(body.quantity),
-            "unit": unit,
+            "unit": unit["code"],
             "movement_reason": body.movement_reason,
             "occurred_date": body.occurred_date.isoformat(),
             "occurred_date_source": "reported",
@@ -504,38 +603,51 @@ async def create_outflow(
             conn, auth_context.organization_id, body.project_id, body.site_id
         )
 
-    material_name = body.material_name.strip()
-    unit = body.unit.strip()
-    material_id = await _resolve_material_id(
-        conn, auth_context.organization_id, material_name, unit, auth_context.user_id
+    material, unit = await _resolve_and_validate_material_unit(
+        conn, auth_context.organization_id, body.material_id, body.unit_id
     )
 
     row_id = uuid.uuid4()
     await conn.execute(
         text(
             "INSERT INTO material_usage "
-            "(id, organization_id, project_id, site_id, material_name, quantity, unit, "
+            "(id, organization_id, project_id, site_id, material_name, quantity, unit, unit_id, "
             "work_item, occurred_date, occurred_date_source, source, movement_reason, notes, "
             "material_id, created_by) "
             "VALUES (:id, :organization_id, :project_id, :site_id, :material_name, "
-            ":quantity, :unit, :work_item, :occurred_date, 'reported', 'web', :movement_reason, "
-            ":notes, :material_id, :created_by)"
+            ":quantity, :unit, :unit_id, :work_item, :occurred_date, 'reported', 'web', "
+            ":movement_reason, :notes, :material_id, :created_by)"
         ),
         {
             "id": row_id,
             "organization_id": auth_context.organization_id,
             "project_id": body.project_id,
             "site_id": body.site_id,
-            "material_name": material_name,
+            "material_name": material["name"],
             "quantity": body.quantity,
-            "unit": unit,
+            "unit": unit["code"],
+            "unit_id": unit["id"],
             "work_item": body.work_item.strip() if body.work_item else None,
             "occurred_date": body.occurred_date,
             "movement_reason": body.movement_reason,
             "notes": body.notes.strip() if body.notes else None,
-            "material_id": material_id,
+            "material_id": material["id"],
             "created_by": auth_context.user_id,
         },
+    )
+    await post_material_movement(
+        conn,
+        movement_type="ISSUE",
+        material_id=material["id"],
+        unit_id=unit["id"],
+        quantity=body.quantity,
+        organization_id=auth_context.organization_id,
+        project_id=body.project_id,
+        site_id=body.site_id,
+        occurred_at=datetime.datetime.combine(body.occurred_date, datetime.time.min),
+        source_type="material_usage",
+        source_id=row_id,
+        recorded_by_user_id=auth_context.user_id,
     )
     await _publish_outbox_event(
         conn,
@@ -543,9 +655,9 @@ async def create_outflow(
         aggregate_id=row_id,
         event_type="MaterialUsed",
         payload={
-            "material_name": material_name,
+            "material_name": material["name"],
             "quantity": str(body.quantity),
-            "unit": unit,
+            "unit": unit["code"],
             "movement_reason": body.movement_reason,
             "occurred_date": body.occurred_date.isoformat(),
             "occurred_date_source": "reported",
@@ -588,12 +700,12 @@ async def reverse_inflow(
     await conn.execute(
         text(
             "INSERT INTO material_usage "
-            "(id, organization_id, project_id, site_id, material_name, quantity, unit, "
+            "(id, organization_id, project_id, site_id, material_name, quantity, unit, unit_id, "
             "work_item, occurred_date, occurred_date_source, source, movement_reason, notes, "
             "material_id, reverses_movement_id, created_by) "
             "VALUES (:id, :organization_id, :project_id, :site_id, :material_name, "
-            ":quantity, :unit, NULL, :occurred_date, 'reported', 'web', 'ADJUSTMENT_OUT', "
-            ":notes, :material_id, :reverses_movement_id, :created_by)"
+            ":quantity, :unit, :unit_id, NULL, :occurred_date, 'reported', 'web', "
+            "'ADJUSTMENT_OUT', :notes, :material_id, :reverses_movement_id, :created_by)"
         ),
         {
             "id": row_id,
@@ -603,12 +715,30 @@ async def reverse_inflow(
             "material_name": original["material_name"],
             "quantity": original["quantity"],
             "unit": original["unit"],
+            "unit_id": original["unit_id"],
             "occurred_date": occurred_date,
             "notes": body.reason_note,
             "material_id": original["material_id"],
             "reverses_movement_id": receipt_id,
             "created_by": auth_context.user_id,
         },
+    )
+    movements_repo = MaterialMovementsRepository(conn)
+    original_movement = await movements_repo.get_by_source("material_receipt", receipt_id)
+    await post_material_movement(
+        conn,
+        movement_type="ISSUE",
+        material_id=original["material_id"],
+        unit_id=original["unit_id"],
+        quantity=original["quantity"],
+        organization_id=auth_context.organization_id,
+        project_id=original["project_id"],
+        site_id=original["site_id"],
+        occurred_at=datetime.datetime.combine(occurred_date, datetime.time.min),
+        source_type="material_usage",
+        source_id=row_id,
+        recorded_by_user_id=auth_context.user_id,
+        reversal_of_movement_id=original_movement["id"] if original_movement else None,
     )
     await _publish_outbox_event(
         conn,
@@ -642,12 +772,12 @@ async def reverse_outflow(
     await conn.execute(
         text(
             "INSERT INTO material_receipts "
-            "(id, organization_id, project_id, site_id, material_name, quantity, unit, "
+            "(id, organization_id, project_id, site_id, material_name, quantity, unit, unit_id, "
             "supplier, occurred_date, occurred_date_source, source, movement_reason, notes, "
             "material_id, reverses_movement_id, created_by) "
             "VALUES (:id, :organization_id, :project_id, :site_id, :material_name, "
-            ":quantity, :unit, NULL, :occurred_date, 'reported', 'web', 'ADJUSTMENT_IN', "
-            ":notes, :material_id, :reverses_movement_id, :created_by)"
+            ":quantity, :unit, :unit_id, NULL, :occurred_date, 'reported', 'web', "
+            "'ADJUSTMENT_IN', :notes, :material_id, :reverses_movement_id, :created_by)"
         ),
         {
             "id": row_id,
@@ -657,12 +787,30 @@ async def reverse_outflow(
             "material_name": original["material_name"],
             "quantity": original["quantity"],
             "unit": original["unit"],
+            "unit_id": original["unit_id"],
             "occurred_date": occurred_date,
             "notes": body.reason_note,
             "material_id": original["material_id"],
             "reverses_movement_id": usage_id,
             "created_by": auth_context.user_id,
         },
+    )
+    movements_repo = MaterialMovementsRepository(conn)
+    original_movement = await movements_repo.get_by_source("material_usage", usage_id)
+    await post_material_movement(
+        conn,
+        movement_type="RECEIPT",
+        material_id=original["material_id"],
+        unit_id=original["unit_id"],
+        quantity=original["quantity"],
+        organization_id=auth_context.organization_id,
+        project_id=original["project_id"],
+        site_id=original["site_id"],
+        occurred_at=datetime.datetime.combine(occurred_date, datetime.time.min),
+        source_type="material_receipt",
+        source_id=row_id,
+        recorded_by_user_id=auth_context.user_id,
+        reversal_of_movement_id=original_movement["id"] if original_movement else None,
     )
     await _publish_outbox_event(
         conn,

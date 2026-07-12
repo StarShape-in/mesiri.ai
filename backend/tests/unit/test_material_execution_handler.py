@@ -5,6 +5,7 @@ from __future__ import annotations
 from mesiri.application.materials.fakes import (
     FakeDatabase,
     FakeMaterialExecutionRepository,
+    FakeMaterialResolver,
     PersistSuccessRaisesRepository,
 )
 from mesiri.application.materials.handlers import ExecuteConfirmedMaterialActionHandler
@@ -68,7 +69,9 @@ async def test_receipt_success():
     )
     workflow_repo = _seeded_workflow_repo(confirmed)
     material_repo = FakeMaterialExecutionRepository(workflow_repo=workflow_repo)
-    handler = ExecuteConfirmedMaterialActionHandler(db=FakeDatabase(), repo=material_repo)
+    handler = ExecuteConfirmedMaterialActionHandler(
+        db=FakeDatabase(), repo=material_repo, resolver=FakeMaterialResolver()
+    )
 
     result = await handler.handle(confirmed)
 
@@ -87,7 +90,9 @@ async def test_usage_success():
     )
     workflow_repo = _seeded_workflow_repo(confirmed)
     material_repo = FakeMaterialExecutionRepository(workflow_repo=workflow_repo)
-    handler = ExecuteConfirmedMaterialActionHandler(db=FakeDatabase(), repo=material_repo)
+    handler = ExecuteConfirmedMaterialActionHandler(
+        db=FakeDatabase(), repo=material_repo, resolver=FakeMaterialResolver()
+    )
 
     result = await handler.handle(confirmed)
 
@@ -105,7 +110,9 @@ async def test_validation_rejection_transitions_to_execution_rejected_not_confir
     )
     workflow_repo = _seeded_workflow_repo(confirmed)
     material_repo = FakeMaterialExecutionRepository(workflow_repo=workflow_repo)
-    handler = ExecuteConfirmedMaterialActionHandler(db=FakeDatabase(), repo=material_repo)
+    handler = ExecuteConfirmedMaterialActionHandler(
+        db=FakeDatabase(), repo=material_repo, resolver=FakeMaterialResolver()
+    )
 
     result = await handler.handle(confirmed)
 
@@ -126,7 +133,9 @@ async def test_repeated_rejection_returns_cached_result_without_rerunning_valida
     )
     workflow_repo = _seeded_workflow_repo(confirmed)
     material_repo = FakeMaterialExecutionRepository(workflow_repo=workflow_repo)
-    handler = ExecuteConfirmedMaterialActionHandler(db=FakeDatabase(), repo=material_repo)
+    handler = ExecuteConfirmedMaterialActionHandler(
+        db=FakeDatabase(), repo=material_repo, resolver=FakeMaterialResolver()
+    )
 
     first = await handler.handle(confirmed)
     second = await handler.handle(confirmed)
@@ -143,7 +152,9 @@ async def test_duplicate_execution_second_call_is_already_executed():
     )
     workflow_repo = _seeded_workflow_repo(confirmed)
     material_repo = FakeMaterialExecutionRepository(workflow_repo=workflow_repo)
-    handler = ExecuteConfirmedMaterialActionHandler(db=FakeDatabase(), repo=material_repo)
+    handler = ExecuteConfirmedMaterialActionHandler(
+        db=FakeDatabase(), repo=material_repo, resolver=FakeMaterialResolver()
+    )
 
     first = await handler.handle(confirmed)
     second = await handler.handle(confirmed)
@@ -163,7 +174,7 @@ async def test_validation_runs_before_any_repo_persist_call():
         project_id=None,
     )
     handler = ExecuteConfirmedMaterialActionHandler(
-        db=FakeDatabase(), repo=PersistSuccessRaisesRepository()
+        db=FakeDatabase(), repo=PersistSuccessRaisesRepository(), resolver=FakeMaterialResolver()
     )
 
     result = await handler.handle(confirmed)  # would raise if persist_success were called

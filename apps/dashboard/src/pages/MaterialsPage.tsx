@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Boxes, PackagePlus, PackageMinus } from 'lucide-react'
+import { Boxes, PackagePlus, PackageMinus, ListTree } from 'lucide-react'
 import { useScope } from '@/lib/ScopeContext'
 import { useAuth } from '@/lib/AuthContext'
 import { Button } from '@/components/ui/button'
@@ -10,6 +10,7 @@ import { OutflowsView } from '@/components/materials/outflows-view'
 import { InventoryView } from '@/components/materials/inventory-view'
 import { RecordInflowDialog } from '@/components/materials/record-inflow-dialog'
 import { RecordOutflowDialog } from '@/components/materials/record-outflow-dialog'
+import { ManageCatalogueDialog } from '@/components/materials/manage-catalogue-dialog'
 
 type MaterialsView = 'inflows' | 'outflows' | 'inventory'
 
@@ -27,6 +28,7 @@ export default function MaterialsPage() {
 
   const [inflowDialogOpen, setInflowDialogOpen] = React.useState(false)
   const [outflowDialogOpen, setOutflowDialogOpen] = React.useState(false)
+  const [catalogueDialogOpen, setCatalogueDialogOpen] = React.useState(false)
 
   const selectView = (next: string) => {
     setSearchParams((prev) => {
@@ -67,27 +69,40 @@ export default function MaterialsPage() {
             <p className="text-xs text-muted-foreground font-semibold">{scopeLabel}</p>
           </div>
         </div>
-        {canRecordMovements && (
-          <div className="flex gap-2">
+        <div className="flex gap-2">
+          {me?.role === 'ADMIN' && (
             <Button
               size="sm"
               variant="outline"
               className="h-8 gap-1.5 text-xs font-bold"
-              onClick={() => setInflowDialogOpen(true)}
+              onClick={() => setCatalogueDialogOpen(true)}
             >
-              <PackagePlus className="size-3.5" />
-              Record Inflow
+              <ListTree className="size-3.5" />
+              Manage Catalogue
             </Button>
-            <Button
-              size="sm"
-              className="h-8 gap-1.5 text-xs font-bold"
-              onClick={() => setOutflowDialogOpen(true)}
-            >
-              <PackageMinus className="size-3.5" />
-              Record Outflow
-            </Button>
-          </div>
-        )}
+          )}
+          {canRecordMovements && (
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 gap-1.5 text-xs font-bold"
+                onClick={() => setInflowDialogOpen(true)}
+              >
+                <PackagePlus className="size-3.5" />
+                Record Inflow
+              </Button>
+              <Button
+                size="sm"
+                className="h-8 gap-1.5 text-xs font-bold"
+                onClick={() => setOutflowDialogOpen(true)}
+              >
+                <PackageMinus className="size-3.5" />
+                Record Outflow
+              </Button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* View switch */}
@@ -113,6 +128,7 @@ export default function MaterialsPage() {
         onOpenChange={setOutflowDialogOpen}
         scope={scope}
       />
+      <ManageCatalogueDialog open={catalogueDialogOpen} onOpenChange={setCatalogueDialogOpen} />
     </div>
   )
 }

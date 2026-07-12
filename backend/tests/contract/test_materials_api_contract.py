@@ -1,9 +1,10 @@
 """Contract/integration tests for the dashboard Materials API.
 
-Covers: catalog CRUD + org isolation, valid/invalid Inflow & Outflow writes
-(direction/reason enforcement, quantity>0, site-must-belong-to-project,
-inaccessible-project rejection), inventory derivation (including negative
-stock), and correction/reversal preserving the original movement.
+Covers: catalog CRUD + org isolation, Stock Unit enforcement, valid/invalid
+Inflow & Outflow writes (direction/reason enforcement, quantity>0,
+site-must-belong-to-project, inaccessible-project rejection), inventory
+derivation from the material_movements ledger (including negative stock),
+and correction/reversal preserving the original movement.
 
 Requires a live Postgres reachable via Settings().postgres.dsn() — run with
 `pytest -m integration`. Mirrors the fixture style of
@@ -39,6 +40,7 @@ async def test_engine():
 @pytest.fixture
 async def clean_db(test_engine: AsyncEngine):
     async with test_engine.begin() as conn:
+        await conn.execute(sa.text("DELETE FROM material_movements"))
         await conn.execute(sa.text("DELETE FROM material_receipts"))
         await conn.execute(sa.text("DELETE FROM material_usage"))
         await conn.execute(sa.text("DELETE FROM materials_catalog"))
@@ -143,10 +145,35 @@ def _auth(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-async def test_create_material_and_org_isolation(client, test_engine, test_org, admin_ctx):
+async def _bags_unit_id(client, token: str) -> str:
+    resp = await client.get("/materials/units-of-measure", headers=_auth(token))
+    assert resp.status_code == 200
+    units = {u["code"]: u["id"] for u in resp.json()["items"]}
+    return units["bags"]
+
+
+async def _tons_unit_id(client, token: str) -> str:
+    resp = await client.get("/materials/units-of-measure", headers=_auth(token))
+    assert resp.status_code == 200
+    units = {u["code"]: u["id"] for u in resp.json()["items"]}
+    return units["tons"]
+
+
+async def _make_material(client, token: str, name: str, unit_id: str) -> str:
     resp = await client.post(
         "/materials",
-        json={"name": "Cement", "default_unit": "bags"},
+        json={"name": name, "default_unit_id": unit_id},
+        headers=_auth(token),
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()["id"]
+
+
+async def test_create_material_and_org_isolation(client, test_engine, test_org, admin_ctx):
+    bags_id = await _bags_unit_id(client, admin_ctx["token"])
+    resp = await client.post(
+        "/materials",
+        json={"name": "Cement", "default_unit_id": bags_id},
         headers=_auth(admin_ctx["token"]),
     )
     assert resp.status_code == 201
@@ -170,33 +197,42 @@ async def test_create_material_and_org_isolation(client, test_engine, test_org, 
 
 
 async def test_duplicate_material_name_rejected(client, admin_ctx):
-    await client.post("/materials", json={"name": "Sand"}, headers=_auth(admin_ctx["token"]))
-    resp = await client.post("/materials", json={"name": "Sand"}, headers=_auth(admin_ctx["token"]))
+    bags_id = await _bags_unit_id(client, admin_ctx["token"])
+    await client.post(
+        "/materials", json={"name": "Sand", "default_unit_id": bags_id}, headers=_auth(admin_ctx["token"])
+    )
+    resp = await client.post(
+        "/materials", json={"name": "Sand", "default_unit_id": bags_id}, headers=_auth(admin_ctx["token"])
+    )
     assert resp.status_code == 409
 
 
+async def test_create_material_with_unknown_unit_rejected(client, admin_ctx):
+    resp = await client.post(
+        "/materials",
+        json={"name": "Gravel", "default_unit_id": str(uuid.uuid4())},
+        headers=_auth(admin_ctx["token"]),
+    )
+    assert resp.status_code == 422
+
+
 async def test_valid_inflow_then_outflow_derives_inventory(client, admin_ctx):
+    bags_id = await _bags_unit_id(client, admin_ctx["token"])
+    material_id = await _make_material(client, admin_ctx["token"], "Cement", bags_id)
+
     body = {
         "project_id": str(admin_ctx["project_id"]),
         "site_id": str(admin_ctx["site_id"]),
-        "material_name": "Cement",
+        "material_id": material_id,
+        "unit_id": bags_id,
         "quantity": "100",
-        "unit": "bags",
         "movement_reason": "RECEIVED",
         "occurred_date": str(datetime.date.today()),
     }
     resp = await client.post("/materials/inflows", json=body, headers=_auth(admin_ctx["token"]))
     assert resp.status_code == 201
 
-    out_body = {
-        "project_id": str(admin_ctx["project_id"]),
-        "site_id": str(admin_ctx["site_id"]),
-        "material_name": "Cement",
-        "quantity": "30",
-        "unit": "bags",
-        "movement_reason": "CONSUMED",
-        "occurred_date": str(datetime.date.today()),
-    }
+    out_body = {**body, "quantity": "30", "movement_reason": "CONSUMED"}
     resp = await client.post(
         "/materials/outflows", json=out_body, headers=_auth(admin_ctx["token"])
     )
@@ -214,13 +250,36 @@ async def test_valid_inflow_then_outflow_derives_inventory(client, admin_ctx):
     assert rows[0]["stock_state"] == "AVAILABLE"
 
 
-async def test_outflow_exceeding_stock_surfaces_negative(client, admin_ctx):
+async def test_outflow_with_unit_mismatched_to_stock_unit_rejected(client, admin_ctx):
+    bags_id = await _bags_unit_id(client, admin_ctx["token"])
+    tons_id = await _tons_unit_id(client, admin_ctx["token"])
+    material_id = await _make_material(client, admin_ctx["token"], "Rebar", tons_id)
+
     out_body = {
         "project_id": str(admin_ctx["project_id"]),
         "site_id": str(admin_ctx["site_id"]),
-        "material_name": "Rebar",
+        "material_id": material_id,
+        "unit_id": bags_id,  # Rebar's Stock Unit is tons, not bags
         "quantity": "10",
-        "unit": "tons",
+        "movement_reason": "CONSUMED",
+        "occurred_date": str(datetime.date.today()),
+    }
+    resp = await client.post(
+        "/materials/outflows", json=out_body, headers=_auth(admin_ctx["token"])
+    )
+    assert resp.status_code == 422
+
+
+async def test_outflow_exceeding_stock_surfaces_negative(client, admin_ctx):
+    tons_id = await _tons_unit_id(client, admin_ctx["token"])
+    material_id = await _make_material(client, admin_ctx["token"], "Rebar", tons_id)
+
+    out_body = {
+        "project_id": str(admin_ctx["project_id"]),
+        "site_id": str(admin_ctx["site_id"]),
+        "material_id": material_id,
+        "unit_id": tons_id,
+        "quantity": "10",
         "movement_reason": "CONSUMED",
         "occurred_date": str(datetime.date.today()),
     }
@@ -239,17 +298,34 @@ async def test_outflow_exceeding_stock_surfaces_negative(client, admin_ctx):
     assert rows[0]["current_stock"] == "-10.00"
 
 
+async def test_unknown_material_id_rejected(client, admin_ctx):
+    bags_id = await _bags_unit_id(client, admin_ctx["token"])
+    body = {
+        "project_id": str(admin_ctx["project_id"]),
+        "site_id": str(admin_ctx["site_id"]),
+        "material_id": str(uuid.uuid4()),
+        "unit_id": bags_id,
+        "quantity": "10",
+        "movement_reason": "RECEIVED",
+        "occurred_date": str(datetime.date.today()),
+    }
+    resp = await client.post("/materials/inflows", json=body, headers=_auth(admin_ctx["token"]))
+    assert resp.status_code == 422
+
+
 @pytest.mark.parametrize(
     "endpoint,reason",
     [("/materials/inflows", "CONSUMED"), ("/materials/outflows", "RECEIVED")],
 )
 async def test_invalid_direction_reason_combo_rejected(client, admin_ctx, endpoint, reason):
+    bags_id = await _bags_unit_id(client, admin_ctx["token"])
+    material_id = await _make_material(client, admin_ctx["token"], "Cement", bags_id)
     body = {
         "project_id": str(admin_ctx["project_id"]),
         "site_id": str(admin_ctx["site_id"]),
-        "material_name": "Cement",
+        "material_id": material_id,
+        "unit_id": bags_id,
         "quantity": "10",
-        "unit": "bags",
         "movement_reason": reason,
         "occurred_date": str(datetime.date.today()),
     }
@@ -258,11 +334,13 @@ async def test_invalid_direction_reason_combo_rejected(client, admin_ctx, endpoi
 
 
 async def test_non_positive_quantity_rejected(client, admin_ctx):
+    bags_id = await _bags_unit_id(client, admin_ctx["token"])
+    material_id = await _make_material(client, admin_ctx["token"], "Cement", bags_id)
     body = {
         "project_id": str(admin_ctx["project_id"]),
-        "material_name": "Cement",
+        "material_id": material_id,
+        "unit_id": bags_id,
         "quantity": "0",
-        "unit": "bags",
         "occurred_date": str(datetime.date.today()),
     }
     resp = await client.post("/materials/inflows", json=body, headers=_auth(admin_ctx["token"]))
@@ -270,21 +348,25 @@ async def test_non_positive_quantity_rejected(client, admin_ctx):
 
 
 async def test_site_not_in_project_rejected(client, test_engine, test_org, admin_ctx):
+    bags_id = await _bags_unit_id(client, admin_ctx["token"])
+    material_id = await _make_material(client, admin_ctx["token"], "Cement", bags_id)
     other_project = await _make_project(test_engine, test_org)
     foreign_site = await _make_site(test_engine, test_org, other_project)
     body = {
         "project_id": str(admin_ctx["project_id"]),
         "site_id": str(foreign_site),
-        "material_name": "Cement",
+        "material_id": material_id,
+        "unit_id": bags_id,
         "quantity": "10",
-        "unit": "bags",
         "occurred_date": str(datetime.date.today()),
     }
     resp = await client.post("/materials/inflows", json=body, headers=_auth(admin_ctx["token"]))
     assert resp.status_code == 422
 
 
-async def test_inaccessible_project_rejected(client, test_engine, test_org):
+async def test_inaccessible_project_rejected(client, test_engine, test_org, admin_ctx):
+    bags_id = await _bags_unit_id(client, admin_ctx["token"])
+    material_id = await _make_material(client, admin_ctx["token"], "Cement", bags_id)
     scoped_user = await _make_user(test_engine, test_org, "site_engineer")
     async with test_engine.begin() as conn:
         await conn.execute(
@@ -295,9 +377,9 @@ async def test_inaccessible_project_rejected(client, test_engine, test_org):
     other_project = uuid.uuid4()
     body = {
         "project_id": str(other_project),
-        "material_name": "Cement",
+        "material_id": material_id,
+        "unit_id": bags_id,
         "quantity": "10",
-        "unit": "bags",
         "occurred_date": str(datetime.date.today()),
     }
     resp = await client.post("/materials/inflows", json=body, headers=_auth(token))
@@ -307,6 +389,8 @@ async def test_inaccessible_project_rejected(client, test_engine, test_org):
 async def test_adjustment_reason_forbidden_for_non_elevated_role(
     client, test_engine, test_org, admin_ctx
 ):
+    bags_id = await _bags_unit_id(client, admin_ctx["token"])
+    material_id = await _make_material(client, admin_ctx["token"], "Cement", bags_id)
     site_engineer = await _make_user(test_engine, test_org, "site_engineer")
     async with test_engine.begin() as conn:
         await conn.execute(
@@ -316,9 +400,9 @@ async def test_adjustment_reason_forbidden_for_non_elevated_role(
     token = _token(site_engineer, test_org, "site_engineer")
     body = {
         "project_id": str(admin_ctx["project_id"]),
-        "material_name": "Cement",
+        "material_id": material_id,
+        "unit_id": bags_id,
         "quantity": "10",
-        "unit": "bags",
         "movement_reason": "ADJUSTMENT_IN",
         "occurred_date": str(datetime.date.today()),
     }
@@ -327,12 +411,14 @@ async def test_adjustment_reason_forbidden_for_non_elevated_role(
 
 
 async def test_reversal_creates_offsetting_movement_and_preserves_original(client, admin_ctx):
+    bags_id = await _bags_unit_id(client, admin_ctx["token"])
+    material_id = await _make_material(client, admin_ctx["token"], "Cement", bags_id)
     body = {
         "project_id": str(admin_ctx["project_id"]),
         "site_id": str(admin_ctx["site_id"]),
-        "material_name": "Cement",
+        "material_id": material_id,
+        "unit_id": bags_id,
         "quantity": "100",
-        "unit": "bags",
         "movement_reason": "RECEIVED",
         "occurred_date": str(datetime.date.today()),
     }
@@ -358,16 +444,15 @@ async def test_reversal_creates_offsetting_movement_and_preserves_original(clien
         params={"project_id": str(admin_ctx["project_id"])},
         headers=_auth(admin_ctx["token"]),
     )
-    assert resp.json()[0]["current_stock"] == "0.00"
+    rows = resp.json()
+    assert len(rows) == 1
+    assert rows[0]["current_stock"] == "0.00"
+    assert rows[0]["stock_state"] == "OUT_OF_STOCK"
 
 
 async def test_ledger_running_balance(client, admin_ctx):
-    material_resp = await client.post(
-        "/materials",
-        json={"name": "Cement", "default_unit": "bags"},
-        headers=_auth(admin_ctx["token"]),
-    )
-    material_id = material_resp.json()["id"]
+    bags_id = await _bags_unit_id(client, admin_ctx["token"])
+    material_id = await _make_material(client, admin_ctx["token"], "Cement", bags_id)
 
     for qty, endpoint, reason in [
         ("50", "/materials/inflows", "RECEIVED"),
@@ -377,9 +462,9 @@ async def test_ledger_running_balance(client, admin_ctx):
         body = {
             "project_id": str(admin_ctx["project_id"]),
             "site_id": str(admin_ctx["site_id"]),
-            "material_name": "Cement",
+            "material_id": material_id,
+            "unit_id": bags_id,
             "quantity": qty,
-            "unit": "bags",
             "movement_reason": reason,
             "occurred_date": str(datetime.date.today()),
         }

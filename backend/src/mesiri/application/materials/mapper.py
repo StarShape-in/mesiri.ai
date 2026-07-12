@@ -45,6 +45,8 @@ def build_command(
         "material_name": str(fields.get("material_name", "")),
         "quantity": _decimal(fields.get("quantity")),
         "unit": str(fields.get("unit", "")),
+        "material_id": fields.get("material_id"),
+        "unit_id": fields.get("unit_id"),
         "occurred_date": date.today(),
         "occurred_date_source": "inferred_at_confirmation",
         "created_by": confirmed.confirmed_by_user_id,
