@@ -98,6 +98,13 @@ async def scenario(engine: AsyncEngine):
     async with engine.begin() as conn:
         await conn.execute(sa.text("DELETE FROM money_transactions WHERE organization_id = :id"), {"id": org_id})
         await conn.execute(sa.text("DELETE FROM expense_payments WHERE organization_id = :id"), {"id": org_id})
+        await conn.execute(
+            sa.text(
+                "DELETE FROM expense_attachments WHERE expense_id IN "
+                "(SELECT id FROM expenses WHERE organization_id = :id)"
+            ),
+            {"id": org_id},
+        )
         await conn.execute(sa.text("DELETE FROM expenses WHERE organization_id = :id"), {"id": org_id})
         await conn.execute(
             sa.text(
