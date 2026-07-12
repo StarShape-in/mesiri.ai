@@ -334,7 +334,11 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             handled = None
         if handled is not None:
             if handled.reply_image is not None:
-                await sender.send_image(wa_id, handled.reply_image, caption=handled.reply_text)
+                sent = await sender.send_image(
+                    wa_id, handled.reply_image, caption=handled.reply_text
+                )
+                if not sent:
+                    await sender.send_text(wa_id, handled.reply_text)
             else:
                 await sender.send_text(wa_id, handled.reply_text)
             await message_logger.log_reply(
