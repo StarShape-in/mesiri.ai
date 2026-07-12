@@ -1,0 +1,140 @@
+"""PostgreSQL implementation of mesiri.application.expenses.repository.ExpenseExecutionRepository.
+
+Only file permitted to hold SQL for RecordExpense execution (capability-
+boundary convention, mirrors material_execution.py). Every method takes an
+externally-supplied connection; the REST router's `get_db_conn` dependency
+owns the one request transaction (see application/expenses/repository.py's
+docstring for why this differs from the Materials CQRS path).
+"""
+
+from __future__ import annotations
+
+import json
+import uuid
+from typing import TYPE_CHECKING
+
+import sqlalchemy as sa
+
+from mesiri.application.expenses.commands import RecordExpenseCommand
+from mesiri.application.expenses.repository import ExpenseExecutionRepository
+from mesiri.application.expenses.results import ExecutionStatus, ExpenseExecutionResult, as_replay
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncConnection
+
+_COMMAND_TYPE = "record_expense"
+
+
+def _optional_uuid(value: str | None) -> uuid.UUID | None:
+    return uuid.UUID(value) if value is not None else None
+
+
+class PostgresExpenseExecutionRepository(ExpenseExecutionRepository):
+    async def check_idempotency(
+        self, conn: AsyncConnection, key: str
+    ) -> ExpenseExecutionResult | None:
+        row = (
+            await conn.execute(
+                sa.text("SELECT status, result FROM idempotency_keys WHERE key = :key"),
+                {"key": key},
+            )
+        ).mappings().first()
+        if row is None or row["status"] != "completed" or row["result"] is None:
+            return None
+        result_json = row["result"]
+        if not isinstance(result_json, str):
+            result_json = json.dumps(result_json)
+        return ExpenseExecutionResult.model_validate_json(result_json)
+
+    async def _try_claim(self, conn: AsyncConnection, cmd: RecordExpenseCommand) -> bool:
+        """INSERT ... ON CONFLICT DO NOTHING — True if this call won the claim."""
+        claimed = (
+            await conn.execute(
+                sa.text(
+                    "INSERT INTO idempotency_keys (key, command_type, status) "
+                    "VALUES (:key, :command_type, 'in_progress') "
+                    "ON CONFLICT (key) DO NOTHING RETURNING key"
+                ),
+                {"key": cmd.idempotency_key, "command_type": _COMMAND_TYPE},
+            )
+        ).first()
+        return claimed is not None
+
+    async def persist_success(
+        self, conn: AsyncConnection, cmd: RecordExpenseCommand
+    ) -> ExpenseExecutionResult:
+        if not await self._try_claim(conn, cmd):
+            # A concurrent request already claimed this key; by the time we
+            # reach here that transaction has committed or rolled back, so
+            # the row is visible. This call did not perform the write, so a
+            # cached SUCCEEDED is reported as ALREADY_EXECUTED.
+            existing = await self.check_idempotency(conn, cmd.idempotency_key)
+            assert existing is not None
+            return as_replay(existing)
+
+        expense_id = uuid.uuid4()
+        await conn.execute(
+            sa.text(
+                "INSERT INTO expenses "
+                "(id, organization_id, project_id, site_id, category_id, amount, currency, "
+                "description, occurred_date, occurred_time, workflow_status, payment_status, "
+                "source, source_message_id, correlation_id, created_by) "
+                "VALUES (:id, :organization_id, :project_id, :site_id, :category_id, :amount, "
+                ":currency, :description, :occurred_date, :occurred_time, 'confirmed', 'unpaid', "
+                ":source, :source_message_id, :correlation_id, :created_by)"
+            ),
+            {
+                "id": expense_id,
+                "organization_id": uuid.UUID(cmd.organization_id),
+                "project_id": uuid.UUID(cmd.project_id),
+                "site_id": _optional_uuid(cmd.site_id),
+                "category_id": uuid.UUID(cmd.category_id),
+                "amount": cmd.amount,
+                "currency": cmd.currency,
+                "description": cmd.description,
+                "occurred_date": cmd.occurred_date,
+                "occurred_time": cmd.occurred_time,
+                "source": cmd.source,
+                "source_message_id": cmd.source_message_id,
+                "correlation_id": cmd.correlation_id,
+                "created_by": uuid.UUID(cmd.created_by),
+            },
+        )
+
+        result = ExpenseExecutionResult(
+            status=ExecutionStatus.SUCCEEDED,
+            idempotency_key=cmd.idempotency_key,
+            expense_id=str(expense_id),
+        )
+        await conn.execute(
+            sa.text(
+                "UPDATE idempotency_keys "
+                "SET status = 'completed', result = CAST(:result AS jsonb), completed_at = now() "
+                "WHERE key = :key"
+            ),
+            {"result": result.model_dump_json(), "key": cmd.idempotency_key},
+        )
+        return result
+
+    async def persist_rejection(
+        self, conn: AsyncConnection, cmd: RecordExpenseCommand, reasons: list[str]
+    ) -> ExpenseExecutionResult:
+        if not await self._try_claim(conn, cmd):
+            existing = await self.check_idempotency(conn, cmd.idempotency_key)
+            assert existing is not None
+            return as_replay(existing)
+
+        result = ExpenseExecutionResult(
+            status=ExecutionStatus.REJECTED,
+            idempotency_key=cmd.idempotency_key,
+            rejection_reasons=reasons,
+        )
+        await conn.execute(
+            sa.text(
+                "UPDATE idempotency_keys "
+                "SET status = 'completed', result = CAST(:result AS jsonb), completed_at = now() "
+                "WHERE key = :key"
+            ),
+            {"result": result.model_dump_json(), "key": cmd.idempotency_key},
+        )
+        return result
