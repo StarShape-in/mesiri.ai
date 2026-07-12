@@ -31,12 +31,14 @@ async def test_engine():
 async def clean_db(test_engine: AsyncEngine):
     """Clean test tables before each test."""
     async with test_engine.begin() as conn:
-        # material_receipts/material_usage FK to projects, and workflow_instances
-        # FKs to users/organizations (migration 0195) — any row left behind by
-        # another integration test sharing this database would otherwise block
-        # the deletes below.
+        # material_receipts/material_usage/material_movements FK to projects/
+        # sites, and workflow_instances FKs to users/organizations (migration
+        # 0195) — any row left behind by another integration test sharing
+        # this database would otherwise block the deletes below.
+        await conn.execute(sa.text("DELETE FROM material_movements"))
         await conn.execute(sa.text("DELETE FROM material_receipts"))
         await conn.execute(sa.text("DELETE FROM material_usage"))
+        await conn.execute(sa.text("DELETE FROM materials_catalog"))
         await conn.execute(sa.text("DELETE FROM workflow_instances"))
         await conn.execute(sa.text("DELETE FROM sites"))
         await conn.execute(sa.text("DELETE FROM projects"))

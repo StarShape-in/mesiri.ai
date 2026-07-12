@@ -30,6 +30,13 @@ async def clean_db(test_engine: AsyncEngine):
     """Clean test tables before each test."""
     async with test_engine.begin() as conn:
         await conn.execute(sa.text("DELETE FROM timeline_entries"))
+        # material_movements/material_receipts/material_usage FK to sites/
+        # projects — any row left behind by another integration test sharing
+        # this database would otherwise block the deletes below.
+        await conn.execute(sa.text("DELETE FROM material_movements"))
+        await conn.execute(sa.text("DELETE FROM material_receipts"))
+        await conn.execute(sa.text("DELETE FROM material_usage"))
+        await conn.execute(sa.text("DELETE FROM materials_catalog"))
         await conn.execute(sa.text("DELETE FROM sites"))
         await conn.execute(sa.text("DELETE FROM projects"))
         await conn.execute(sa.text("DELETE FROM users"))
