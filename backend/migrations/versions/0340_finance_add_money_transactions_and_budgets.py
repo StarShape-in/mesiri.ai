@@ -22,6 +22,10 @@ transfer leg from a fund receipt:
   - anything else (debit, non-expense source)   -> transaction_type='adjustment',
     from_account_id=account_id (safest default for an unrecognized debit).
 
+finance_account_transactions (0080) never carried organization_id of its
+own, only account_id — money_transactions.organization_id is backfilled from
+the referenced money_accounts row before account_id is dropped.
+
 budgets/budget_allocations are new — lightweight project spending limits,
 not accounting periods. Actual spend is always computed from expenses at
 read time; no spent_amount/remaining_amount column is stored here.
@@ -47,6 +51,12 @@ def upgrade() -> None:
 
     # --- finance_account_transactions -> money_transactions ------------------
     op.rename_table("finance_account_transactions", "money_transactions")
+    # finance_account_transactions (0080) never carried organization_id itself
+    # (only account_id) — backfill it from money_accounts before account_id
+    # is dropped below.
+    op.add_column(
+        "money_transactions", sa.Column("organization_id", sa.UUID(as_uuid=True), nullable=True)
+    )
     op.add_column(
         "money_transactions",
         sa.Column("from_account_id", sa.UUID(as_uuid=True), nullable=True),
@@ -75,6 +85,15 @@ def upgrade() -> None:
             """
         )
     )
+    conn.execute(
+        sa.text(
+            """
+            UPDATE money_transactions mt SET organization_id = ma.organization_id
+            FROM money_accounts ma
+            WHERE ma.id = mt.account_id
+            """
+        )
+    )
     # Re-point expense_payment transactions from the old expense id to the
     # matching expense_payments row (1:1 for backfilled payments — see 0330).
     conn.execute(
@@ -91,6 +110,14 @@ def upgrade() -> None:
     )
 
     op.alter_column("money_transactions", "transaction_type", nullable=False)
+    op.alter_column("money_transactions", "organization_id", nullable=False)
+    op.create_foreign_key(
+        "fk_money_transactions_organization_id",
+        "money_transactions",
+        "organizations",
+        ["organization_id"],
+        ["id"],
+    )
 
     op.drop_index("ix_finance_account_transactions_account_id", table_name="money_transactions")
     op.drop_index("ix_finance_account_transactions_source", table_name="money_transactions")
@@ -281,4 +308,8 @@ def downgrade() -> None:
     op.drop_column("money_transactions", "transaction_type")
     op.drop_column("money_transactions", "to_account_id")
     op.drop_column("money_transactions", "from_account_id")
+    op.drop_constraint(
+        "fk_money_transactions_organization_id", "money_transactions", type_="foreignkey"
+    )
+    op.drop_column("money_transactions", "organization_id")
     op.rename_table("money_transactions", "finance_account_transactions")
