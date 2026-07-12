@@ -94,8 +94,25 @@ def build_receipt_data(
         ReceiptLocationRow("pin", site_name),
     ]
 
-    if draft.action_type is DraftActionType.RECORD_MATERIAL_RECEIPT:
+    if draft.action_type is DraftActionType.RECORD_EXPENSE:
+        expense_category = str(fields.get("category", "")).strip() or "Uncategorized"
+        category = "Expense"
+        value = str(fields.get("amount", "")).strip() or "0"
+        subtitle = f"{expense_category.title()} expense recorded"
+        sections = [
+            [
+                ReceiptField("layers", "Category", expense_category.title()),
+                ReceiptField("store", "Description", str(fields.get("description") or "—")),
+            ],
+            [
+                ReceiptField("user", "Reported by", reporter),
+                ReceiptField("whatsapp", "Source", "WhatsApp"),
+            ],
+        ]
+        id_prefix = "EX"
+    elif draft.action_type is DraftActionType.RECORD_MATERIAL_RECEIPT:
         category = "Material receipt"
+        value = _fmt_quantity(fields)
         subtitle = f"{material_name.title()} received"
         sections = [
             [
@@ -110,6 +127,7 @@ def build_receipt_data(
         id_prefix = "MR"
     else:
         category = "Material usage"
+        value = _fmt_quantity(fields)
         subtitle = f"{material_name.title()} used"
         sections = [
             [
@@ -128,7 +146,7 @@ def build_receipt_data(
     return ReceiptData(
         brand="MESIRI",
         category=category,
-        value=_fmt_quantity(fields),
+        value=value,
         subtitle=subtitle,
         location=location,
         date=f"{confirmed_at:%d %b %Y}",

@@ -2,9 +2,9 @@
 
 Only file permitted to hold SQL for RecordExpense execution (capability-
 boundary convention, mirrors material_execution.py). Every method takes an
-externally-supplied connection; the REST router's `get_db_conn` dependency
-owns the one request transaction (see application/expenses/repository.py's
-docstring for why this differs from the Materials CQRS path).
+externally-supplied connection — see application/expenses/repository.py's
+docstring for how the REST and WhatsApp/CQRS entry points differ in who
+supplies it and who owns the workflow_instances transition.
 """
 
 from __future__ import annotations
@@ -15,9 +15,15 @@ from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
 
+from backend.postgres.workflow_instance import get_by_id_on_connection, transition_on_connection
 from mesiri.application.expenses.commands import RecordExpenseCommand
 from mesiri.application.expenses.repository import ExpenseExecutionRepository
-from mesiri.application.expenses.results import ExecutionStatus, ExpenseExecutionResult, as_replay
+from mesiri_contracts.application.results.execution_result import (
+    ExecutionResult,
+    ExecutionStatus,
+    as_replay,
+)
+from mesiri_contracts.context.enums import WorkflowPhase
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncConnection
@@ -30,9 +36,7 @@ def _optional_uuid(value: str | None) -> uuid.UUID | None:
 
 
 class PostgresExpenseExecutionRepository(ExpenseExecutionRepository):
-    async def check_idempotency(
-        self, conn: AsyncConnection, key: str
-    ) -> ExpenseExecutionResult | None:
+    async def check_idempotency(self, conn: AsyncConnection, key: str) -> ExecutionResult | None:
         row = (
             await conn.execute(
                 sa.text("SELECT status, result FROM idempotency_keys WHERE key = :key"),
@@ -44,7 +48,7 @@ class PostgresExpenseExecutionRepository(ExpenseExecutionRepository):
         result_json = row["result"]
         if not isinstance(result_json, str):
             result_json = json.dumps(result_json)
-        return ExpenseExecutionResult.model_validate_json(result_json)
+        return ExecutionResult.model_validate_json(result_json)
 
     async def _try_claim(self, conn: AsyncConnection, cmd: RecordExpenseCommand) -> bool:
         """INSERT ... ON CONFLICT DO NOTHING — True if this call won the claim."""
@@ -62,7 +66,7 @@ class PostgresExpenseExecutionRepository(ExpenseExecutionRepository):
 
     async def persist_success(
         self, conn: AsyncConnection, cmd: RecordExpenseCommand
-    ) -> ExpenseExecutionResult:
+    ) -> ExecutionResult:
         if not await self._try_claim(conn, cmd):
             # A concurrent request already claimed this key; by the time we
             # reach here that transaction has committed or rolled back, so
@@ -71,6 +75,12 @@ class PostgresExpenseExecutionRepository(ExpenseExecutionRepository):
             existing = await self.check_idempotency(conn, cmd.idempotency_key)
             assert existing is not None
             return as_replay(existing)
+
+        if cmd.category_id is None:
+            raise RuntimeError(
+                "persist_success called with unresolved category_id — "
+                "the Handler must resolve this before calling persist_success"
+            )
 
         expense_id = uuid.uuid4()
         await conn.execute(
@@ -101,10 +111,10 @@ class PostgresExpenseExecutionRepository(ExpenseExecutionRepository):
             },
         )
 
-        result = ExpenseExecutionResult(
+        result = ExecutionResult(
             status=ExecutionStatus.SUCCEEDED,
             idempotency_key=cmd.idempotency_key,
-            expense_id=str(expense_id),
+            material_row_id=str(expense_id),
         )
         await conn.execute(
             sa.text(
@@ -114,17 +124,18 @@ class PostgresExpenseExecutionRepository(ExpenseExecutionRepository):
             ),
             {"result": result.model_dump_json(), "key": cmd.idempotency_key},
         )
+        await self._transition(conn, cmd.idempotency_key, WorkflowPhase.COMPLETED)
         return result
 
     async def persist_rejection(
         self, conn: AsyncConnection, cmd: RecordExpenseCommand, reasons: list[str]
-    ) -> ExpenseExecutionResult:
+    ) -> ExecutionResult:
         if not await self._try_claim(conn, cmd):
             existing = await self.check_idempotency(conn, cmd.idempotency_key)
             assert existing is not None
             return as_replay(existing)
 
-        result = ExpenseExecutionResult(
+        result = ExecutionResult(
             status=ExecutionStatus.REJECTED,
             idempotency_key=cmd.idempotency_key,
             rejection_reasons=reasons,
@@ -137,4 +148,21 @@ class PostgresExpenseExecutionRepository(ExpenseExecutionRepository):
             ),
             {"result": result.model_dump_json(), "key": cmd.idempotency_key},
         )
+        await self._transition(conn, cmd.idempotency_key, WorkflowPhase.EXECUTION_REJECTED)
         return result
+
+    async def _transition(
+        self, conn: AsyncConnection, workflow_instance_id: str, new_phase: WorkflowPhase
+    ) -> None:
+        """Move workflow_instances to `new_phase` on the same connection as the
+        domain write. No-op when `workflow_instance_id` doesn't match any row —
+        including the REST path, whose client-supplied Idempotency-Key is
+        never a workflow_instance_id and isn't even guaranteed to be a UUID."""
+        try:
+            loaded = await get_by_id_on_connection(conn, workflow_instance_id)
+        except ValueError:
+            return
+        if loaded is None:
+            return
+        new_state = loaded.state.model_copy(update={"phase": new_phase})
+        await transition_on_connection(conn, workflow_instance_id, loaded.version, new_state)

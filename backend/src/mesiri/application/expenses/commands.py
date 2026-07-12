@@ -1,9 +1,16 @@
 """RecordExpense Application Command.
 
-Local to backend (not a shared mesiri_contracts contract) — unlike Materials,
-expenses has no WhatsApp/Planner producer yet, so there is no cross-package
-consumer that needs this shape. If/when a WhatsApp or Planner integration is
-added, promote this into shared/contracts following the Materials precedent.
+Local to backend (not a shared mesiri_contracts contract) — since backend is
+imported in-process by apps/whatsapp-assistant (see how Materials' dispatcher
+is wired in runtime/dependencies.py), this command doesn't need to live in
+shared/contracts for the WhatsApp path to reach it.
+
+`category_id` is set directly by the REST path (the client already knows the
+id — see domains/expenses/router.py). The WhatsApp path only has free-text
+category input at draft time, so it sends `category_text` instead and leaves
+`category_id` unset; application/expenses/resolution.py resolves it before
+persistence, mirroring how Materials resolves material_name/unit into
+material_id/unit_id (see application/materials/resolution.py).
 """
 
 from __future__ import annotations
@@ -20,10 +27,11 @@ class RecordExpenseCommand(BaseModel):
     idempotency_key: str
     organization_id: str
     project_id: str
-    category_id: str
     amount: Decimal
     created_by: str
 
+    category_id: str | None = None
+    category_text: str | None = None
     site_id: str | None = None
     currency: str = "INR"
     description: str | None = None

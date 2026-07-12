@@ -191,6 +191,36 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         resolver=PostgresMaterialResolver(),
     )
     material_dispatcher = MaterialExecutionDispatcher(material_execution_handler)
+    # Expense capture (M9): same in-process capability-boundary wiring as
+    # Materials above, reusing the same material_db transaction pool. The
+    # resolver turns the free-text `category` collected in conversation into
+    # an expense_categories.id at confirmation time (defense-in-depth,
+    # mirrors PostgresMaterialResolver).
+    from mesiri.application.expenses.dispatcher import ExpenseExecutionDispatcher
+    from mesiri.application.expenses.handlers import RecordExpenseHandler
+    from mesiri.application.expenses.resolution import PostgresExpenseCategoryResolver
+    from mesiri.infrastructure.postgres.repositories.expense_execution import (
+        PostgresExpenseExecutionRepository,
+    )
+
+    expense_execution_handler = RecordExpenseHandler(
+        PostgresExpenseExecutionRepository(),
+        db=material_db,
+        resolver=PostgresExpenseCategoryResolver(),
+    )
+    expense_dispatcher = ExpenseExecutionDispatcher(expense_execution_handler)
+    # Routes a confirmed action to the dispatcher registered for its
+    # action_type -- InteractionHandler only ever holds one ExecutionDispatcher.
+    from interactions.execution_router import ActionTypeRoutingDispatcher
+    from mesiri_contracts.assistant.draft_action import DraftActionType
+
+    execution_dispatcher = ActionTypeRoutingDispatcher(
+        {
+            DraftActionType.RECORD_MATERIAL_RECEIPT: material_dispatcher,
+            DraftActionType.RECORD_MATERIAL_USAGE: material_dispatcher,
+            DraftActionType.RECORD_EXPENSE: expense_dispatcher,
+        }
+    )
     # Read-only inventory lookups for the material.inventory_query workflow --
     # reuses the same material_db connection pool, never opens a write
     # transaction. See runtime/inventory_query.py.
@@ -233,7 +263,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     interaction_handler = build_interaction_handler(
         workflow_runtime,
         classifier=interaction_classifier,
-        dispatcher=material_dispatcher,
+        dispatcher=execution_dispatcher,
         receipt_builder=material_receipt_builder,
     )
     sender = WhatsAppSender(

@@ -193,6 +193,19 @@ class PostgresExpenseCategoryRepository:
         row = res.mappings().first()
         return _row_to_category(row) if row else None
 
+    async def find_by_name_exact_active(
+        self, organization_id: uuid.UUID, name: str
+    ) -> ExpenseCategory | None:
+        """Case-insensitive exact match against active categories only."""
+        stmt = sa.select(_expense_categories).where(
+            _expense_categories.c.organization_id == organization_id,
+            _expense_categories.c.status == "active",
+            sa.func.lower(_expense_categories.c.name) == name.strip().lower(),
+        )
+        res = await self.conn.execute(stmt)
+        row = res.mappings().first()
+        return _row_to_category(row) if row else None
+
 
 class PostgresExpenseRepository:
     def __init__(self, conn: AsyncConnection):

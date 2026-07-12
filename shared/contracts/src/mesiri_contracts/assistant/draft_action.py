@@ -24,7 +24,8 @@ class DraftActionType(str, Enum):
 
     RECORD_MATERIAL_RECEIPT = "record_material_receipt"
     RECORD_MATERIAL_USAGE = "record_material_usage"
-    # Future v1 domains: record_expense, record_equipment_usage, record_labour_attendance
+    RECORD_EXPENSE = "record_expense"
+    # Future v1 domains: record_equipment_usage, record_labour_attendance
 
 
 class DraftAction(BaseModel):

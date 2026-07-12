@@ -13,6 +13,7 @@ from typing import Any
 
 from mesiri_contracts.assistant.planner_decision import WorkflowKey
 
+from .expense_capture.graph import build_expense_capture_graph
 from .material import build_material_graph
 from .material_inventory_query.graph import build_material_inventory_query_graph
 from .who_am_i.graph import build_who_am_i_graph
@@ -22,6 +23,7 @@ _BUILDERS: dict[WorkflowKey, Callable[[], Any]] = {
     WorkflowKey.MATERIAL_USAGE: build_material_graph,
     WorkflowKey.WHO_AM_I: build_who_am_i_graph,
     WorkflowKey.MATERIAL_INVENTORY_QUERY: build_material_inventory_query_graph,
+    WorkflowKey.EXPENSE_SUBMIT: build_expense_capture_graph,
 }
 
 

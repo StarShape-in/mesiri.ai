@@ -22,7 +22,6 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from mesiri.application.expenses.commands import RecordExpenseCommand
 from mesiri.application.expenses.handlers import RecordExpenseHandler
-from mesiri.application.expenses.results import ExecutionStatus
 from mesiri.authorization.context import AuthorizationContext
 from mesiri.domains.expenses.responses import ExpenseResponse, RecordExpenseResponse
 from mesiri.domains.projects.router import get_auth_context
@@ -31,6 +30,7 @@ from mesiri.infrastructure.postgres.repositories.expense_execution import (
     PostgresExpenseExecutionRepository,
 )
 from mesiri.infrastructure.postgres.repositories.expenses import PostgresExpenseRepository
+from mesiri_contracts.application.results.execution_result import ExecutionStatus
 
 router = APIRouter(prefix="/expenses", tags=["expenses"])
 
@@ -98,7 +98,7 @@ async def record_expense(
     status_code = 201 if result.status == ExecutionStatus.SUCCEEDED else 200
     return JSONResponse(
         status_code=status_code,
-        content={"id": result.expense_id, "status": result.status.value},
+        content={"id": result.material_row_id, "status": result.status.value},
     )
 
 

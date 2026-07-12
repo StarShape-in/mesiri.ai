@@ -195,6 +195,30 @@ async def test_retried_record_expense_with_same_key_does_not_double_post(client,
     assert second.json()["status"] == "already_executed"
 
 
+async def test_non_uuid_idempotency_key_is_accepted_and_stays_idempotent(client, admin_ctx):
+    """The Idempotency-Key header is client-supplied and never guaranteed to
+    be a UUID (unlike Materials' CQRS path, whose idempotency_key IS a
+    workflow_instance_id). The claim/replay logic and the workflow_instances
+    phase-transition no-op (see PostgresExpenseExecutionRepository._transition)
+    must both handle a plain non-UUID string without raising."""
+    key = "order-42-not-a-uuid"
+    first = await client.post(
+        "/expenses",
+        json=_body(admin_ctx),
+        headers={**_auth(admin_ctx["token"]), "Idempotency-Key": key},
+    )
+    second = await client.post(
+        "/expenses",
+        json=_body(admin_ctx, amount="999.00"),
+        headers={**_auth(admin_ctx["token"]), "Idempotency-Key": key},
+    )
+
+    assert first.status_code == 201, first.text
+    assert second.status_code == 200, second.text
+    assert second.json()["id"] == first.json()["id"]
+    assert second.json()["status"] == "already_executed"
+
+
 async def test_missing_idempotency_key_header_is_rejected(client, admin_ctx):
     resp = await client.post("/expenses", json=_body(admin_ctx), headers=_auth(admin_ctx["token"]))
     assert resp.status_code == 422
