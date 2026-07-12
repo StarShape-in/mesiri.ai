@@ -512,7 +512,6 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             trace_logger=trace_logger,
             inventory_query=inventory_query,
             catalog_query=catalog_query,
-            receipt_renderer=receipt_renderer,
             pending_report_store=pending_report_store,
         )
 
