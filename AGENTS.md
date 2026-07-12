@@ -93,6 +93,25 @@ pytest tests/ --ignore=tests/integration -q
 
 ---
 
+## Module Placement Log
+
+**Why this exists:** an earlier version of this project was discarded entirely because new code was added ad hoc, with no agreed record of which module owned what — the architecture became too messy to keep building on. Never again. This log is the fix.
+
+**Rule:** before writing code for any new module, feature, or table (not a bug fix inside an existing module) — even at the planning stage, before implementation starts — decide and record here:
+
+1. **Which existing module/folder/layer it belongs to** (or that a genuinely new one is needed, and why — check the layer-ownership table in `docs/architecture/Core-architecture.md` first).
+2. **Where the design doc lives**, if there is one (link it).
+3. **Status**: `planned` / `in progress` / `done`.
+
+Update the row's status as work progresses. A stale or missing row is worse than none — keep this table honest, not aspirational. If a plan is large enough to need its own document, put that document under `docs/execution/` and link it here rather than pasting the whole plan into this file.
+
+| Feature | Belongs in | Design doc | Status |
+|---|---|---|---|
+| Materials catalogue + units-of-measure + immutable movement ledger (retires the `_UNIT_ALIASES` stopgap from `1ad7977`) | `backend/domains/materials/` (`posting.py` done), `backend/migrations/` (`0290`/`0300`/`0310` done, including production self-heal fixes), `apps/whatsapp-assistant/src/runtime/material_catalog_query.py` (done, wired into `inbound_journey.py`'s resolution gate), `apps/dashboard/src/components/materials/manage-catalogue-dialog.tsx` (done) | [docs/execution/MATERIALS_CATALOGUE_PLAN.md](docs/execution/MATERIALS_CATALOGUE_PLAN.md) | in progress — backend/WhatsApp/dashboard pieces largely landed by Ilan as of 2026-07-12; verify end-to-end before marking done |
+| Unit conversion within the same physical dimension (e.g. feet ↔ cm) — store as reported, calculate on demand when asked in a different unit | Extends `units_of_measure`'s schema (`0290`) — not yet added; confirm with the user before bolting onto the now-live schema, since `0290` already shipped without it | Open decision logged in the materials catalogue plan above | planned |
+
+---
+
 ## Folder-Specific Rules
 
 Some apps and packages have their own `AGENTS.md` with deeper architectural constraints. **Read and obey the nearest `AGENTS.md` in the folder tree you are editing.**
@@ -103,4 +122,4 @@ Some apps and packages have their own `AGENTS.md` with deeper architectural cons
 
 ---
 
-*Last updated: 2026-07-12*
+*Last updated: 2026-07-12 (Module Placement Log added)*
