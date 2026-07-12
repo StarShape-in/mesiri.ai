@@ -29,8 +29,10 @@ async def test_engine():
 async def clean_db(test_engine: AsyncEngine):
     """Clean test tables before each test."""
     async with test_engine.begin() as conn:
+        await conn.execute(sa.text("DELETE FROM material_movements"))
         await conn.execute(sa.text("DELETE FROM material_receipts"))
         await conn.execute(sa.text("DELETE FROM material_usage"))
+        await conn.execute(sa.text("DELETE FROM materials_catalog"))
         await conn.execute(sa.text("DELETE FROM workflow_instances"))
         await conn.execute(sa.text("DELETE FROM sites"))
         await conn.execute(sa.text("DELETE FROM projects"))
@@ -114,6 +116,31 @@ async def test_site(test_engine: AsyncEngine, test_org: uuid.UUID, test_project:
     return site_id
 
 
+async def _unit_id(conn, code: str) -> uuid.UUID:
+    """units_of_measure is seeded by migration 0290 with a fixed global list
+    (bags, tons, cum, etc.) -- look up the id for a known code rather than
+    inserting a duplicate."""
+    row = (
+        await conn.execute(sa.text("SELECT id FROM units_of_measure WHERE code = :code"), {"code": code})
+    ).first()
+    assert row is not None, f"expected units_of_measure seed to include {code!r}"
+    return row[0]
+
+
+async def _make_material(conn, org_id: uuid.UUID, user_id: uuid.UUID, name: str, unit_id: uuid.UUID) -> uuid.UUID:
+    """Insert a materials_catalog row with the given Stock Unit -- material_id
+    is now a required FK on every material_receipts/material_usage row."""
+    material_id = uuid.uuid4()
+    await conn.execute(
+        sa.text("""
+        INSERT INTO materials_catalog (id, organization_id, name, default_unit_id, is_active, created_by)
+        VALUES (:id, :org_id, :name, :unit_id, true, :user_id)
+        """),
+        {"id": material_id, "org_id": org_id, "name": name, "unit_id": unit_id, "user_id": user_id},
+    )
+    return material_id
+
+
 async def test_list_receipts_filters_and_pagination(
     test_engine: AsyncEngine,
     test_org: uuid.UUID,
@@ -124,16 +151,18 @@ async def test_list_receipts_filters_and_pagination(
 ):
     """Test PostgresMaterialReadRepository.list_receipts with filters and pagination."""
     async with test_engine.begin() as conn:
+        bags_id = await _unit_id(conn, "bags")
         # Seed 3 material receipts
         for i, name in enumerate(["Cement", "Steel", "Sand"]):
+            material_id = await _make_material(conn, test_org, test_user, name, bags_id)
             await conn.execute(
                 sa.text("""
                 INSERT INTO material_receipts (
                     id, organization_id, project_id, site_id, material_name, quantity, unit,
-                    occurred_date, created_by, created_at, updated_at
+                    unit_id, material_id, occurred_date, created_by, created_at, updated_at
                 ) VALUES (
                     :id, :org_id, :project_id, :site_id, :name, :qty, 'bags',
-                    :date, :user_id, now(), now()
+                    :unit_id, :material_id, :date, :user_id, now(), now()
                 )
                 """),
                 {
@@ -143,6 +172,8 @@ async def test_list_receipts_filters_and_pagination(
                     "site_id": test_site if i < 2 else None,
                     "name": name,
                     "qty": 100 + i * 10,
+                    "unit_id": bags_id,
+                    "material_id": material_id,
                     "date": datetime.date(2026, 7, 1 + i),
                     "user_id": test_user,
                 },
@@ -190,16 +221,18 @@ async def test_list_usage_filters_and_pagination(
 ):
     """Test PostgresMaterialReadRepository.list_usage with filters and pagination."""
     async with test_engine.begin() as conn:
+        bags_id = await _unit_id(conn, "bags")
         # Seed 2 material usages
         for i, name in enumerate(["Cement", "Steel"]):
+            material_id = await _make_material(conn, test_org, test_user, name, bags_id)
             await conn.execute(
                 sa.text("""
                 INSERT INTO material_usage (
                     id, organization_id, project_id, material_name, quantity, unit,
-                    occurred_date, created_by, created_at, updated_at
+                    unit_id, material_id, occurred_date, created_by, created_at, updated_at
                 ) VALUES (
                     :id, :org_id, :project_id, :name, :qty, 'bags',
-                    :date, :user_id, now(), now()
+                    :unit_id, :material_id, :date, :user_id, now(), now()
                 )
                 """),
                 {
@@ -208,6 +241,8 @@ async def test_list_usage_filters_and_pagination(
                     "project_id": test_project,
                     "name": name,
                     "qty": 50 + i * 5,
+                    "unit_id": bags_id,
+                    "material_id": material_id,
                     "date": datetime.date(2026, 7, 10 + i),
                     "user_id": test_user,
                 },
@@ -231,6 +266,9 @@ async def test_organization_isolation(
     """Test that material reads are strictly isolated by organization."""
     other_org = uuid.uuid4()
     async with test_engine.begin() as conn:
+        bags_id = await _unit_id(conn, "bags")
+        tons_id = await _unit_id(conn, "tons")
+
         # Create other org
         await conn.execute(
             sa.text("""
@@ -269,31 +307,41 @@ async def test_organization_isolation(
         )
 
         # Seed receipt in test_org
+        cement_id = await _make_material(conn, test_org, test_user, "Cement", bags_id)
         await conn.execute(
             sa.text("""
             INSERT INTO material_receipts (
-                id, organization_id, project_id, material_name, quantity, unit, occurred_date, created_by, created_at, updated_at
-            ) VALUES (:id, :org_id, :project_id, 'Cement', 100, 'bags', '2026-07-01', :user_id, now(), now())
+                id, organization_id, project_id, material_name, quantity, unit, unit_id,
+                material_id, occurred_date, created_by, created_at, updated_at
+            ) VALUES (:id, :org_id, :project_id, 'Cement', 100, 'bags', :unit_id, :material_id,
+                '2026-07-01', :user_id, now(), now())
             """),
             {
                 "id": uuid.uuid4(),
                 "org_id": test_org,
                 "project_id": test_project,
+                "unit_id": bags_id,
+                "material_id": cement_id,
                 "user_id": test_user,
             },
         )
 
         # Seed receipt in other_org
+        steel_id = await _make_material(conn, other_org, other_user, "Steel", tons_id)
         await conn.execute(
             sa.text("""
             INSERT INTO material_receipts (
-                id, organization_id, project_id, material_name, quantity, unit, occurred_date, created_by, created_at, updated_at
-            ) VALUES (:id, :org_id, :project_id, 'Steel', 200, 'tons', '2026-07-01', :user_id, now(), now())
+                id, organization_id, project_id, material_name, quantity, unit, unit_id,
+                material_id, occurred_date, created_by, created_at, updated_at
+            ) VALUES (:id, :org_id, :project_id, 'Steel', 200, 'tons', :unit_id, :material_id,
+                '2026-07-01', :user_id, now(), now())
             """),
             {
                 "id": uuid.uuid4(),
                 "org_id": other_org,
                 "project_id": other_project,
+                "unit_id": tons_id,
+                "material_id": steel_id,
                 "user_id": other_user,
             },
         )
@@ -320,69 +368,95 @@ async def test_stock_levels_arithmetic_and_joins(
     test_site: uuid.UUID,
     clean_db,
 ):
-    """Test stock level aggregation with FULL OUTER JOIN and nullable site_id."""
+    """Test stock level aggregation, now derived from material_movements
+    (RECEIPT/ISSUE) rather than SUM(receipts) - SUM(usage) -- see migration
+    0300 and get_stock_levels' docstring. Movement rows are inserted
+    directly here (bypassing posting.post_material_movement, which also
+    inserts the operational receipt/usage row) since this test is only
+    exercising the read side."""
     async with test_engine.begin() as conn:
+        bags_id = await _unit_id(conn, "bags")
+        tons_id = await _unit_id(conn, "tons")
+        cum_id = await _unit_id(conn, "cum")
+
+        cement_id = await _make_material(conn, test_org, test_user, "Cement", bags_id)
+        steel_id = await _make_material(conn, test_org, test_user, "Steel", tons_id)
+        sand_id = await _make_material(conn, test_org, test_user, "Sand", cum_id)
+
+        async def _movement(
+            *, movement_type: str, material_id, unit_id, quantity, site_id, occurred_at, source_type
+        ) -> None:
+            await conn.execute(
+                sa.text("""
+                INSERT INTO material_movements (
+                    id, organization_id, project_id, site_id, material_id, unit_id,
+                    movement_type, quantity, occurred_at, source_type, source_id,
+                    recorded_by_user_id, created_at
+                ) VALUES (
+                    :id, :org_id, :project_id, :site_id, :material_id, :unit_id,
+                    :movement_type, :quantity, :occurred_at, :source_type, :source_id,
+                    :user_id, now()
+                )
+                """),
+                {
+                    "id": uuid.uuid4(),
+                    "org_id": test_org,
+                    "project_id": test_project,
+                    "site_id": site_id,
+                    "material_id": material_id,
+                    "unit_id": unit_id,
+                    "movement_type": movement_type,
+                    "quantity": quantity,
+                    "occurred_at": occurred_at,
+                    "source_type": source_type,
+                    "source_id": uuid.uuid4(),
+                    "user_id": test_user,
+                },
+            )
+
         # Material 1: Cement (has both receipts and usage on test_site)
         # Rec: 100 bags, Used: 40 bags -> Stock: 60 bags
-        await conn.execute(
-            sa.text("""
-            INSERT INTO material_receipts (
-                id, organization_id, project_id, site_id, material_name, quantity, unit, occurred_date, created_by, created_at, updated_at
-            ) VALUES (:id, :org_id, :project_id, :site_id, 'Cement', 100.0, 'bags', '2026-07-01', :user_id, now(), now())
-            """),
-            {
-                "id": uuid.uuid4(),
-                "org_id": test_org,
-                "project_id": test_project,
-                "site_id": test_site,
-                "user_id": test_user,
-            },
+        await _movement(
+            movement_type="RECEIPT",
+            material_id=cement_id,
+            unit_id=bags_id,
+            quantity=Decimal("100.0"),
+            site_id=test_site,
+            occurred_at=datetime.datetime(2026, 7, 1),
+            source_type="material_receipt",
         )
-        await conn.execute(
-            sa.text("""
-            INSERT INTO material_usage (
-                id, organization_id, project_id, site_id, material_name, quantity, unit, occurred_date, created_by, created_at, updated_at
-            ) VALUES (:id, :org_id, :project_id, :site_id, 'Cement', 40.0, 'bags', '2026-07-02', :user_id, now(), now())
-            """),
-            {
-                "id": uuid.uuid4(),
-                "org_id": test_org,
-                "project_id": test_project,
-                "site_id": test_site,
-                "user_id": test_user,
-            },
+        await _movement(
+            movement_type="ISSUE",
+            material_id=cement_id,
+            unit_id=bags_id,
+            quantity=Decimal("40.0"),
+            site_id=test_site,
+            occurred_at=datetime.datetime(2026, 7, 2),
+            source_type="material_usage",
         )
 
         # Material 2: Steel (receipts only, site_id is NULL)
         # Rec: 10 tons -> Stock: 10 tons
-        await conn.execute(
-            sa.text("""
-            INSERT INTO material_receipts (
-                id, organization_id, project_id, site_id, material_name, quantity, unit, occurred_date, created_by, created_at, updated_at
-            ) VALUES (:id, :org_id, :project_id, NULL, 'Steel', 10.0, 'tons', '2026-07-01', :user_id, now(), now())
-            """),
-            {
-                "id": uuid.uuid4(),
-                "org_id": test_org,
-                "project_id": test_project,
-                "user_id": test_user,
-            },
+        await _movement(
+            movement_type="RECEIPT",
+            material_id=steel_id,
+            unit_id=tons_id,
+            quantity=Decimal("10.0"),
+            site_id=None,
+            occurred_at=datetime.datetime(2026, 7, 1),
+            source_type="material_receipt",
         )
 
         # Material 3: Sand (usage only, site_id is NULL)
         # Used: 50.0 cubic meters -> Stock: -50.0
-        await conn.execute(
-            sa.text("""
-            INSERT INTO material_usage (
-                id, organization_id, project_id, site_id, material_name, quantity, unit, occurred_date, created_by, created_at, updated_at
-            ) VALUES (:id, :org_id, :project_id, NULL, 'Sand', 50.0, 'cum', '2026-07-01', :user_id, now(), now())
-            """),
-            {
-                "id": uuid.uuid4(),
-                "org_id": test_org,
-                "project_id": test_project,
-                "user_id": test_user,
-            },
+        await _movement(
+            movement_type="ISSUE",
+            material_id=sand_id,
+            unit_id=cum_id,
+            quantity=Decimal("50.0"),
+            site_id=None,
+            occurred_at=datetime.datetime(2026, 7, 1),
+            source_type="material_usage",
         )
 
     async with test_engine.begin() as conn:

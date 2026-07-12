@@ -20,6 +20,7 @@ from mesiri.application.materials.recovery import (
     MATERIAL_WORKFLOW_KEYS,
     recover_confirmed_instances,
 )
+from mesiri.application.materials.resolution import PostgresMaterialResolver
 from mesiri.bootstrap.settings import Settings
 from mesiri.infrastructure.postgres.database import PostgresDatabase
 from mesiri.infrastructure.postgres.repositories.material_execution import (
@@ -49,8 +50,10 @@ async def clean_db(test_engine: AsyncEngine):
     async with test_engine.begin() as conn:
         await conn.execute(sa.text("DELETE FROM idempotency_keys"))
         await conn.execute(sa.text("DELETE FROM outbox_events"))
+        await conn.execute(sa.text("DELETE FROM material_movements"))
         await conn.execute(sa.text("DELETE FROM material_receipts"))
         await conn.execute(sa.text("DELETE FROM material_usage"))
+        await conn.execute(sa.text("DELETE FROM materials_catalog"))
         await conn.execute(sa.text("DELETE FROM workflow_instances"))
         await conn.execute(sa.text("DELETE FROM sites"))
         await conn.execute(sa.text("DELETE FROM projects"))
@@ -92,6 +95,27 @@ async def test_user(test_engine: AsyncEngine, test_org: uuid.UUID) -> uuid.UUID:
             {"id": user_id, "org_id": test_org, "email": f"{user_id}@example.com"},
         )
     return user_id
+
+
+@pytest.fixture
+async def cement_material(test_engine: AsyncEngine, test_org: uuid.UUID, test_user: uuid.UUID) -> uuid.UUID:
+    """_confirmed_action below reports material_name="cement" with no
+    material_id -- the CQRS Handler's resolver (application/materials/
+    resolution.py) now requires an exact active catalog match by name before
+    persist_success can run, so the fixture data must include one."""
+    async with test_engine.begin() as conn:
+        unit_id = (
+            await conn.execute(sa.text("SELECT id FROM units_of_measure WHERE code = 'bags'"))
+        ).scalar_one()
+        material_id = uuid.uuid4()
+        await conn.execute(
+            sa.text(
+                "INSERT INTO materials_catalog (id, organization_id, name, default_unit_id, "
+                "is_active, created_by) VALUES (:id, :org_id, 'cement', :unit_id, true, :user_id)"
+            ),
+            {"id": material_id, "org_id": test_org, "unit_id": unit_id, "user_id": test_user},
+        )
+    return material_id
 
 
 @pytest.fixture
@@ -196,6 +220,7 @@ async def test_persist_success_writes_row_outbox_and_completes_workflow(
     test_org: uuid.UUID,
     test_user: uuid.UUID,
     test_project: uuid.UUID,
+    cement_material: uuid.UUID,
     db: PostgresDatabase,
 ):
     workflow_instance_id = str(uuid.uuid4())
@@ -213,7 +238,7 @@ async def test_persist_success_writes_row_outbox_and_completes_workflow(
         project=test_project,
     )
     handler = ExecuteConfirmedMaterialActionHandler(
-        db=db, repo=PostgresMaterialExecutionRepository()
+        db=db, repo=PostgresMaterialExecutionRepository(), resolver=PostgresMaterialResolver()
     )
 
     result = await handler.handle(confirmed)
@@ -283,7 +308,7 @@ async def test_validation_rejection_rolls_back_no_domain_row_and_transitions_exe
         confirmed_by_user_id=str(test_user),
     )
     handler = ExecuteConfirmedMaterialActionHandler(
-        db=db, repo=PostgresMaterialExecutionRepository()
+        db=db, repo=PostgresMaterialExecutionRepository(), resolver=PostgresMaterialResolver()
     )
 
     result = await handler.handle(confirmed)
@@ -310,6 +335,7 @@ async def test_concurrent_duplicate_execution_writes_exactly_one_row(
     test_org: uuid.UUID,
     test_user: uuid.UUID,
     test_project: uuid.UUID,
+    cement_material: uuid.UUID,
     db: PostgresDatabase,
 ):
     """Two concurrent handler.handle() calls for the same workflow_instance_id
@@ -332,10 +358,10 @@ async def test_concurrent_duplicate_execution_writes_exactly_one_row(
         project=test_project,
     )
     handler_a = ExecuteConfirmedMaterialActionHandler(
-        db=db, repo=PostgresMaterialExecutionRepository()
+        db=db, repo=PostgresMaterialExecutionRepository(), resolver=PostgresMaterialResolver()
     )
     handler_b = ExecuteConfirmedMaterialActionHandler(
-        db=db, repo=PostgresMaterialExecutionRepository()
+        db=db, repo=PostgresMaterialExecutionRepository(), resolver=PostgresMaterialResolver()
     )
 
     results = await asyncio.gather(handler_a.handle(confirmed), handler_b.handle(confirmed))
@@ -355,6 +381,7 @@ async def test_recovery_replays_crashed_confirmed_instance_and_is_idempotent_on_
     test_org: uuid.UUID,
     test_user: uuid.UUID,
     test_project: uuid.UUID,
+    cement_material: uuid.UUID,
     db: PostgresDatabase,
 ):
     """Simulates the real crash window: M7 committed CONFIRMED, the process
@@ -369,7 +396,7 @@ async def test_recovery_replays_crashed_confirmed_instance_and_is_idempotent_on_
         project=test_project,
     )
     handler = ExecuteConfirmedMaterialActionHandler(
-        db=db, repo=PostgresMaterialExecutionRepository()
+        db=db, repo=PostgresMaterialExecutionRepository(), resolver=PostgresMaterialResolver()
     )
 
     first_pass = await recover_confirmed_instances(db, handler, MATERIAL_WORKFLOW_KEYS)

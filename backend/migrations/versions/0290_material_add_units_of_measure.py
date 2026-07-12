@@ -155,23 +155,23 @@ def upgrade() -> None:
     op.create_index("ix_material_receipts_unit_id", "material_receipts", ["unit_id"])
     op.create_index("ix_material_usage_unit_id", "material_usage", ["unit_id"])
 
-    for table, unit_col in (
-        ("material_receipts", "unit"),
-        ("material_usage", "unit"),
-        ("materials_catalog", "default_unit"),
+    for table, unit_col, target_col in (
+        ("material_receipts", "unit", "unit_id"),
+        ("material_usage", "unit", "unit_id"),
+        ("materials_catalog", "default_unit", "default_unit_id"),
     ):
         conn.execute(
             sa.text(
-                f"UPDATE {table} t SET unit_id = a.unit_id "  # noqa: S608 - fixed table names, no user input
+                f"UPDATE {table} t SET {target_col} = a.unit_id "  # noqa: S608 - fixed table/column names, no user input
                 "FROM unit_aliases a "
                 f"WHERE lower(trim(t.{unit_col})) = a.alias_text "
-                "AND t.unit_id IS NULL"
+                f"AND t.{target_col} IS NULL"
             )
         )
         unmapped = conn.execute(
             sa.text(
                 f"SELECT DISTINCT {unit_col} FROM {table} "  # noqa: S608
-                f"WHERE {unit_col} IS NOT NULL AND {unit_col} <> '' AND unit_id IS NULL"
+                f"WHERE {unit_col} IS NOT NULL AND {unit_col} <> '' AND {target_col} IS NULL"
             )
         ).fetchall()
         if unmapped:

@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from mesiri.authorization.context import AuthorizationContext
+from mesiri.domains.materials.posting import post_material_movement
 from mesiri.domains.materials.responses import (
     MaterialCatalogListResponse,
     MaterialCatalogResponse,
@@ -28,7 +29,6 @@ from mesiri.domains.materials.validation import (
     is_valid_usage_reason,
     role_can_adjust,
 )
-from mesiri.domains.materials.posting import post_material_movement
 from mesiri.domains.projects.router import get_auth_context
 from mesiri.infrastructure.postgres.dependency import get_db_conn
 from mesiri.infrastructure.postgres.repositories.materials import (

@@ -10,7 +10,11 @@ from datetime import UTC, datetime
 
 from interactions import InteractionHandler
 from mesiri.application.materials.dispatcher import MaterialExecutionDispatcher
-from mesiri.application.materials.fakes import FakeDatabase, FakeMaterialExecutionRepository
+from mesiri.application.materials.fakes import (
+    FakeDatabase,
+    FakeMaterialExecutionRepository,
+    FakeMaterialResolver,
+)
 from mesiri.application.materials.handlers import ExecuteConfirmedMaterialActionHandler
 from mesiri_contracts.application.results.execution_result import ExecutionStatus
 from mesiri_contracts.assistant.draft_action import DraftActionType
@@ -69,7 +73,9 @@ def _build_interaction_handler(*, workflow_repo: FakeWorkflowInstanceRepository,
         registry=FakeWorkflowRegistry({WorkflowKey.MATERIAL_RECEIPT: FakeCompiledGraph({})}),
         repo=workflow_repo,
     )
-    handler = ExecuteConfirmedMaterialActionHandler(db=FakeDatabase(), repo=material_repo)
+    handler = ExecuteConfirmedMaterialActionHandler(
+        db=FakeDatabase(), repo=material_repo, resolver=FakeMaterialResolver()
+    )
     dispatcher = MaterialExecutionDispatcher(handler)
     return InteractionHandler(workflow_runtime, dispatcher=dispatcher)
 

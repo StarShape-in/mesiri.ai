@@ -32,8 +32,10 @@ async def clean_db(test_engine: AsyncEngine):
     async with test_engine.begin() as conn:
         await conn.execute(sa.text("DELETE FROM timeline_entries"))
         await conn.execute(sa.text("DELETE FROM outbox_events"))
+        await conn.execute(sa.text("DELETE FROM material_movements"))
         await conn.execute(sa.text("DELETE FROM material_receipts"))
         await conn.execute(sa.text("DELETE FROM material_usage"))
+        await conn.execute(sa.text("DELETE FROM materials_catalog"))
         await conn.execute(sa.text("DELETE FROM workflow_instances"))
         await conn.execute(sa.text("DELETE FROM sites"))
         await conn.execute(sa.text("DELETE FROM projects"))
@@ -117,6 +119,36 @@ async def test_site(test_engine: AsyncEngine, test_org: uuid.UUID, test_project:
     return site_id
 
 
+async def _material_and_unit_id(
+    conn, *, org_id: uuid.UUID, user_id: uuid.UUID, name: str
+) -> tuple[uuid.UUID, uuid.UUID]:
+    """Get-or-create a materials_catalog row for `name` (Stock Unit: bags,
+    from the units_of_measure list migration 0290 seeds) -- material_id/
+    unit_id are required on material_receipts as of migration 0290/0310."""
+    unit_row = (await conn.execute(sa.text("SELECT id FROM units_of_measure WHERE code = 'bags'"))).first()
+    assert unit_row is not None
+    unit_id = unit_row[0]
+
+    existing = (
+        await conn.execute(
+            sa.text("SELECT id FROM materials_catalog WHERE organization_id = :org_id AND name = :name"),
+            {"org_id": org_id, "name": name},
+        )
+    ).first()
+    if existing is not None:
+        return existing[0], unit_id
+
+    material_id = uuid.uuid4()
+    await conn.execute(
+        sa.text("""
+        INSERT INTO materials_catalog (id, organization_id, name, default_unit_id, is_active, created_by)
+        VALUES (:id, :org_id, :name, :unit_id, true, :user_id)
+        """),
+        {"id": material_id, "org_id": org_id, "name": name, "unit_id": unit_id, "user_id": user_id},
+    )
+    return material_id, unit_id
+
+
 async def _insert_receipt(
     engine: AsyncEngine,
     *,
@@ -130,14 +162,17 @@ async def _insert_receipt(
 ) -> uuid.UUID:
     row_id = uuid.uuid4()
     async with engine.begin() as conn:
+        material_id, unit_id = await _material_and_unit_id(
+            conn, org_id=org_id, user_id=user_id, name=material_name
+        )
         await conn.execute(
             sa.text("""
             INSERT INTO material_receipts (
                 id, organization_id, project_id, site_id, material_name, quantity, unit,
-                occurred_date, created_by, created_at, updated_at
+                unit_id, material_id, occurred_date, created_by, created_at, updated_at
             ) VALUES (
                 :id, :org_id, :project_id, :site_id, :name, :qty, 'bags',
-                :date, :user_id, now(), now()
+                :unit_id, :material_id, :date, :user_id, now(), now()
             )
             """),
             {
@@ -147,6 +182,8 @@ async def _insert_receipt(
                 "site_id": site_id,
                 "name": material_name,
                 "qty": quantity,
+                "unit_id": unit_id,
+                "material_id": material_id,
                 "date": occurred_date,
                 "user_id": user_id,
             },
