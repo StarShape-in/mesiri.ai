@@ -108,7 +108,7 @@ Update the row's status as work progresses. A stale or missing row is worse than
 | Feature | Belongs in | Design doc | Status |
 |---|---|---|---|
 | Materials catalogue + units-of-measure + immutable movement ledger (retires the `_UNIT_ALIASES` stopgap from `1ad7977`) | `backend/domains/materials/` (`posting.py` done), `backend/migrations/` (`0290`/`0300`/`0310` done, including production self-heal fixes), `apps/whatsapp-assistant/src/runtime/material_catalog_query.py` (done, wired into `inbound_journey.py`'s resolution gate), `apps/dashboard/src/components/materials/manage-catalogue-dialog.tsx` (done) | [docs/execution/MATERIALS_CATALOGUE_PLAN.md](docs/execution/MATERIALS_CATALOGUE_PLAN.md) | in progress — backend/WhatsApp/dashboard pieces largely landed by Ilan as of 2026-07-12; verify end-to-end before marking done |
-| Unit conversion within the same physical dimension (e.g. feet ↔ cm) — store as reported, calculate on demand when asked in a different unit | Extends `units_of_measure`'s schema (`0290`) — not yet added; confirm with the user before bolting onto the now-live schema, since `0290` already shipped without it | Open decision logged in the materials catalogue plan above | planned |
+| Unit conversion within the same physical dimension (e.g. feet ↔ cm) — store as reported, calculate on demand when asked in a different unit | **Owned by Ilan** — he confirmed he'll implement this himself, extending `units_of_measure` (`0290`). Do not implement from this side; check the live schema before assuming this is still open if picked up later. | Open decision logged in the materials catalogue plan above | assigned to Ilan |
 
 ---
 
