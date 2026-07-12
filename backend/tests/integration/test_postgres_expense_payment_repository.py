@@ -96,6 +96,19 @@ async def scenario(engine: AsyncEngine):
         "account_b": account_b,
     }
     async with engine.begin() as conn:
+        await conn.execute(sa.text("DELETE FROM money_transactions WHERE organization_id = :id"), {"id": org_id})
+        await conn.execute(sa.text("DELETE FROM expense_payments WHERE organization_id = :id"), {"id": org_id})
+        await conn.execute(sa.text("DELETE FROM expenses WHERE organization_id = :id"), {"id": org_id})
+        await conn.execute(
+            sa.text(
+                "DELETE FROM budget_allocations WHERE budget_id IN "
+                "(SELECT id FROM budgets WHERE organization_id = :id)"
+            ),
+            {"id": org_id},
+        )
+        await conn.execute(sa.text("DELETE FROM budgets WHERE organization_id = :id"), {"id": org_id})
+        await conn.execute(sa.text("DELETE FROM money_accounts WHERE organization_id = :id"), {"id": org_id})
+        await conn.execute(sa.text("DELETE FROM expense_categories WHERE organization_id = :id"), {"id": org_id})
         await conn.execute(sa.text("DELETE FROM organizations WHERE id = :id"), {"id": org_id})
 
 
