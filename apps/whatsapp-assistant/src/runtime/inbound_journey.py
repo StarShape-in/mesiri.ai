@@ -390,13 +390,25 @@ async def process_inbound_message(
             and canonical_event.project_id is None
             and pending_report_store is not None
         ):
-            if actor is not None and actor.projects:
-                await pending_report_store.set_pending(user_id=actor_user_id, event=canonical_event)
-                project_picker_reply = render_project_picker(
-                    [(p.id, p.name, p.location) for p in actor.projects]
+            try:
+                if actor is not None and actor.projects:
+                    await pending_report_store.set_pending(
+                        user_id=actor_user_id, event=canonical_event
+                    )
+                    project_picker_reply = render_project_picker(
+                        [(p.id, p.name, p.location) for p in actor.projects]
+                    )
+                else:
+                    project_picker_reply = ReplySpec(text=render_no_projects_reply())
+            except Exception:
+                # Redis being unavailable here must never take down the whole
+                # reply -- degrade to the normal journey (project stays
+                # unresolved, same as before this gate existed) rather than
+                # leaving the sender with no response at all.
+                _log.exception(
+                    "project_selection_gate.failed correlation_id=%s", correlation_id
                 )
-            else:
-                project_picker_reply = ReplySpec(text=render_no_projects_reply())
+                project_picker_reply = None
 
         if project_picker_reply is None:
             # --- Planner stage ---
