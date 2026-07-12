@@ -30,6 +30,12 @@ def build_draft(state: WorkflowGraphState) -> dict:
     """Map collected fields into a DraftAction. Shape-mapping only — no validation."""
     workflow_key = WorkflowKey(state["workflow_key"])
     action_type = _ACTION_TYPE_BY_WORKFLOW_KEY[workflow_key]
+    fields = dict(state.get("collected_fields") or {})
+    # available_stock is a runtime hint for request_confirmation's low-stock
+    # warning (see runtime/inbound_journey.py's injection) -- not a real
+    # business field, so it must never appear as a line in the saved draft
+    # or the confirmation text's field list.
+    fields.pop("available_stock", None)
     draft = DraftActionV2(
         draft_id=new_id("draft"),
         correlation_id=state["correlation_id"],
@@ -39,9 +45,26 @@ def build_draft(state: WorkflowGraphState) -> dict:
         user_id=state["user_id"],
         project_id=state.get("project_id"),
         site_id=state.get("site_id"),
-        fields=dict(state.get("collected_fields") or {}),
+        fields=fields,
     )
     return {"draft_action": draft}
+
+
+def _low_stock_warning(state: WorkflowGraphState, draft: DraftActionV2) -> str | None:
+    if draft.action_type is not DraftActionType.RECORD_MATERIAL_USAGE:
+        return None
+    available = state.get("collected_fields", {}).get("available_stock")
+    if available is None:
+        return None
+    try:
+        requested = float(draft.fields.get("quantity"))
+        available = float(available)
+    except (TypeError, ValueError):
+        return None
+    if requested <= available:
+        return None
+    unit = draft.fields.get("unit", "")
+    return f"⚠️ Only {available:g} {unit} in stock — you're reporting {requested:g}."
 
 
 def request_confirmation(state: WorkflowGraphState) -> dict:
@@ -53,6 +76,10 @@ def request_confirmation(state: WorkflowGraphState) -> dict:
     lines = ["*Confirm this record?*", "", f"📦 {label}"]
     for key, value in draft.fields.items():
         lines.append(f"   • {key}: {value}")
+    warning = _low_stock_warning(state, draft)
+    if warning:
+        lines.append("")
+        lines.append(warning)
     lines.append("")
     lines.append("Reply YES to confirm or NO to cancel.")
     return {"pending_prompt": "\n".join(lines)}

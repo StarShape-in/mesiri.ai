@@ -16,6 +16,43 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from mesiri.infrastructure.postgres.database import PostgresDatabase
 
+# Reported unit spelling varies by message ("bag" vs "bags" vs "sack") even
+# though it's the same real-world unit -- material_receipts/material_usage
+# store whatever string extraction produced, so stock_levels groups by the
+# raw (material_name, unit) pair and the same material can show up as
+# several separate lines. Merged here at read time rather than backfilling
+# already-stored rows.
+_UNIT_ALIASES: dict[str, str] = {
+    "bag": "bags",
+    "bags": "bags",
+    "sack": "bags",
+    "sacks": "bags",
+    "kg": "kg",
+    "kgs": "kg",
+    "kilogram": "kg",
+    "kilograms": "kg",
+    "ton": "tons",
+    "tons": "tons",
+    "tonne": "tons",
+    "tonnes": "tons",
+    "litre": "litres",
+    "liter": "litres",
+    "litres": "litres",
+    "liters": "litres",
+    "piece": "pieces",
+    "pieces": "pieces",
+    "pc": "pieces",
+    "pcs": "pieces",
+    "roll": "rolls",
+    "rolls": "rolls",
+    "box": "boxes",
+    "boxes": "boxes",
+}
+
+
+def _canonical_unit(unit: str) -> str:
+    return _UNIT_ALIASES.get(unit.strip().lower(), unit.strip().lower())
+
 
 class MaterialInventoryQueryService:
     """Read-only: never opens a write transaction, never mutates state."""
@@ -46,16 +83,29 @@ class MaterialInventoryQueryService:
                 site_id=uuid.UUID(site_id) if site_id else None,
             )
 
-        levels = [
-            {
-                "material_name": row["material_name"],
-                "unit": row["unit"],
-                "received": float(row["total_received"]),
-                "used": float(row["total_used"]),
-                "current_stock": float(row["current_stock"]),
-            }
-            for row in rows
-        ]
+        # Merge by (material_name lowercased, canonical unit) so "cement/bag",
+        # "cement/bags", and "cement/sack" become one summed line instead of
+        # three -- see _UNIT_ALIASES above.
+        merged: dict[tuple[str, str], dict[str, Any]] = {}
+        for row in rows:
+            name_key = row["material_name"].strip().lower()
+            unit = _canonical_unit(row["unit"])
+            key = (name_key, unit)
+            entry = merged.setdefault(
+                key,
+                {
+                    "material_name": row["material_name"],
+                    "unit": unit,
+                    "received": 0.0,
+                    "used": 0.0,
+                    "current_stock": 0.0,
+                },
+            )
+            entry["received"] += float(row["total_received"])
+            entry["used"] += float(row["total_used"])
+            entry["current_stock"] += float(row["current_stock"])
+
+        levels = list(merged.values())
 
         if material_name:
             needle = material_name.strip().lower()

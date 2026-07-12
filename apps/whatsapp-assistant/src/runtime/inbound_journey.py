@@ -325,6 +325,26 @@ async def process_inbound_message(
                     material_name=canonical_event.fields.get("material_name"),
                 )
 
+            # A usage report's quantity can't be validated against stock until
+            # the confirmation prompt itself (the Domain layer only checks
+            # quantity > 0, never sufficiency -- see domains/materials/
+            # validation.py). Inject a low-stock hint the same way as
+            # inventory_levels above so workflows/material/nodes.py can warn
+            # "only X in stock" without querying the database itself.
+            if (
+                canonical_event.event_type is CanonicalEventType.MATERIAL_USAGE_REQUESTED
+                and inventory_query is not None
+                and canonical_event.fields.get("material_name")
+            ):
+                levels = await inventory_query.query(
+                    organization_id=canonical_event.organization_id,
+                    project_id=canonical_event.project_id,
+                    site_id=canonical_event.site_id,
+                    material_name=canonical_event.fields.get("material_name"),
+                )
+                if levels:
+                    canonical_event.fields["available_stock"] = levels[0]["current_stock"]
+
             if context_debug:
                 log_canonical_event(canonical_event)
             await _safe(

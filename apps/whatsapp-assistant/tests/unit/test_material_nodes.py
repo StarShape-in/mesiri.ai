@@ -80,3 +80,44 @@ def test_request_confirmation_sets_prompt_from_draft():
     assert "cement" in prompt
     assert "20" in prompt
     assert "YES" in prompt
+
+
+def test_available_stock_never_shown_as_a_draft_field():
+    state = _base_state(
+        WorkflowKey.MATERIAL_USAGE,
+        {"material_name": "cement", "quantity": 40, "unit": "bags", "available_stock": 46.0},
+    )
+    update = build_draft(state)
+    assert "available_stock" not in update["draft_action"].fields
+
+
+def test_confirmation_warns_when_usage_exceeds_available_stock():
+    state = _base_state(
+        WorkflowKey.MATERIAL_USAGE,
+        {"material_name": "cement", "quantity": 100, "unit": "bags", "available_stock": 46.0},
+    )
+    state.update(build_draft(state))
+    prompt = request_confirmation(state)["pending_prompt"]
+    assert "Only 46 bags in stock" in prompt
+    assert "100" in prompt
+
+
+def test_confirmation_has_no_warning_when_stock_is_sufficient():
+    state = _base_state(
+        WorkflowKey.MATERIAL_USAGE,
+        {"material_name": "cement", "quantity": 20, "unit": "bags", "available_stock": 46.0},
+    )
+    state.update(build_draft(state))
+    prompt = request_confirmation(state)["pending_prompt"]
+    assert "in stock" not in prompt
+
+
+def test_receipt_never_gets_a_low_stock_warning():
+    """The warning is meaningless for an inflow -- only usage can exceed stock."""
+    state = _base_state(
+        WorkflowKey.MATERIAL_RECEIPT,
+        {"material_name": "cement", "quantity": 500, "unit": "bags", "available_stock": 46.0},
+    )
+    state.update(build_draft(state))
+    prompt = request_confirmation(state)["pending_prompt"]
+    assert "in stock" not in prompt

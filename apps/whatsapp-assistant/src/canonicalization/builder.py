@@ -60,6 +60,30 @@ _USED_SYNONYMS = {
     "outward",
 }
 
+# "bag"/"bags"/"sack" reported for the same material must store one
+# consistent unit -- otherwise inventory queries (runtime/inventory_query.py
+# merges these the same way for already-stored data, but new writes should
+# stop adding to the drift) split one material into several stock lines.
+_UNIT_ALIASES: dict[str, str] = {
+    "bag": "bags",
+    "sack": "bags",
+    "sacks": "bags",
+    "kgs": "kg",
+    "kilogram": "kg",
+    "kilograms": "kg",
+    "ton": "tons",
+    "tonne": "tons",
+    "tonnes": "tons",
+    "litre": "litres",
+    "liter": "litres",
+    "liters": "litres",
+    "piece": "pieces",
+    "pc": "pieces",
+    "pcs": "pieces",
+    "roll": "rolls",
+    "box": "boxes",
+}
+
 
 def _normalize_material_fields(fields: dict) -> dict:
     """Map common provider aliases onto canonical material field names.
@@ -97,6 +121,11 @@ def _normalize_material_fields(fields: dict) -> dict:
             if value in _USED_SYNONYMS:
                 out["direction"] = "used"
                 break
+
+    unit = out.get("unit")
+    if unit:
+        out["unit"] = _UNIT_ALIASES.get(str(unit).strip().lower(), str(unit).strip())
+
     return out
 
 
