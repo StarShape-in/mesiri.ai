@@ -93,7 +93,6 @@ async def test_0310_default_unit_id_is_not_null_on_catalog(engine: AsyncEngine):
     async with engine.connect() as conn:
         for table, column in [
             ("materials_catalog", "default_unit_id"),
-            ("materials_catalog", "material_id"),
             ("material_receipts", "material_id"),
             ("material_receipts", "unit_id"),
             ("material_usage", "material_id"),

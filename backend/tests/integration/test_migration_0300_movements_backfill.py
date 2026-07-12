@@ -65,6 +65,7 @@ async def test_0300_backfill_produces_one_movement_per_operational_row(engine: A
         await conn.execute(sa.text("DELETE FROM materials_catalog"))
         await conn.execute(sa.text("DELETE FROM sites"))
         await conn.execute(sa.text("DELETE FROM projects"))
+        await conn.execute(sa.text("DELETE FROM workflow_instances"))
         await conn.execute(sa.text("DELETE FROM users"))
         await conn.execute(sa.text("DELETE FROM organizations"))
 

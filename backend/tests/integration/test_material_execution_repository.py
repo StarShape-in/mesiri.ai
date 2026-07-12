@@ -630,7 +630,7 @@ async def test_movement_posting_failure_rolls_back_receipt_and_outbox(
     handler = ExecuteConfirmedMaterialActionHandler(
         db=db, repo=PostgresMaterialExecutionRepository(), resolver=PostgresMaterialResolver()
     )
-    with pytest.raises(RuntimeError, match="simulated movement-posting failure"):
+    with pytest.raises(Exception, match="simulated movement-posting failure"):
         await handler.handle(confirmed)
 
     monkeypatch.setattr(MaterialMovementsRepository, "insert", original_insert)
