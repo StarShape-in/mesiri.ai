@@ -35,9 +35,14 @@ every movement is created going forward only after catalog/unit resolution
 succeeds — there is no free-text period for this table to backfill through.
 
 Backfills one RECEIPT movement per existing material_receipts row and one
-ISSUE movement per existing material_usage row, using each row's already-
-resolved material_id/unit_id (0290 must have fully resolved these first).
-Aborts loudly if any source row still lacks material_id or unit_id.
+ISSUE movement per existing material_usage row, using each row's resolved
+material_id/unit_id. 0180's original catalog backfill and 0290's unit
+backfill both matched by exact string equality, which misses case/whitespace
+variants present in real production data — this migration self-heals any
+still-unresolved material_id with a case/whitespace-insensitive catalog
+lookup, falling back to creating a new catalog entry from the row's own
+reported name (mirroring 0290's fallback-unit creation), rather than
+aborting a deploy on data it can resolve or safely fall back for.
 
 Revision ID: 0300
 Revises: 0290
@@ -45,6 +50,8 @@ Create Date: 2026-07-12
 """
 
 from __future__ import annotations
+
+import uuid
 
 import sqlalchemy as sa
 from alembic import op
@@ -107,18 +114,68 @@ def upgrade() -> None:
 
     conn = op.get_bind()
 
-    for table, unresolved_col in (("material_receipts", "material_id"), ("material_usage", "material_id")):
+    # 0180's original catalog backfill (and 0290's unit backfill) matched by
+    # exact string equality, which misses case/whitespace variants (e.g.
+    # "Cement" reported once, "cement" another time) -- production has rows
+    # like this. Same principle as 0290's fallback-unit fix: self-heal rather
+    # than abort a deploy on data we can resolve or safely fall back for.
+    for table in ("material_receipts", "material_usage"):
+        # Case/whitespace-insensitive catalog link for rows 0180 missed.
+        conn.execute(
+            sa.text(
+                f"UPDATE {table} t SET material_id = c.id "  # noqa: S608
+                "FROM materials_catalog c "
+                "WHERE t.material_id IS NULL AND c.organization_id = t.organization_id "
+                "AND lower(trim(c.name)) = lower(trim(t.material_name))"
+            )
+        )
+        # Anything still unresolved (no catalog entry at all, even case-
+        # insensitively) gets one created from the row's own reported name --
+        # mirrors 0290's fallback-unit creation. Grouped by (org, trimmed
+        # lowercased name) so repeated reports of the same never-cataloged
+        # material collapse onto one new catalog row, not one per row.
+        uncataloged = conn.execute(
+            sa.text(
+                f"SELECT DISTINCT organization_id, "  # noqa: S608
+                f"COALESCE(NULLIF(trim(material_name), ''), 'Unresolved Material'), created_by "
+                f"FROM {table} WHERE material_id IS NULL"
+            )
+        ).fetchall()
+        for org_id, name, created_by in uncataloged:
+            new_material_id = uuid.uuid4()
+            conn.execute(
+                sa.text(
+                    "INSERT INTO materials_catalog (id, organization_id, name, is_active, created_by) "
+                    "VALUES (:id, :org_id, :name, true, :created_by) "
+                    "ON CONFLICT (organization_id, name) DO NOTHING"
+                ),
+                {"id": new_material_id, "org_id": org_id, "name": name, "created_by": created_by},
+            )
+            conn.execute(
+                sa.text(
+                    f"UPDATE {table} t SET material_id = c.id "  # noqa: S608
+                    "FROM materials_catalog c "
+                    "WHERE t.material_id IS NULL AND c.organization_id = :org_id "
+                    "AND lower(trim(c.name)) = lower(trim(:name)) AND t.organization_id = :org_id "
+                    f"AND COALESCE(NULLIF(trim(t.material_name), ''), 'Unresolved Material') = :name"
+                ),
+                {"org_id": org_id, "name": name},
+            )
+
+        # unit_id should already be fully resolved by 0290's fallback-unit
+        # creation, but re-check defensively — this is the true "should be
+        # unreachable" guard now (material_id is self-healed above; unit_id
+        # was self-healed in 0290).
         unresolved = conn.execute(
             sa.text(
-                f"SELECT id FROM {table} WHERE {unresolved_col} IS NULL OR unit_id IS NULL LIMIT 5"  # noqa: S608
+                f"SELECT id FROM {table} WHERE material_id IS NULL OR unit_id IS NULL LIMIT 5"  # noqa: S608
             )
         ).fetchall()
         if unresolved:
             ids = ", ".join(str(row[0]) for row in unresolved)
             raise RuntimeError(
                 f"Migration 0300: {table} has rows with unresolved material_id/unit_id "
-                f"(e.g. {ids}) — migration 0290 must fully resolve these before movements "
-                "can be backfilled. Refusing to silently skip rows."
+                f"(e.g. {ids}) after self-healing — investigate this data manually."
             )
 
     conn.execute(
