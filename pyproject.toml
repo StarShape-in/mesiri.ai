@@ -58,6 +58,14 @@ providers = [
 workflow = [
     "langgraph>=0.2",
 ]
+# Post-confirmation receipt image rendering (channel/receipt/). Imported
+# lazily inside render.py so the core test suite runs without a headless
+# browser installed -- data-building (data.py) is pure and fully unit-tested
+# without this group.
+receipt = [
+    "playwright>=1.40",
+    "jinja2>=3.1",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",

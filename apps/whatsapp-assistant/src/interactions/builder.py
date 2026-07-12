@@ -11,15 +11,22 @@ from workflows import WorkflowRuntime
 
 from .classifier_port import InteractionClassifierPort
 from .handler import InteractionHandler
-from .ports import ExecutionDispatcher
+from .ports import ExecutionDispatcher, ReceiptBuilder
 
 
 def build_interaction_handler(
     workflow_runtime: WorkflowRuntime,
     classifier: InteractionClassifierPort | None = None,
     dispatcher: ExecutionDispatcher | None = None,
+    receipt_builder: ReceiptBuilder | None = None,
 ) -> InteractionHandler:
     """Construct an ``InteractionHandler`` wired to ``workflow_runtime`` and,
     once M8 is wired, an ``ExecutionDispatcher`` that executes confirmed
-    Material actions synchronously in the same request."""
-    return InteractionHandler(workflow_runtime, classifier=classifier, dispatcher=dispatcher)
+    Material actions synchronously in the same request, plus an optional
+    ``ReceiptBuilder`` that renders the post-confirmation receipt image."""
+    return InteractionHandler(
+        workflow_runtime,
+        classifier=classifier,
+        dispatcher=dispatcher,
+        receipt_builder=receipt_builder,
+    )

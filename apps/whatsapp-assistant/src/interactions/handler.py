@@ -36,7 +36,7 @@ from workflows.who_am_i import is_whoami_trigger
 from .classifier import classify_reply
 from .classifier_port import InteractionClassifierPort
 from .policy import InteractionRoute, decide
-from .ports import ExecutionDispatcher
+from .ports import ExecutionDispatcher, ReceiptBuilder
 from .response_handler import render_execution_reply, render_resume_reply, render_workflow_run_reply
 
 logger = logging.getLogger(__name__)
@@ -50,6 +50,11 @@ class InteractionHandled:
     reply_text: str
     execution_result: ExecutionResult | None = None
     unrelated_text: str | None = None
+    # The post-confirmation receipt image (see channel/receipt/). None for
+    # every outcome except a successful execution -- and even then, only
+    # when rendering actually produced bytes (ReceiptBuilder degrades to
+    # None on any failure rather than raising).
+    reply_image: bytes | None = None
 
 
 class InteractionHandler:
@@ -58,18 +63,21 @@ class InteractionHandler:
         workflow_runtime: WorkflowRuntime,
         classifier: InteractionClassifierPort | None = None,
         dispatcher: ExecutionDispatcher | None = None,
+        receipt_builder: ReceiptBuilder | None = None,
     ) -> None:
         self._runtime = workflow_runtime
         self._classifier = classifier
         self._dispatcher = dispatcher
+        self._receipt_builder = receipt_builder
 
     async def _resume_and_render(
-        self, user_id: str, loaded, resume_action, *, log_prefix: str
-    ) -> tuple[WorkflowResumeResult, str, ExecutionResult | None]:
+        self, user_id: str, loaded, resume_action, *, log_prefix: str, actor: ActorIdentity | None = None
+    ) -> tuple[WorkflowResumeResult, str, ExecutionResult | None, bytes | None]:
         """Resume the workflow and, if it lands on CONFIRMED and a dispatcher is
         wired (M8), execute the domain write synchronously and reflect the real
         outcome in the reply. Shared by the fast and slow paths so a confirm
-        resolved either way gets the same execution guarantee."""
+        resolved either way gets the same execution guarantee (and the same
+        receipt-image behavior)."""
         result = await self._runtime.resume(loaded, resume_action)
         logger.info(
             "%s.resumed user=%s status=%s instance=%s",
@@ -80,6 +88,7 @@ class InteractionHandler:
         )
 
         execution_result: ExecutionResult | None = None
+        reply_image: bytes | None = None
         if result.status is WorkflowResumeStatus.CONFIRMED and self._dispatcher is not None:
             assert result.confirmed_action is not None
             execution_result = await self._dispatcher.dispatch(result.confirmed_action)
@@ -91,13 +100,17 @@ class InteractionHandler:
                 result.workflow_instance_id,
             )
             reply_text = render_execution_reply(execution_result)
+            if self._receipt_builder is not None:
+                reply_image = await self._receipt_builder.build(
+                    result.confirmed_action, execution_result, actor
+                )
         else:
             reply_text = render_resume_reply(result)
 
-        return result, reply_text, execution_result
+        return result, reply_text, execution_result, reply_image
 
     async def handle_fast_path(
-        self, user_id: str, message: NormalizedMessage
+        self, user_id: str, message: NormalizedMessage, actor: ActorIdentity | None = None
     ) -> InteractionHandled | None:
         loaded = await self._runtime.get_awaiting_confirmation(user_id)
         if loaded is None:
@@ -116,11 +129,14 @@ class InteractionHandler:
             )
             return None
 
-        result, reply_text, execution_result = await self._resume_and_render(
-            user_id, loaded, decision.resume_action, log_prefix="interaction"
+        result, reply_text, execution_result, reply_image = await self._resume_and_render(
+            user_id, loaded, decision.resume_action, log_prefix="interaction", actor=actor
         )
         return InteractionHandled(
-            result=result, reply_text=reply_text, execution_result=execution_result
+            result=result,
+            reply_text=reply_text,
+            execution_result=execution_result,
+            reply_image=reply_image,
         )
 
     def handle_category_tap(self, message: NormalizedMessage) -> str | None:
@@ -203,6 +219,7 @@ class InteractionHandler:
         message: NormalizedMessage,
         original_text: str,
         translated_text: str | None,
+        actor: ActorIdentity | None = None,
     ) -> InteractionHandled | None:
         if self._classifier is None:
             return None
@@ -241,6 +258,7 @@ class InteractionHandler:
         handled_result: WorkflowRunResult | WorkflowResumeResult | None = None
         execution_result: ExecutionResult | None = None
         reply_text: str | None = None
+        reply_image: bytes | None = None
 
         for segment in spec.segments:
             if segment.intent == InteractionIntent.UNRELATED:
@@ -280,8 +298,12 @@ class InteractionHandler:
                 continue
 
             if handled_result is None:
-                result, reply_text, execution_result = await self._resume_and_render(
-                    user_id, loaded, decision.resume_action, log_prefix="interaction.slow_path"
+                result, reply_text, execution_result, reply_image = await self._resume_and_render(
+                    user_id,
+                    loaded,
+                    decision.resume_action,
+                    log_prefix="interaction.slow_path",
+                    actor=actor,
                 )
                 handled_result = result
             continue
@@ -294,6 +316,7 @@ class InteractionHandler:
                 reply_text=reply_text,
                 execution_result=execution_result,
                 unrelated_text=unrelated_text,
+                reply_image=reply_image,
             )
 
         # If nothing triggered a workflow change (e.g. only UNRELATED segments),

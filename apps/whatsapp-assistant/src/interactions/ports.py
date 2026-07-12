@@ -8,10 +8,13 @@ itself (mirrors how workflows/ports.py defines what *it* depends on).
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from mesiri_contracts.application.results.execution_result import ExecutionResult
 from mesiri_contracts.assistant.v2.confirmed_action import ConfirmedActionV2
+
+if TYPE_CHECKING:
+    from backend.ports import ActorIdentity
 
 
 class ExecutionDispatcher(Protocol):
@@ -21,3 +24,17 @@ class ExecutionDispatcher(Protocol):
     failure semantics: FAILED leaves the workflow at CONFIRMED, recoverable)."""
 
     async def dispatch(self, confirmed: ConfirmedActionV2) -> ExecutionResult: ...
+
+
+class ReceiptBuilder(Protocol):
+    """Renders the post-confirmation receipt image for a successful execution.
+
+    Concrete implementation lives in channel/receipt/ (Python + playwright,
+    see AGENTS.md's Module Placement Log) and is wired in runtime/
+    dependencies.py, same convention as ExecutionDispatcher. Must never
+    raise — a rendering failure degrades to a text-only confirmation, it
+    must never break the confirm flow itself."""
+
+    async def build(
+        self, confirmed: ConfirmedActionV2, execution: ExecutionResult, actor: ActorIdentity | None
+    ) -> bytes | None: ...

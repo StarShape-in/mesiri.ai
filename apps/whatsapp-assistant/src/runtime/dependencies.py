@@ -19,6 +19,7 @@ from runtime.logging_ports import MessageLogger, TraceLogger
 
 if TYPE_CHECKING:
     from backend.ports import ActorReader
+    from channel.receipt import ReceiptRenderer
     from context.resolver import ContextResolver
     from interactions import InteractionHandler
     from mesiri.infrastructure.postgres.database import PostgresDatabase
@@ -78,6 +79,10 @@ class AppContainer:
     # Read-only catalog/units-of-measure lookups for the material/unit
     # resolution gate. Exposed for the same reason as inventory_query above.
     catalog_query: MaterialCatalogQueryService
+    # Owns the one headless-Chromium instance used to render post-confirmation
+    # receipt images (see channel/receipt/). close() is called by the
+    # lifespan handler, same lifecycle pattern as material_db/redis_client.
+    receipt_renderer: ReceiptRenderer
     # redis_client is either a real RedisClient (when MESIRI_REDIS__HOST is set)
     # or FakeRedis for local/test.  Both expose connect() / disconnect() so the
     # lifespan handler can manage the lifecycle without special-casing.
@@ -212,12 +217,24 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     interaction_classifier = AdapterInteractionClassifier(
         DynamicAIProviderResolver(material_db, redis_client, _backend_settings)
     )
+    # Post-confirmation receipt image (see AGENTS.md's Module Placement Log
+    # and channel/receipt/). One long-lived headless-Chromium instance for
+    # the whole process -- ReceiptRenderer launches it lazily on first
+    # render, not here, so container construction never needs a browser
+    # installed. Closed in runtime/lifecycle.py's shutdown handler.
+    from channel.receipt import MaterialReceiptBuilder, ReceiptRenderer
+
+    receipt_renderer = ReceiptRenderer()
+    material_receipt_builder = MaterialReceiptBuilder(receipt_renderer)
     # M7: resolves a confirmation reply into the pending workflow, or None
     # (fall through to the normal understanding journey). M8: when a CONFIRM
     # resolves to CONFIRMED, the dispatcher executes the domain write
     # synchronously in the same request and the reply reflects the real outcome.
     interaction_handler = build_interaction_handler(
-        workflow_runtime, classifier=interaction_classifier, dispatcher=material_dispatcher
+        workflow_runtime,
+        classifier=interaction_classifier,
+        dispatcher=material_dispatcher,
+        receipt_builder=material_receipt_builder,
     )
     sender = WhatsAppSender(
         client=http_client,
@@ -311,12 +328,15 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         # is a confirmation reply, resume it and stop — the AI pipeline (and its
         # token cost) is never touched. A plain "yes" ends here.
         try:
-            handled = await interaction_handler.handle_fast_path(ctx.user_id, message)
+            handled = await interaction_handler.handle_fast_path(ctx.user_id, message, actor=ctx)
         except Exception:  # noqa: BLE001 — a resume error must not drop the message
             _log.exception("interaction.handle_failed user=%s", ctx.user_id)
             handled = None
         if handled is not None:
-            await sender.send_text(wa_id, handled.reply_text)
+            if handled.reply_image is not None:
+                await sender.send_image(wa_id, handled.reply_image, caption=handled.reply_text)
+            else:
+                await sender.send_text(wa_id, handled.reply_text)
             await message_logger.log_reply(
                 correlation_id=message.correlation_id, reply=handled.reply_text
             )
@@ -467,11 +487,13 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             send_text=sender.send_text,
             send_list=sender.send_list,
             send_button=sender.send_button,
+            send_image=sender.send_image,
             context_debug=settings.context_debug,
             message_logger=message_logger,
             trace_logger=trace_logger,
             inventory_query=inventory_query,
             catalog_query=catalog_query,
+            receipt_renderer=receipt_renderer,
             pending_report_store=pending_report_store,
         )
 
@@ -495,6 +517,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         actor_reader=actor_reader,
         inventory_query=inventory_query,
         catalog_query=catalog_query,
+        receipt_renderer=receipt_renderer,
         workflow_runtime=workflow_runtime,
         interaction_handler=interaction_handler,
         redis_client=redis_client,

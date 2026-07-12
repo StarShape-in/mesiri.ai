@@ -317,6 +317,7 @@ async def process_inbound_message(
     send_text: Callable[[str, str], Awaitable[Any]],
     send_list: Callable[[str, str, str, tuple[ListRow, ...]], Awaitable[Any]] | None = None,
     send_button: Callable[[str, str, tuple[ListRow, ...]], Awaitable[Any]] | None = None,
+    send_image: Callable[[str, bytes], Awaitable[Any]] | None = None,
     context_debug: bool = False,
     message_logger: MessageLogger | None = None,
     trace_logger: TraceLogger | None = None,
@@ -405,10 +406,13 @@ async def process_inbound_message(
     translated_text = understanding.translated_text
     if original_text:
         handled = await interaction_handler.handle_slow_path(
-            actor_user_id, message, original_text, translated_text
+            actor_user_id, message, original_text, translated_text, actor=actor
         )
         if handled:
-            await send_text(message.sender.wa_id, handled.reply_text)
+            if handled.reply_image is not None and send_image is not None:
+                await send_image(message.sender.wa_id, handled.reply_image)
+            else:
+                await send_text(message.sender.wa_id, handled.reply_text)
             await _safe(mlog.log_reply(correlation_id=correlation_id, reply=handled.reply_text))
 
             if isinstance(handled.result, WorkflowRunResult):

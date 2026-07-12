@@ -157,6 +157,53 @@ class WhatsAppSender:
         }
         return await self._send(to_wa_id, {"type": "interactive", "interactive": interactive})
 
+    async def send_image(
+        self, to_wa_id: str, image_bytes: bytes, *, caption: str | None = None
+    ) -> bool:
+        """Upload an image and send it. Returns True on success.
+
+        The Cloud API has no "send these raw bytes" call -- media must be
+        uploaded first (POST /{phone-number-id}/media, multipart) to get a
+        media id, then referenced in the message. Two HTTP calls, not one;
+        a failure at either step degrades to False rather than raising, same
+        as every other send_* method here.
+        """
+        if not self.enabled:
+            logger.warning("WhatsApp sender disabled (missing phone_number_id/access_token)")
+            return False
+
+        media_id = await self._upload_media(image_bytes, mime_type="image/png")
+        if media_id is None:
+            return False
+
+        image_fields: dict = {"id": media_id}
+        if caption:
+            image_fields["caption"] = caption
+        return await self._send(to_wa_id, {"type": "image", "image": image_fields})
+
+    async def _upload_media(self, data: bytes, *, mime_type: str) -> str | None:
+        url = f"{self._graph_base_url}/{self._api_version}/{self._phone_number_id}/media"
+        try:
+            resp = await self._client.post(
+                url,
+                data={"messaging_product": "whatsapp", "type": mime_type},
+                files={"file": ("receipt.png", data, mime_type)},
+                headers={"Authorization": f"Bearer {self._access_token}"},
+            )
+        except httpx.HTTPError as exc:
+            logger.error("WhatsApp media upload failed: %s", exc)
+            return None
+
+        if resp.status_code >= 400:
+            logger.error("WhatsApp media upload rejected (%s): %s", resp.status_code, resp.text[:300])
+            return None
+
+        media_id = resp.json().get("id")
+        if not media_id:
+            logger.error("WhatsApp media upload response had no id: %s", resp.text[:300])
+            return None
+        return media_id
+
     async def _send(self, to_wa_id: str, message_fields: dict) -> bool:
         """POST one message to the Cloud API. `message_fields` supplies the
         `type` key and its matching payload (`text`, `interactive`, ...)."""

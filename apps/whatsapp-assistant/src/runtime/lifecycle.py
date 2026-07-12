@@ -43,6 +43,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             finally:
                 await app.state.container.material_db.disconnect()
                 await app.state.container.redis_client.disconnect()
+                # Only closes anything if a render actually happened (the
+                # headless browser launches lazily on first use) -- a no-op
+                # otherwise.
+                await app.state.container.receipt_renderer.close()
 
     app = FastAPI(title="Mesiri WhatsApp Assistant", lifespan=lifespan)
 
