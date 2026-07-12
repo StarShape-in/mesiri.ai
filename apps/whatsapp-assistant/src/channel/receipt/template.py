@@ -9,9 +9,12 @@ image; swap in real lucide SVG paths later if that gap ever matters.
 
 from __future__ import annotations
 
-from jinja2 import Template
+from typing import TYPE_CHECKING
 
 from .data import ReceiptData
+
+if TYPE_CHECKING:
+    from jinja2 import Template
 
 _INK = "#1D1D1F"
 _SUB = "#86868B"
@@ -44,7 +47,7 @@ def _icon_svg(name: str, *, size: int = 14, color: str = _INK) -> str:
     )
 
 
-_CARD_TEMPLATE = Template(
+_CARD_TEMPLATE_SRC = (
     """
 <!doctype html>
 <html><head><meta charset="utf-8"><style>
@@ -140,14 +143,28 @@ _CARD_TEMPLATE = Template(
 )
 
 
+_card_template: Template | None = None
+
+
 def render_html(data: ReceiptData) -> str:
+    # jinja2 is only required if a receipt is actually rendered -- lazy
+    # import + lazy Template compilation, matching how playwright is lazily
+    # imported in render.py, so the core test suite (and everything that
+    # merely imports channel.receipt, e.g. runtime/dependencies.py) runs
+    # without jinja2 installed. See pyproject.toml's "receipt" extra.
+    global _card_template
+    if _card_template is None:
+        from jinja2 import Template
+
+        _card_template = Template(_CARD_TEMPLATE_SRC)
+
     def icon(name: str) -> str:
         # WhatsApp keeps its brand green, matching the original design --
         # every other icon uses the standard ink color.
         color = _WHATSAPP if name == "whatsapp" else _INK
         return _icon_svg(name, color=color)
 
-    return _CARD_TEMPLATE.render(
+    return _card_template.render(
         data=data,
         ink=_INK,
         sub=_SUB,

@@ -224,7 +224,9 @@ async def _run_material_unit_gates(
             )
             return None
         if material is None or not material["is_active"]:
-            return ReplySpec(text="That material is no longer available — please resend your report.")
+            return ReplySpec(
+                text="That material is no longer available — please resend your report."
+            )
 
     stock_unit_id = material.get("default_unit_id")
     if stock_unit_id is None:
@@ -248,9 +250,7 @@ async def _run_material_unit_gates(
     try:
         resolved_unit = await catalog_query.resolve_unit(unit_text)
     except Exception:
-        _log.exception(
-            "unit_gate.lookup_failed correlation_id=%s", canonical_event.correlation_id
-        )
+        _log.exception("unit_gate.lookup_failed correlation_id=%s", canonical_event.correlation_id)
         return None
 
     if resolved_unit is not None and str(resolved_unit["id"]) == str(stock_unit_id):
@@ -264,9 +264,7 @@ async def _run_material_unit_gates(
     try:
         stock_unit = await catalog_query.get_unit(str(stock_unit_id))
     except Exception:
-        _log.exception(
-            "unit_gate.lookup_failed correlation_id=%s", canonical_event.correlation_id
-        )
+        _log.exception("unit_gate.lookup_failed correlation_id=%s", canonical_event.correlation_id)
         return None
     await pending_report_store.set_pending(user_id=actor_user_id, event=canonical_event)
     return render_unit_mismatch_reply(
@@ -426,7 +424,11 @@ async def process_inbound_message(
         )
         if handled:
             if handled.reply_image is not None and send_image is not None:
-                await send_image(message.sender.wa_id, handled.reply_image)
+                sent = await send_image(
+                    message.sender.wa_id, handled.reply_image, caption=handled.reply_text
+                )
+                if not sent:
+                    await send_text(message.sender.wa_id, handled.reply_text)
             else:
                 await send_text(message.sender.wa_id, handled.reply_text)
             await _safe(mlog.log_reply(correlation_id=correlation_id, reply=handled.reply_text))
@@ -726,9 +728,7 @@ async def process_inbound_message(
     # held_reply, when set, always wins: the report is being held pending a
     # material/unit/project clarification, so nothing from planner/workflow
     # ran this turn.
-    reply = held_reply or _render_reply(
-        workflow_run, workflow_resume, planner_decision, resolved
-    )
+    reply = held_reply or _render_reply(workflow_run, workflow_resume, planner_decision, resolved)
 
     if reply is not None:
         await send_reply_spec(
@@ -889,9 +889,7 @@ async def resume_pending_report_with_unit(
         await pending_report_store.pop_pending(user_id=actor_user_id)
         if message_logger:
             await _safe(message_logger.mark_completed(correlation_id=message.correlation_id))
-        return ReplySpec(
-            text="No problem — please resend the report with the correct unit."
-        )
+        return ReplySpec(text="No problem — please resend the report with the correct unit.")
     if not row_id.startswith(_UNIT_YES_ROW_PREFIX):
         return None
 
