@@ -17,11 +17,17 @@ This migration removes the escape hatch:
   already-created receipt/usage row fails cleanly instead of double-posting
   (see domains/materials/posting.py's docstring).
 
-Run only after confirming (via the application layer) that no NULL
-material_id/unit_id/default_unit_id rows remain — this migration does not
-attempt to backfill; 0290/0300 already did, and abort loudly if they didn't
-finish cleanly. This migration itself will fail with a NOT NULL violation if
-any row was missed, which is the intended safety net.
+material_id/unit_id on material_receipts/material_usage are already fully
+resolved by 0290/0300's backfill + self-heal — this migration just tightens
+those two to NOT NULL. materials_catalog.default_unit_id needs one more
+backfill pass here first: catalog entries created directly (dashboard's old
+create_material endpoint, or 0300's fallback catalog-row creation for
+never-cataloged materials) may never have had a Stock Unit assigned at all.
+Backfilled from the unit most commonly reported in that material's own
+movement history (the strongest real signal, now available since 0300 fully
+resolved material_movements); anything with zero movement history falls
+back to a generic "unspecified" unit (admin can correct via the catalogue
+surface later) rather than blocking this migration.
 
 Revision ID: 0310
 Revises: 0300
@@ -30,6 +36,9 @@ Create Date: 2026-07-12
 
 from __future__ import annotations
 
+import uuid
+
+import sqlalchemy as sa
 from alembic import op
 
 revision = "0310"
@@ -39,6 +48,61 @@ depends_on = None
 
 
 def upgrade() -> None:
+    conn = op.get_bind()
+
+    # Prefer the unit most commonly used in this material's own movement
+    # history.
+    conn.execute(
+        sa.text(
+            """
+            UPDATE materials_catalog c SET default_unit_id = ranked.unit_id
+            FROM (
+                SELECT DISTINCT ON (material_id) material_id, unit_id
+                FROM (
+                    SELECT material_id, unit_id, COUNT(*) AS cnt
+                    FROM material_movements
+                    GROUP BY material_id, unit_id
+                ) counts
+                ORDER BY material_id, cnt DESC
+            ) ranked
+            WHERE c.id = ranked.material_id AND c.default_unit_id IS NULL
+            """
+        )
+    )
+
+    # Anything left (materials never referenced by any movement at all) gets
+    # a generic fallback unit rather than blocking this migration.
+    remaining = conn.execute(
+        sa.text("SELECT COUNT(*) FROM materials_catalog WHERE default_unit_id IS NULL")
+    ).scalar_one()
+    if remaining:
+        fallback_id = conn.execute(
+            sa.text("SELECT id FROM units_of_measure WHERE code = 'unspecified'")
+        ).scalar()
+        if fallback_id is None:
+            fallback_id = uuid.uuid4()
+            conn.execute(
+                sa.text(
+                    "INSERT INTO units_of_measure (id, code, display_name) "
+                    "VALUES (:id, 'unspecified', 'Unspecified')"
+                ),
+                {"id": fallback_id},
+            )
+            conn.execute(
+                sa.text(
+                    "INSERT INTO unit_aliases (id, unit_id, alias_text) "
+                    "VALUES (:id, :unit_id, 'unspecified')"
+                ),
+                {"id": uuid.uuid4(), "unit_id": fallback_id},
+            )
+        conn.execute(
+            sa.text(
+                "UPDATE materials_catalog SET default_unit_id = :fallback_id "
+                "WHERE default_unit_id IS NULL"
+            ),
+            {"fallback_id": fallback_id},
+        )
+
     op.alter_column("material_receipts", "unit_id", nullable=False)
     op.alter_column("material_receipts", "material_id", nullable=False)
     op.alter_column("material_usage", "unit_id", nullable=False)
