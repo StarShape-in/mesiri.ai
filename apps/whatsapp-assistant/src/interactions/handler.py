@@ -55,6 +55,8 @@ class InteractionHandled:
     # when rendering actually produced bytes (ReceiptBuilder degrades to
     # None on any failure rather than raising).
     reply_image: bytes | None = None
+    project_id: str | None = None
+    site_id: str | None = None
 
 
 class InteractionHandler:
@@ -137,6 +139,8 @@ class InteractionHandler:
             reply_text=reply_text,
             execution_result=execution_result,
             reply_image=reply_image,
+            project_id=str(loaded.state.project_id) if loaded.state.project_id else None,
+            site_id=str(loaded.state.site_id) if loaded.state.site_id else None,
         )
 
     def handle_category_tap(self, message: NormalizedMessage) -> str | None:
@@ -317,6 +321,8 @@ class InteractionHandler:
                 execution_result=execution_result,
                 unrelated_text=unrelated_text,
                 reply_image=reply_image,
+                project_id=str(loaded.state.project_id) if loaded.state.project_id else None,
+                site_id=str(loaded.state.site_id) if loaded.state.site_id else None,
             )
 
         # If nothing triggered a workflow change (e.g. only UNRELATED segments),

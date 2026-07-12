@@ -1,15 +1,16 @@
 import * as React from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { AlertTriangle, RotateCcw, Boxes, AlertOctagon, PackageX } from 'lucide-react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { AlertTriangle, RotateCcw, Boxes, AlertOctagon, CircleSlash2, PackageX } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Skeleton } from '@/components/ui/skeleton'
 import { KpiCard } from '@/components/ui/kpi-card'
-import { fetchInventory, type MaterialStock, type StockState } from '@/lib/materials'
+import { fetchInventory, updateMaterial, type MaterialStock, type StockState } from '@/lib/materials'
 import { fetchProjects, fetchSites } from '@/lib/projects'
 import { MaterialLedgerSheet } from './material-ledger-sheet'
+import { BulkActionBar } from '@/components/ui/bulk-action-bar'
 
 interface InventoryViewProps {
   projectId: string | null
@@ -22,9 +23,21 @@ function stockStateBadgeVariant(state: StockState): 'default' | 'secondary' | 'o
   return 'destructive'
 }
 
+function stockStateLabel(state: StockState): string {
+  if (state === 'AVAILABLE') return 'Available'
+  if (state === 'OUT_OF_STOCK') return 'Out of Stock'
+  return 'Negative Stock'
+}
+
+function inventoryRowKey(row: MaterialStock): string {
+  return `${row.project_id ?? 'portfolio'}:${row.site_id ?? 'no-site'}:${row.material_id}`
+}
+
 export function InventoryView({ projectId, siteId }: InventoryViewProps) {
+  const queryClient = useQueryClient()
   const [selectedRow, setSelectedRow] = React.useState<MaterialStock | null>(null)
   const [ledgerOpen, setLedgerOpen] = React.useState(false)
+  const [selectedRowKeys, setSelectedRowKeys] = React.useState<string[]>([])
 
   const filters = {
     project_id: projectId ?? undefined,
@@ -49,12 +62,31 @@ export function InventoryView({ projectId, siteId }: InventoryViewProps) {
     staleTime: 60_000,
   })
 
+  const deactivateMutation = useMutation({
+    mutationFn: (materialId: string) => updateMaterial(materialId, { is_active: false }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['materials'] })
+    },
+  })
+
+  React.useEffect(() => {
+    setSelectedRowKeys([])
+  }, [projectId, siteId])
+
   const projectNameById = React.useMemo(() => new Map(projects.map((p) => [p.id, p.name])), [projects])
   const siteNameById = React.useMemo(() => new Map(sites.map((s) => [s.id, s.name])), [sites])
 
   const showProjectColumn = !projectId
 
   const rows = React.useMemo(() => data ?? [], [data])
+  const selectedRows = React.useMemo(
+    () => rows.filter((row) => selectedRowKeys.includes(inventoryRowKey(row))),
+    [rows, selectedRowKeys]
+  )
+  const selectedMaterialIds = React.useMemo(
+    () => Array.from(new Set(selectedRows.map((row) => row.material_id))),
+    [selectedRows]
+  )
 
   const summary = React.useMemo(
     () => ({
@@ -69,6 +101,32 @@ export function InventoryView({ projectId, siteId }: InventoryViewProps) {
   const openLedger = (row: MaterialStock) => {
     setSelectedRow(row)
     setLedgerOpen(true)
+  }
+
+  const handleSelectAll = (checked: boolean) => {
+    setSelectedRowKeys(checked ? rows.map(inventoryRowKey) : [])
+  }
+
+  const handleSelectRow = (row: MaterialStock, checked: boolean) => {
+    const key = inventoryRowKey(row)
+    if (checked) {
+      setSelectedRowKeys((prev) => (prev.includes(key) ? prev : [...prev, key]))
+    } else {
+      setSelectedRowKeys((prev) => prev.filter((item) => item !== key))
+    }
+  }
+
+  const handleBulkDeactivate = async () => {
+    if (confirm(`Deactivate ${selectedMaterialIds.length} selected materials?`)) {
+      try {
+        for (const materialId of selectedMaterialIds) {
+          await deactivateMutation.mutateAsync(materialId)
+        }
+        setSelectedRowKeys([])
+      } catch (err: any) {
+        alert(err.response?.data?.detail || 'Failed to deactivate selected materials.')
+      }
+    }
   }
 
   return (
@@ -119,6 +177,14 @@ export function InventoryView({ projectId, siteId }: InventoryViewProps) {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-12 px-4">
+                      <input
+                        type="checkbox"
+                        checked={rows.length > 0 && selectedRowKeys.length === rows.length}
+                        onChange={(e) => handleSelectAll(e.target.checked)}
+                        className="rounded border-border/80 text-primary focus:ring-primary size-4"
+                      />
+                    </TableHead>
                     <TableHead>Material</TableHead>
                     <TableHead className="text-right">Available</TableHead>
                     <TableHead>Site</TableHead>
@@ -130,40 +196,53 @@ export function InventoryView({ projectId, siteId }: InventoryViewProps) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {rows.map((row) => (
-                    <TableRow
-                      key={`${row.site_id}-${row.material_id}`}
-                      onClick={() => openLedger(row)}
-                      className="cursor-pointer hover:bg-muted/30 transition-colors text-xs"
-                    >
-                      <TableCell className="font-semibold text-foreground">{row.material_name}</TableCell>
-                      <TableCell className="text-right font-mono tabular-nums font-semibold">
-                        {row.current_stock} {row.unit}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {row.site_id ? (siteNameById.get(row.site_id) ?? row.site_id.slice(0, 8)) : '—'}
-                      </TableCell>
-                      {showProjectColumn && (
-                        <TableCell className="text-muted-foreground">
-                          {row.project_id ? (projectNameById.get(row.project_id) ?? row.project_id.slice(0, 8)) : '—'}
+                  {rows.map((row) => {
+                    const rowKey = inventoryRowKey(row)
+                    const isSelected = selectedRowKeys.includes(rowKey)
+                    return (
+                      <TableRow
+                        key={rowKey}
+                        data-state={isSelected ? 'selected' : undefined}
+                        onClick={() => openLedger(row)}
+                        className="cursor-pointer hover:bg-muted/30 transition-colors text-xs"
+                      >
+                        <TableCell className="px-4" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(e) => handleSelectRow(row, e.target.checked)}
+                            className="rounded border-border/80 text-primary focus:ring-primary size-4"
+                          />
                         </TableCell>
-                      )}
-                      <TableCell className="text-right font-mono tabular-nums text-muted-foreground">
-                        {row.total_received}
-                      </TableCell>
-                      <TableCell className="text-right font-mono tabular-nums text-muted-foreground">
-                        {row.total_used}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {row.last_movement_at ? new Date(row.last_movement_at).toLocaleString() : '—'}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={stockStateBadgeVariant(row.stock_state)} className="text-[10px]">
-                          {row.stock_state}
-                        </Badge>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                        <TableCell className="font-semibold text-foreground">{row.material_name}</TableCell>
+                        <TableCell className="text-right font-mono tabular-nums font-semibold">
+                          {row.current_stock} {row.unit}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {row.site_id ? (siteNameById.get(row.site_id) ?? row.site_id.slice(0, 8)) : '—'}
+                        </TableCell>
+                        {showProjectColumn && (
+                          <TableCell className="text-muted-foreground">
+                            {row.project_id ? (projectNameById.get(row.project_id) ?? row.project_id.slice(0, 8)) : '—'}
+                          </TableCell>
+                        )}
+                        <TableCell className="text-right font-mono tabular-nums text-muted-foreground">
+                          {row.total_received}
+                        </TableCell>
+                        <TableCell className="text-right font-mono tabular-nums text-muted-foreground">
+                          {row.total_used}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {row.last_movement_at ? new Date(row.last_movement_at).toLocaleString() : '—'}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={stockStateBadgeVariant(row.stock_state)} className="text-[10px]">
+                            {stockStateLabel(row.stock_state)}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
                 </TableBody>
               </Table>
             </div>
@@ -181,6 +260,30 @@ export function InventoryView({ projectId, siteId }: InventoryViewProps) {
           onOpenChange={setLedgerOpen}
         />
       )}
+
+      <BulkActionBar selectedCount={selectedRowKeys.length} onClear={() => setSelectedRowKeys([])}>
+        {selectedRows.length === 1 && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => openLedger(selectedRows[0])}
+            className="h-8 text-xs gap-1 font-bold"
+          >
+            <Boxes className="size-3.5" />
+            Open Ledger
+          </Button>
+        )}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleBulkDeactivate}
+          className="h-8 text-xs text-rose-600 dark:text-rose-400 gap-1 font-bold"
+          disabled={deactivateMutation.isPending || selectedMaterialIds.length === 0}
+        >
+          <CircleSlash2 className="size-3.5" />
+          Deactivate Materials
+        </Button>
+      </BulkActionBar>
     </div>
   )
 }

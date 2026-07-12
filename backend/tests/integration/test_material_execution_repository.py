@@ -418,3 +418,257 @@ async def test_recovery_replays_crashed_confirmed_instance_and_is_idempotent_on_
             )
         ).scalar_one()
         assert phase == "completed"
+
+
+async def test_persist_success_posts_exactly_one_ledger_movement_for_receipt(
+    test_engine: AsyncEngine,
+    clean_db,
+    test_org: uuid.UUID,
+    test_user: uuid.UUID,
+    test_project: uuid.UUID,
+    cement_material: uuid.UUID,
+    db: PostgresDatabase,
+):
+    """The CQRS write path (material_execution.py's persist_success) must post
+    exactly one RECEIPT movement into material_movements, linked back to the
+    material_receipts row it just created via source_type/source_id. The
+    movement_type is the load-bearing detail -- a receipt must never produce
+    an ISSUE, and a bug that omitted the movement (or doubled it) would leave
+    stock silently wrong. The existing persist_success test only looked at
+    material_receipts/outbox_events; this one looks at the ledger itself."""
+    workflow_instance_id = str(uuid.uuid4())
+    await _seed_confirmed_workflow_instance(
+        test_engine,
+        workflow_instance_id=workflow_instance_id,
+        org=test_org,
+        user=test_user,
+        project=test_project,
+    )
+    confirmed = _confirmed_action(
+        workflow_instance_id=workflow_instance_id,
+        org=test_org,
+        user=test_user,
+        project=test_project,
+    )
+    handler = ExecuteConfirmedMaterialActionHandler(
+        db=db, repo=PostgresMaterialExecutionRepository(), resolver=PostgresMaterialResolver()
+    )
+
+    result = await handler.handle(confirmed)
+    assert result.status is ExecutionStatus.SUCCEEDED
+    receipt_row_id = uuid.UUID(result.material_row_id)
+
+    async with test_engine.connect() as conn:
+        movements = (
+            (
+                await conn.execute(
+                    sa.text(
+                        "SELECT movement_type, quantity, source_type, source_id, "
+                        "material_id, unit_id, reversal_of_movement_id, idempotency_key "
+                        "FROM material_movements WHERE source_type = 'material_receipt' "
+                        "AND source_id = :id"
+                    ),
+                    {"id": receipt_row_id},
+                )
+            )
+            .mappings()
+            .all()
+        )
+        assert len(movements) == 1, "a receipt must produce exactly one ledger movement"
+        m = movements[0]
+        assert m["movement_type"] == "RECEIPT"
+        assert m["quantity"] == 20
+        assert m["source_type"] == "material_receipt"
+        assert m["source_id"] == receipt_row_id
+        assert m["material_id"] == cement_material
+        assert m["reversal_of_movement_id"] is None
+        assert m["idempotency_key"] == workflow_instance_id
+
+
+async def test_persist_success_posts_exactly_one_ledger_movement_for_usage(
+    test_engine: AsyncEngine,
+    clean_db,
+    test_org: uuid.UUID,
+    test_user: uuid.UUID,
+    test_project: uuid.UUID,
+    cement_material: uuid.UUID,
+    db: PostgresDatabase,
+):
+    """Same invariant as the receipt test above, for the usage/ISSUE branch of
+    persist_success (material_execution.py:143-171). A usage report must post
+    exactly one ISSUE movement linked back to its material_usage row."""
+    workflow_instance_id = str(uuid.uuid4())
+    project_id_str = str(test_project)
+    org_id_str = str(test_org)
+    user_id_str = str(test_user)
+    draft = DraftActionV2(
+        draft_id="draft_usage",
+        correlation_id="cor_usage",
+        workflow_instance_id=workflow_instance_id,
+        action_type=DraftActionType.RECORD_MATERIAL_USAGE,
+        organization_id=org_id_str,
+        user_id=user_id_str,
+        project_id=project_id_str,
+        fields={"material_name": "cement", "quantity": 20, "unit": "bags"},
+    )
+    state = WorkflowStateV2(
+        workflow_instance_id=workflow_instance_id,
+        workflow_key=WorkflowKey.MATERIAL_USAGE,
+        correlation_id="cor_usage",
+        organization_id=org_id_str,
+        user_id=user_id_str,
+        project_id=project_id_str,
+        phase=WorkflowPhase.CONFIRMED,
+        draft_action=draft,
+    )
+    async with test_engine.begin() as conn:
+        await conn.execute(
+            sa.text(
+                "INSERT INTO workflow_instances "
+                "(id, organization_id, user_id, workflow_key, phase, state, correlation_id, status, version) "
+                "VALUES (:id, :org_id, :user_id, :workflow_key, 'confirmed', CAST(:state AS jsonb), "
+                ":correlation_id, 'active', 1)"
+            ),
+            {
+                "id": uuid.UUID(workflow_instance_id),
+                "org_id": test_org,
+                "user_id": test_user,
+                "workflow_key": WorkflowKey.MATERIAL_USAGE.value,
+                "state": state.model_dump_json(),
+                "correlation_id": "cor_usage",
+            },
+        )
+    confirmed = ConfirmedActionV2(
+        confirmed_action_id="conf_usage",
+        workflow_instance_id=workflow_instance_id,
+        correlation_id="cor_usage",
+        draft_action=draft,
+        confirmed_by_user_id=user_id_str,
+    )
+    handler = ExecuteConfirmedMaterialActionHandler(
+        db=db, repo=PostgresMaterialExecutionRepository(), resolver=PostgresMaterialResolver()
+    )
+
+    result = await handler.handle(confirmed)
+    assert result.status is ExecutionStatus.SUCCEEDED
+    usage_row_id = uuid.UUID(result.material_row_id)
+
+    async with test_engine.connect() as conn:
+        movements = (
+            (
+                await conn.execute(
+                    sa.text(
+                        "SELECT movement_type, quantity, source_type, source_id, "
+                        "material_id, reversal_of_movement_id "
+                        "FROM material_movements WHERE source_type = 'material_usage' "
+                        "AND source_id = :id"
+                    ),
+                    {"id": usage_row_id},
+                )
+            )
+            .mappings()
+            .all()
+        )
+        assert len(movements) == 1, "a usage must produce exactly one ledger movement"
+        m = movements[0]
+        assert m["movement_type"] == "ISSUE"
+        assert m["quantity"] == 20
+        assert m["source_type"] == "material_usage"
+        assert m["source_id"] == usage_row_id
+        assert m["material_id"] == cement_material
+        assert m["reversal_of_movement_id"] is None
+
+
+async def test_movement_posting_failure_rolls_back_receipt_and_outbox(
+    test_engine: AsyncEngine,
+    clean_db,
+    test_org: uuid.UUID,
+    test_user: uuid.UUID,
+    test_project: uuid.UUID,
+    cement_material: uuid.UUID,
+    db: PostgresDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """posting.py's docstring promises the operational row and the ledger
+    movement share one connection/transaction. Prove it: force the movement
+    insert to raise after the material_receipts row already exists inside the
+    transaction. The whole transaction must roll back -- no receipt row, no
+    movement, no outbox event, no idempotency_keys claim. A phantom receipt
+    with no matching ledger movement is the worst V2 failure mode (silently
+    wrong stock); this test makes it structurally impossible to ship that bug.
+
+    The idempotency_keys claim also rolls back because it ran inside the same
+    transaction -- so a retry can proceed cleanly rather than seeing a stale
+    'in_progress' claim.
+    """
+    from mesiri.infrastructure.postgres.repositories.materials import (
+        MaterialMovementsRepository,
+    )
+
+    workflow_instance_id = str(uuid.uuid4())
+    await _seed_confirmed_workflow_instance(
+        test_engine,
+        workflow_instance_id=workflow_instance_id,
+        org=test_org,
+        user=test_user,
+        project=test_project,
+    )
+    confirmed = _confirmed_action(
+        workflow_instance_id=workflow_instance_id,
+        org=test_org,
+        user=test_user,
+        project=test_project,
+    )
+
+    original_insert = MaterialMovementsRepository.insert
+
+    async def failing_insert(self, **kwargs):
+        raise RuntimeError("simulated movement-posting failure")
+
+    monkeypatch.setattr(MaterialMovementsRepository, "insert", failing_insert)
+
+    handler = ExecuteConfirmedMaterialActionHandler(
+        db=db, repo=PostgresMaterialExecutionRepository(), resolver=PostgresMaterialResolver()
+    )
+    with pytest.raises(RuntimeError, match="simulated movement-posting failure"):
+        await handler.handle(confirmed)
+
+    monkeypatch.setattr(MaterialMovementsRepository, "insert", original_insert)
+
+    async with test_engine.connect() as conn:
+        receipt_count = (
+            await conn.execute(sa.text("SELECT COUNT(*) FROM material_receipts"))
+        ).scalar_one()
+        assert receipt_count == 0, "receipt row must roll back when movement posting fails"
+
+        movement_count = (
+            await conn.execute(
+                sa.text(
+                    "SELECT COUNT(*) FROM material_movements "
+                    "WHERE source_type = 'material_receipt'"
+                )
+            )
+        ).scalar_one()
+        assert movement_count == 0, "no movement must survive the rolled-back transaction"
+
+        outbox_count = (
+            await conn.execute(
+                sa.text(
+                    "SELECT COUNT(*) FROM outbox_events "
+                    "WHERE aggregate_type = 'material_receipt'"
+                )
+            )
+        ).scalar_one()
+        assert outbox_count == 0, "outbox event must roll back with the transaction"
+
+        idempotency_count = (
+            await conn.execute(
+                sa.text(
+                    "SELECT COUNT(*) FROM idempotency_keys WHERE key = :key"
+                ),
+                {"key": workflow_instance_id},
+            )
+        ).scalar_one()
+        assert idempotency_count == 0, (
+            "idempotency claim must roll back so a retry can proceed"
+        )

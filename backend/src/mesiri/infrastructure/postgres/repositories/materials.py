@@ -378,49 +378,86 @@ class PostgresMaterialReadRepository:
     ) -> tuple[list[dict], int]:
         """Chronological IN+OUT movement history for one Site + Material, with running balance.
 
-        Combines both ledger tables into one ordered stream (oldest first) and
-        computes a running balance via a window function, then returns the
-        page in newest-first order for display while keeping balances correct.
+        Reads directly from material_movements as the single source of truth,
+        left-joining material_receipts/material_usage to resolve rich audit metadata.
+        Computes running balance via window function, returning in newest-first order.
         """
-        in_stmt = sa.select(
-            _material_receipts.c.id,
-            sa.literal("IN").label("direction"),
-            _material_receipts.c.movement_reason,
-            _material_receipts.c.quantity,
-            _material_receipts.c.unit,
-            _material_receipts.c.occurred_date,
-            _material_receipts.c.occurred_time,
-            _material_receipts.c.source,
-            _material_receipts.c.notes,
-            _material_receipts.c.supplier.label("context"),
-            _material_receipts.c.reverses_movement_id,
-            _material_receipts.c.created_by,
-            _material_receipts.c.created_at,
-        ).where(
-            _material_receipts.c.organization_id == organization_id,
-            _material_receipts.c.site_id == site_id,
-            _material_receipts.c.material_id == material_id,
+        stmt_base = (
+            sa.select(
+                _material_movements.c.id,
+                sa.case(
+                    (_material_movements.c.movement_type == "RECEIPT", "IN"),
+                    else_="OUT"
+                ).label("direction"),
+                sa.coalesce(
+                    _material_receipts.c.movement_reason,
+                    _material_usage.c.movement_reason,
+                    _material_movements.c.movement_type,
+                ).label("movement_reason"),
+                _material_movements.c.quantity,
+                _units_of_measure.c.code.label("unit"),
+                sa.coalesce(
+                    _material_receipts.c.occurred_date,
+                    _material_usage.c.occurred_date,
+                    sa.cast(_material_movements.c.occurred_at, sa.Date),
+                ).label("occurred_date"),
+                sa.coalesce(
+                    _material_receipts.c.occurred_time,
+                    _material_usage.c.occurred_time,
+                    sa.cast(_material_movements.c.occurred_at, sa.Time),
+                ).label("occurred_time"),
+                sa.coalesce(
+                    _material_receipts.c.source,
+                    _material_usage.c.source,
+                    sa.literal("system"),
+                ).label("source"),
+                sa.coalesce(
+                    _material_receipts.c.notes,
+                    _material_usage.c.notes
+                ).label("notes"),
+                sa.coalesce(
+                    _material_receipts.c.supplier,
+                    _material_usage.c.work_item
+                ).label("context"),
+                sa.coalesce(
+                    _material_receipts.c.reverses_movement_id,
+                    _material_usage.c.reverses_movement_id
+                ).label("reverses_movement_id"),
+                sa.coalesce(
+                    _material_movements.c.recorded_by_user_id,
+                    _material_receipts.c.created_by,
+                    _material_usage.c.created_by,
+                ).label("created_by"),
+                _material_movements.c.created_at,
+            )
+            .select_from(
+                _material_movements.join(
+                    _units_of_measure,
+                    _units_of_measure.c.id == _material_movements.c.unit_id
+                )
+                .outerjoin(
+                    _material_receipts,
+                    sa.and_(
+                        _material_movements.c.source_id == _material_receipts.c.id,
+                        _material_movements.c.source_type == "material_receipt"
+                    )
+                )
+                .outerjoin(
+                    _material_usage,
+                    sa.and_(
+                        _material_movements.c.source_id == _material_usage.c.id,
+                        _material_movements.c.source_type == "material_usage"
+                    )
+                )
+            )
+            .where(
+                _material_movements.c.organization_id == organization_id,
+                _material_movements.c.site_id == site_id,
+                _material_movements.c.material_id == material_id,
+            )
         )
-        out_stmt = sa.select(
-            _material_usage.c.id,
-            sa.literal("OUT").label("direction"),
-            _material_usage.c.movement_reason,
-            _material_usage.c.quantity,
-            _material_usage.c.unit,
-            _material_usage.c.occurred_date,
-            _material_usage.c.occurred_time,
-            _material_usage.c.source,
-            _material_usage.c.notes,
-            _material_usage.c.work_item.label("context"),
-            _material_usage.c.reverses_movement_id,
-            _material_usage.c.created_by,
-            _material_usage.c.created_at,
-        ).where(
-            _material_usage.c.organization_id == organization_id,
-            _material_usage.c.site_id == site_id,
-            _material_usage.c.material_id == material_id,
-        )
-        combined = sa.union_all(in_stmt, out_stmt).cte("ledger_combined")
+
+        combined = stmt_base.cte("ledger_combined")
 
         signed_qty = sa.case(
             (combined.c.direction == "IN", combined.c.quantity),
@@ -605,6 +642,25 @@ class PostgresMaterialCatalogRepository:
         )
         res = await self.conn.execute(stmt)
         return res.first() is not None
+
+    async def delete_unused(self, organization_id: uuid.UUID, material_id: uuid.UUID) -> bool:
+        """Delete a catalog row only when no immutable ledger movement references it."""
+        no_movements = ~sa.exists(
+            sa.select(sa.literal(1))
+            .select_from(_material_movements)
+            .where(_material_movements.c.material_id == material_id)
+        )
+        stmt = (
+            sa.delete(_materials_catalog)
+            .where(
+                _materials_catalog.c.id == material_id,
+                _materials_catalog.c.organization_id == organization_id,
+                no_movements,
+            )
+            .returning(_materials_catalog.c.id)
+        )
+        res = await self.conn.execute(stmt)
+        return res.scalar_one_or_none() is not None
 
 
 class UnitsOfMeasureRepository:

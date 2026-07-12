@@ -340,9 +340,8 @@ export function UserWhatsAppMessagesTab({
         </div>
       ) : (
         <div className="space-y-4">
-          {/* Desktop Table View */}
-          <div className="hidden md:block border rounded overflow-hidden">
-            <Table className="text-xs">
+          <div className="hidden md:block border rounded overflow-x-auto w-full">
+            <Table className="text-xs w-full min-w-[1000px] table-fixed">
               <TableHeader className="bg-muted/30">
                 <TableRow>
                   <TableHead className="w-20">Direction</TableHead>

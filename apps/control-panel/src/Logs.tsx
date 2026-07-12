@@ -14,6 +14,10 @@ interface InboundMessageSummary {
   processed_at: string | null;
   assistant_reply: string | null;
   acknowledged_at: string | null;
+  project_id: string | null;
+  project_name: string | null;
+  site_id: string | null;
+  site_name: string | null;
 }
 
 interface InboundMessageList {
@@ -39,6 +43,10 @@ interface InboundMessageDetail {
   acknowledged_by: string | null;
   retry_of_id: string | null;
   assistant_reply: string | null;
+  project_id: string | null;
+  project_name: string | null;
+  site_id: string | null;
+  site_name: string | null;
 }
 
 interface ProviderExecutionEntry {
@@ -360,6 +368,29 @@ const LogDetailPanel = ({
             )}
           </div>
 
+          {/* Resolved Context Display */}
+          <div style={{ borderTop: '1px solid var(--neutral-100)', borderBottom: '1px solid var(--neutral-100)', padding: 'var(--space-3) 0', margin: 'var(--space-3) 0', display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+            <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--neutral-400)' }}>
+              Resolved Context
+            </div>
+            {detail.project_name ? (
+              <div>
+                <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--neutral-800)' }}>
+                  📁 {detail.project_name}
+                </div>
+                {detail.site_name && (
+                  <div style={{ fontSize: '12px', color: 'var(--neutral-500)', marginTop: '2px', paddingLeft: '18px' }}>
+                    📍 {detail.site_name}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div style={{ fontSize: '12px', fontStyle: 'italic', color: 'var(--neutral-400)' }}>
+                Unmapped (No project/site resolved)
+              </div>
+            )}
+          </div>
+
           {detail.acknowledged_at && (
             <div style={{ fontSize: '12px', color: 'var(--neutral-500)', marginBottom: 'var(--space-3)', display: 'flex', alignItems: 'center', gap: '4px' }}>
               <Check size={12} /> Acknowledged by {detail.acknowledged_by || 'admin'} at {new Date(detail.acknowledged_at).toLocaleString()}
@@ -652,15 +683,16 @@ export default function Logs() {
               <th>Time</th>
               <th>From</th>
               <th>Type</th>
+              <th>Project/Site</th>
               <th>Message</th>
               <th>Status</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--neutral-500)' }}>Loading…</td></tr>
+              <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--neutral-500)' }}>Loading…</td></tr>
             ) : messages.length === 0 ? (
-              <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--neutral-500)' }}>No messages yet.</td></tr>
+              <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--neutral-500)' }}>No messages yet.</td></tr>
             ) : (
               messages.map((m) => (
                 <Fragment key={m.id}>
@@ -680,6 +712,20 @@ export default function Logs() {
                       {m.message_type}
                       {m.message_type === 'audio' && ' 🗣'}
                     </td>
+                    <td>
+                      {m.project_name ? (
+                        <div>
+                          <div style={{ fontSize: '13px', color: 'var(--neutral-800)', fontWeight: 500 }}>{m.project_name}</div>
+                          {m.site_name && (
+                            <div style={{ fontSize: '11px', color: 'var(--neutral-400)', marginTop: '2px' }}>
+                              {m.site_name}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: '11px', color: 'var(--neutral-400)', fontStyle: 'italic' }}>Unmapped</span>
+                      )}
+                    </td>
                     <td style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {m.body_preview || <em style={{ color: 'var(--neutral-400)' }}>no text</em>}
                     </td>
@@ -689,7 +735,7 @@ export default function Logs() {
                   </tr>
                   {expandedId === m.correlation_id && (
                     <tr>
-                      <td colSpan={6} style={{ padding: 0 }}>
+                      <td colSpan={7} style={{ padding: 0 }}>
                         <LogDetailPanel message={m} onUpdate={loadHistory} />
                       </td>
                     </tr>

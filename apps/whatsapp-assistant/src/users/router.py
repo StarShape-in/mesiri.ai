@@ -478,7 +478,7 @@ external_identities_table = sa.Table(
     sa.Column("id", sa.String, primary_key=True),
     sa.Column("provider", sa.String),
     sa.Column("external_subject", sa.String),
-    sa.Column("user_id", sa.UUID),
+    sa.Column("user_id", sa.String),
     sa.Column("created_at", sa.DateTime(timezone=True)),
 )
 
@@ -685,7 +685,7 @@ async def list_user_whatsapp_messages(
         # Resolve WhatsApp Identities mapped to the user
         identities_res = await conn.execute(
             sa.select(external_identities_table.c.external_subject).where(
-                external_identities_table.c.user_id == user_id,
+                external_identities_table.c.user_id == f"ctx_user_{user_id}",
                 external_identities_table.c.provider == "whatsapp",
             )
         )
@@ -974,7 +974,7 @@ async def get_user_whatsapp_message_detail(
         # Resolve WhatsApp Identities mapped to the user
         identities_res = await conn.execute(
             sa.select(external_identities_table.c.external_subject).where(
-                external_identities_table.c.user_id == user_id,
+                external_identities_table.c.user_id == f"ctx_user_{user_id}",
                 external_identities_table.c.provider == "whatsapp",
             )
         )

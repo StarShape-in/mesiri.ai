@@ -202,6 +202,10 @@ export async function updateMaterial(
   return res.data
 }
 
+export async function deleteMaterial(id: string): Promise<void> {
+  await api.delete(`/materials/${id}`)
+}
+
 export async function setMaterialActive(id: string, isActive: boolean): Promise<MaterialCatalog> {
   return updateMaterial(id, { is_active: isActive })
 }

@@ -35,6 +35,10 @@ class InboundMessageSummary(BaseModel):
     acknowledged_by: str | None = None
     raw_payload_captured: bool = False
     assistant_reply: str | None = None
+    project_id: uuid.UUID | None = None
+    project_name: str | None = None
+    site_id: uuid.UUID | None = None
+    site_name: str | None = None
 
 
 class InboundMessageList(BaseModel):
@@ -60,6 +64,10 @@ class InboundMessageDetail(BaseModel):
     acknowledged_by: str | None = None
     retry_of_id: uuid.UUID | None = None
     assistant_reply: str | None = None
+    project_id: uuid.UUID | None = None
+    project_name: str | None = None
+    site_id: uuid.UUID | None = None
+    site_name: str | None = None
 
 
 class JourneyTraceEntry(BaseModel):

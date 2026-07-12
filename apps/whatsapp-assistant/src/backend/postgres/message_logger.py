@@ -188,8 +188,8 @@ class PostgresMessageLogger:
         from sqlalchemy import String, bindparam, text
 
         where = [
-            "(:wa_id IS NULL OR sender_wa_id = :wa_id)",
-            "(:status IS NULL OR processing_status = :status)",
+            "(:wa_id IS NULL OR im.sender_wa_id = :wa_id)",
+            "(:status IS NULL OR im.processing_status = :status)",
         ]
         params: dict[str, Any] = {"wa_id": wa_id, "status": status, "limit": limit}
         bind_types = [bindparam("wa_id", type_=String), bindparam("status", type_=String)]
@@ -197,7 +197,7 @@ class PostgresMessageLogger:
         if provider is not None:
             where.append(
                 "EXISTS (SELECT 1 FROM provider_executions pe "
-                "WHERE pe.correlation_id = inbound_messages.correlation_id AND pe.provider = :provider)"
+                "WHERE pe.correlation_id = im.correlation_id AND pe.provider = :provider)"
             )
             params["provider"] = provider
             bind_types.append(bindparam("provider", type_=String))
@@ -205,22 +205,25 @@ class PostgresMessageLogger:
         is_live_cursor = since_received_at is not None
         if is_live_cursor:
             where.append(
-                "(received_at > :since_received_at "
-                "OR (received_at = :since_received_at AND id > :since_id))"
+                "(im.received_at > :since_received_at "
+                "OR (im.received_at = :since_received_at AND im.id > :since_id))"
             )
             params["since_received_at"] = since_received_at
             params["since_id"] = uuid.UUID(since_id) if since_id else uuid.UUID(int=0)
-            order_by = "received_at ASC, id ASC"
+            order_by = "im.received_at ASC, im.id ASC"
         else:
-            order_by = "received_at DESC, id DESC"
+            order_by = "im.received_at DESC, im.id DESC"
             params["offset"] = offset
 
         query = (
-            "SELECT id, correlation_id, sender_wa_id, message_type, "
-            f"LEFT(COALESCE(body_text, ''), {_BODY_PREVIEW_LEN}) AS body_preview, "
-            "processing_status, error_code, received_at, processed_at, "
-            "acknowledged_at, acknowledged_by, raw_payload_captured, assistant_reply "
-            "FROM inbound_messages "
+            "SELECT im.id, im.correlation_id, im.sender_wa_id, im.message_type, "
+            f"LEFT(COALESCE(im.body_text, ''), {_BODY_PREVIEW_LEN}) AS body_preview, "
+            "im.processing_status, im.error_code, im.received_at, im.processed_at, "
+            "im.acknowledged_at, im.acknowledged_by, im.raw_payload_captured, im.assistant_reply, "
+            "im.project_id, p.name AS project_name, im.site_id, s.name AS site_name "
+            "FROM inbound_messages im "
+            "LEFT JOIN projects p ON p.id = im.project_id "
+            "LEFT JOIN sites s ON s.id = im.site_id "
             f"WHERE {' AND '.join(where)} "
             f"ORDER BY {order_by} "
             "LIMIT :limit" + ("" if is_live_cursor else " OFFSET :offset")
@@ -231,7 +234,7 @@ class PostgresMessageLogger:
             rows = (await conn.execute(stmt, params)).mappings().all()
             total: int | None = None
             if not is_live_cursor:
-                count_query = f"SELECT COUNT(*) FROM inbound_messages WHERE {' AND '.join(where)}"
+                count_query = f"SELECT COUNT(*) FROM inbound_messages im WHERE {' AND '.join(where)}"
                 count_stmt = text(count_query).bindparams(*bind_types)
                 count_params = {k: v for k, v in params.items() if k not in ("limit", "offset")}
                 total = (await conn.execute(count_stmt, count_params)).scalar_one()
@@ -247,11 +250,15 @@ class PostgresMessageLogger:
                 (
                     await conn.execute(
                         text(
-                            "SELECT id, correlation_id, sender_wa_id, message_type, "
-                            "body_text, raw_payload, normalized_message, media_object_key, "
-                            "processing_status, error_code, received_at, processed_at, "
-                            "raw_payload_captured, acknowledged_at, acknowledged_by, retry_of_id, assistant_reply "
-                            "FROM inbound_messages WHERE id = :id"
+                            "SELECT im.id, im.correlation_id, im.sender_wa_id, im.message_type, "
+                            "im.body_text, im.raw_payload, im.normalized_message, im.media_object_key, "
+                            "im.processing_status, im.error_code, im.received_at, im.processed_at, "
+                            "im.raw_payload_captured, im.acknowledged_at, im.acknowledged_by, im.retry_of_id, im.assistant_reply, "
+                            "im.project_id, p.name AS project_name, im.site_id, s.name AS site_name "
+                            "FROM inbound_messages im "
+                            "LEFT JOIN projects p ON p.id = im.project_id "
+                            "LEFT JOIN sites s ON s.id = im.site_id "
+                            "WHERE im.id = :id"
                         ),
                         {"id": uuid.UUID(message_id)},
                     )

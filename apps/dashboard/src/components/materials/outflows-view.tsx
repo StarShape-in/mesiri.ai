@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, Search, RotateCcw } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -8,9 +8,10 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Skeleton } from '@/components/ui/skeleton'
-import { fetchOutflows, OUTFLOW_REASONS, type MaterialUsage } from '@/lib/materials'
+import { fetchOutflows, OUTFLOW_REASONS, type MaterialUsage, reverseOutflow } from '@/lib/materials'
 import { fetchProjects, fetchSites } from '@/lib/projects'
 import { MovementDetailsSheet } from './movement-details-sheet'
+import { BulkActionBar } from '@/components/ui/bulk-action-bar'
 
 interface OutflowsViewProps {
   projectId: string | null
@@ -23,10 +24,12 @@ function reasonBadgeVariant(reason: string): 'default' | 'secondary' | 'outline'
 }
 
 export function OutflowsView({ projectId, siteId }: OutflowsViewProps) {
+  const queryClient = useQueryClient()
   const [search, setSearch] = React.useState('')
   const [reason, setReason] = React.useState('ALL')
   const [selectedId, setSelectedId] = React.useState<string | null>(null)
   const [sheetOpen, setSheetOpen] = React.useState(false)
+  const [selectedIds, setSelectedIds] = React.useState<string[]>([])
 
   const filters = {
     project_id: projectId ?? undefined,
@@ -54,6 +57,17 @@ export function OutflowsView({ projectId, siteId }: OutflowsViewProps) {
     staleTime: 60_000,
   })
 
+  const reverseMutation = useMutation({
+    mutationFn: (id: string) => reverseOutflow(id, { reason_note: 'Bulk reversal correction' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['materials'] })
+    },
+  })
+
+  React.useEffect(() => {
+    setSelectedIds([])
+  }, [projectId, siteId, search, reason])
+
   const projectNameById = React.useMemo(() => new Map(projects.map((p) => [p.id, p.name])), [projects])
   const siteNameById = React.useMemo(() => new Map(sites.map((s) => [s.id, s.name])), [sites])
 
@@ -66,6 +80,36 @@ export function OutflowsView({ projectId, siteId }: OutflowsViewProps) {
   }
 
   const items = data?.items ?? []
+
+  // Row selection helpers
+  const handleSelectAll = (checked: boolean) => {
+    if (checked) {
+      setSelectedIds(items.map((i) => i.id))
+    } else {
+      setSelectedIds([])
+    }
+  }
+
+  const handleSelectRow = (id: string, checked: boolean) => {
+    if (checked) {
+      setSelectedIds((prev) => [...prev, id])
+    } else {
+      setSelectedIds((prev) => prev.filter((item) => item !== id))
+    }
+  }
+
+  const handleBulkReverse = async () => {
+    if (confirm(`Are you sure you want to reverse the ${selectedIds.length} selected outflows?`)) {
+      try {
+        for (const id of selectedIds) {
+          await reverseMutation.mutateAsync(id)
+        }
+        setSelectedIds([])
+      } catch (err: any) {
+        alert(err.response?.data?.detail || 'Failed to bulk reverse outflows.')
+      }
+    }
+  }
 
   return (
     <div className="space-y-3">
@@ -122,6 +166,14 @@ export function OutflowsView({ projectId, siteId }: OutflowsViewProps) {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-12 px-4">
+                      <input
+                        type="checkbox"
+                        checked={items.length > 0 && selectedIds.length === items.length}
+                        onChange={(e) => handleSelectAll(e.target.checked)}
+                        className="rounded border-border/80 text-primary focus:ring-primary size-4"
+                      />
+                    </TableHead>
                     <TableHead>Material</TableHead>
                     <TableHead className="text-right">Quantity</TableHead>
                     <TableHead>Reason</TableHead>
@@ -133,43 +185,54 @@ export function OutflowsView({ projectId, siteId }: OutflowsViewProps) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {items.map((row: MaterialUsage) => (
-                    <TableRow
-                      key={row.id}
-                      onClick={() => openRow(row.id)}
-                      className="cursor-pointer hover:bg-muted/30 transition-colors text-xs"
-                    >
-                      <TableCell className="font-semibold text-foreground">{row.material_name}</TableCell>
-                      <TableCell className="text-right font-mono tabular-nums">
-                        {row.quantity} {row.unit}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={reasonBadgeVariant(row.movement_reason)} className="text-[10px]">
-                          {row.movement_reason}
-                        </Badge>
-                      </TableCell>
-                      {showSiteColumn && (
-                        <TableCell className="text-muted-foreground">
-                          {row.site_id ? (siteNameById.get(row.site_id) ?? row.site_id.slice(0, 8)) : '—'}
+                  {items.map((row: MaterialUsage) => {
+                    const isSelected = selectedIds.includes(row.id)
+                    return (
+                      <TableRow
+                        key={row.id}
+                        data-state={isSelected ? 'selected' : undefined}
+                        className="cursor-pointer hover:bg-muted/30 transition-colors text-xs"
+                      >
+                        <TableCell className="px-4" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(e) => handleSelectRow(row.id, e.target.checked)}
+                            className="rounded border-border/80 text-primary focus:ring-primary size-4"
+                          />
                         </TableCell>
-                      )}
-                      {showProjectColumn && (
-                        <TableCell className="text-muted-foreground">
-                          {projectNameById.get(row.project_id) ?? row.project_id.slice(0, 8)}
+                        <TableCell className="font-semibold text-foreground" onClick={() => openRow(row.id)}>{row.material_name}</TableCell>
+                        <TableCell className="text-right font-mono tabular-nums" onClick={() => openRow(row.id)}>
+                          {row.quantity} {row.unit}
                         </TableCell>
-                      )}
-                      <TableCell className="text-muted-foreground">{row.work_item ?? '—'}</TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {row.occurred_date}
-                        {row.occurred_time ? ` ${row.occurred_time}` : ''}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="text-[10px]">
-                          {row.source}
-                        </Badge>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                        <TableCell onClick={() => openRow(row.id)}>
+                          <Badge variant={reasonBadgeVariant(row.movement_reason)} className="text-[10px]">
+                            {row.movement_reason}
+                          </Badge>
+                        </TableCell>
+                        {showSiteColumn && (
+                          <TableCell className="text-muted-foreground" onClick={() => openRow(row.id)}>
+                            {row.site_id ? (siteNameById.get(row.site_id) ?? row.site_id.slice(0, 8)) : '—'}
+                          </TableCell>
+                        )}
+                        {showProjectColumn && (
+                          <TableCell className="text-muted-foreground" onClick={() => openRow(row.id)}>
+                            {projectNameById.get(row.project_id) ?? row.project_id.slice(0, 8)}
+                          </TableCell>
+                        )}
+                        <TableCell className="text-muted-foreground" onClick={() => openRow(row.id)}>{row.work_item ?? '—'}</TableCell>
+                        <TableCell className="text-muted-foreground" onClick={() => openRow(row.id)}>
+                          {row.occurred_date}
+                          {row.occurred_time ? ` ${row.occurred_time}` : ''}
+                        </TableCell>
+                        <TableCell onClick={() => openRow(row.id)}>
+                          <Badge variant="outline" className="text-[10px]">
+                            {row.source}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
                 </TableBody>
               </Table>
             </div>
@@ -178,6 +241,17 @@ export function OutflowsView({ projectId, siteId }: OutflowsViewProps) {
       </Card>
 
       <MovementDetailsSheet direction="OUT" id={selectedId} open={sheetOpen} onOpenChange={setSheetOpen} />
+
+      <BulkActionBar selectedCount={selectedIds.length} onClear={() => setSelectedIds([])}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleBulkReverse}
+          className="h-8 text-xs text-rose-600 dark:text-rose-400 gap-1 font-bold"
+        >
+          Reverse Selected
+        </Button>
+      </BulkActionBar>
     </div>
   )
 }

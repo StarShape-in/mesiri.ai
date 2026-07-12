@@ -300,6 +300,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             await message_logger.log_reply(
                 correlation_id=message.correlation_id, reply=UNREGISTERED_MESSAGE
             )
+            await message_logger.mark_completed(correlation_id=message.correlation_id)
             return
 
         if ctx.organization_id is None:
@@ -307,6 +308,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             reply = NO_ORG_MESSAGE.format(name=ctx.full_name)
             await sender.send_text(wa_id, reply)
             await message_logger.log_reply(correlation_id=message.correlation_id, reply=reply)
+            await message_logger.mark_completed(correlation_id=message.correlation_id)
             return
 
         if not ctx.org_active:
@@ -315,6 +317,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             await message_logger.log_reply(
                 correlation_id=message.correlation_id, reply=ORG_SUSPENDED_MESSAGE
             )
+            await message_logger.mark_completed(correlation_id=message.correlation_id)
             return
 
         _log.info(
@@ -340,6 +343,12 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             await message_logger.log_reply(
                 correlation_id=message.correlation_id, reply=handled.reply_text
             )
+            await message_logger.update_context(
+                correlation_id=message.correlation_id,
+                project_id=handled.project_id,
+                site_id=handled.site_id,
+            )
+            await message_logger.mark_completed(correlation_id=message.correlation_id)
             return
 
         # Category-menu tap (from render_direct_reply's greeting list): a
@@ -360,6 +369,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             await message_logger.log_reply(
                 correlation_id=message.correlation_id, reply=category_prompt
             )
+            await message_logger.mark_completed(correlation_id=message.correlation_id)
             return
 
         # Bare "hi"/"menu"/"help"/etc (see greeting_phrases.json): the AI
@@ -381,6 +391,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             await message_logger.log_reply(
                 correlation_id=message.correlation_id, reply=greeting_reply.text
             )
+            await message_logger.mark_completed(correlation_id=message.correlation_id)
             return
 
         # Bare "who am i"/"whoami"/"my profile"/etc (see
@@ -394,6 +405,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             await message_logger.log_reply(
                 correlation_id=message.correlation_id, reply=whoami_reply_text
             )
+            await message_logger.mark_completed(correlation_id=message.correlation_id)
             return
 
         # A tap on the material picker sent by the material-resolution gate
@@ -408,6 +420,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             planner=planner,
             workflow_runtime=workflow_runtime,
             actor=ctx,
+            message_logger=message_logger,
         )
         if material_reply is not None:
             await send_reply_spec(
@@ -433,6 +446,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             planner=planner,
             workflow_runtime=workflow_runtime,
             actor=ctx,
+            message_logger=message_logger,
         )
         if unit_reply is not None:
             await send_reply_spec(
@@ -458,6 +472,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             pending_report_store=pending_report_store,
             planner=planner,
             workflow_runtime=workflow_runtime,
+            message_logger=message_logger,
         )
         if project_reply is not None:
             await send_reply_spec(

@@ -16,6 +16,7 @@ import { useAuth } from '@/lib/AuthContext'
 import { fetchProjects, fetchSites } from '@/lib/projects'
 import { fetchMaterials, createOutflow, OUTFLOW_REASONS, ADJUSTMENT_REASONS, type OutflowReason } from '@/lib/materials'
 import type { AppScope } from '@/lib/scope-types'
+import { Combobox } from '@/components/ui/combobox'
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10)
@@ -86,6 +87,13 @@ export function RecordOutflowDialog({ open, onOpenChange, scope }: RecordOutflow
   })
 
   const selectedMaterial = catalog?.items.find((m) => m.id === materialId)
+
+  const materialOptions = React.useMemo(() => {
+    return (catalog?.items ?? []).map((m) => ({
+      value: m.id,
+      label: m.name,
+    }))
+  }, [catalog])
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -193,18 +201,14 @@ export function RecordOutflowDialog({ open, onOpenChange, scope }: RecordOutflow
 
           <div className="grid gap-1.5">
             <Label>Material</Label>
-            <Select value={materialId} onValueChange={setMaterialId}>
-              <SelectTrigger className="h-9">
-                <SelectValue placeholder="Select material from catalog" />
-              </SelectTrigger>
-              <SelectContent>
-                {catalog?.items.map((m) => (
-                  <SelectItem key={m.id} value={m.id}>
-                    {m.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Combobox
+              options={materialOptions}
+              value={materialId}
+              onValueChange={setMaterialId}
+              placeholder="Select material from catalog"
+              searchPlaceholder="Search materials..."
+              emptyText="No materials found."
+            />
             {catalog && catalog.items.length === 0 && (
               <p className="text-muted-foreground">
                 No materials in the catalog yet — ask an admin to add one first.

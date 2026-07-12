@@ -256,6 +256,30 @@ async def update_material(
     return updated
 
 
+@router.delete("/{material_id}", status_code=204)
+async def delete_material(
+    material_id: uuid.UUID,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Delete an unused Material catalog entry.
+
+    Materials with ledger history must be deactivated instead so inventory and
+    audit history keep resolving to the original catalog row.
+    """
+    repo = PostgresMaterialCatalogRepository(conn)
+    existing = await repo.get_by_id(auth_context.organization_id, material_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Material not found")
+    deleted = await repo.delete_unused(auth_context.organization_id, material_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=409,
+            detail="Material has recorded movements and cannot be deleted. Deactivate it instead.",
+        )
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Inflows (material_receipts, direction=IN)
 # ---------------------------------------------------------------------------

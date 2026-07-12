@@ -80,6 +80,22 @@ async def _safe(coro: Awaitable[None]) -> None:
         _log.warning("logger call failed", exc_info=True)
 
 
+async def _complete_resume_leg(
+    message: NormalizedMessage,
+    event: CanonicalEventV2,
+    message_logger: MessageLogger | None,
+) -> None:
+    if message_logger is not None:
+        await _safe(
+            message_logger.update_context(
+                correlation_id=message.correlation_id,
+                project_id=event.project_id,
+                site_id=event.site_id,
+            )
+        )
+        await _safe(message_logger.mark_completed(correlation_id=message.correlation_id))
+
+
 def _render_reply(
     workflow_run: WorkflowRunResult | None,
     workflow_resume: WorkflowResumeResult | None,
@@ -193,9 +209,9 @@ async def _run_material_unit_gates(
             material = candidates[0]
             canonical_event.fields["material_id"] = str(material["id"])
         else:
-            await pending_report_store.set_pending(user_id=actor_user_id, event=canonical_event)
             if not candidates:
                 return ReplySpec(text=render_material_not_found_reply(name))
+            await pending_report_store.set_pending(user_id=actor_user_id, event=canonical_event)
             return render_material_picker([(str(c["id"]), c["name"]) for c in candidates])
     else:
         try:
@@ -421,6 +437,14 @@ async def process_inbound_message(
                 workflow_resume = handled.result
 
             if not handled.unrelated_text:
+                await _safe(
+                    mlog.update_context(
+                        correlation_id=correlation_id,
+                        project_id=handled.project_id,
+                        site_id=handled.site_id,
+                    )
+                )
+                await _safe(mlog.mark_completed(correlation_id=correlation_id))
                 return JourneyResult(
                     understanding=understanding,
                     resolved_context=None,
@@ -738,6 +762,7 @@ async def resume_pending_report_with_project(
     pending_report_store: PendingReportStore,
     planner: Planner,
     workflow_runtime: WorkflowRuntime,
+    message_logger: MessageLogger | None = None,
 ) -> ReplySpec | None:
     """Resume a report that was held by the project-selection gate above, now
     that the user tapped which project it belongs to.
@@ -759,6 +784,8 @@ async def resume_pending_report_with_project(
 
     event = await pending_report_store.pop_pending(user_id=actor_user_id)
     if event is None:
+        if message_logger:
+            await _safe(message_logger.mark_completed(correlation_id=message.correlation_id))
         return ReplySpec(text="That selection expired — please resend your report.")
 
     project_id = row_id.removeprefix(_PROJECT_ROW_PREFIX)
@@ -766,7 +793,9 @@ async def resume_pending_report_with_project(
 
     # Project is the last gate in the chain, so nothing else needs re-running
     # here -- straight to planner/workflow.
-    return await _plan_and_run(event, planner=planner, workflow_runtime=workflow_runtime)
+    reply = await _plan_and_run(event, planner=planner, workflow_runtime=workflow_runtime)
+    await _complete_resume_leg(message, event, message_logger)
+    return reply
 
 
 _MATERIAL_ROW_PREFIX = "mat_"
@@ -783,6 +812,7 @@ async def resume_pending_report_with_material(
     planner: Planner,
     workflow_runtime: WorkflowRuntime,
     actor: ActorIdentity | None = None,
+    message_logger: MessageLogger | None = None,
 ) -> ReplySpec | None:
     """Resume a report held by the material-resolution gate, now that the user
     tapped which catalog material it refers to.
@@ -801,6 +831,8 @@ async def resume_pending_report_with_material(
 
     event = await pending_report_store.pop_pending(user_id=actor_user_id)
     if event is None:
+        if message_logger:
+            await _safe(message_logger.mark_completed(correlation_id=message.correlation_id))
         return ReplySpec(text="That selection expired — please resend your report.")
 
     material_id = row_id.removeprefix(_MATERIAL_ROW_PREFIX)
@@ -813,15 +845,19 @@ async def resume_pending_report_with_material(
         actor_user_id=actor_user_id,
     )
     if held_reply is not None:
+        await _complete_resume_leg(message, event, message_logger)
         return held_reply
 
     held_reply = await _run_project_gate(
         event, actor=actor, actor_user_id=actor_user_id, pending_report_store=pending_report_store
     )
     if held_reply is not None:
+        await _complete_resume_leg(message, event, message_logger)
         return held_reply
 
-    return await _plan_and_run(event, planner=planner, workflow_runtime=workflow_runtime)
+    reply = await _plan_and_run(event, planner=planner, workflow_runtime=workflow_runtime)
+    await _complete_resume_leg(message, event, message_logger)
+    return reply
 
 
 async def resume_pending_report_with_unit(
@@ -833,6 +869,7 @@ async def resume_pending_report_with_unit(
     planner: Planner,
     workflow_runtime: WorkflowRuntime,
     actor: ActorIdentity | None = None,
+    message_logger: MessageLogger | None = None,
 ) -> ReplySpec | None:
     """Resume a report held by the unit-mismatch clarification, now that the
     user confirmed or declined the material's Stock Unit.
@@ -850,6 +887,8 @@ async def resume_pending_report_with_unit(
     if row_id == _UNIT_NO_ROW_ID:
         # Must still pop -- a stale pending report must never resurrect later.
         await pending_report_store.pop_pending(user_id=actor_user_id)
+        if message_logger:
+            await _safe(message_logger.mark_completed(correlation_id=message.correlation_id))
         return ReplySpec(
             text="No problem — please resend the report with the correct unit."
         )
@@ -858,6 +897,8 @@ async def resume_pending_report_with_unit(
 
     event = await pending_report_store.pop_pending(user_id=actor_user_id)
     if event is None:
+        if message_logger:
+            await _safe(message_logger.mark_completed(correlation_id=message.correlation_id))
         return ReplySpec(text="That selection expired — please resend your report.")
 
     unit_id = row_id.removeprefix(_UNIT_YES_ROW_PREFIX)
@@ -867,6 +908,9 @@ async def resume_pending_report_with_unit(
         event, actor=actor, actor_user_id=actor_user_id, pending_report_store=pending_report_store
     )
     if held_reply is not None:
+        await _complete_resume_leg(message, event, message_logger)
         return held_reply
 
-    return await _plan_and_run(event, planner=planner, workflow_runtime=workflow_runtime)
+    reply = await _plan_and_run(event, planner=planner, workflow_runtime=workflow_runtime)
+    await _complete_resume_leg(message, event, message_logger)
+    return reply
