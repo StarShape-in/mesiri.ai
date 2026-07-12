@@ -81,11 +81,20 @@ class FakeExtractionProvider:
         self._error = error
         self._delay = delay_seconds
         self.calls = 0
+        self.last_semantic_hint: str | None = None
+        self.last_expense_categories: list[str] | None = None
 
     async def extract(
-        self, text: str, *, semantic_hint: str | None = None, correlation_id: str | None = None
+        self,
+        text: str,
+        *,
+        semantic_hint: str | None = None,
+        expense_categories: list[str] | None = None,
+        correlation_id: str | None = None,
     ) -> ExtractionResult:
         self.calls += 1
+        self.last_semantic_hint = semantic_hint
+        self.last_expense_categories = expense_categories
         if self._delay:
             await asyncio.sleep(self._delay)
         if self._error is not None:

@@ -985,6 +985,9 @@ async def simulate_message(
         # Real catalog/units lookups so the material/unit resolution gate
         # actually runs in this dry run too, not just in production.
         catalog_query=container.catalog_query,
+        # Real expense category names so AI-side category selection is
+        # exercised in this dry run too, not just in production.
+        expense_category_query=container.expense_category_query,
         # No loggers: this is a dry run, not a real inbound message.
     )
 

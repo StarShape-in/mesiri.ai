@@ -41,16 +41,9 @@ def test_blank_currency_is_rejected():
     assert "currency is required" in validate(_command(currency="  "))
 
 
-def test_blank_category_is_rejected():
-    assert "category_id or category_text is required" in validate(_command(category_id=" "))
-
-
-def test_category_text_alone_satisfies_validation():
-    reasons = validate(_command(category_id=None, category_text="materials"))
-    assert "category_id or category_text is required" not in reasons
-
-
-def test_missing_category_id_and_text_is_rejected():
-    assert "category_id or category_text is required" in validate(
-        _command(category_id=None, category_text=None)
-    )
+def test_missing_category_id_and_text_has_no_reasons():
+    """category is optional at the pure-validation layer -- REST enforces
+    category_id via its own request schema, and the WhatsApp/CQRS resolver
+    falls back to a default category rather than rejecting (see
+    resolution.py's PostgresExpenseCategoryResolver.get_or_create_default)."""
+    assert validate(_command(category_id=None, category_text=None)) == []

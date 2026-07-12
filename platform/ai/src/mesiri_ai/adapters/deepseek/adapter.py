@@ -66,7 +66,12 @@ class DeepSeekExtractionProvider:
         self._s = settings
 
     async def extract(
-        self, text: str, *, semantic_hint: str | None = None, correlation_id: str | None = None
+        self,
+        text: str,
+        *,
+        semantic_hint: str | None = None,
+        expense_categories: list[str] | None = None,
+        correlation_id: str | None = None,
     ) -> ExtractionResult:
         api_key = self._s.api_key.get_secret_value() if self._s.api_key else None
         system_prompt = _EXTRACTION_PROMPT
@@ -75,6 +80,14 @@ class DeepSeekExtractionProvider:
                 f'\n\nHint: the user selected the "{semantic_hint}" category just before '
                 "sending this message. Prefer that semantic_type unless the text clearly "
                 "indicates a different one -- never force it against clear evidence."
+            )
+        if expense_categories:
+            options = ", ".join(f'"{c}"' for c in expense_categories)
+            system_prompt += (
+                f"\n\nIf semantic_type is expense, the organization's existing expense "
+                f"categories are: {options}. Set the expense's `category` field to the "
+                "closest matching one of these, verbatim. Only use a different value if "
+                "none of these fit at all."
             )
 
         async def _raw() -> Any:

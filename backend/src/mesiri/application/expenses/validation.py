@@ -1,4 +1,13 @@
-"""Pure structural validation for RecordExpenseCommand — no DB, no I/O."""
+"""Pure structural validation for RecordExpenseCommand — no DB, no I/O.
+
+category_id/category_text presence is deliberately not checked here:
+category is documented as optional on the extraction side (see
+mesiri_contracts.assistant.candidates.ExpenseCandidate), and neither entry
+point needs a structural guard for it — REST's RecordExpenseRequest already
+requires category_id via its Pydantic schema, and the WhatsApp/CQRS path's
+resolver (resolution.py) falls back to a default "Uncategorized" category
+when neither is given, rather than rejecting.
+"""
 
 from __future__ import annotations
 
@@ -11,10 +20,6 @@ def validate(cmd: RecordExpenseCommand) -> list[str]:
         reasons.append("amount must be greater than zero")
     if not cmd.currency.strip():
         reasons.append("currency is required")
-    if not (cmd.category_id and cmd.category_id.strip()) and not (
-        cmd.category_text and cmd.category_text.strip()
-    ):
-        reasons.append("category_id or category_text is required")
     if not cmd.project_id.strip():
         reasons.append("project_id is required")
     return reasons

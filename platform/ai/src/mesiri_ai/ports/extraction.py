@@ -21,5 +21,12 @@ class StructuredExtractionProvider(Protocol):
         text: str,
         *,
         semantic_hint: str | None = None,
+        expense_categories: list[str] | None = None,
         correlation_id: str | None = None,
-    ) -> ExtractionResult: ...
+    ) -> ExtractionResult:
+        """``expense_categories``, when given, is the caller org's active
+        expense_categories names — the provider should pick one of these
+        verbatim for an expense's `category` field when the text supports
+        it, rather than inventing a new label (see resolution.py's
+        exact-match resolver, which this keeps in sync with)."""
+        ...

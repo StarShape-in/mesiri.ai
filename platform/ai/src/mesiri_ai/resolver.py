@@ -265,6 +265,7 @@ class DynamicAIProviderResolver:
         text: str,
         *,
         semantic_hint: str | None = None,
+        expense_categories: list[str] | None = None,
         correlation_id: str | None = None,
     ) -> ExtractionResult:
         """Extract structured entities from text with automatic fallback."""
@@ -279,17 +280,26 @@ class DynamicAIProviderResolver:
             if pid == "gemini":
                 provider = _build_gemini_provider(config, mdl, self._settings)
                 return await provider.extract(
-                    text, semantic_hint=semantic_hint, correlation_id=correlation_id
+                    text,
+                    semantic_hint=semantic_hint,
+                    expense_categories=expense_categories,
+                    correlation_id=correlation_id,
                 )
             if pid == "deepseek":
                 provider = _build_deepseek_provider(config, mdl, self._settings)
                 return await provider.extract(
-                    text, semantic_hint=semantic_hint, correlation_id=correlation_id
+                    text,
+                    semantic_hint=semantic_hint,
+                    expense_categories=expense_categories,
+                    correlation_id=correlation_id,
                 )
             from mesiri_ai.fakes import FakeExtractionProvider
 
             return await FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION).extract(
-                text, semantic_hint=semantic_hint, correlation_id=correlation_id
+                text,
+                semantic_hint=semantic_hint,
+                expense_categories=expense_categories,
+                correlation_id=correlation_id,
             )
 
         try:

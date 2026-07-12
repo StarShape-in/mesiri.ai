@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from interactions import InteractionHandler
     from mesiri.infrastructure.postgres.database import PostgresDatabase
     from planner import Planner
+    from runtime.expense_category_query import ExpenseCategoryQueryService
     from runtime.inventory_query import MaterialInventoryQueryService
     from runtime.material_catalog_query import MaterialCatalogQueryService
     from understanding.pipeline import UnderstandingPipeline
@@ -79,6 +80,9 @@ class AppContainer:
     # Read-only catalog/units-of-measure lookups for the material/unit
     # resolution gate. Exposed for the same reason as inventory_query above.
     catalog_query: MaterialCatalogQueryService
+    # Read-only expense category names for the extraction call's AI-side
+    # category selection. Exposed for the same reason as catalog_query above.
+    expense_category_query: ExpenseCategoryQueryService
     # Owns the one headless-Chromium instance used to render post-confirmation
     # receipt images (see channel/receipt/). close() is called by the
     # lifespan handler, same lifecycle pattern as material_db/redis_client.
@@ -233,6 +237,12 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from runtime.material_catalog_query import MaterialCatalogQueryService
 
     catalog_query = MaterialCatalogQueryService(material_db)
+    # Read-only expense category names, fed into the extraction call so the
+    # AI can pick from the org's real categories -- same reasoning and same
+    # material_db as catalog_query above. See runtime/expense_category_query.py.
+    from runtime.expense_category_query import ExpenseCategoryQueryService
+
+    expense_category_query = ExpenseCategoryQueryService(material_db)
     # Slow-path interaction classifier: while a confirmation is pending, a
     # message that isn't a plain "yes"/"no" (e.g. "40 bags of cement" instead
     # of the drafted 50) needs an LLM to recognize it as a CORRECTION rather
@@ -542,6 +552,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             trace_logger=trace_logger,
             inventory_query=inventory_query,
             catalog_query=catalog_query,
+            expense_category_query=expense_category_query,
             pending_report_store=pending_report_store,
         )
 
@@ -565,6 +576,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         actor_reader=actor_reader,
         inventory_query=inventory_query,
         catalog_query=catalog_query,
+        expense_category_query=expense_category_query,
         receipt_renderer=receipt_renderer,
         workflow_runtime=workflow_runtime,
         interaction_handler=interaction_handler,

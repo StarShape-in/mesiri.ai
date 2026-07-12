@@ -130,6 +130,51 @@ async def test_confirm_reply_executes_domain_write_and_replies_recorded():
     assert saved_state.phase is WorkflowPhase.COMPLETED
 
 
+async def test_confirm_with_no_category_field_still_succeeds():
+    """The exact production bug: category is optional on the extraction
+    side (see mesiri_contracts.assistant.candidates.ExpenseCandidate), so a
+    draft with no `category` key at all -- e.g. "spent 250 on cement bags",
+    which states no explicit category -- must still record successfully via
+    the resolver's default-category fallback, not reply with a rejection."""
+    draft = DraftActionV2(
+        draft_id="draft_1",
+        correlation_id="cor_e2e_expense_1",
+        workflow_instance_id=WF_ID,
+        action_type=DraftActionType.RECORD_EXPENSE,
+        organization_id=ORG,
+        user_id=USR,
+        project_id=PRJ,
+        site_id=SITE,
+        fields={"amount": 250},
+    )
+    state = WorkflowStateV2(
+        workflow_instance_id=WF_ID,
+        workflow_key=WorkflowKey.EXPENSE_SUBMIT,
+        correlation_id="cor_e2e_expense_1",
+        organization_id=ORG,
+        user_id=USR,
+        project_id=PRJ,
+        phase=WorkflowPhase.AWAITING_CONFIRMATION,
+        draft_action=draft,
+        pending_prompt="Confirm: expense of 250?",
+    )
+    workflow_repo = FakeWorkflowInstanceRepository()
+    workflow_repo.seed(state, version=0)
+    expense_repo = FakeExpenseExecutionRepository(workflow_repo=workflow_repo)
+    interaction_handler = _build_interaction_handler(
+        workflow_repo=workflow_repo, expense_repo=expense_repo
+    )
+
+    handled = await interaction_handler.handle_fast_path(USR, _message("yes"))
+
+    assert handled.execution_result.status is ExecutionStatus.SUCCEEDED
+    assert handled.reply_text == "✅ Recorded. Thank you."
+    assert len(expense_repo.expense_rows) == 1
+    persisted = expense_repo.expense_rows[0]["command"]
+    assert persisted.category_id is not None
+    assert persisted.category_text is None
+
+
 async def test_duplicate_confirm_reply_is_idempotent_and_replies_recorded():
     """A user sending "yes" twice (or a duplicated WhatsApp delivery) must not
     create a second expense — the second resume() is ALREADY_RESOLVED at the

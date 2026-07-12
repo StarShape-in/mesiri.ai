@@ -120,6 +120,22 @@ async def test_category_text_is_resolved_when_category_id_absent():
 
 
 @pytest.mark.asyncio
+async def test_no_category_at_all_falls_back_to_default_via_resolver():
+    """The exact production bug: a draft with no `category` field at all
+    (category is optional on the extraction side) must still succeed via
+    the resolver's default-category fallback, not be rejected."""
+    repo = FakeExpenseExecutionRepository()
+    handler = RecordExpenseHandler(repo, resolver=FakeExpenseCategoryResolver())
+
+    result = await handler.handle(
+        None, _command(category_id=None, category_text=None)
+    )
+
+    assert result.status == ExecutionStatus.SUCCEEDED
+    assert repo.expense_rows[0]["command"].category_id is not None
+
+
+@pytest.mark.asyncio
 async def test_unresolvable_category_text_is_rejected():
     repo = FakeExpenseExecutionRepository()
     handler = RecordExpenseHandler(

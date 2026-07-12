@@ -91,6 +91,48 @@ async def test_receipt_image_yields_expense():
     assert result.document_classification == "receipt"
 
 
+async def test_expense_categories_reach_extraction_for_image():
+    """AI-side category selection: the org's real expense_categories names
+    must reach the extraction call for an image (receipt photo), not just
+    text -- extraction is what actually picks the category field."""
+    storage = FakeObjectStorage()
+    await storage.put_object("img/1.jpg", b"<image>")
+    extraction = FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION)
+    pipeline = await _build(
+        vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
+        extraction=extraction,
+        storage=storage,
+    )
+    msg = _msg(
+        modality=InputModality.IMAGE,
+        media=MediaReference(object_key="img/1.jpg", mime_type="image/jpeg"),
+    )
+
+    await pipeline.understand(msg, expense_categories=["Materials", "Fuel"])
+
+    assert extraction.last_expense_categories == ["Materials", "Fuel"]
+
+
+async def test_expense_categories_reach_extraction_for_text():
+    extraction = FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION)
+    pipeline = await _build(extraction=extraction)
+    msg = _msg(text="spent 250 on cement bags")
+
+    await pipeline.understand(msg, expense_categories=["Materials", "Fuel"])
+
+    assert extraction.last_expense_categories == ["Materials", "Fuel"]
+
+
+async def test_no_expense_categories_defaults_to_none():
+    extraction = FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION)
+    pipeline = await _build(extraction=extraction)
+    msg = _msg(text="spent 250 on cement bags")
+
+    await pipeline.understand(msg)
+
+    assert extraction.last_expense_categories is None
+
+
 async def test_partial_receipt_keeps_missing_fields_and_lowers_confidence():
     storage = FakeObjectStorage()
     await storage.put_object("img/2.jpg", b"<image>")

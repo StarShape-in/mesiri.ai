@@ -206,6 +206,33 @@ class PostgresExpenseCategoryRepository:
         row = res.mappings().first()
         return _row_to_category(row) if row else None
 
+    async def get_or_create_default(
+        self, organization_id: uuid.UUID, *, created_by: uuid.UUID
+    ) -> ExpenseCategory:
+        """The org-scoped "Uncategorized" bucket, created on first use.
+
+        Mirrors migration 0310's `units_of_measure` "unspecified" fallback:
+        category is documented as optional on the extraction side, so an
+        expense with no category shouldn't be rejected outright — it lands
+        here instead. ON CONFLICT DO NOTHING on the (organization_id, name)
+        unique constraint makes concurrent first-use races safe.
+        """
+        existing = await self.find_by_name_exact_active(organization_id, "Uncategorized")
+        if existing is not None:
+            return existing
+
+        await self.conn.execute(
+            sa.text(
+                "INSERT INTO expense_categories (id, organization_id, name, status, created_by) "
+                "VALUES (:id, :organization_id, 'Uncategorized', 'active', :created_by) "
+                "ON CONFLICT (organization_id, name) DO NOTHING"
+            ),
+            {"id": uuid.uuid4(), "organization_id": organization_id, "created_by": created_by},
+        )
+        category = await self.find_by_name_exact_active(organization_id, "Uncategorized")
+        assert category is not None
+        return category
+
 
 class PostgresExpenseRepository:
     def __init__(self, conn: AsyncConnection):

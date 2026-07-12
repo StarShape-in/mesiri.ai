@@ -45,6 +45,7 @@ from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
 from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
 from mesiri_contracts.assistant.v2.resolved_context import ResolvedContextV2
 from planner import Planner, log_planner_decision
+from runtime.expense_category_query import ExpenseCategoryQueryService
 from runtime.inventory_query import MaterialInventoryQueryService
 from runtime.logging_ports import MessageLogger, TraceLogger
 from runtime.material_catalog_query import MaterialCatalogQueryService
@@ -346,6 +347,7 @@ async def process_inbound_message(
     actor: ActorIdentity | None = None,
     inventory_query: MaterialInventoryQueryService | None = None,
     catalog_query: MaterialCatalogQueryService | None = None,
+    expense_category_query: ExpenseCategoryQueryService | None = None,
     semantic_hint: str | None = None,
     pending_report_store: PendingReportStore | None = None,
     category_hint_store: CategoryHintStore | None = None,
@@ -357,7 +359,14 @@ async def process_inbound_message(
     # --- Understanding stage ---
     t0 = time.perf_counter()
     try:
-        understanding = await pipeline.understand(message, semantic_hint=semantic_hint)
+        expense_categories: list[str] | None = None
+        if expense_category_query is not None and actor is not None and actor.organization_id:
+            expense_categories = await expense_category_query.list_active_category_names(
+                organization_id=actor.organization_id
+            )
+        understanding = await pipeline.understand(
+            message, semantic_hint=semantic_hint, expense_categories=expense_categories
+        )
         await _safe(
             tlog.log_stage(
                 correlation_id=correlation_id,
