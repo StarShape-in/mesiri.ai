@@ -23,7 +23,12 @@ import logging
 from dataclasses import dataclass
 
 from backend.ports import ActorIdentity
-from channel.replies import ReplySpec, render_category_prompt, render_greeting_menu
+from channel.replies import (
+    ReplySpec,
+    render_category_prompt,
+    render_greeting_menu,
+    render_material_direction_followup,
+)
 from context.live_identity import whoami_reply
 from mesiri_ai.greeting_classifier import is_greeting_trigger
 from mesiri_contracts.application.results.execution_result import ExecutionResult
@@ -143,7 +148,7 @@ class InteractionHandler:
             site_id=str(loaded.state.site_id) if loaded.state.site_id else None,
         )
 
-    def handle_category_tap(self, message: NormalizedMessage) -> str | None:
+    def handle_category_tap(self, message: NormalizedMessage) -> ReplySpec | None:
         """A tap on the category-menu list (see channel/replies.CATEGORY_ROWS,
         sent by render_direct_reply's greeting). Deterministic -- we defined
         these row ids ourselves, so recognizing one needs no AI call, same
@@ -165,6 +170,28 @@ class InteractionHandler:
         if not row_id:
             return None
         return render_category_prompt(row_id)
+
+    def handle_material_direction_tap(self, message: NormalizedMessage) -> str | None:
+        """A tap on the Material Arrived/Used buttons (see channel/replies.py
+        MATERIAL_DIRECTION_BUTTONS, sent by render_category_prompt's
+        "cat_material" case). Deterministic, same principle as
+        handle_category_tap -- this only recognizes the two ids we defined
+        ourselves and returns the tailored follow-up prompt text; the caller
+        (runtime/dependencies.py) is responsible for locking the direction
+        into category_hint_store so canonicalization can use it as a fallback
+        default.
+
+        Returns None for anything else, so the caller falls through to the
+        normal journey exactly like the other fast-path checks.
+        """
+        if message.modality is not InputModality.INTERACTIVE:
+            return None
+        row_id = message.metadata.get("interactive_reply_id")
+        if row_id == "dir_received":
+            return render_material_direction_followup("received")
+        if row_id == "dir_used":
+            return render_material_direction_followup("used")
+        return None
 
     def handle_greeting_trigger(
         self, message: NormalizedMessage, *, timezone: str | None = None

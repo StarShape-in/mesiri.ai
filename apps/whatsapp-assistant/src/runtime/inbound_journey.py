@@ -349,6 +349,7 @@ async def process_inbound_message(
     catalog_query: MaterialCatalogQueryService | None = None,
     expense_category_query: ExpenseCategoryQueryService | None = None,
     semantic_hint: str | None = None,
+    direction_hint: str | None = None,
     pending_report_store: PendingReportStore | None = None,
     category_hint_store: CategoryHintStore | None = None,
 ) -> JourneyResult:
@@ -520,7 +521,9 @@ async def process_inbound_message(
         # --- Canonicalization stage ---
         t0 = time.perf_counter()
         try:
-            canonical_event = build_canonical_event(understanding, resolved)
+            canonical_event = build_canonical_event(
+                understanding, resolved, direction_hint=direction_hint
+            )
 
             # Inject the loaded actor profile into the canonical event so the
             # WHO_AM_I workflow has the data it needs to generate a reply

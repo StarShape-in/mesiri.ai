@@ -414,9 +414,37 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
                     await category_hint_store.set_hint(user_id=ctx.user_id, semantic_hint=hint)
                 except Exception:  # noqa: BLE001 — a hint is a nudge, never worth losing the reply
                     _log.exception("category_hint.set_failed user=%s", ctx.user_id)
-            await sender.send_text(wa_id, category_prompt)
+            await send_reply_spec(
+                category_prompt,
+                wa_id,
+                send_text=sender.send_text,
+                send_list=sender.send_list,
+                send_button=sender.send_button,
+            )
             await message_logger.log_reply(
-                correlation_id=message.correlation_id, reply=category_prompt
+                correlation_id=message.correlation_id, reply=category_prompt.text
+            )
+            await message_logger.mark_completed(correlation_id=message.correlation_id)
+            return
+
+        # Material Arrived/Used button tap (from render_category_prompt's
+        # "cat_material" case) -- locks direction as a fallback default for
+        # canonicalization (see build_canonical_event's direction_hint), never
+        # an override of what the report itself says. Deterministic, no AI,
+        # same principle as the category tap above.
+        material_direction_prompt = interaction_handler.handle_material_direction_tap(message)
+        if material_direction_prompt is not None:
+            row_id = message.metadata.get("interactive_reply_id")
+            direction = "received" if row_id == "dir_received" else "used"
+            try:
+                await category_hint_store.set_hint(
+                    user_id=ctx.user_id, semantic_hint="material_update", direction=direction
+                )
+            except Exception:  # noqa: BLE001 — a hint is a nudge, never worth losing the reply
+                _log.exception("category_hint.set_failed user=%s", ctx.user_id)
+            await sender.send_text(wa_id, material_direction_prompt)
+            await message_logger.log_reply(
+                correlation_id=message.correlation_id, reply=material_direction_prompt
             )
             await message_logger.mark_completed(correlation_id=message.correlation_id)
             return
@@ -536,12 +564,13 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             )
             return
 
-        semantic_hint = await category_hint_store.pop_hint(user_id=ctx.user_id)
+        category_hint = await category_hint_store.pop_hint(user_id=ctx.user_id)
         await process_inbound_message(
             message,
             actor_user_id=ctx.user_id,
             actor=ctx,
-            semantic_hint=semantic_hint,
+            semantic_hint=category_hint.semantic_hint if category_hint else None,
+            direction_hint=category_hint.direction if category_hint else None,
             category_hint_store=category_hint_store,
             pipeline=pipeline,
             context_resolver=context_resolver,

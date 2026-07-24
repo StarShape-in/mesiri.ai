@@ -135,7 +135,13 @@ def test_material_missing_quantity_needs_clarification():
     assert "unit" in event.missing_fields
 
 
-def test_material_missing_direction_is_unrecognized():
+def test_material_missing_direction_asks_for_it_instead_of_resetting():
+    """A message that clearly named a material and quantity but couldn't be
+    read as arrived/used (e.g. transcription noise garbled that one word)
+    must ask specifically for direction -- not UNRECOGNIZED, which renders
+    as a full reset to the category menu (the exact bug this fixes: garbled
+    voice reports were sending the user back to "choose a module" instead of
+    a targeted clarifying question)."""
     understanding = _understanding(
         semantic_type=SemanticType.MATERIAL_UPDATE,
         candidates=[
@@ -145,8 +151,65 @@ def test_material_missing_direction_is_unrecognized():
         ],
     )
     event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.CLARIFICATION_REQUIRED
+    assert event.completeness is IntentCompleteness.NEEDS_CLARIFICATION
+    assert event.missing_fields == ["direction"]
+
+
+def test_material_unrelated_noise_with_no_material_evidence_stays_unrecognized():
+    """If there's no sign the message was about material at all (no name, no
+    quantity), an unresolved direction must NOT trigger the targeted
+    clarification -- that would ask "arrived or used?" about something that
+    was never a material report. Falls through to UNRECOGNIZED as before."""
+    understanding = _understanding(
+        semantic_type=SemanticType.MATERIAL_UPDATE,
+        candidates=[MaterialUpdateCandidate(fields={})],
+    )
+    event = build_canonical_event(understanding, _context())
     assert event.event_type is CanonicalEventType.UNRECOGNIZED
     assert event.completeness is IntentCompleteness.NOT_ACTIONABLE
+
+
+def test_direction_hint_fills_in_when_message_doesnt_resolve_it():
+    """A locked direction_hint (from the Material Arrived/Used button tap)
+    is used as a fallback default when the message's own words don't give a
+    clear received/used -- letting the report proceed as ACTIONABLE instead
+    of asking a now-redundant clarifying question."""
+    understanding = _understanding(
+        semantic_type=SemanticType.MATERIAL_UPDATE,
+        candidates=[
+            MaterialUpdateCandidate(
+                fields={"material_name": "cement", "quantity": 20, "unit": "bags"}
+            )
+        ],
+    )
+    event = build_canonical_event(understanding, _context(), direction_hint="received")
+    assert event.event_type is CanonicalEventType.MATERIAL_RECEIPT_REQUESTED
+    assert event.completeness is IntentCompleteness.ACTIONABLE
+    assert event.fields["direction"] == "received"
+
+
+def test_direction_hint_never_overrides_an_explicit_spoken_direction():
+    """If the message itself clearly says "used", a stale/mismatched
+    direction_hint (e.g. the user tapped Arrived but then said "used" in
+    their report) must NOT win -- what the user actually said always takes
+    priority over a button tap from a moment earlier."""
+    understanding = _understanding(
+        semantic_type=SemanticType.MATERIAL_UPDATE,
+        candidates=[
+            MaterialUpdateCandidate(
+                fields={
+                    "material_name": "cement",
+                    "quantity": 20,
+                    "unit": "bags",
+                    "direction": "used",
+                }
+            )
+        ],
+    )
+    event = build_canonical_event(understanding, _context(), direction_hint="received")
+    assert event.event_type is CanonicalEventType.MATERIAL_USAGE_REQUESTED
+    assert event.fields["direction"] == "used"
 
 
 def test_expense_complete_is_actionable():

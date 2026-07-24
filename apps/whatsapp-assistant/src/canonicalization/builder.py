@@ -108,9 +108,19 @@ def _normalize_material_fields(fields: dict) -> dict:
 
 
 def build_canonical_event(
-    understanding: UnderstandingResult, context: ResolvedContextV2
+    understanding: UnderstandingResult,
+    context: ResolvedContextV2,
+    *,
+    direction_hint: str | None = None,
 ) -> CanonicalEventV2:
-    """Normalize AI output + resolved context into a CanonicalEvent v2."""
+    """Normalize AI output + resolved context into a CanonicalEvent v2.
+
+    ``direction_hint`` is a fallback default only -- set when the user tapped
+    Material's Arrived/Used buttons (channel/replies.py MATERIAL_DIRECTION_
+    BUTTONS) before reporting. It's applied only if the message's own words
+    didn't already resolve to a clear "received"/"used"; an explicit spoken/
+    typed direction always wins over a stale or mismatched hint.
+    """
     candidate = _select_candidate(understanding)
     fields: dict = {}
     warnings: list[str] = []
@@ -120,6 +130,41 @@ def build_canonical_event(
 
     if understanding.semantic_type is SemanticType.MATERIAL_UPDATE:
         fields = _normalize_material_fields(fields)
+        if fields.get("direction") not in ("received", "used") and direction_hint in (
+            "received",
+            "used",
+        ):
+            fields["direction"] = direction_hint
+
+        if fields.get("direction") not in ("received", "used") and (
+            fields.get("material_name") or fields.get("quantity")
+        ):
+            # The message clearly reads as a material report (it named a
+            # material and/or a quantity) but direction still couldn't be
+            # pinned down -- e.g. transcription noise garbled the one word
+            # that says arrived/used, and no button hint was there to fall
+            # back on. resolve_event_type below would otherwise call this
+            # UNRECOGNIZED, the same terminal bucket as a message that isn't
+            # about material at all, which renders as a full reset to the
+            # category menu (see render_direct_reply). Ask specifically for
+            # the missing piece instead, the same way any other missing
+            # required field already does.
+            return CanonicalEventV2(
+                event_id=new_id("evt"),
+                correlation_id=understanding.correlation_id,
+                source_message_id=understanding.source_message_id,
+                conversation_id=context.conversation_id,
+                event_type=CanonicalEventType.CLARIFICATION_REQUIRED,
+                completeness=IntentCompleteness.NEEDS_CLARIFICATION,
+                organization_id=context.organization_id,
+                user_id=context.user_id,
+                project_id=context.project_id,
+                site_id=context.site_id,
+                permissions=context.permissions,
+                fields=fields,
+                missing_fields=["direction"],
+                warnings=warnings,
+            )
 
     event_type = resolve_event_type(understanding.semantic_type, fields)
 

@@ -282,10 +282,40 @@ def _interactive_message(row_id: str, title: str = "Material") -> NormalizedMess
 
 
 def test_category_tap_returns_the_matching_prompt():
+    """Material is the one category with a two-step tap -- it asks Arrived/
+    Used via buttons instead of a plain-text prompt (see channel/replies.py
+    MATERIAL_DIRECTION_BUTTONS)."""
     handler = _handler(FakeWorkflowInstanceRepository())
     prompt = handler.handle_category_tap(_interactive_message("cat_material"))
     assert prompt is not None
-    assert "material" in prompt.lower()
+    assert "material" in prompt.text.lower()
+    assert prompt.buttons is not None
+    assert {b.id for b in prompt.buttons} == {"dir_received", "dir_used"}
+
+
+def test_other_category_taps_return_plain_text_no_buttons():
+    handler = _handler(FakeWorkflowInstanceRepository())
+    prompt = handler.handle_category_tap(_interactive_message("cat_expense"))
+    assert prompt is not None
+    assert "expense" in prompt.text.lower()
+    assert prompt.buttons is None
+
+
+def test_material_direction_tap_returns_tailored_prompt():
+    handler = _handler(FakeWorkflowInstanceRepository())
+    arrived_prompt = handler.handle_material_direction_tap(_interactive_message("dir_received"))
+    assert arrived_prompt is not None
+    assert "arrived" in arrived_prompt.lower()
+
+    used_prompt = handler.handle_material_direction_tap(_interactive_message("dir_used"))
+    assert used_prompt is not None
+    assert "used" in used_prompt.lower()
+
+
+def test_material_direction_tap_is_none_for_unrelated_ids():
+    handler = _handler(FakeWorkflowInstanceRepository())
+    assert handler.handle_material_direction_tap(_interactive_message("cat_material")) is None
+    assert handler.handle_material_direction_tap(_message("dir_received")) is None
 
 
 def test_category_tap_is_none_for_plain_text():

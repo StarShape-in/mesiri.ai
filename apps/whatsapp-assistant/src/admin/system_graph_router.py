@@ -357,6 +357,10 @@ def _hardcoded_replies() -> list[HardcodedReplyInfo]:
         UNREGISTERED_MESSAGE,
         whoami_reply,
     )
+
+    def _category_prompt_text(row_id: str) -> str:
+        prompt = render_category_prompt(row_id)
+        return prompt.text if prompt is not None else ""
     from interactions.response_handler import render_execution_reply, render_resume_reply
     from mesiri_contracts.application.results.execution_result import (
         ExecutionResult,
@@ -500,29 +504,29 @@ def _hardcoded_replies() -> list[HardcodedReplyInfo]:
             key="category_prompt_material",
             title="Category prompt — Material",
             source="channel/replies.py:render_category_prompt('cat_material')",
-            trigger='Tapping "Material" on the category menu.',
-            template=render_category_prompt("cat_material") or "",
+            trigger='Tapping "Material" on the category menu (asks Arrived/Used via buttons).',
+            template=_category_prompt_text("cat_material"),
         ),
         HardcodedReplyInfo(
             key="category_prompt_equipment",
             title="Category prompt — Equipment",
             source="channel/replies.py:render_category_prompt('cat_equipment')",
             trigger='Tapping "Equipment & Machinery" on the category menu.',
-            template=render_category_prompt("cat_equipment") or "",
+            template=_category_prompt_text("cat_equipment"),
         ),
         HardcodedReplyInfo(
             key="category_prompt_labour",
             title="Category prompt — Labour",
             source="channel/replies.py:render_category_prompt('cat_labour')",
             trigger='Tapping "Labour" on the category menu.',
-            template=render_category_prompt("cat_labour") or "",
+            template=_category_prompt_text("cat_labour"),
         ),
         HardcodedReplyInfo(
             key="category_prompt_expense",
             title="Category prompt — Expense",
             source="channel/replies.py:render_category_prompt('cat_expense')",
             trigger='Tapping "Expense" on the category menu.',
-            template=render_category_prompt("cat_expense") or "",
+            template=_category_prompt_text("cat_expense"),
         ),
         HardcodedReplyInfo(
             key="understanding_failed",
@@ -931,7 +935,15 @@ async def simulate_message(
 
     category_prompt = container.interaction_handler.handle_category_tap(message)
     if category_prompt is not None:
-        return _reply("category_tap", category_prompt)
+        text = category_prompt.text
+        if category_prompt.buttons:
+            options = " / ".join(b.title for b in category_prompt.buttons)
+            text = f"{text}\n\nReply {options}"
+        return _reply("category_tap", text)
+
+    material_direction_prompt = container.interaction_handler.handle_material_direction_tap(message)
+    if material_direction_prompt is not None:
+        return _reply("material_direction_tap", material_direction_prompt)
 
     greeting_reply = container.interaction_handler.handle_greeting_trigger(message)
     if greeting_reply is not None:
