@@ -187,95 +187,31 @@ async def get_organization(org_id: uuid.UUID, _admin: dict = Depends(require_pla
 async def delete_organization(org_id: uuid.UUID, _admin: dict = Depends(require_platform_admin)):
     """Hard-delete a tenant and every row scoped to it.
 
-    Deletion order matters: every domain table below has a plain FK straight
-    to organizations.id/users.id (no ON DELETE CASCADE), so children must go
-    before parents. `sites` and `project_members` cascade automatically when
-    `projects` is deleted (their FK is ondelete="CASCADE"). The
-    material_receipts/material_usage reverses_movement_id columns form a
-    self-referencing cycle between the two tables, so both are nulled out
-    before either is deleted.
+    Deleting the organizations row is enough — migration 0361 put ON DELETE
+    CASCADE on every tenant-scoped table's path back to organizations.id (and
+    added the FK to users.organization_id / projects.organization_id, which
+    previously had none at all). This used to be a ~90-line hand-ordered
+    sequence of DELETEs here that broke silently every time a migration added
+    an org-scoped table — see 0361's docstring for the incident (the finance
+    refactor renaming finance_accounts -> money_accounts underneath it) and
+    for why the schema, not this function, is now the source of truth for
+    what gets deleted.
+
+    NOTE: this does not remove anything outside Postgres — expense_attachments
+    .media_object_key (and other WhatsApp media) still live in object storage
+    after this call. Cleaning those up is a separate, deliberately-out-of-scope
+    concern (deleting external files is irreversible and needs its own review),
+    tracked but not implemented here.
     """
     engine = get_engine()
     async with engine.begin() as conn:
         result = await conn.execute(
-            sa.select(organizations_table.c.id).where(organizations_table.c.id == org_id)
+            organizations_table.delete()
+            .where(organizations_table.c.id == org_id)
+            .returning(organizations_table.c.id)
         )
         if result.first() is None:
             raise HTTPException(status_code=404, detail="Organization not found")
-
-        params = {"org_id": org_id}
-
-        # Break the material_receipts <-> material_usage reversal cycle first.
-        await conn.execute(
-            sa.text(
-                "UPDATE material_receipts SET reverses_movement_id = NULL "
-                "WHERE organization_id = :org_id"
-            ),
-            params,
-        )
-        await conn.execute(
-            sa.text(
-                "UPDATE material_usage SET reverses_movement_id = NULL "
-                "WHERE organization_id = :org_id"
-            ),
-            params,
-        )
-
-        # Interactions reference users.id and (nullably) workflow_instances.id —
-        # delete before either.
-        await conn.execute(
-            sa.text(
-                "DELETE FROM interactions WHERE user_id IN "
-                "(SELECT id FROM users WHERE organization_id = :org_id)"
-            ),
-            params,
-        )
-
-        # Detail rows referencing finance_accounts/labour_attendance.
-        await conn.execute(
-            sa.text(
-                "DELETE FROM finance_account_transactions WHERE account_id IN "
-                "(SELECT id FROM finance_accounts WHERE organization_id = :org_id)"
-            ),
-            params,
-        )
-        await conn.execute(
-            sa.text(
-                "DELETE FROM labour_attendance_entries WHERE attendance_id IN "
-                "(SELECT id FROM labour_attendance WHERE organization_id = :org_id)"
-            ),
-            params,
-        )
-
-        # Org-scoped event/ledger tables (also reference projects/sites, which
-        # must still exist at this point).
-        for table in (
-            "material_receipts",
-            "material_usage",
-            "equipment_events",
-            "expenses",
-            "timeline_entries",
-        ):
-            await conn.execute(
-                sa.text(f"DELETE FROM {table} WHERE organization_id = :org_id"), params
-            )
-
-        # Parents of the above (materials_catalog, finance_accounts, etc).
-        for table in (
-            "finance_accounts",
-            "labour_attendance",
-            "materials_catalog",
-            "workflow_instances",
-        ):
-            await conn.execute(
-                sa.text(f"DELETE FROM {table} WHERE organization_id = :org_id"), params
-            )
-
-        # Projects cascade-deletes sites and project_members (ondelete="CASCADE").
-        await conn.execute(sa.text("DELETE FROM projects WHERE organization_id = :org_id"), params)
-
-        await conn.execute(users_table.delete().where(users_table.c.organization_id == org_id))
-        await conn.execute(organizations_table.delete().where(organizations_table.c.id == org_id))
 
 
 @router.get("/{org_id}/timeline", response_model=TimelineEntriesListResponse)
