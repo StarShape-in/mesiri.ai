@@ -22,6 +22,18 @@ try:
 except Exception:  # pragma: no cover
     DeepSeekSettings = Any  # type: ignore
 
+_ENGLISH_LANGUAGE_LABELS = frozenset({"english", "en", "en-us", "en-in", "en-gb"})
+
+
+def _is_english(detected_language: object) -> bool:
+    """True only for a detected_language value that plainly says English --
+    used to tell a legitimate no-op translation (source was already English)
+    apart from a translation that silently didn't happen for non-English
+    input. Mirrors the Gemini adapter's identical helper."""
+    return bool(detected_language) and str(detected_language).strip().lower() in (
+        _ENGLISH_LANGUAGE_LABELS
+    )
+
 _EXTRACTION_PROMPT = (
     "You extract structured construction-site data from a worker's message. "
     "Return STRICT JSON only, with keys: "
@@ -188,9 +200,22 @@ class DeepSeekExtractionProvider:
                 "translation response missing 'translated_text'",
                 correlation_id=correlation_id,
             )
+        detected_language = data.get("detected_language")
+        if not _is_english(detected_language) and translated_text.strip() == text.strip():
+            # A second, distinct silent-failure mode: a *populated*
+            # translated_text that's just the original non-English text
+            # echoed back verbatim, rather than the key being omitted.
+            # See the Gemini adapter's identical guard for the live bug
+            # this closes (a Malayalam sentence with an embedded English
+            # proper noun/project name).
+            raise malformed_output(
+                "deepseek",
+                f"translation returned unchanged text for detected_language={detected_language!r}",
+                correlation_id=correlation_id,
+            )
         return TranslationResult(
             translated_text=translated_text,
-            detected_language=data.get("detected_language"),
+            detected_language=detected_language,
             provider=self.provider,
             model=self._s.model,
             latency_ms=latency_ms,

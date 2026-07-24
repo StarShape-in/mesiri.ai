@@ -5,6 +5,7 @@ models and that malformed provider output maps to the shared error contract.
 The SDK calls themselves are exercised only in provider-marked tests.
 """
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -168,6 +169,53 @@ async def test_gemini_translate_raises_when_translated_text_blank():
         await provider.translate_to_english("hello", correlation_id=None)
 
 
+async def test_gemini_translate_raises_when_text_unchanged_for_non_english_source():
+    """Regression test: a SECOND, distinct silent-translation-failure mode
+    found live after the missing-key fix above shipped -- Gemini returned a
+    *populated* translated_text that was just the original Malayalam text
+    echoed back verbatim (not omitted), for a message naming a project
+    inline ("ഗ്രീൻവാലി"). The missing-key check doesn't catch this since
+    translated_text isn't empty; a separate check is needed for "claims a
+    non-English source but the text didn't change at all"."""
+
+    malayalam_text = "ഗ്രീൻവാലിയിൽ എന്തൊക്കെ ഉണ്ട്"
+
+    class _FakeModels:
+        def generate_content(self, *, model, contents, config=None):
+            return SimpleNamespace(
+                text=json.dumps(
+                    {"translated_text": malayalam_text, "detected_language": "Malayalam"}
+                )
+            )
+
+    provider = GeminiProvider.__new__(GeminiProvider)
+    provider._settings = SimpleNamespace(model="gemini-test", timeout_seconds=5, max_retries=0)
+    provider._client = SimpleNamespace(models=_FakeModels())
+
+    with pytest.raises(MesiriError) as exc:
+        await provider.translate_to_english(malayalam_text, correlation_id="cor_z")
+    assert exc.value.error_code == "PROVIDER_MALFORMED_OUTPUT"
+
+
+async def test_gemini_translate_allows_unchanged_text_when_source_is_already_english():
+    """The prompt explicitly instructs returning the same text when the
+    source is already English -- that legitimate no-op must NOT raise."""
+
+    class _FakeModels:
+        def generate_content(self, *, model, contents, config=None):
+            return SimpleNamespace(
+                text='{"translated_text": "50 bags of cement arrived", '
+                '"detected_language": "English"}'
+            )
+
+    provider = GeminiProvider.__new__(GeminiProvider)
+    provider._settings = SimpleNamespace(model="gemini-test", timeout_seconds=5, max_retries=0)
+    provider._client = SimpleNamespace(models=_FakeModels())
+
+    result = await provider.translate_to_english("50 bags of cement arrived", correlation_id=None)
+    assert result.translated_text == "50 bags of cement arrived"
+
+
 async def test_deepseek_translate_raises_when_translated_text_missing():
     """Same fail-loud regression coverage as the Gemini test above, for
     DeepSeek's equivalent (and previously identically silent) fallback."""
@@ -189,6 +237,34 @@ async def test_deepseek_translate_raises_when_translated_text_missing():
     try:
         with pytest.raises(MesiriError) as exc:
             await provider.translate_to_english("ഹലോ", correlation_id="cor_y")
+        assert exc.value.error_code == "PROVIDER_MALFORMED_OUTPUT"
+    finally:
+        deepseek_module.call_with_resilience = original
+
+
+async def test_deepseek_translate_raises_when_text_unchanged_for_non_english_source():
+    """DeepSeek equivalent of the Gemini "populated but unchanged" regression
+    above -- same silent-failure shape, same fail-loud fix."""
+    from mesiri_ai.adapters.deepseek.adapter import DeepSeekExtractionProvider
+
+    malayalam_text = "ഗ്രീൻവാലിയിൽ എന്തൊക്കെ ഉണ്ട്"
+    provider = DeepSeekExtractionProvider.__new__(DeepSeekExtractionProvider)
+    provider._s = SimpleNamespace(
+        api_key=None, base_url="https://example.test", timeout_seconds=5, max_retries=0,
+        model="deepseek-test",
+    )
+
+    async def _fake_resilience(_raw, **kwargs):
+        content = json.dumps({"translated_text": malayalam_text, "detected_language": "ml"})
+        return {"choices": [{"message": {"content": content}}]}, 42.0
+
+    import mesiri_ai.adapters.deepseek.adapter as deepseek_module
+
+    original = deepseek_module.call_with_resilience
+    deepseek_module.call_with_resilience = _fake_resilience
+    try:
+        with pytest.raises(MesiriError) as exc:
+            await provider.translate_to_english(malayalam_text, correlation_id="cor_w")
         assert exc.value.error_code == "PROVIDER_MALFORMED_OUTPUT"
     finally:
         deepseek_module.call_with_resilience = original

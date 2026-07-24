@@ -72,6 +72,18 @@ _TRANSLATION_PROMPT = (
     "If it is already English, just return the text as translated_text and 'English' as detected_language."
 )
 
+_ENGLISH_LANGUAGE_LABELS = frozenset({"english", "en", "en-us", "en-in", "en-gb"})
+
+
+def _is_english(detected_language: object) -> bool:
+    """True only for a detected_language value that plainly says English --
+    used to tell a legitimate no-op translation (source was already English,
+    per _TRANSLATION_PROMPT's own instruction) apart from a translation that
+    silently didn't happen for non-English input."""
+    return bool(detected_language) and str(detected_language).strip().lower() in (
+        _ENGLISH_LANGUAGE_LABELS
+    )
+
 
 class GeminiProvider:
     provider = "gemini"
@@ -269,9 +281,25 @@ class GeminiProvider:
                 "translation response missing 'translated_text'",
                 correlation_id=correlation_id,
             )
+        detected_language = data.get("detected_language")
+        if not _is_english(detected_language) and translated_text.strip() == text.strip():
+            # A SECOND, distinct silent-failure mode found live after the
+            # fix above shipped: Gemini can return a *populated*
+            # translated_text that's just the original non-English text
+            # echoed back verbatim (rather than omitting the key) --
+            # disproportionately likely for code-mixed input (a Malayalam
+            # sentence with an embedded English proper noun/project name).
+            # The prompt explicitly allows identical output only when the
+            # source is already English; anything else claiming "unchanged"
+            # is a translation that didn't happen, not a legitimate no-op.
+            raise malformed_output(
+                "gemini",
+                f"translation returned unchanged text for detected_language={detected_language!r}",
+                correlation_id=correlation_id,
+            )
         return TranslationResult(
             translated_text=translated_text,
-            detected_language=data.get("detected_language"),
+            detected_language=detected_language,
             provider=self.provider,
             model=self._settings.model,
             latency_ms=latency_ms,
