@@ -274,10 +274,175 @@ const TracePanel = ({ correlationId }: { correlationId: string }) => {
   );
 };
 
+// --- AI Context rendering helpers -------------------------------------------
+
+const STAGE_META: Record<string, { label: string; icon: string; hint: string }> = {
+  understanding: { label: 'Understanding', icon: '🧠', hint: 'Transcription, translation & extraction' },
+  context: { label: 'Context Resolution', icon: '📍', hint: 'Who & where this message maps to' },
+  canonicalization: { label: 'Canonical Event', icon: '📦', hint: 'The structured action extracted' },
+  planner: { label: 'Planner Decision', icon: '🧭', hint: 'What the assistant decided to do' },
+  workflow: { label: 'Workflow', icon: '⚙️', hint: 'Workflow started / resumed' },
+  retry: { label: 'Retry', icon: '🔁', hint: 'Admin replay' },
+  acknowledge: { label: 'Acknowledged', icon: '✔️', hint: 'Admin triage' },
+};
+
+const prettyValue = (v: unknown): string => {
+  if (v === null || v === undefined || v === '') return '—';
+  if (typeof v === 'boolean') return v ? 'yes' : 'no';
+  if (typeof v === 'object') return JSON.stringify(v);
+  return String(v);
+};
+
+const FieldGrid = ({ rows }: { rows: Array<[string, unknown]> }) => {
+  const visible = rows.filter(([, v]) => v !== null && v !== undefined && v !== '' && !(Array.isArray(v) && v.length === 0));
+  if (visible.length === 0) return null;
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '4px 12px', alignItems: 'baseline' }}>
+      {visible.map(([k, v]) => (
+        <Fragment key={k}>
+          <div style={{ fontSize: '11px', color: 'var(--neutral-500)', fontWeight: 500, whiteSpace: 'nowrap' }}>{k}</div>
+          <div style={{ fontSize: '12px', color: 'var(--neutral-800)', wordBreak: 'break-word' }}>{prettyValue(v)}</div>
+        </Fragment>
+      ))}
+    </div>
+  );
+};
+
+// The language pipeline: original speech/text -> translation -> normalized,
+// each shown as a step so a reviewer can see exactly where a Malayalam voice
+// note became the English the extractor worked from.
+const LanguageFlow = ({ p }: { p: any }) => {
+  const steps: Array<{ label: string; text: string; sub?: string }> = [];
+  if (p.transcript) steps.push({ label: 'Heard (original)', text: p.transcript, sub: p.detected_language ? `detected: ${p.detected_language}` : undefined });
+  if (p.translated_text && p.translated_text !== p.transcript) steps.push({ label: 'Translated', text: p.translated_text });
+  if (p.normalized_text && p.normalized_text !== p.translated_text && p.normalized_text !== p.transcript) steps.push({ label: 'Normalized', text: p.normalized_text });
+  if (steps.length === 0) return null;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+      {steps.map((s, i) => (
+        <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+          <span style={{ fontSize: '10px', fontWeight: 600, color: 'var(--info)', textTransform: 'uppercase', letterSpacing: '0.03em', width: 100, flexShrink: 0, paddingTop: '2px' }}>{s.label}</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: '13px', color: 'var(--neutral-800)', backgroundColor: 'var(--neutral-100)', border: '1px solid var(--neutral-200)', borderRadius: '6px', padding: '6px 10px', lineHeight: 1.4 }}>{s.text}</div>
+            {s.sub && <div style={{ fontSize: '10px', color: 'var(--neutral-400)', marginTop: '2px' }}>{s.sub}</div>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+const renderStageBody = (stage: string, p: any) => {
+  if (stage === 'understanding') {
+    const best = Array.isArray(p.candidates) && p.candidates.length > 0 ? p.candidates[0] : null;
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+        <LanguageFlow p={p} />
+        <FieldGrid rows={[
+          ['Semantic type', p.semantic_type],
+          ['Confidence', p.overall_confidence],
+          ['Document type', p.document_classification],
+          ['Missing fields', Array.isArray(p.missing_fields) ? p.missing_fields.join(', ') : p.missing_fields],
+          ['Warnings', Array.isArray(p.warnings) ? p.warnings.join(', ') : p.warnings],
+        ]} />
+        {best && best.fields && Object.keys(best.fields).length > 0 && (
+          <div>
+            <div style={{ fontSize: '10px', fontWeight: 600, color: 'var(--neutral-400)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px' }}>Extracted fields</div>
+            <FieldGrid rows={Object.entries(best.fields)} />
+          </div>
+        )}
+      </div>
+    );
+  }
+  if (stage === 'context') {
+    return <FieldGrid rows={[
+      ['Organization', p.organization_id],
+      ['Project', p.project_id],
+      ['Site', p.site_id],
+      ['Source', p.context_source],
+      ['Confidence', p.context_confidence],
+      ['Timezone', p.timezone],
+      ['Locale', p.locale],
+    ]} />;
+  }
+  if (stage === 'canonicalization') {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+        <FieldGrid rows={[
+          ['Event type', p.event_type],
+          ['Completeness', p.completeness],
+          ['Missing fields', Array.isArray(p.missing_fields) ? p.missing_fields.join(', ') : p.missing_fields],
+          ['Warnings', Array.isArray(p.warnings) ? p.warnings.join(', ') : p.warnings],
+        ]} />
+        {p.fields && Object.keys(p.fields).length > 0 && (
+          <div>
+            <div style={{ fontSize: '10px', fontWeight: 600, color: 'var(--neutral-400)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px' }}>Fields</div>
+            <FieldGrid rows={Object.entries(p.fields)} />
+          </div>
+        )}
+      </div>
+    );
+  }
+  if (stage === 'planner') {
+    return <FieldGrid rows={[
+      ['Decision', p.decision_type],
+      ['Workflow', p.workflow_key],
+      ['Reason', p.reason],
+      ['Priority', p.priority],
+      ['Missing fields', Array.isArray(p.missing_fields) ? p.missing_fields.join(', ') : p.missing_fields],
+    ]} />;
+  }
+  if (stage === 'workflow') {
+    return <FieldGrid rows={[
+      ['Status', p.status],
+      ['Workflow', p.workflow_key],
+      ['Instance', p.workflow_instance_id],
+    ]} />;
+  }
+  return <FieldGrid rows={Object.entries(p)} />;
+};
+
+const ContextStageCard = ({ entry }: { entry: StageContextEntry }) => {
+  const [showRaw, setShowRaw] = useState(false);
+  const meta = STAGE_META[entry.stage] || { label: entry.stage, icon: '•', hint: '' };
+  const p = (entry.stage_payload || {}) as any;
+
+  return (
+    <div style={{ border: '1px solid var(--neutral-200)', borderRadius: 'var(--radius-sm)', overflow: 'hidden', backgroundColor: '#ffffff' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', backgroundColor: 'var(--neutral-50)', borderBottom: '1px solid var(--neutral-100)' }}>
+        <span style={{ fontSize: '14px' }}>{meta.icon}</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--neutral-800)' }}>{meta.label}</div>
+          {meta.hint && <div style={{ fontSize: '10px', color: 'var(--neutral-400)' }}>{meta.hint}</div>}
+        </div>
+        {!entry.succeeded && (
+          <span className="badge badge-error" style={{ fontSize: '9px', padding: '1px 6px' }}>failed</span>
+        )}
+        <button
+          type="button"
+          onClick={() => setShowRaw((s) => !s)}
+          title="Toggle raw JSON"
+          style={{ border: 'none', background: 'none', cursor: 'pointer', color: showRaw ? 'var(--info)' : 'var(--neutral-400)', display: 'flex', alignItems: 'center', padding: '2px' }}
+        >
+          <Code size={13} />
+        </button>
+      </div>
+      <div style={{ padding: '12px' }}>
+        {showRaw ? (
+          <div style={{ backgroundColor: 'var(--neutral-900)', color: 'var(--neutral-200)', borderRadius: 'var(--radius-xs)', padding: '10px', overflowX: 'auto' }}>
+            <pre style={{ margin: 0, fontSize: '11px', fontFamily: 'monospace', lineHeight: 1.5 }}>{JSON.stringify(entry.stage_payload, null, 2)}</pre>
+          </div>
+        ) : (
+          renderStageBody(entry.stage, p)
+        )}
+      </div>
+    </div>
+  );
+};
+
 const ContextPanel = ({ correlationId }: { correlationId: string }) => {
   const [context, setContext] = useState<StageContextEntry[] | null>(null);
   const [loading, setLoading] = useState(true);
-  const [openStage, setOpenStage] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -296,41 +461,16 @@ const ContextPanel = ({ correlationId }: { correlationId: string }) => {
   }, [correlationId]);
 
   if (loading) return <div style={{ padding: 'var(--space-2) 0', color: 'var(--neutral-500)', fontSize: '13px' }}>Loading context…</div>;
-  if (!context || context.length === 0) {
-    return <div style={{ padding: 'var(--space-2) 0', color: 'var(--neutral-500)', fontSize: '13px' }}>No AI context recorded.</div>;
+  const withPayload = (context || []).filter((entry) => entry.stage_payload !== null);
+  if (withPayload.length === 0) {
+    return <div style={{ padding: 'var(--space-2) 0', color: 'var(--neutral-500)', fontSize: '13px' }}>No AI context recorded for this message.</div>;
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-      {context
-        .filter((entry) => entry.stage_payload !== null)
-        .map((entry, i) => {
-          const isOpen = openStage === `${entry.stage}-${i}`;
-          return (
-            <div key={i} style={{ border: '1px solid var(--neutral-200)', borderRadius: 'var(--radius-xs)', overflow: 'hidden' }}>
-              <button
-                type="button"
-                onClick={() => setOpenStage(isOpen ? null : `${entry.stage}-${i}`)}
-                style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 'var(--space-2) var(--space-3)', border: 'none', background: 'none', cursor: 'pointer', outline: 'none' }}
-              >
-                <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: '12px', fontWeight: 500, color: 'var(--neutral-800)' }}>
-                  {entry.stage}
-                  <span className={`badge ${entry.succeeded ? 'badge-success' : 'badge-error'}`} style={{ fontSize: '9px', padding: '1px 6px' }}>
-                    {entry.succeeded ? 'ok' : 'failed'}
-                  </span>
-                </span>
-                <ChevronDown size={13} style={{ transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
-              </button>
-              {isOpen && (
-                <div style={{ borderTop: '1px solid var(--neutral-200)', padding: 'var(--space-3)', backgroundColor: 'var(--neutral-900)', color: 'var(--neutral-200)', overflowX: 'auto' }}>
-                  <pre style={{ margin: 0, fontSize: '11px', fontFamily: 'monospace', lineHeight: '1.5' }}>
-                    {JSON.stringify(entry.stage_payload, null, 2)}
-                  </pre>
-                </div>
-              )}
-            </div>
-          );
-        })}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+      {withPayload.map((entry, i) => (
+        <ContextStageCard key={`${entry.stage}-${i}`} entry={entry} />
+      ))}
     </div>
   );
 };
@@ -462,9 +602,18 @@ const LogDetailPanel = ({
           )}
         </div>
 
+        {/* AI Context — the full pipeline for THIS message (transcription,
+            translation, extraction, resolution, planner decision). */}
+        <div style={{ backgroundColor: '#ffffff', borderRadius: 'var(--radius-sm)', border: '1px solid var(--neutral-200)', padding: 'var(--space-4)' }}>
+          <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--neutral-500)', borderBottom: '1px solid var(--neutral-100)', paddingBottom: 'var(--space-2)', marginBottom: 'var(--space-3)' }}>
+            AI Context — how this message was understood
+          </div>
+          <ContextPanel correlationId={message.correlation_id} />
+        </div>
+
         {/* Raw Payload Section */}
         <div style={{ backgroundColor: '#ffffff', borderRadius: 'var(--radius-sm)', border: '1px solid var(--neutral-200)', overflow: 'hidden' }}>
-          <button 
+          <button
             type="button"
             onClick={() => setShowPayload(!showPayload)}
             style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 'var(--space-3) var(--space-4)', border: 'none', background: 'none', cursor: 'pointer', outline: 'none' }}
@@ -608,14 +757,6 @@ const LogDetailPanel = ({
             Pipeline Trace
           </div>
           <TracePanel correlationId={message.correlation_id} />
-        </div>
-
-        {/* AI Context (platform-admin only — full per-stage payloads) */}
-        <div style={{ backgroundColor: '#ffffff', borderRadius: 'var(--radius-sm)', border: '1px solid var(--neutral-200)', padding: 'var(--space-4)' }}>
-          <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--neutral-500)', marginBottom: 'var(--space-2)' }}>
-            AI Context
-          </div>
-          <ContextPanel correlationId={message.correlation_id} />
         </div>
       </div>
     </div>
