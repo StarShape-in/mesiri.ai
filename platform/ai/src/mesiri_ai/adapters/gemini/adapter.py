@@ -254,8 +254,23 @@ class GeminiProvider:
             prompt, correlation_id, "translate", json_mode=True
         )
         data = self._parse_json(raw_text, correlation_id)
+        translated_text = data.get("translated_text")
+        if not translated_text:
+            # A response that parses as JSON but omits (or blanks) the one
+            # field this call exists to produce must not silently degrade
+            # into "translation" that's just the original text handed back
+            # -- that's indistinguishable from a working translation to
+            # every caller downstream and was observed live: a Malayalam
+            # report reached extraction/UI with no translation ever having
+            # happened, no error, no warning anywhere. Same fail-loud
+            # posture _parse_json already takes on unparseable JSON.
+            raise malformed_output(
+                "gemini",
+                "translation response missing 'translated_text'",
+                correlation_id=correlation_id,
+            )
         return TranslationResult(
-            translated_text=data.get("translated_text", text),
+            translated_text=translated_text,
             detected_language=data.get("detected_language"),
             provider=self.provider,
             model=self._settings.model,

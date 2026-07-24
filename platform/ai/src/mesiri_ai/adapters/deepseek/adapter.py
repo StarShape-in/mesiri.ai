@@ -177,8 +177,19 @@ class DeepSeekExtractionProvider:
         except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise malformed_output("deepseek", str(exc), correlation_id=correlation_id) from exc
 
+        translated_text = data.get("translated_text")
+        if not translated_text:
+            # Same fail-loud posture as the malformed-JSON case above --
+            # see the Gemini adapter's equivalent guard for why silently
+            # falling back to the original text here is unacceptable (it
+            # was previously indistinguishable from a working translation).
+            raise malformed_output(
+                "deepseek",
+                "translation response missing 'translated_text'",
+                correlation_id=correlation_id,
+            )
         return TranslationResult(
-            translated_text=data.get("translated_text", text),
+            translated_text=translated_text,
             detected_language=data.get("detected_language"),
             provider=self.provider,
             model=self._s.model,

@@ -125,3 +125,70 @@ async def test_gemini_transcribe_does_not_force_json_mode():
     await provider.transcribe(b"audio-bytes", correlation_id="cor_1")
 
     assert captured["config"] is None
+
+
+async def test_gemini_translate_raises_when_translated_text_missing():
+    """Regression test: a live bug where a Malayalam material report reached
+    extraction/the control-panel logs viewer with NO translation ever having
+    happened, no error, no warning anywhere -- translate_to_english used to
+    default translated_text to the original input whenever Gemini's JSON
+    response omitted that key, making a silently failed translation
+    indistinguishable from a working one. It must now fail loud, exactly
+    like a JSON-parse failure already does in this same method."""
+
+    class _FakeModels:
+        def generate_content(self, *, model, contents, config=None):
+            return SimpleNamespace(text='{"detected_language": "ml"}')
+
+    provider = GeminiProvider.__new__(GeminiProvider)
+    provider._settings = SimpleNamespace(model="gemini-test", timeout_seconds=5, max_retries=0)
+    provider._client = SimpleNamespace(models=_FakeModels())
+
+    with pytest.raises(MesiriError) as exc:
+        await provider.translate_to_english(
+            "ഇന്നൊരു 46 ചാക്ക് സിമൻറ് വന്നിട്ടുണ്ടായിരുന്നു", correlation_id="cor_x"
+        )
+    assert exc.value.error_code == "PROVIDER_MALFORMED_OUTPUT"
+    assert exc.value.correlation_id == "cor_x"
+
+
+async def test_gemini_translate_raises_when_translated_text_blank():
+    """A present-but-empty translated_text is equally useless -- must also
+    raise, not silently propagate an empty string as "the translation"."""
+
+    class _FakeModels:
+        def generate_content(self, *, model, contents, config=None):
+            return SimpleNamespace(text='{"translated_text": "", "detected_language": "ml"}')
+
+    provider = GeminiProvider.__new__(GeminiProvider)
+    provider._settings = SimpleNamespace(model="gemini-test", timeout_seconds=5, max_retries=0)
+    provider._client = SimpleNamespace(models=_FakeModels())
+
+    with pytest.raises(MesiriError):
+        await provider.translate_to_english("hello", correlation_id=None)
+
+
+async def test_deepseek_translate_raises_when_translated_text_missing():
+    """Same fail-loud regression coverage as the Gemini test above, for
+    DeepSeek's equivalent (and previously identically silent) fallback."""
+    from mesiri_ai.adapters.deepseek.adapter import DeepSeekExtractionProvider
+
+    provider = DeepSeekExtractionProvider.__new__(DeepSeekExtractionProvider)
+    provider._s = SimpleNamespace(
+        api_key=None, base_url="https://example.test", timeout_seconds=5, max_retries=0,
+        model="deepseek-test",
+    )
+
+    async def _fake_resilience(_raw, **kwargs):
+        return {"choices": [{"message": {"content": '{"detected_language": "ml"}'}}]}, 42.0
+
+    import mesiri_ai.adapters.deepseek.adapter as deepseek_module
+
+    original = deepseek_module.call_with_resilience
+    deepseek_module.call_with_resilience = _fake_resilience
+    try:
+        with pytest.raises(MesiriError) as exc:
+            await provider.translate_to_english("ഹലോ", correlation_id="cor_y")
+        assert exc.value.error_code == "PROVIDER_MALFORMED_OUTPUT"
+    finally:
+        deepseek_module.call_with_resilience = original

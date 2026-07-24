@@ -324,7 +324,17 @@ const LanguageFlow = ({ p, messageType, providers }: { p: any; messageType?: str
     ? `via ${translateExec.provider}${translateExec.model ? ' · ' + translateExec.model : ''} (Understanding stage)`
     : undefined;
 
-  const steps: Array<{ label: string; text: string; sub?: string }> = [];
+  const isEnglish = !!p.detected_language && /^en/i.test(p.detected_language);
+  // Historical rows written before the adapter fix (platform/ai's translate_
+  // to_english used to silently return the original text as "translated"
+  // when the provider's response omitted translated_text -- indistinguishable
+  // from a real translation) can still have translated_text === transcript.
+  // Surface that honestly instead of just omitting the step, which looked
+  // identical to "this message never needed translation."
+  const translationMissing =
+    !!p.transcript && !isEnglish && (!p.translated_text || p.translated_text === p.transcript);
+
+  const steps: Array<{ label: string; text: string; sub?: string; warn?: boolean }> = [];
   if (p.transcript) {
     steps.push({
       label: isVoice ? 'Heard (voice)' : 'Original text',
@@ -334,6 +344,13 @@ const LanguageFlow = ({ p, messageType, providers }: { p: any; messageType?: str
   }
   if (p.translated_text && p.translated_text !== p.transcript) {
     steps.push({ label: 'Translated to English', text: p.translated_text, sub: providerLabel });
+  } else if (translationMissing) {
+    steps.push({
+      label: 'Translated to English',
+      text: 'Translation did not run — the original text was used as-is.',
+      sub: providerLabel,
+      warn: true,
+    });
   }
   if (p.normalized_text && p.normalized_text !== p.translated_text && p.normalized_text !== p.transcript) {
     steps.push({ label: 'Normalized', text: p.normalized_text });
@@ -343,9 +360,9 @@ const LanguageFlow = ({ p, messageType, providers }: { p: any; messageType?: str
     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
       {steps.map((s, i) => (
         <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
-          <span style={{ fontSize: '10px', fontWeight: 600, color: 'var(--info)', textTransform: 'uppercase', letterSpacing: '0.03em', width: 100, flexShrink: 0, paddingTop: '2px' }}>{s.label}</span>
+          <span style={{ fontSize: '10px', fontWeight: 600, color: s.warn ? 'var(--error)' : 'var(--info)', textTransform: 'uppercase', letterSpacing: '0.03em', width: 100, flexShrink: 0, paddingTop: '2px' }}>{s.label}</span>
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: '13px', color: 'var(--neutral-800)', backgroundColor: 'var(--neutral-100)', border: '1px solid var(--neutral-200)', borderRadius: '6px', padding: '6px 10px', lineHeight: 1.4 }}>{s.text}</div>
+            <div style={{ fontSize: '13px', color: s.warn ? 'var(--error)' : 'var(--neutral-800)', fontStyle: s.warn ? 'italic' : 'normal', backgroundColor: s.warn ? 'var(--error-soft)' : 'var(--neutral-100)', border: `1px solid ${s.warn ? 'rgba(239, 68, 68, 0.3)' : 'var(--neutral-200)'}`, borderRadius: '6px', padding: '6px 10px', lineHeight: 1.4 }}>{s.text}</div>
             {s.sub && <div style={{ fontSize: '10px', color: 'var(--neutral-400)', marginTop: '2px' }}>{s.sub}</div>}
           </div>
         </div>
