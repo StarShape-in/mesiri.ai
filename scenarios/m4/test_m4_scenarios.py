@@ -130,13 +130,20 @@ async def test_scenario_m4_008_unauthorized_project():
 
 
 async def test_scenario_m4_009_ambiguous_project():
-    """Given two authorized projects with the same name, Then AMBIGUOUS_PROJECT."""
+    """Given two authorized projects with the same name, Then the ambiguous
+    NAME reference falls through to the director's other candidates
+    (single-project convenience / default assignment) rather than failing
+    the whole message -- see context/resolver.py's _UNRESOLVED_NAME_REF_CODES
+    handling and the mirrored unit test in test_m4_context.py."""
     world = seed.build_world()
     world.projects.append(world.projects[0].__class__("proj_dupe", seed.ORG_A, "Project Beta"))
     world.project_access[seed.USER_DIRECTOR].add("proj_dupe")
     r = ContextResolver(seed.build_dependencies(world))
     res = await r.resolve(_msg(seed.WA_DIRECTOR), _und({"project_name": "Project Beta"}))
-    assert res.is_err and res.error.error_code == ErrorCode.AMBIGUOUS_PROJECT.value
+    assert res.is_ok
+    ctx = res.unwrap()
+    assert ctx.context_project_id == seed.PROJ_ALPHA
+    assert ctx.context_source == ContextSource.USER_DEFAULT
 
 
 async def test_scenario_m4_010_active_project_switch():
