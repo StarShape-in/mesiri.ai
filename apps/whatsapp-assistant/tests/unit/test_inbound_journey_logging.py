@@ -116,6 +116,12 @@ async def test_trace_logger_captures_all_stages_on_success():
     assert len(mlog.replies) == 1
     assert mlog.replies[0] == ("cor_logging_1", render_unsupported_reply())
 
+    # Self-tag: the origin message is its own interaction group root, so a
+    # later gate-resume leg can resolve back to it via
+    # _complete_resume_leg's matching tag (see test_material_unit_gates.py's
+    # test_material_picker_tap_is_tagged_with_the_originating_report_correlation_id).
+    assert ("cor_logging_1", "cor_logging_1") in mlog.interaction_groups
+
 
 async def test_trace_logger_captures_context_failure():
     """When context resolution fails, the context stage is traced with succeeded=False."""
@@ -213,6 +219,12 @@ async def test_logger_failure_does_not_break_pipeline():
             raise RuntimeError("log DB is down")
 
         async def update_body_text(self, **kwargs):  # noqa: ANN001
+            raise RuntimeError("log DB is down")
+
+        async def link_workflow_instance(self, **kwargs):  # noqa: ANN001
+            raise RuntimeError("log DB is down")
+
+        async def set_interaction_group(self, **kwargs):  # noqa: ANN001
             raise RuntimeError("log DB is down")
 
     message = _message()

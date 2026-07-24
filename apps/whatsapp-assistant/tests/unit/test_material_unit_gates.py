@@ -40,6 +40,7 @@ from runtime.inbound_journey import (
     _run_material_unit_gates,
     resume_pending_report_with_material,
 )
+from runtime.noop_loggers import RecordingMessageLogger
 from workflows import WorkflowRunResult, WorkflowRunStatus, WorkflowRuntime
 from workflows.fakes import FakeWorkflowInstanceRepository, FakeWorkflowRegistry
 
@@ -318,4 +319,54 @@ async def test_material_picker_resume_reruns_unit_gate_when_unit_still_mismatche
     )
     assert re_held.fields.get("material_id") == material_id, (
         "the tapped material_id must persist into the re-held event"
+    )
+
+
+async def test_material_picker_tap_is_tagged_with_the_originating_report_correlation_id():
+    """The logs-viewer grouping bug this guards: a material report's picker
+    taps (and every other gate-resume leg) must be tagged with the ORIGIN
+    report's correlation_id -- CanonicalEventV2.correlation_id, unchanged
+    since the report was first seeded into pending_report_store -- not the
+    tap message's own correlation_id. Without this, only the message that
+    happens to touch workflow_instance_id directly (usually just the final
+    "yes") ever grouped in the control-panel logs viewer; every intermediate
+    material/unit/project clarification tap, and the original voice/text
+    report itself, showed up as unrelated rows."""
+    material_id = str(uuid.uuid4())
+    stock_unit_id = str(uuid.uuid4())
+
+    catalog = _FakeCatalogQuery(
+        get_material_result={
+            "id": material_id,
+            "name": "Cement",
+            "is_active": True,
+            "default_unit_id": stock_unit_id,
+        },
+        resolve_unit_result={"id": stock_unit_id, "code": "tons"},  # matches -- unit resolves clean
+        get_unit_result={"id": stock_unit_id, "code": "tons", "display_name": "Tons"},
+    )
+    store = _pending_store()
+    origin_event = _event(material_name="Cement", unit="tons")
+    assert origin_event.correlation_id == "cor_1"
+    await store.set_pending(user_id=USR, event=origin_event)
+
+    mlog = RecordingMessageLogger()
+    tap_message = _material_tap_message(material_id)
+    assert tap_message.correlation_id == "cor_resume_1"
+
+    await resume_pending_report_with_material(
+        tap_message,
+        USR,
+        pending_report_store=store,
+        catalog_query=catalog,
+        planner=Planner(),
+        workflow_runtime=WorkflowRuntime(
+            registry=FakeWorkflowRegistry(), repo=FakeWorkflowInstanceRepository()
+        ),
+        message_logger=mlog,
+    )
+
+    assert ("cor_resume_1", "cor_1") in mlog.interaction_groups, (
+        "the tap message must be tagged with the origin report's correlation_id, "
+        f"got {mlog.interaction_groups!r}"
     )

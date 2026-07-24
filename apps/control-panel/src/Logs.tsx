@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
-import { RefreshCw, ChevronDown, ChevronRight, Check, RotateCcw, Code, Cpu } from 'lucide-react';
+import { RefreshCw, ChevronDown, ChevronRight, Check, RotateCcw, Code, Cpu, Link2 } from 'lucide-react';
 import { api } from './api';
 
 interface InboundMessageSummary {
@@ -114,6 +114,43 @@ function groupIntoSessions(messages: InboundMessageSummary[]): MessageSession[] 
     sessions.push({ key: `${m.sender_wa_id}-${m.id}`, sender_wa_id: m.sender_wa_id, messages: [m] });
   }
   return sessions;
+}
+
+// Within a session, consecutive messages sharing a non-null
+// workflow_instance_id are one logical interaction (e.g. a voice expense
+// report and its later "yes" confirmation) -- merge them into a single
+// visual card instead of leaving them as unrelated-looking rows.
+type TurnGroup =
+  | { kind: 'single'; message: InboundMessageSummary }
+  | {
+      kind: 'workflow';
+      workflowInstanceId: string;
+      workflowKey: string | null;
+      workflowPhase: string | null;
+      messages: InboundMessageSummary[];
+    };
+
+function groupByWorkflow(messages: InboundMessageSummary[]): TurnGroup[] {
+  const groups: TurnGroup[] = [];
+  for (const m of messages) {
+    const last = groups[groups.length - 1];
+    if (m.workflow_instance_id && last?.kind === 'workflow' && last.workflowInstanceId === m.workflow_instance_id) {
+      last.messages.push(m);
+      continue;
+    }
+    if (m.workflow_instance_id) {
+      groups.push({
+        kind: 'workflow',
+        workflowInstanceId: m.workflow_instance_id,
+        workflowKey: m.workflow_key,
+        workflowPhase: m.workflow_phase,
+        messages: [m],
+      });
+    } else {
+      groups.push({ kind: 'single', message: m });
+    }
+  }
+  return groups;
 }
 
 function formatRelativeTime(dateString: string): string {
@@ -821,80 +858,114 @@ export default function Logs() {
                       </div>
                     </td>
                   </tr>
-                  {session.messages.map((m, i) => {
-                    const prev = session.messages[i - 1];
-                    const next = session.messages[i + 1];
-                    const inWorkflow = !!m.workflow_instance_id;
-                    const startsBracket = inWorkflow && prev?.workflow_instance_id !== m.workflow_instance_id;
-                    const continuesBracket = inWorkflow && next?.workflow_instance_id === m.workflow_instance_id;
-                    return (
-                      <Fragment key={m.id}>
-                        <tr
-                          style={{ cursor: 'pointer' }}
-                          onClick={() => setExpandedId(expandedId === m.correlation_id ? null : m.correlation_id)}
-                        >
-                          <td style={{ position: 'relative' }}>
-                            {inWorkflow && (
-                              <div
-                                title={[m.workflow_key, m.workflow_phase].filter(Boolean).join(' · ') || 'workflow interaction'}
-                                style={{
-                                  position: 'absolute',
-                                  left: 2,
-                                  top: 0,
-                                  bottom: continuesBracket ? '-1px' : '50%',
-                                  width: '3px',
-                                  backgroundColor: 'var(--info)',
-                                  borderRadius: '2px',
-                                }}
-                              />
-                            )}
-                            {expandedId === m.correlation_id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                          </td>
-                          <td>
-                            <div style={{ fontSize: '13px', color: 'var(--neutral-800)', fontWeight: 500 }}>{formatRelativeTime(m.received_at)}</div>
-                            <div style={{ fontSize: '11px', color: 'var(--neutral-400)', fontFamily: 'monospace', marginTop: '2px' }}>
-                              {new Date(m.received_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </div>
-                          </td>
-                          <td>{m.sender_wa_id}</td>
-                          <td>
-                            {m.message_type}
-                            {m.message_type === 'audio' && ' 🗣'}
-                          </td>
-                          <td>
-                            {m.project_name ? (
-                              <div>
-                                <div style={{ fontSize: '13px', color: 'var(--neutral-800)', fontWeight: 500 }}>{m.project_name}</div>
-                                {m.site_name && (
-                                  <div style={{ fontSize: '11px', color: 'var(--neutral-400)', marginTop: '2px' }}>
-                                    {m.site_name}
-                                  </div>
-                                )}
+                  {groupByWorkflow(session.messages).map((group) => {
+                    if (group.kind === 'single') {
+                      const m = group.message;
+                      return (
+                        <Fragment key={m.id}>
+                          <tr
+                            style={{ cursor: 'pointer' }}
+                            onClick={() => setExpandedId(expandedId === m.correlation_id ? null : m.correlation_id)}
+                          >
+                            <td>{expandedId === m.correlation_id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
+                            <td>
+                              <div style={{ fontSize: '13px', color: 'var(--neutral-800)', fontWeight: 500 }}>{formatRelativeTime(m.received_at)}</div>
+                              <div style={{ fontSize: '11px', color: 'var(--neutral-400)', fontFamily: 'monospace', marginTop: '2px' }}>
+                                {new Date(m.received_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                               </div>
-                            ) : (
-                              <span style={{ fontSize: '11px', color: 'var(--neutral-400)', fontStyle: 'italic' }}>Unmapped</span>
-                            )}
-                          </td>
-                          <td style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {startsBracket && (
-                              <span style={{ fontSize: '9px', fontWeight: 600, color: 'var(--info)', textTransform: 'uppercase', letterSpacing: '0.03em', marginRight: '6px' }}>
-                                {m.workflow_key || 'workflow'}
-                              </span>
-                            )}
-                            {m.body_preview || <em style={{ color: 'var(--neutral-400)' }}>no text</em>}
-                          </td>
-                          <td>
-                            <span className={`badge ${statusBadgeClass(m.processing_status)}`}>{m.processing_status}</span>
-                          </td>
-                        </tr>
-                        {expandedId === m.correlation_id && (
-                          <tr>
-                            <td colSpan={7} style={{ padding: 0 }}>
-                              <LogDetailPanel message={m} onUpdate={loadHistory} />
+                            </td>
+                            <td>{m.sender_wa_id}</td>
+                            <td>
+                              {m.message_type}
+                              {m.message_type === 'audio' && ' 🗣'}
+                            </td>
+                            <td>
+                              {m.project_name ? (
+                                <div>
+                                  <div style={{ fontSize: '13px', color: 'var(--neutral-800)', fontWeight: 500 }}>{m.project_name}</div>
+                                  {m.site_name && (
+                                    <div style={{ fontSize: '11px', color: 'var(--neutral-400)', marginTop: '2px' }}>
+                                      {m.site_name}
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <span style={{ fontSize: '11px', color: 'var(--neutral-400)', fontStyle: 'italic' }}>Unmapped</span>
+                              )}
+                            </td>
+                            <td style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {m.body_preview || <em style={{ color: 'var(--neutral-400)' }}>no text</em>}
+                            </td>
+                            <td>
+                              <span className={`badge ${statusBadgeClass(m.processing_status)}`}>{m.processing_status}</span>
                             </td>
                           </tr>
-                        )}
-                      </Fragment>
+                          {expandedId === m.correlation_id && (
+                            <tr>
+                              <td colSpan={7} style={{ padding: 0 }}>
+                                <LogDetailPanel message={m} onUpdate={loadHistory} />
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    }
+
+                    // A workflow interaction: every turn (voice report, "yes"
+                    // confirmation, corrections, ...) rendered as one merged
+                    // card instead of separate unrelated-looking rows.
+                    return (
+                      <tr key={group.workflowInstanceId}>
+                        <td colSpan={7} style={{ padding: '8px 12px' }}>
+                          <div style={{ border: '1px solid var(--info)', borderRadius: 'var(--radius-sm)', overflow: 'hidden' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', padding: '8px 12px', backgroundColor: 'var(--info-soft)', fontSize: '11px', fontWeight: 600, color: 'var(--info)' }}>
+                              <Link2 size={13} />
+                              <span style={{ textTransform: 'uppercase', letterSpacing: '0.03em' }}>{group.workflowKey || 'workflow interaction'}</span>
+                              {group.workflowPhase && (
+                                <span className="badge" style={{ fontSize: '9px', padding: '1px 6px', backgroundColor: 'rgba(255,255,255,0.6)' }}>
+                                  {group.workflowPhase}
+                                </span>
+                              )}
+                              <span style={{ marginLeft: 'auto', fontWeight: 400, color: 'var(--neutral-500)', textTransform: 'none' }}>
+                                {group.messages.length} turn{group.messages.length === 1 ? '' : 's'}
+                              </span>
+                            </div>
+                            {group.messages.map((m, i) => (
+                              <Fragment key={m.id}>
+                                <div
+                                  onClick={() => setExpandedId(expandedId === m.correlation_id ? null : m.correlation_id)}
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 'var(--space-3)',
+                                    padding: '8px 12px',
+                                    cursor: 'pointer',
+                                    borderTop: i > 0 ? '1px solid var(--neutral-100)' : 'none',
+                                    backgroundColor: '#ffffff',
+                                  }}
+                                >
+                                  {expandedId === m.correlation_id ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                                  <span style={{ fontSize: '11px', color: 'var(--neutral-400)', fontFamily: 'monospace', width: 60, flexShrink: 0 }}>
+                                    {new Date(m.received_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                  <span style={{ fontSize: '11px', color: 'var(--neutral-500)', width: 50, flexShrink: 0 }}>
+                                    {m.message_type}{m.message_type === 'audio' && ' 🗣'}
+                                  </span>
+                                  <span style={{ flex: 1, fontSize: '13px', color: 'var(--neutral-800)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {m.body_preview || <em style={{ color: 'var(--neutral-400)' }}>no text</em>}
+                                  </span>
+                                  <span className={`badge ${statusBadgeClass(m.processing_status)}`} style={{ fontSize: '10px' }}>{m.processing_status}</span>
+                                </div>
+                                {expandedId === m.correlation_id && (
+                                  <div style={{ borderTop: '1px solid var(--neutral-100)' }}>
+                                    <LogDetailPanel message={m} onUpdate={loadHistory} />
+                                  </div>
+                                )}
+                              </Fragment>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
                     );
                   })}
                 </Fragment>

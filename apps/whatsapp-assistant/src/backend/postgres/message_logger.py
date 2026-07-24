@@ -154,6 +154,30 @@ class PostgresMessageLogger:
                 "message_logger.link_workflow_instance failed correlation_id=%s", correlation_id
             )
 
+    async def set_interaction_group(self, *, correlation_id: str, group_id: str) -> None:
+        """UPDATE the row's interaction_group_id -- the originating report's
+        own correlation_id, stamped on every message that's part of the same
+        multi-turn interaction (a gate-clarification tap, or the report
+        itself), even before any workflow_instances row exists. See
+        list_recent/get_message_detail below for how this resolves to a real
+        workflow once one is eventually created."""
+        from sqlalchemy import text
+
+        try:
+            async with self._get_engine().begin() as conn:
+                await conn.execute(
+                    text(
+                        "UPDATE inbound_messages "
+                        "SET interaction_group_id = :group_id "
+                        "WHERE correlation_id = :correlation_id"
+                    ),
+                    {"correlation_id": correlation_id, "group_id": group_id},
+                )
+        except Exception:  # noqa: BLE001
+            _log.exception(
+                "message_logger.set_interaction_group failed correlation_id=%s", correlation_id
+            )
+
     async def mark_completed(self, *, correlation_id: str) -> None:
         from sqlalchemy import text
 
@@ -210,6 +234,17 @@ class PostgresMessageLogger:
         ever returned by `get_message_detail`. Unlike the write methods
         above, a query failure here is NOT swallowed — the caller (an
         authenticated API endpoint) should see a real error.
+
+        `workflow_instance_id`/`workflow_key`/`workflow_phase` resolve
+        through two paths: `im.workflow_instance_id` directly when this
+        message itself started or resumed the workflow, or -- via
+        `wi_origin` -- by matching `im.interaction_group_id` (the
+        originating report's own correlation_id, stamped on every
+        material/unit/project gate-clarification tap along the way, see
+        inbound_journey.py's `_complete_resume_leg`) against
+        `workflow_instances.correlation_id`. This lets an entire multi-turn
+        report resolve to one interaction even though most of its messages
+        never touch workflow_instance_id directly.
         """
         from sqlalchemy import String, bindparam, text
 
@@ -247,11 +282,14 @@ class PostgresMessageLogger:
             "im.processing_status, im.error_code, im.received_at, im.processed_at, "
             "im.acknowledged_at, im.acknowledged_by, im.raw_payload_captured, im.assistant_reply, "
             "im.project_id, p.name AS project_name, im.site_id, s.name AS site_name, "
-            "im.workflow_instance_id, wi.workflow_key, wi.phase AS workflow_phase "
+            "COALESCE(im.workflow_instance_id, wi_origin.id) AS workflow_instance_id, "
+            "COALESCE(wi.workflow_key, wi_origin.workflow_key) AS workflow_key, "
+            "COALESCE(wi.phase, wi_origin.phase) AS workflow_phase "
             "FROM inbound_messages im "
             "LEFT JOIN projects p ON p.id = im.project_id "
             "LEFT JOIN sites s ON s.id = im.site_id "
             "LEFT JOIN workflow_instances wi ON wi.id = im.workflow_instance_id "
+            "LEFT JOIN workflow_instances wi_origin ON wi_origin.correlation_id = im.interaction_group_id "
             f"WHERE {' AND '.join(where)} "
             f"ORDER BY {order_by} "
             "LIMIT :limit" + ("" if is_live_cursor else " OFFSET :offset")
@@ -283,11 +321,14 @@ class PostgresMessageLogger:
                             "im.processing_status, im.error_code, im.received_at, im.processed_at, "
                             "im.raw_payload_captured, im.acknowledged_at, im.acknowledged_by, im.retry_of_id, im.assistant_reply, "
                             "im.project_id, p.name AS project_name, im.site_id, s.name AS site_name, "
-                            "im.workflow_instance_id, wi.workflow_key, wi.phase AS workflow_phase "
+                            "COALESCE(im.workflow_instance_id, wi_origin.id) AS workflow_instance_id, "
+                            "COALESCE(wi.workflow_key, wi_origin.workflow_key) AS workflow_key, "
+                            "COALESCE(wi.phase, wi_origin.phase) AS workflow_phase "
                             "FROM inbound_messages im "
                             "LEFT JOIN projects p ON p.id = im.project_id "
                             "LEFT JOIN sites s ON s.id = im.site_id "
                             "LEFT JOIN workflow_instances wi ON wi.id = im.workflow_instance_id "
+                            "LEFT JOIN workflow_instances wi_origin ON wi_origin.correlation_id = im.interaction_group_id "
                             "WHERE im.id = :id"
                         ),
                         {"id": uuid.UUID(message_id)},

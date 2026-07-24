@@ -94,6 +94,19 @@ async def _complete_resume_leg(
                 site_id=event.site_id,
             )
         )
+        # event.correlation_id survives every pop_pending/model_copy in the
+        # material/unit/project gate chain unchanged -- it's always the
+        # ORIGINAL report's correlation_id, even N gate-taps later. Tagging
+        # every leg's own message with it (a plain string, not a workflow_
+        # instance_id FK -- no workflow may exist yet) lets the logs viewer
+        # resolve the whole picker chain to one interaction once a workflow
+        # instance is eventually created from it (see message_logger.py's
+        # list_recent/get_message_detail COALESCE join).
+        await _safe(
+            message_logger.set_interaction_group(
+                correlation_id=message.correlation_id, group_id=event.correlation_id
+            )
+        )
         await _safe(message_logger.mark_completed(correlation_id=message.correlation_id))
 
 
@@ -582,6 +595,18 @@ async def process_inbound_message(
                     stage_payload=canonical_event.model_dump(mode="json"),
                     duration_ms=int((time.perf_counter() - t0) * 1000),
                     succeeded=True,
+                )
+            )
+            # Self-tag: this message IS the origin of whatever interaction
+            # follows (a material/unit/project gate hold, or a workflow start
+            # further down). _complete_resume_leg re-reads this same
+            # canonical_event.correlation_id on every later gate-resume leg,
+            # so tagging it here is what lets a multi-turn report (voice note
+            # -> material pick -> unit confirm -> project pick -> workflow
+            # confirm) resolve to one interaction in the logs viewer.
+            await _safe(
+                mlog.set_interaction_group(
+                    correlation_id=correlation_id, group_id=canonical_event.correlation_id
                 )
             )
         except Exception as exc:

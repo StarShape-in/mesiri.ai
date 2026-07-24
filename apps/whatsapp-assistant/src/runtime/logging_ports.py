@@ -67,6 +67,13 @@ class MessageLogger(Protocol):
         the multi-turn interaction (e.g. voice expense -> confirmation)."""
         ...
 
+    async def set_interaction_group(self, *, correlation_id: str, group_id: str) -> None:
+        """UPDATE the row's interaction_group_id -- the originating report's
+        own correlation_id, stamped on every message in a multi-turn
+        interaction (a gate-clarification tap, or the report itself) even
+        before any workflow_instances row exists to link to directly."""
+        ...
+
 
 class TraceLogger(Protocol):
     """Best-effort per-stage pipeline trace."""
