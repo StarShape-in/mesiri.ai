@@ -194,6 +194,33 @@ def render_no_projects_reply() -> str:
     return "You don't have any projects assigned yet. Ask your admin to add you to one first."
 
 
+# Fixed id for "All Sites Combined" -- distinct from the per-site "site_{id}"
+# prefix (never collides: real site ids are UUIDs, never the literal "all").
+ALL_SITES_ROW_ID = "site_all"
+
+
+def render_site_picker(sites: list[tuple[str, str]], *, allow_combined: bool) -> ReplySpec:
+    """Ask which site a report/query belongs to, once its project is settled
+    but the project has more than one site. ``sites`` is (site_id, name)
+    pairs. Row id is "site_{site_id}", matched verbatim by the caller that
+    resumes the pending report/query once one is tapped.
+
+    ``allow_combined`` adds an "All Sites Combined" row -- only ever true for
+    an inventory query (asking about stock can meaningfully span every site);
+    a material report being recorded must always resolve to one real site,
+    so recording never offers this option."""
+    capacity = 9 if allow_combined else 10
+    rows = [ListRow(f"site_{site_id}", name) for site_id, name in sites[:capacity]]
+    if allow_combined:
+        rows.append(ListRow(ALL_SITES_ROW_ID, "All Sites Combined"))
+    text = (
+        "Which site would you like — or everything combined?"
+        if allow_combined
+        else "Which site is this for?"
+    )
+    return ReplySpec(text=text, list_button_label="Choose site", list_rows=tuple(rows))
+
+
 def render_material_picker(candidates: list[tuple[str, str]]) -> ReplySpec:
     """Ask which catalog material a report refers to -- either because the
     reported name matched more than one active entry ("cement" -> OPC/PPC

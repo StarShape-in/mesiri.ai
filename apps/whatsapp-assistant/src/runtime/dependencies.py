@@ -143,6 +143,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         process_inbound_message,
         resume_pending_report_with_material,
         resume_pending_report_with_project,
+        resume_pending_report_with_site,
         resume_pending_report_with_unit,
     )
     from runtime.reply_dispatch import send_reply_spec
@@ -497,6 +498,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             planner=planner,
             workflow_runtime=workflow_runtime,
             actor=ctx,
+            inventory_query=inventory_query,
             message_logger=message_logger,
         )
         if material_reply is not None:
@@ -523,6 +525,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             planner=planner,
             workflow_runtime=workflow_runtime,
             actor=ctx,
+            inventory_query=inventory_query,
             message_logger=message_logger,
         )
         if unit_reply is not None:
@@ -549,6 +552,8 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             pending_report_store=pending_report_store,
             planner=planner,
             workflow_runtime=workflow_runtime,
+            actor=ctx,
+            inventory_query=inventory_query,
             message_logger=message_logger,
         )
         if project_reply is not None:
@@ -561,6 +566,34 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             )
             await message_logger.log_reply(
                 correlation_id=message.correlation_id, reply=project_reply.text
+            )
+            return
+
+        # A tap on the site-picker list sent by the site-selection gate
+        # (runtime/inbound_journey.py, once project is settled but the
+        # project has more than one site) -- resumes the held report/query
+        # with the chosen site_id (or None for "All Sites Combined") and
+        # runs planner/workflow directly, same principle as the other
+        # interactive fast paths above.
+        site_reply = await resume_pending_report_with_site(
+            message,
+            ctx.user_id,
+            pending_report_store=pending_report_store,
+            planner=planner,
+            workflow_runtime=workflow_runtime,
+            inventory_query=inventory_query,
+            message_logger=message_logger,
+        )
+        if site_reply is not None:
+            await send_reply_spec(
+                site_reply,
+                wa_id,
+                send_text=sender.send_text,
+                send_list=sender.send_list,
+                send_button=sender.send_button,
+            )
+            await message_logger.log_reply(
+                correlation_id=message.correlation_id, reply=site_reply.text
             )
             return
 
