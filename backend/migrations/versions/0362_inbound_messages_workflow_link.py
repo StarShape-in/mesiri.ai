@@ -14,8 +14,8 @@ workflow_instance_id is nullable and set best-effort by the pipeline
 starts or resumes a workflow -- most messages (greetings, whoami, direct
 replies) never touch a workflow and stay NULL.
 
-Revision ID: 0360
-Revises: 0350
+Revision ID: 0362
+Revises: 0361
 Create Date: 2026-07-24
 """
 
@@ -24,8 +24,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0360"
-down_revision = "0350"
+revision = "0362"
+down_revision = "0361"
 branch_labels = None
 depends_on = None
 
