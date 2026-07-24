@@ -309,13 +309,35 @@ const FieldGrid = ({ rows }: { rows: Array<[string, unknown]> }) => {
 };
 
 // The language pipeline: original speech/text -> translation -> normalized,
-// each shown as a step so a reviewer can see exactly where a Malayalam voice
-// note became the English the extractor worked from.
-const LanguageFlow = ({ p }: { p: any }) => {
+// each shown as a step so a reviewer can see exactly what a Malayalam (or
+// any non-English) message became by the time the extractor worked on it --
+// and which AI provider/model actually did that translation, sourced from
+// the same provider_executions rows the "AI Providers Metrics" panel reads
+// (see understanding/pipeline.py's _handle_text/_handle_voice, which each
+// append one ProviderExecution per translate/speech_to_text_translate call).
+const LanguageFlow = ({ p, messageType, providers }: { p: any; messageType?: string; providers?: ProviderExecutionEntry[] }) => {
+  const isVoice = messageType === 'audio';
+  const translateExec = (providers || []).find(
+    (pe) => pe.operation === 'translate' || pe.operation === 'speech_to_text_translate'
+  );
+  const providerLabel = translateExec
+    ? `via ${translateExec.provider}${translateExec.model ? ' · ' + translateExec.model : ''} (Understanding stage)`
+    : undefined;
+
   const steps: Array<{ label: string; text: string; sub?: string }> = [];
-  if (p.transcript) steps.push({ label: 'Heard (original)', text: p.transcript, sub: p.detected_language ? `detected: ${p.detected_language}` : undefined });
-  if (p.translated_text && p.translated_text !== p.transcript) steps.push({ label: 'Translated', text: p.translated_text });
-  if (p.normalized_text && p.normalized_text !== p.translated_text && p.normalized_text !== p.transcript) steps.push({ label: 'Normalized', text: p.normalized_text });
+  if (p.transcript) {
+    steps.push({
+      label: isVoice ? 'Heard (voice)' : 'Original text',
+      text: p.transcript,
+      sub: p.detected_language ? `detected language: ${p.detected_language}` : undefined,
+    });
+  }
+  if (p.translated_text && p.translated_text !== p.transcript) {
+    steps.push({ label: 'Translated to English', text: p.translated_text, sub: providerLabel });
+  }
+  if (p.normalized_text && p.normalized_text !== p.translated_text && p.normalized_text !== p.transcript) {
+    steps.push({ label: 'Normalized', text: p.normalized_text });
+  }
   if (steps.length === 0) return null;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -332,12 +354,12 @@ const LanguageFlow = ({ p }: { p: any }) => {
   );
 };
 
-const renderStageBody = (stage: string, p: any) => {
+const renderStageBody = (stage: string, p: any, messageType?: string, providers?: ProviderExecutionEntry[]) => {
   if (stage === 'understanding') {
     const best = Array.isArray(p.candidates) && p.candidates.length > 0 ? p.candidates[0] : null;
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-        <LanguageFlow p={p} />
+        <LanguageFlow p={p} messageType={messageType} providers={providers} />
         <FieldGrid rows={[
           ['Semantic type', p.semantic_type],
           ['Confidence', p.overall_confidence],
@@ -402,7 +424,15 @@ const renderStageBody = (stage: string, p: any) => {
   return <FieldGrid rows={Object.entries(p)} />;
 };
 
-const ContextStageCard = ({ entry }: { entry: StageContextEntry }) => {
+const ContextStageCard = ({
+  entry,
+  messageType,
+  providers,
+}: {
+  entry: StageContextEntry;
+  messageType?: string;
+  providers?: ProviderExecutionEntry[];
+}) => {
   const [showRaw, setShowRaw] = useState(false);
   const meta = STAGE_META[entry.stage] || { label: entry.stage, icon: '•', hint: '' };
   const p = (entry.stage_payload || {}) as any;
@@ -433,14 +463,22 @@ const ContextStageCard = ({ entry }: { entry: StageContextEntry }) => {
             <pre style={{ margin: 0, fontSize: '11px', fontFamily: 'monospace', lineHeight: 1.5 }}>{JSON.stringify(entry.stage_payload, null, 2)}</pre>
           </div>
         ) : (
-          renderStageBody(entry.stage, p)
+          renderStageBody(entry.stage, p, messageType, providers)
         )}
       </div>
     </div>
   );
 };
 
-const ContextPanel = ({ correlationId }: { correlationId: string }) => {
+const ContextPanel = ({
+  correlationId,
+  messageType,
+  providers,
+}: {
+  correlationId: string;
+  messageType?: string;
+  providers?: ProviderExecutionEntry[];
+}) => {
   const [context, setContext] = useState<StageContextEntry[] | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -469,7 +507,7 @@ const ContextPanel = ({ correlationId }: { correlationId: string }) => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
       {withPayload.map((entry, i) => (
-        <ContextStageCard key={`${entry.stage}-${i}`} entry={entry} />
+        <ContextStageCard key={`${entry.stage}-${i}`} entry={entry} messageType={messageType} providers={providers} />
       ))}
     </div>
   );
@@ -608,7 +646,7 @@ const LogDetailPanel = ({
           <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--neutral-500)', borderBottom: '1px solid var(--neutral-100)', paddingBottom: 'var(--space-2)', marginBottom: 'var(--space-3)' }}>
             AI Context — how this message was understood
           </div>
-          <ContextPanel correlationId={message.correlation_id} />
+          <ContextPanel correlationId={message.correlation_id} messageType={detail.message_type} providers={providers} />
         </div>
 
         {/* Raw Payload Section */}
