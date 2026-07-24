@@ -70,24 +70,40 @@ CATEGORY_ROWS: tuple[ListRow, ...] = (
     ListRow("cat_expense", "Expense", "Petty cash spent"),
 )
 
-# Dedicated (not the shared _EXAMPLES above) -- the category prompt gets its
-# own tap, so it can afford two clearly labeled examples instead of _EXAMPLES'
-# compact bullet pair, which stays as-is for the broader intro/fallback
-# contexts that reuse it below.
-_MATERIAL_EXAMPLES = (
-    "📦 *Material* — tell me what happened.\n\n"
-    '*Arrived*\n"50 bags of cement arrived"\n\n'
-    '*Used*\n"20 bags of cement used for the foundation"'
-)
-
 # What to say once a category is picked -- deterministic, no AI involved (see
 # runtime/dependencies.py). Keyed by the same row ids as CATEGORY_ROWS.
+# "cat_material" is handled separately (see render_category_prompt) -- it asks
+# Arrived/Used up front instead of a text prompt, so that field never has to
+# be inferred from speech at all on the common path (see MATERIAL_DIRECTION_
+# BUTTONS below).
 _CATEGORY_PROMPTS: dict[str, str] = {
-    "cat_material": _MATERIAL_EXAMPLES,
     "cat_equipment": 'Tell me about the equipment — for example:\n  • "JCB ran for 4 hours"',
     "cat_labour": 'Tell me the headcount — for example:\n  • "12 workers on site today"',
     "cat_expense": 'Tell me the expense — for example:\n  • "Paid 1500 to ABC Hardware"',
 }
+
+# Tapping "Material" asks this before anything else -- a button tap can't be
+# garbled by a translation error the way speech/text can, so locking direction
+# here means the common path never depends on transcription quality for this
+# field. Row ids are matched verbatim by runtime/dependencies.py's category-tap
+# handler (kept distinct from _MATERIAL_ROW_PREFIX = "mat_" in inbound_journey
+# .py, which prefixes catalog *material* ids -- no collision).
+MATERIAL_DIRECTION_BUTTONS: tuple[ListRow, ...] = (
+    ListRow("dir_received", "Arrived"),
+    ListRow("dir_used", "Used"),
+)
+
+_MATERIAL_ARRIVED_PROMPT = '📦 *Material Arrived* — tell me what arrived.\n\n"50 bags of cement arrived"'
+_MATERIAL_USED_PROMPT = (
+    '📦 *Material Used* — tell me what was used.\n\n"20 bags of cement used for the foundation"'
+)
+
+
+def render_material_direction_followup(direction: str) -> str:
+    """The tailored prompt shown right after a Material direction button tap
+    -- the example no longer needs to mention arrived/used since that's
+    already settled, only what/how much."""
+    return _MATERIAL_ARRIVED_PROMPT if direction == "received" else _MATERIAL_USED_PROMPT
 
 # The semantic_type a category tap hints extraction toward for the user's
 # *next* message (see interactions/category_hint.py). A hint only ever
@@ -105,6 +121,7 @@ _FIELD_LABELS: dict[str, str] = {
     "material_name": "which material",
     "quantity": "how much",
     "unit": "the unit (bags, kg, tons)",
+    "direction": "whether it arrived or was used",
     "amount": "the amount",
     "equipment_name": "which equipment",
     "duration_hours": "how many hours",
@@ -175,6 +192,33 @@ def render_no_projects_reply() -> str:
     """The sender has no project to attach a report to at all -- distinct from
     the picker case so the message doesn't imply tapping will help."""
     return "You don't have any projects assigned yet. Ask your admin to add you to one first."
+
+
+# Fixed id for "All Sites Combined" -- distinct from the per-site "site_{id}"
+# prefix (never collides: real site ids are UUIDs, never the literal "all").
+ALL_SITES_ROW_ID = "site_all"
+
+
+def render_site_picker(sites: list[tuple[str, str]], *, allow_combined: bool) -> ReplySpec:
+    """Ask which site a report/query belongs to, once its project is settled
+    but the project has more than one site. ``sites`` is (site_id, name)
+    pairs. Row id is "site_{site_id}", matched verbatim by the caller that
+    resumes the pending report/query once one is tapped.
+
+    ``allow_combined`` adds an "All Sites Combined" row -- only ever true for
+    an inventory query (asking about stock can meaningfully span every site);
+    a material report being recorded must always resolve to one real site,
+    so recording never offers this option."""
+    capacity = 9 if allow_combined else 10
+    rows = [ListRow(f"site_{site_id}", name) for site_id, name in sites[:capacity]]
+    if allow_combined:
+        rows.append(ListRow(ALL_SITES_ROW_ID, "All Sites Combined"))
+    text = (
+        "Which site would you like — or everything combined?"
+        if allow_combined
+        else "Which site is this for?"
+    )
+    return ReplySpec(text=text, list_button_label="Choose site", list_rows=tuple(rows))
 
 
 def render_material_picker(candidates: list[tuple[str, str]]) -> ReplySpec:
@@ -261,12 +305,23 @@ def render_direct_reply(
     return render_greeting_menu(timezone=timezone, is_first_message=is_first_message)
 
 
-def render_category_prompt(row_id: str) -> str | None:
+def render_category_prompt(row_id: str) -> ReplySpec | None:
     """The follow-up question after a category is tapped. Deterministic --
     no AI call, since we defined these row ids ourselves (see
     runtime/dependencies.py's category-tap fast path). None for an id that
-    doesn't match a known category (stale/foreign button, tampered payload)."""
-    return _CATEGORY_PROMPTS.get(row_id)
+    doesn't match a known category (stale/foreign button, tampered payload).
+
+    "cat_material" is the one category with a two-step tap (see
+    MATERIAL_DIRECTION_BUTTONS) -- every other category still gets a single
+    plain-text prompt, wrapped in a ReplySpec so the caller has one shape to
+    dispatch regardless of which category was tapped."""
+    if row_id == "cat_material":
+        return ReplySpec(
+            text="📦 *Material* — did it arrive on site, or get used?",
+            buttons=MATERIAL_DIRECTION_BUTTONS,
+        )
+    text = _CATEGORY_PROMPTS.get(row_id)
+    return ReplySpec(text=text) if text is not None else None
 
 
 def render_understanding_failed_reply() -> str:

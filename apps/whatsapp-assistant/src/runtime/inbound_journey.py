@@ -16,6 +16,7 @@ from typing import Any
 from backend.ports import ActorIdentity
 from canonicalization import build_canonical_event, log_canonical_event
 from channel.replies import (
+    ALL_SITES_ROW_ID,
     CONFIRM_BUTTONS,
     ListRow,
     ReplySpec,
@@ -25,6 +26,7 @@ from channel.replies import (
     render_material_picker,
     render_no_projects_reply,
     render_project_picker,
+    render_site_picker,
     render_understanding_failed_reply,
     render_unit_mismatch_reply,
     render_unsupported_reply,
@@ -324,16 +326,112 @@ async def _run_project_gate(
         )
 
 
+async def _run_site_gate(
+    canonical_event: CanonicalEventV2,
+    *,
+    actor: ActorIdentity | None,
+    actor_user_id: str,
+    pending_report_store: PendingReportStore,
+    allow_combined: bool,
+) -> ReplySpec | None:
+    """Ask which site a report/query belongs to, once its project is settled
+    but site_id still isn't and the project has more than one site.
+
+    Mirrors _run_project_gate's shape: a single site under the resolved
+    project auto-resolves (no ask, no picker) the same way a single
+    authorized project already does in context/resolver.py; zero sites lets
+    the report through site-less rather than blocking on nothing to choose
+    from. Unlike project, site_id is not required by domain validation
+    (domains/materials/validation.py never checks it) -- so a failure here
+    fails OPEN (let it through unresolved), the same safe degrade the
+    material/unit gates use, not the fail-closed project gate needs.
+
+    ``allow_combined`` is only ever True for an inventory query -- asking
+    "how much cement" can meaningfully span every site, so its picker offers
+    an "All Sites Combined" row; a material report being recorded always
+    has to land on one real site, so recording never offers that option."""
+    if canonical_event.completeness is not _IntentCompleteness.ACTIONABLE:
+        return None
+    if canonical_event.site_id is not None:
+        return None
+    if canonical_event.project_id is None:
+        return None  # site only makes sense once a project is settled
+    if actor is None:
+        return None
+    try:
+        sites = [s for s in actor.sites if s.project_id == canonical_event.project_id]
+        if not sites:
+            return None
+        if len(sites) == 1:
+            canonical_event.site_id = sites[0].id
+            return None
+        await pending_report_store.set_pending(user_id=actor_user_id, event=canonical_event)
+        return render_site_picker(
+            [(s.id, s.name) for s in sites], allow_combined=allow_combined
+        )
+    except Exception:
+        _log.exception(
+            "site_selection_gate.failed correlation_id=%s", canonical_event.correlation_id
+        )
+        return None
+
+
+async def _inject_inventory_context(
+    event: CanonicalEventV2, inventory_query: MaterialInventoryQueryService | None
+) -> None:
+    """Populate inventory_levels (for INVENTORY_QUERY_ASKED) / available_stock
+    (for MATERIAL_USAGE_REQUESTED's low-stock warning) on the event's fields.
+
+    Must only run after every material/unit/project/site gate has already
+    resolved project_id/site_id -- project_id/site_id can still change up to
+    that point, and computing this any earlier would silently answer for
+    the wrong scope once the user picked a different project/site than
+    whatever was resolved at canonicalization time. Called from both the
+    first-pass journey (inline, right before the planner stage) and
+    _plan_and_run (used by every resume_pending_report_with_* function),
+    since the first pass has its own inline planner/workflow telemetry and
+    doesn't route through _plan_and_run."""
+    if inventory_query is None:
+        return
+    if event.event_type is CanonicalEventType.INVENTORY_QUERY_ASKED:
+        event.fields["inventory_levels"] = await inventory_query.query(
+            organization_id=event.organization_id,
+            project_id=event.project_id,
+            site_id=event.site_id,
+            material_name=event.fields.get("material_name"),
+        )
+    elif (
+        event.event_type is CanonicalEventType.MATERIAL_USAGE_REQUESTED
+        and event.fields.get("material_name")
+    ):
+        # A usage report's quantity can't be validated against stock until
+        # the confirmation prompt itself (the Domain layer only checks
+        # quantity > 0, never sufficiency -- see domains/materials/
+        # validation.py). This hint lets workflows/material/nodes.py warn
+        # "only X in stock" without querying the database itself.
+        levels = await inventory_query.query(
+            organization_id=event.organization_id,
+            project_id=event.project_id,
+            site_id=event.site_id,
+            material_name=event.fields.get("material_name"),
+        )
+        if levels:
+            event.fields["available_stock"] = levels[0]["current_stock"]
+
+
 async def _plan_and_run(
     event: CanonicalEventV2,
     *,
     planner: Planner,
     workflow_runtime: WorkflowRuntime,
+    inventory_query: MaterialInventoryQueryService | None = None,
 ) -> ReplySpec | None:
     """Run the planner and, if it starts a workflow, the workflow -- shared by
-    the first-pass journey below and every resume_pending_report_with_*
-    function, so a resumed report goes through the exact same decision path
-    a first-pass ACTIONABLE report would."""
+    every resume_pending_report_with_* function, so a resumed report goes
+    through the exact same decision path a first-pass ACTIONABLE report
+    would (see _inject_inventory_context for why inventory context is
+    injected here rather than at canonicalization time)."""
+    await _inject_inventory_context(event, inventory_query)
     decision = planner.decide(event)
     workflow_run: WorkflowRunResult | None = None
     if decision.decision_type is PlannerDecisionType.START_WORKFLOW:
@@ -362,6 +460,7 @@ async def process_inbound_message(
     catalog_query: MaterialCatalogQueryService | None = None,
     expense_category_query: ExpenseCategoryQueryService | None = None,
     semantic_hint: str | None = None,
+    direction_hint: str | None = None,
     pending_report_store: PendingReportStore | None = None,
     category_hint_store: CategoryHintStore | None = None,
 ) -> JourneyResult:
@@ -533,7 +632,9 @@ async def process_inbound_message(
         # --- Canonicalization stage ---
         t0 = time.perf_counter()
         try:
-            canonical_event = build_canonical_event(understanding, resolved)
+            canonical_event = build_canonical_event(
+                understanding, resolved, direction_hint=direction_hint
+            )
 
             # Inject the loaded actor profile into the canonical event so the
             # WHO_AM_I workflow has the data it needs to generate a reply
@@ -551,40 +652,17 @@ async def process_inbound_message(
                     "query_text": understanding.translated_text or understanding.normalized_text,
                 }
 
-            # Same reasoning as actor_profile above, for the inventory-query
-            # workflow: it must not touch the database itself, so the read
-            # happens here (the wiring layer) and the result is injected as
-            # plain, already-scoped data before the graph ever runs.
-            if (
-                canonical_event.event_type is CanonicalEventType.INVENTORY_QUERY_ASKED
-                and inventory_query is not None
-            ):
-                canonical_event.fields["inventory_levels"] = await inventory_query.query(
-                    organization_id=canonical_event.organization_id,
-                    project_id=canonical_event.project_id,
-                    site_id=canonical_event.site_id,
-                    material_name=canonical_event.fields.get("material_name"),
-                )
-
-            # A usage report's quantity can't be validated against stock until
-            # the confirmation prompt itself (the Domain layer only checks
-            # quantity > 0, never sufficiency -- see domains/materials/
-            # validation.py). Inject a low-stock hint the same way as
-            # inventory_levels above so workflows/material/nodes.py can warn
-            # "only X in stock" without querying the database itself.
-            if (
-                canonical_event.event_type is CanonicalEventType.MATERIAL_USAGE_REQUESTED
-                and inventory_query is not None
-                and canonical_event.fields.get("material_name")
-            ):
-                levels = await inventory_query.query(
-                    organization_id=canonical_event.organization_id,
-                    project_id=canonical_event.project_id,
-                    site_id=canonical_event.site_id,
-                    material_name=canonical_event.fields.get("material_name"),
-                )
-                if levels:
-                    canonical_event.fields["available_stock"] = levels[0]["current_stock"]
+            # inventory_levels (for INVENTORY_QUERY_ASKED) and available_stock
+            # (for MATERIAL_USAGE_REQUESTED's low-stock warning) are injected
+            # in _plan_and_run instead of here -- project_id/site_id can still
+            # change after this point (material/unit/project/site gates below
+            # all run after canonicalization), so computing them this early
+            # used to bake in whatever scope was resolved *before* any gate
+            # asked a clarifying question, silently answering for the wrong
+            # project/site once the user picked one. _plan_and_run runs after
+            # every gate has settled, on both the first pass and every
+            # resume_pending_report_with_* path, so it's the one place
+            # guaranteed to see the final project_id/site_id.
 
             if context_debug:
                 log_canonical_event(canonical_event)
@@ -665,7 +743,25 @@ async def process_inbound_message(
                 pending_report_store=pending_report_store,
             )
 
+        # --- Site-selection gate ---
+        # Once project is settled, a report/query can still be ambiguous
+        # across the project's sites. Inventory queries offer "All Sites
+        # Combined" (allow_combined=True); a material report being recorded
+        # always has to land on one real site, so recording never offers
+        # that option. See _run_site_gate for the single/zero-site shortcuts.
+        if held_reply is None and pending_report_store is not None:
+            held_reply = await _run_site_gate(
+                canonical_event,
+                actor=actor,
+                actor_user_id=actor_user_id,
+                pending_report_store=pending_report_store,
+                allow_combined=canonical_event.event_type
+                is CanonicalEventType.INVENTORY_QUERY_ASKED,
+            )
+
         if held_reply is None:
+            await _inject_inventory_context(canonical_event, inventory_query)
+
             # --- Planner stage ---
             t0 = time.perf_counter()
             try:
@@ -818,6 +914,8 @@ async def resume_pending_report_with_project(
     pending_report_store: PendingReportStore,
     planner: Planner,
     workflow_runtime: WorkflowRuntime,
+    actor: ActorIdentity | None = None,
+    inventory_query: MaterialInventoryQueryService | None = None,
     message_logger: MessageLogger | None = None,
 ) -> ReplySpec | None:
     """Resume a report that was held by the project-selection gate above, now
@@ -828,9 +926,12 @@ async def resume_pending_report_with_project(
     is the raw phone number the identity gate has already resolved past by
     the time this runs.
 
-    Returns None for anything that isn't a "proj_*" list-row tap, so the
-    caller falls through to the normal journey exactly like the other
-    fast-path checks (category tap, greeting, whoami).
+    Re-runs the site gate before planner/workflow -- resolving project
+    doesn't guarantee site does too (a project can still have more than one
+    site to choose between). Returns None for anything that isn't a
+    "proj_*" list-row tap, so the caller falls through to the normal journey
+    exactly like the other fast-path checks (category tap, greeting,
+    whoami).
     """
     if message.modality is not InputModality.INTERACTIVE:
         return None
@@ -847,9 +948,20 @@ async def resume_pending_report_with_project(
     project_id = row_id.removeprefix(_PROJECT_ROW_PREFIX)
     event = event.model_copy(update={"project_id": project_id})
 
-    # Project is the last gate in the chain, so nothing else needs re-running
-    # here -- straight to planner/workflow.
-    reply = await _plan_and_run(event, planner=planner, workflow_runtime=workflow_runtime)
+    held_reply = await _run_site_gate(
+        event,
+        actor=actor,
+        actor_user_id=actor_user_id,
+        pending_report_store=pending_report_store,
+        allow_combined=event.event_type is CanonicalEventType.INVENTORY_QUERY_ASKED,
+    )
+    if held_reply is not None:
+        await _complete_resume_leg(message, event, message_logger)
+        return held_reply
+
+    reply = await _plan_and_run(
+        event, planner=planner, workflow_runtime=workflow_runtime, inventory_query=inventory_query
+    )
     await _complete_resume_leg(message, event, message_logger)
     return reply
 
@@ -868,16 +980,17 @@ async def resume_pending_report_with_material(
     planner: Planner,
     workflow_runtime: WorkflowRuntime,
     actor: ActorIdentity | None = None,
+    inventory_query: MaterialInventoryQueryService | None = None,
     message_logger: MessageLogger | None = None,
 ) -> ReplySpec | None:
     """Resume a report held by the material-resolution gate, now that the user
     tapped which catalog material it refers to.
 
-    Re-runs the remaining gate chain (unit, then project) rather than jumping
-    straight to planner -- material resolving doesn't guarantee unit does too
-    (see _run_material_unit_gates: a resolved material_id with no unit_id yet
-    still needs the Stock Unit check to run). Mirrors
-    resume_pending_report_with_project's shape otherwise.
+    Re-runs the remaining gate chain (unit, then project, then site) rather
+    than jumping straight to planner -- material resolving doesn't guarantee
+    unit/project/site do too (see _run_material_unit_gates: a resolved
+    material_id with no unit_id yet still needs the Stock Unit check to
+    run). Mirrors resume_pending_report_with_project's shape otherwise.
     """
     if message.modality is not InputModality.INTERACTIVE:
         return None
@@ -911,7 +1024,20 @@ async def resume_pending_report_with_material(
         await _complete_resume_leg(message, event, message_logger)
         return held_reply
 
-    reply = await _plan_and_run(event, planner=planner, workflow_runtime=workflow_runtime)
+    held_reply = await _run_site_gate(
+        event,
+        actor=actor,
+        actor_user_id=actor_user_id,
+        pending_report_store=pending_report_store,
+        allow_combined=event.event_type is CanonicalEventType.INVENTORY_QUERY_ASKED,
+    )
+    if held_reply is not None:
+        await _complete_resume_leg(message, event, message_logger)
+        return held_reply
+
+    reply = await _plan_and_run(
+        event, planner=planner, workflow_runtime=workflow_runtime, inventory_query=inventory_query
+    )
     await _complete_resume_leg(message, event, message_logger)
     return reply
 
@@ -925,6 +1051,7 @@ async def resume_pending_report_with_unit(
     planner: Planner,
     workflow_runtime: WorkflowRuntime,
     actor: ActorIdentity | None = None,
+    inventory_query: MaterialInventoryQueryService | None = None,
     message_logger: MessageLogger | None = None,
 ) -> ReplySpec | None:
     """Resume a report held by the unit-mismatch clarification, now that the
@@ -965,6 +1092,65 @@ async def resume_pending_report_with_unit(
         await _complete_resume_leg(message, event, message_logger)
         return held_reply
 
-    reply = await _plan_and_run(event, planner=planner, workflow_runtime=workflow_runtime)
+    held_reply = await _run_site_gate(
+        event,
+        actor=actor,
+        actor_user_id=actor_user_id,
+        pending_report_store=pending_report_store,
+        allow_combined=event.event_type is CanonicalEventType.INVENTORY_QUERY_ASKED,
+    )
+    if held_reply is not None:
+        await _complete_resume_leg(message, event, message_logger)
+        return held_reply
+
+    reply = await _plan_and_run(
+        event, planner=planner, workflow_runtime=workflow_runtime, inventory_query=inventory_query
+    )
+    await _complete_resume_leg(message, event, message_logger)
+    return reply
+
+
+_SITE_ROW_PREFIX = "site_"
+
+
+async def resume_pending_report_with_site(
+    message: NormalizedMessage,
+    actor_user_id: str,
+    *,
+    pending_report_store: PendingReportStore,
+    planner: Planner,
+    workflow_runtime: WorkflowRuntime,
+    inventory_query: MaterialInventoryQueryService | None = None,
+    message_logger: MessageLogger | None = None,
+) -> ReplySpec | None:
+    """Resume a report/query held by the site-selection gate, now that the
+    user tapped which site it belongs to (or "All Sites Combined", for an
+    inventory query -- see render_site_picker's allow_combined).
+
+    Site is the last gate in the chain (material/unit/project must already
+    be settled to have reached the site gate at all -- see _run_site_gate's
+    project_id-is-None short-circuit), so nothing else needs re-running here.
+    Returns None for anything that isn't a "site_*" list-row tap, so the
+    caller falls through to the normal journey exactly like the other
+    fast-path checks.
+    """
+    if message.modality is not InputModality.INTERACTIVE:
+        return None
+    row_id = message.metadata.get("interactive_reply_id")
+    if not row_id or not row_id.startswith(_SITE_ROW_PREFIX):
+        return None
+
+    event = await pending_report_store.pop_pending(user_id=actor_user_id)
+    if event is None:
+        if message_logger:
+            await _safe(message_logger.mark_completed(correlation_id=message.correlation_id))
+        return ReplySpec(text="That selection expired — please resend your report.")
+
+    site_id = None if row_id == ALL_SITES_ROW_ID else row_id.removeprefix(_SITE_ROW_PREFIX)
+    event = event.model_copy(update={"site_id": site_id})
+
+    reply = await _plan_and_run(
+        event, planner=planner, workflow_runtime=workflow_runtime, inventory_query=inventory_query
+    )
     await _complete_resume_leg(message, event, message_logger)
     return reply

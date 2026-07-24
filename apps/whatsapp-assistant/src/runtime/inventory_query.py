@@ -52,16 +52,25 @@ class MaterialInventoryQueryService:
                 site_id=uuid.UUID(site_id) if site_id else None,
             )
 
-        levels = [
-            {
-                "material_name": row["material_name"],
-                "unit": row["unit"],
-                "received": float(row["total_received"]),
-                "used": float(row["total_used"]),
-                "current_stock": float(row["current_stock"]),
-            }
-            for row in rows
-        ]
+        # get_stock_levels groups by (org, project, site, material_id, unit_id)
+        # -- when the query spans more than one site/project (site_id is None,
+        # e.g. the site-selection gate's "All Sites Combined" choice, or an
+        # org-wide query), the same material_id legitimately produces one row
+        # per site. Re-aggregate by material_id here so the reply shows one
+        # line per material with a combined total, instead of a separate
+        # "Cement" line per site the caller never asked to see broken out.
+        totals: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            key = str(row["material_id"])
+            entry = totals.setdefault(
+                key,
+                {"material_name": row["material_name"], "unit": row["unit"], "received": 0.0, "used": 0.0, "current_stock": 0.0},
+            )
+            entry["received"] += float(row["total_received"])
+            entry["used"] += float(row["total_used"])
+            entry["current_stock"] += float(row["current_stock"])
+
+        levels = list(totals.values())
 
         if material_name:
             needle = material_name.strip().lower()
