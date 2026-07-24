@@ -15,6 +15,8 @@ import {
   Zap,
   AlertTriangle,
   FileText,
+  Tags,
+  ArrowRight,
 } from 'lucide-react';
 import mermaid from 'mermaid';
 import { api } from './api';
@@ -57,11 +59,23 @@ interface HardcodedReplyInfo {
   template: string;
   flag: string | null;
 }
+interface SemanticTypeInfo {
+  semantic_type: string;
+  description: string;
+  detection: string;
+  canonical_events: string[];
+  workflow_keys: string[];
+  implemented: boolean;
+  routes_to_reply: string | null;
+  required_field_labels: string[];
+  example_messages: string[];
+}
 interface SystemGraphResponse {
   mermaid: string;
   fast_paths: FastPathInfo[];
   hardcoded_replies: HardcodedReplyInfo[];
   stages: PipelineStage[];
+  semantic_types: SemanticTypeInfo[];
   workflows: WorkflowGraphInfo[];
 }
 
@@ -163,6 +177,35 @@ const chipStyle: React.CSSProperties = {
   color: 'var(--neutral-700, #444)',
 };
 
+// Small monospace pill used to render the semantic-type routing flow
+// (semantic → event → workflow) inline.
+const pillStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  padding: '3px 8px',
+  borderRadius: 'var(--radius-sm)',
+  border: '1px solid var(--neutral-200, #e5e5e5)',
+  background: 'var(--neutral-50, #fafafa)',
+  fontSize: '11px',
+  fontFamily: 'monospace',
+  color: 'var(--neutral-700, #444)',
+  whiteSpace: 'nowrap',
+};
+
+/** One `pill → pill → …` chain, wrapping gracefully at narrow widths. */
+const RoutingFlow = ({ steps }: { steps: { label: string; muted?: boolean }[] }) => (
+  <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+    {steps.map((step, i) => (
+      <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+        <span style={step.muted ? { ...pillStyle, color: 'var(--neutral-500)', fontStyle: 'italic' } : pillStyle}>
+          {step.label}
+        </span>
+        {i < steps.length - 1 && <ArrowRight size={12} style={{ color: 'var(--neutral-400, #aaa)', flexShrink: 0 }} />}
+      </span>
+    ))}
+  </div>
+);
+
 const SystemGraph = () => {
   const [data, setData] = useState<SystemGraphResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -191,6 +234,7 @@ const SystemGraph = () => {
           fast_paths: res.data.fast_paths ?? [],
           hardcoded_replies: res.data.hardcoded_replies ?? [],
           stages: res.data.stages ?? [],
+          semantic_types: res.data.semantic_types ?? [],
           workflows: res.data.workflows ?? [],
         }),
       )
@@ -372,6 +416,74 @@ const SystemGraph = () => {
                 <MermaidDiagram source={data.mermaid} />
               </div>
             )}
+          </div>
+
+          {/* --- Semantic Types --- */}
+          <h2 style={{ fontSize: '16px', fontWeight: 600, marginBottom: 'var(--space-2)', display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+            <Tags size={16} style={{ color: 'var(--primary)' }} /> Semantic Types
+          </h2>
+          <p style={{ fontSize: '12px', color: 'var(--neutral-500)', marginTop: 0, marginBottom: 'var(--space-4)' }}>
+            Everything Understanding can decide a message is <em>about</em>, and where each one routes — derived live from the
+            canonicalization + routing tables. Read each card as a flow: <strong>semantic type → canonical event → workflow</strong>.
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 'var(--space-5)', marginBottom: 'var(--space-10)' }}>
+            {data.semantic_types.map((st) => {
+              const isDirectReply = st.workflow_keys.length === 0;
+              const badge = isDirectReply
+                ? { cls: '', text: 'Direct reply', icon: <MessageSquare size={12} style={{ marginRight: 4 }} /> }
+                : st.implemented
+                  ? { cls: 'badge-success', text: 'Built', icon: <CheckCircle2 size={12} style={{ marginRight: 4 }} /> }
+                  : { cls: 'badge-warning', text: 'Not built yet', icon: <Circle size={12} style={{ marginRight: 4 }} /> };
+              // One routing row per canonical event, so MATERIAL_UPDATE shows both branches.
+              const rows = st.canonical_events.map((event, i) => {
+                const wf = st.workflow_keys[i] ?? (isDirectReply ? null : st.workflow_keys[0] ?? null);
+                const steps: { label: string; muted?: boolean }[] = [{ label: st.semantic_type }, { label: event }];
+                if (wf) steps.push({ label: wf });
+                else if (st.routes_to_reply) steps.push({ label: st.routes_to_reply, muted: true });
+                return steps;
+              });
+              return (
+                <div key={st.semantic_type} className="card">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 'var(--space-3)' }}>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: '14px', fontFamily: 'monospace', color: 'var(--neutral-900)' }}>{st.semantic_type}</div>
+                      <div style={{ fontSize: '12px', color: 'var(--neutral-500)', marginTop: '2px' }}>{st.description}</div>
+                    </div>
+                    <span className={`badge ${badge.cls}`} style={{ flexShrink: 0 }}>
+                      {badge.icon}{badge.text}
+                    </span>
+                  </div>
+
+                  {/* Routing flow — the visual centerpiece */}
+                  <div style={{ marginTop: 'var(--space-4)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {rows.map((steps, i) => (
+                      <RoutingFlow key={i} steps={steps} />
+                    ))}
+                  </div>
+
+                  <dl style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '6px 12px', margin: 0, marginTop: 'var(--space-4)', paddingTop: 'var(--space-4)', borderTop: '1px solid var(--neutral-100, #eee)', fontSize: '13px' }}>
+                    <dt style={{ color: 'var(--neutral-500)' }}>How it's detected</dt>
+                    <dd style={{ margin: 0 }}>{st.detection}</dd>
+                    {st.required_field_labels.length > 0 && (
+                      <>
+                        <dt style={{ color: 'var(--neutral-500)' }}>Required fields</dt>
+                        <dd style={{ margin: 0 }}>{st.required_field_labels.join(', ')}</dd>
+                      </>
+                    )}
+                  </dl>
+
+                  {st.example_messages.length > 0 && (
+                    <div style={{ marginTop: 'var(--space-3)', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                      {st.example_messages.map((msg) => (
+                        <span key={msg} style={chipStyle} onClick={() => tryExample(msg)} title="Load into the test panel">
+                          <Play size={11} /> {msg}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           {/* --- Workflows --- */}

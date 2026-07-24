@@ -98,11 +98,39 @@ class HardcodedReplyInfo(BaseModel):
     flag: str | None = None
 
 
+class SemanticTypeInfo(BaseModel):
+    """One understanding hypothesis (``SemanticType``) traced through the whole
+    routing chain: semantic type -> canonical event(s) -> workflow(s) -> built?.
+    Derived live from the same tables the runtime uses (canonicalization.mapping,
+    planner.routing, workflows.registry), so it can't drift from what ships.
+
+    The inverse view of ``workflows`` above: that list is keyed by workflow, this
+    one by what Understanding decided the message was *about*."""
+
+    semantic_type: str
+    description: str
+    # How the type gets set: AI extraction for most; a couple also/only via a
+    # deterministic pre-AI shortcut.
+    detection: str
+    # 1 event, or 2 for MATERIAL_UPDATE (splits by direction: received / used).
+    canonical_events: list[str] = []
+    # Workflow(s) this routes to; empty when it's answered by a direct reply
+    # (GENERAL_QUESTION / UNKNOWN never start a workflow).
+    workflow_keys: list[str] = []
+    # True when at least one mapped workflow is actually built (in _BUILDERS).
+    implemented: bool = False
+    # Short note for the types that never reach a workflow.
+    routes_to_reply: str | None = None
+    required_field_labels: list[str] = []
+    example_messages: list[str] = []
+
+
 class SystemGraphResponse(BaseModel):
     mermaid: str
     fast_paths: list[FastPathInfo]
     hardcoded_replies: list[HardcodedReplyInfo]
     stages: list[PipelineStage]
+    semantic_types: list[SemanticTypeInfo]
     workflows: list[WorkflowGraphInfo]
 
 
@@ -763,6 +791,109 @@ def _build_pipeline_mermaid() -> str:
     return "\n".join(lines)
 
 
+# One-line, human descriptions per semantic type. Kept here (not on the enum)
+# because the enum's docstring is class-level, not per-member — this is the
+# display copy for the control panel.
+_SEMANTIC_TYPE_DOC: dict[str, str] = {
+    "expense": "An expense to record (an amount spent).",
+    "equipment_usage": "An equipment / machinery usage report.",
+    "material_update": "Material received or used — the one type that splits by direction.",
+    "labour_update": "A labour attendance / headcount update.",
+    "general_site_update": "A free-form site progress update.",
+    "general_question": "A question with no other bucket — gets a canned capability reply.",
+    "whoami_question": "A 'who am I' / 'my profile' question — answered with the caller's own identity.",
+    "inventory_query": "A read-only stock / movement question (never an update).",
+    "unknown": "Not understood — falls back to the greeting / menu.",
+}
+
+# How each type is set. Default is plain AI extraction; a couple have a
+# deterministic pre-AI path too (see understanding/pipeline.py
+# _apply_deterministic_shortcut and interactions/handler.py's fast paths).
+_SEMANTIC_TYPE_DETECTION: dict[str, str] = {
+    "whoami_question": (
+        "AI extraction, plus a deterministic pre-AI fast path — English identity "
+        "phrases are intercepted before Understanding even runs."
+    ),
+    "unknown": "The fallback when nothing else matches, or a deterministic greeting shortcut.",
+}
+
+# Short note for the semantic types that never start a workflow.
+_SEMANTIC_TYPE_REPLY_NOTE: dict[str, str] = {
+    "general_question": "Direct canned reply (describes what Mesiri records).",
+    "unknown": "Direct reply — opens the greeting / category menu.",
+}
+
+
+def _semantic_type_infos() -> list[SemanticTypeInfo]:
+    """Every SemanticType traced through the live routing chain. The inverse of
+    _workflow_infos(): keyed by understanding hypothesis, walking
+    canonicalization.mapping -> planner.routing -> workflows.registry."""
+    from canonicalization.mapping import (
+        _MATERIAL_DIRECTION_EVENT_TYPE,
+        _SIMPLE_EVENT_TYPE,
+        REQUIRED_FIELDS,
+    )
+    from channel.replies import _FIELD_LABELS
+    from mesiri_contracts.assistant.canonical_event import CanonicalEventType
+    from mesiri_contracts.assistant.enums import SemanticType
+    from planner.routing import WORKFLOW_KEY_BY_EVENT
+    from workflows.registry import _BUILDERS
+
+    examples = _example_messages_by_workflow()
+
+    def _labels(events: list[CanonicalEventType]) -> list[str]:
+        """Union of required-field labels across the given event(s), order-stable."""
+        seen: list[str] = []
+        for event in events:
+            for field in REQUIRED_FIELDS.get(event, ()):
+                label = _FIELD_LABELS.get(field, field.replace("_", " "))
+                if label not in seen:
+                    seen.append(label)
+        return seen
+
+    infos: list[SemanticTypeInfo] = []
+    for semantic in SemanticType:
+        # Resolve the canonical event(s) this semantic type maps to.
+        if semantic is SemanticType.MATERIAL_UPDATE:
+            events = list(_MATERIAL_DIRECTION_EVENT_TYPE.values())
+        elif semantic in _SIMPLE_EVENT_TYPE:
+            events = [_SIMPLE_EVENT_TYPE[semantic]]
+        else:  # UNKNOWN — no mapping, routes to UNRECOGNIZED
+            events = [CanonicalEventType.UNRECOGNIZED]
+
+        # Event(s) -> workflow key(s), preserving order and dropping duplicates.
+        workflow_keys: list[str] = []
+        implemented = False
+        for event in events:
+            key = WORKFLOW_KEY_BY_EVENT.get(event)
+            if key is not None and key.value not in workflow_keys:
+                workflow_keys.append(key.value)
+                if key in _BUILDERS:
+                    implemented = True
+
+        # Example messages: gathered from the mapped workflows (verbatim copy).
+        example_messages: list[str] = []
+        for key_value in workflow_keys:
+            for msg in examples.get(key_value, []):
+                if msg not in example_messages:
+                    example_messages.append(msg)
+
+        infos.append(
+            SemanticTypeInfo(
+                semantic_type=semantic.value,
+                description=_SEMANTIC_TYPE_DOC.get(semantic.value, ""),
+                detection=_SEMANTIC_TYPE_DETECTION.get(semantic.value, "AI extraction."),
+                canonical_events=[e.value for e in events],
+                workflow_keys=workflow_keys,
+                implemented=implemented,
+                routes_to_reply=_SEMANTIC_TYPE_REPLY_NOTE.get(semantic.value),
+                required_field_labels=_labels(events),
+                example_messages=example_messages,
+            )
+        )
+    return infos
+
+
 def _workflow_infos() -> list[WorkflowGraphInfo]:
     """Structured, drill-down info per workflow key."""
     from canonicalization.mapping import (
@@ -835,6 +966,7 @@ async def get_system_graph(_admin: dict = Depends(require_platform_admin)):
         fast_paths=_fast_paths(),
         hardcoded_replies=_hardcoded_replies(),
         stages=_build_stages(),
+        semantic_types=_semantic_type_infos(),
         workflows=_workflow_infos(),
     )
 
