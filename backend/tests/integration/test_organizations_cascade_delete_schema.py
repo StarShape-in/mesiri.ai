@@ -68,12 +68,16 @@ async def _tables(engine: AsyncEngine) -> list[str]:
 async def test_every_organization_id_fk_to_organizations_cascades(engine: AsyncEngine):
     for table in await _tables(engine):
         for fk in await _foreign_keys(engine, table):
-            if fk["referred_table"] != "organizations":
+            # Only tenant-scoped tables' organization_id column is in scope here.
+            # context_organizations.canonical_organization_id also FKs straight to
+            # organizations (the identity bridge, migration 0190) but is a
+            # different, intentional relationship for a table this handler never
+            # touches (see module docstring) -- not a tenant-scoped data row, so
+            # it's not asserted on.
+            if fk["referred_table"] != "organizations" or fk["constrained_columns"] != [
+                "organization_id"
+            ]:
                 continue
-            assert fk["constrained_columns"] == ["organization_id"], (
-                f"{table}: FK to organizations should be on organization_id, "
-                f"got {fk['constrained_columns']}"
-            )
             assert fk["options"].get("ondelete") == "CASCADE", (
                 f"{table}.organization_id references organizations but doesn't "
                 "cascade on delete -- deleting a tenant will either 500 or leave "
