@@ -51,7 +51,7 @@ _EXTRACTION_PROMPT = (
     "- labour_update: headcount, trade, hours, contractor, project_name\n"
     "- general_site_update: summary, activity, location, weather, project_name\n"
     "- general_question: question, topic\n"
-    "- inventory_query: material_name (omit material_name if asking about all "
+    "- inventory_query: material_name, project_name (omit material_name if asking about all "
     'materials, e.g. "show inventory"). Use this type for questions about how '
     'much of a material is currently in stock (e.g. "how much cement is left?", '
     '"current stock of steel") or its movement history '

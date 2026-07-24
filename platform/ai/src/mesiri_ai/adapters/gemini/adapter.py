@@ -58,7 +58,7 @@ _EXTRACTION_PROMPT = (
     "- general_site_update: summary, activity, location, weather, project_name\n"
     "- general_question: question, topic\n"
     "- whoami_question: question\n"
-    "- inventory_query: material_name (omit material_name if asking about all "
+    "- inventory_query: material_name, project_name (omit material_name if asking about all "
     'materials, e.g. "show inventory"). Use this type for questions about how '
     'much of a material is currently in stock (e.g. "how much cement is left?", '
     '"current stock of steel") or its movement history '
@@ -89,7 +89,12 @@ class GeminiProvider:
         return self._client
 
     async def _generate(
-        self, contents: Any, correlation_id: str | None, operation: str
+        self,
+        contents: Any,
+        correlation_id: str | None,
+        operation: str,
+        *,
+        json_mode: bool = False,
     ) -> tuple[str, float]:
         client = self._get_client()
 
@@ -97,10 +102,26 @@ class GeminiProvider:
             import asyncio
 
             def _call() -> Any:
-                return client.models.generate_content(
-                    model=self._settings.model,
-                    contents=contents,
-                )
+                kwargs: dict[str, Any] = {"model": self._settings.model, "contents": contents}
+                if json_mode:
+                    # Ask Gemini to return only the JSON object, no surrounding
+                    # commentary -- without this, code-mixed input (e.g. a
+                    # Malayalam sentence with an embedded English proper noun
+                    # like a project name) sometimes prompts Gemini to add an
+                    # explanatory sentence around the JSON, which _parse_json's
+                    # naive fence-stripping can't handle (real bug: an
+                    # inventory query naming a project failed translation this
+                    # way). DeepSeek's adapter already forces its own
+                    # equivalent (response_format=json_object); this is the
+                    # same guarantee for Gemini. _parse_json below is hardened
+                    # as a second line of defense in case this mode is ever
+                    # unavailable/ignored by a future model.
+                    from google.genai import types
+
+                    kwargs["config"] = types.GenerateContentConfig(
+                        response_mime_type="application/json"
+                    )
+                return client.models.generate_content(**kwargs)
 
             return await asyncio.to_thread(_call)
 
@@ -122,8 +143,25 @@ class GeminiProvider:
         )
         try:
             data = json.loads(cleaned)
-        except (ValueError, TypeError) as exc:
-            raise malformed_output("gemini", str(exc), correlation_id=correlation_id) from exc
+        except (ValueError, TypeError):
+            # json_mode (response_mime_type="application/json") should prevent
+            # this, but a model can still wrap the JSON in a clarifying
+            # sentence -- disproportionately likely for code-mixed input
+            # (e.g. a Malayalam sentence with an embedded English proper
+            # noun). Fall back to extracting the outermost {...} object
+            # from anywhere in the response before giving up.
+            start, end = cleaned.find("{"), cleaned.rfind("}")
+            if start != -1 and end > start:
+                try:
+                    data = json.loads(cleaned[start : end + 1])
+                except (ValueError, TypeError) as exc:
+                    raise malformed_output(
+                        "gemini", str(exc), correlation_id=correlation_id
+                    ) from exc
+            else:
+                raise malformed_output(
+                    "gemini", "no JSON object found in response", correlation_id=correlation_id
+                ) from None
         if not isinstance(data, dict):
             raise malformed_output(
                 "gemini", "top-level JSON is not an object", correlation_id=correlation_id
@@ -142,7 +180,7 @@ class GeminiProvider:
 
         part = types.Part.from_bytes(data=image, mime_type=mime_type or "image/jpeg")
         text, latency_ms = await self._generate(
-            [_VISION_PROMPT, part], correlation_id, "analyze_image"
+            [_VISION_PROMPT, part], correlation_id, "analyze_image", json_mode=True
         )
         data = self._parse_json(text, correlation_id)
         return VisionResult(
@@ -177,7 +215,9 @@ class GeminiProvider:
                 "closest matching one of these, verbatim. Only use a different value if "
                 "none of these fit at all."
             )
-        raw_text, latency_ms = await self._generate(prompt, correlation_id, "extract")
+        raw_text, latency_ms = await self._generate(
+            prompt, correlation_id, "extract", json_mode=True
+        )
         data = self._parse_json(raw_text, correlation_id)
         return ExtractionResult(
             semantic_type=data.get("semantic_type", "unknown"),
@@ -199,7 +239,9 @@ class GeminiProvider:
         correlation_id: str | None = None,
     ) -> str:
         prompt = f"{system_prompt}\n\n{user_prompt}"
-        raw_text, _latency_ms = await self._generate(prompt, correlation_id, "generate_json")
+        raw_text, _latency_ms = await self._generate(
+            prompt, correlation_id, "generate_json", json_mode=True
+        )
         return (
             raw_text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         )
@@ -208,7 +250,9 @@ class GeminiProvider:
         self, text: str, *, correlation_id: str | None = None
     ) -> TranslationResult:
         prompt = f"{_TRANSLATION_PROMPT}\n\nText:\n{text}"
-        raw_text, latency_ms = await self._generate(prompt, correlation_id, "translate")
+        raw_text, latency_ms = await self._generate(
+            prompt, correlation_id, "translate", json_mode=True
+        )
         data = self._parse_json(raw_text, correlation_id)
         return TranslationResult(
             translated_text=data.get("translated_text", text),

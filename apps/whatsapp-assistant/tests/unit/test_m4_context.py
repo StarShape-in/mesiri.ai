@@ -164,13 +164,40 @@ async def test_unauthorized_project_denied():
     assert res.error.error_code == ErrorCode.PROJECT_ACCESS_DENIED.value
 
 
-async def test_unknown_project_name_not_found():
+async def test_unknown_project_name_falls_through_to_other_candidates():
+    """A NAME reference (never an id) that doesn't resolve to exactly one
+    authorized project must not fail the whole message -- regression test
+    for a live bug where naming a project the sender genuinely had access
+    to via every other path (project picker, single-project convenience)
+    still failed with a generic "couldn't understand" error whenever that
+    name wasn't yet reflected in the project_memberships table used for
+    name lookups. It must instead fall through to the next-best candidate
+    -- here, the engineer's single-project auto-resolve -- exactly as if
+    no project name had been mentioned at all."""
     r = resolver()
     res = await r.resolve(
         msg(seed.WA_ENGINEER), understanding(fields={"project_name": "Nonexistent"})
     )
-    assert res.is_err
-    assert res.error.error_code == ErrorCode.PROJECT_NOT_FOUND.value
+    assert res.is_ok
+    ctx = res.unwrap()
+    assert ctx.context_project_id == seed.PROJ_ALPHA
+    assert ctx.context_source == ContextSource.USER_DEFAULT
+
+
+async def test_unresolved_project_name_with_no_fallback_leaves_project_unresolved():
+    """When there's no other candidate to fall back on either (multiple
+    projects, no default), the result must still be OK with project_id
+    left None -- letting the existing project-selection gate ask which
+    project, rather than erroring out."""
+    world = seed.build_world()
+    world.preferences = [p for p in world.preferences if p.user_id != seed.USER_DIRECTOR]
+    r = ContextResolver(seed.build_dependencies(world))
+    res = await r.resolve(
+        msg(seed.WA_DIRECTOR), understanding(fields={"project_name": "Nonexistent"})
+    )
+    assert res.is_ok
+    ctx = res.unwrap()
+    assert ctx.context_project_id is None
 
 
 async def test_project_site_mismatch():
@@ -186,7 +213,10 @@ async def test_project_site_mismatch():
 # -- Ambiguity ---------------------------------------------------------------
 
 
-async def test_ambiguous_project_across_authorized_matches():
+async def test_ambiguous_project_name_falls_through_to_other_candidates():
+    """A NAME reference matching more than one authorized project must not
+    fail the whole message either (same reasoning as the not-found case
+    above) -- falls through to the director's default assignment instead."""
     # Give the director two authorized projects both named "Marina Tower".
     world = seed.build_world()
     world.projects.append(world.projects[0].__class__("proj_dupe", seed.ORG_A, "Project Beta"))
@@ -195,9 +225,10 @@ async def test_ambiguous_project_across_authorized_matches():
     res = await r.resolve(
         msg(seed.WA_DIRECTOR), understanding(fields={"project_name": "Project Beta"})
     )
-    assert res.is_err
-    assert res.error.error_code == ErrorCode.AMBIGUOUS_PROJECT.value
-    assert len(res.error.details["project_ids"]) == 2
+    assert res.is_ok
+    ctx = res.unwrap()
+    assert ctx.context_project_id == seed.PROJ_ALPHA  # falls through to the default assignment
+    assert ctx.context_source == ContextSource.USER_DEFAULT
 
 
 # -- Cross-organization isolation --------------------------------------------

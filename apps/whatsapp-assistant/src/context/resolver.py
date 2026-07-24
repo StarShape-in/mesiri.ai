@@ -21,7 +21,7 @@ from mesiri_contracts.assistant.context_enums import ContextConfidence, ContextS
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage
 from mesiri_contracts.assistant.understanding_result import UnderstandingResult
 from mesiri_contracts.assistant.v2.resolved_context import ResolvedContextV2
-from mesiri_contracts.common.errors import MesiriError
+from mesiri_contracts.common.errors import ErrorCode, MesiriError
 from mesiri_contracts.common.result import Result
 
 from . import context_policy, errors
@@ -222,6 +222,17 @@ class ContextResolver:
 
         return candidates
 
+    # Name-reference resolution failures that must degrade gracefully rather
+    # than kill context resolution outright -- see _explicit_candidate.
+    _UNRESOLVED_NAME_REF_CODES = frozenset(
+        {
+            ErrorCode.PROJECT_NOT_FOUND.value,
+            ErrorCode.AMBIGUOUS_PROJECT.value,
+            ErrorCode.SITE_NOT_FOUND.value,
+            ErrorCode.AMBIGUOUS_SITE.value,
+        }
+    )
+
     async def _explicit_candidate(
         self,
         org: str,
@@ -238,13 +249,47 @@ class ContextResolver:
         evidence_parts: list[str] = []
 
         if project_ref is not None:
-            project, pid_by_id = await self._resolve_project_ref(org, user, project_ref)
+            try:
+                project, pid_by_id = await self._resolve_project_ref(org, user, project_ref)
+            except MesiriError as err:
+                if not project_ref.by_id and err.error_code in self._UNRESOLVED_NAME_REF_CODES:
+                    # A NAME reference (never an explicit id tap) that
+                    # doesn't resolve to exactly one authorized project must
+                    # not kill the whole message -- fall through to the
+                    # normal "no project resolved" flow, same as if no name
+                    # had been mentioned at all, so the existing project-
+                    # selection gate (which lists every project the sender
+                    # can otherwise reach) gets a chance to ask instead.
+                    # Real bug this fixes: naming a project by name failed
+                    # every time with "I couldn't understand you" whenever
+                    # that name wasn't yet reflected in the newer per-
+                    # project membership table -- even for a project the
+                    # sender demonstrably already has access to via every
+                    # other path (the project picker, single-project
+                    # convenience, etc).
+                    _log.info(
+                        "context.explicit_project_ref_unresolved",
+                        error_code=err.error_code,
+                        reference=project_ref.value,
+                    )
+                    return None
+                raise
             project_id = project.project_id
             by_id = by_id or pid_by_id
             evidence_parts.append(f"project={project_ref.value!r}")
 
         if site_ref is not None:
-            site, sid_by_id = await self._resolve_site_ref(org, user, site_ref, project_id)
+            try:
+                site, sid_by_id = await self._resolve_site_ref(org, user, site_ref, project_id)
+            except MesiriError as err:
+                if not site_ref.by_id and err.error_code in self._UNRESOLVED_NAME_REF_CODES:
+                    _log.info(
+                        "context.explicit_site_ref_unresolved",
+                        error_code=err.error_code,
+                        reference=site_ref.value,
+                    )
+                    return None
+                raise
             # Site must belong to the resolved project (if any).
             if project_id is not None and site.project_id != project_id:
                 raise errors.project_site_mismatch(project_id, site.site_id)
