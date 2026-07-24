@@ -387,6 +387,11 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             await message_logger.log_reply(
                 correlation_id=message.correlation_id, reply=handled.reply_text
             )
+            if handled.result.workflow_instance_id:
+                await message_logger.link_workflow_instance(
+                    correlation_id=message.correlation_id,
+                    workflow_instance_id=handled.result.workflow_instance_id,
+                )
             await message_logger.update_context(
                 correlation_id=message.correlation_id,
                 project_id=handled.project_id,

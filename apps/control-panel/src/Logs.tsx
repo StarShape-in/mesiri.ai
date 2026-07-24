@@ -18,6 +18,9 @@ interface InboundMessageSummary {
   project_name: string | null;
   site_id: string | null;
   site_name: string | null;
+  workflow_instance_id: string | null;
+  workflow_key: string | null;
+  workflow_phase: string | null;
 }
 
 interface InboundMessageList {
@@ -47,6 +50,16 @@ interface InboundMessageDetail {
   project_name: string | null;
   site_id: string | null;
   site_name: string | null;
+  workflow_instance_id: string | null;
+  workflow_key: string | null;
+  workflow_phase: string | null;
+}
+
+interface StageContextEntry {
+  stage: string;
+  succeeded: boolean;
+  created_at: string;
+  stage_payload: Record<string, unknown> | null;
 }
 
 interface ProviderExecutionEntry {
@@ -71,6 +84,37 @@ interface JourneyTraceEntry {
 
 const POLL_INTERVAL_MS = 5000;
 const MAX_ROWS = 200;
+// Messages from the same sender within this gap are treated as one
+// conversation session — a heuristic grouping (no schema change) that sits
+// alongside the precise workflow_instance_id bracket below.
+const SESSION_GAP_MS = 30 * 60 * 1000;
+
+interface MessageSession {
+  key: string;
+  sender_wa_id: string;
+  messages: InboundMessageSummary[]; // newest-first, same order as the source list
+}
+
+// `messages` is newest-first. Runs of consecutive same-sender messages
+// within SESSION_GAP_MS become one session — if another sender's messages
+// interleave in time, that naturally splits the run, which is the desired
+// behavior for a heuristic grounded in actual timestamps.
+function groupIntoSessions(messages: InboundMessageSummary[]): MessageSession[] {
+  const sessions: MessageSession[] = [];
+  for (const m of messages) {
+    const last = sessions[sessions.length - 1];
+    if (last && last.sender_wa_id === m.sender_wa_id) {
+      const lastMsg = last.messages[last.messages.length - 1];
+      const gapMs = new Date(lastMsg.received_at).getTime() - new Date(m.received_at).getTime();
+      if (gapMs <= SESSION_GAP_MS) {
+        last.messages.push(m);
+        continue;
+      }
+    }
+    sessions.push({ key: `${m.sender_wa_id}-${m.id}`, sender_wa_id: m.sender_wa_id, messages: [m] });
+  }
+  return sessions;
+}
 
 function formatRelativeTime(dateString: string): string {
   const date = new Date(dateString);
@@ -189,6 +233,67 @@ const TracePanel = ({ correlationId }: { correlationId: string }) => {
           </div>
         </div>
       ))}
+    </div>
+  );
+};
+
+const ContextPanel = ({ correlationId }: { correlationId: string }) => {
+  const [context, setContext] = useState<StageContextEntry[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [openStage, setOpenStage] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    api
+      .get<StageContextEntry[]>(`/admin/logs/messages/${correlationId}/context`)
+      .then((res) => {
+        if (!cancelled) setContext(res.data);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [correlationId]);
+
+  if (loading) return <div style={{ padding: 'var(--space-2) 0', color: 'var(--neutral-500)', fontSize: '13px' }}>Loading context…</div>;
+  if (!context || context.length === 0) {
+    return <div style={{ padding: 'var(--space-2) 0', color: 'var(--neutral-500)', fontSize: '13px' }}>No AI context recorded.</div>;
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+      {context
+        .filter((entry) => entry.stage_payload !== null)
+        .map((entry, i) => {
+          const isOpen = openStage === `${entry.stage}-${i}`;
+          return (
+            <div key={i} style={{ border: '1px solid var(--neutral-200)', borderRadius: 'var(--radius-xs)', overflow: 'hidden' }}>
+              <button
+                type="button"
+                onClick={() => setOpenStage(isOpen ? null : `${entry.stage}-${i}`)}
+                style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 'var(--space-2) var(--space-3)', border: 'none', background: 'none', cursor: 'pointer', outline: 'none' }}
+              >
+                <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: '12px', fontWeight: 500, color: 'var(--neutral-800)' }}>
+                  {entry.stage}
+                  <span className={`badge ${entry.succeeded ? 'badge-success' : 'badge-error'}`} style={{ fontSize: '9px', padding: '1px 6px' }}>
+                    {entry.succeeded ? 'ok' : 'failed'}
+                  </span>
+                </span>
+                <ChevronDown size={13} style={{ transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
+              </button>
+              {isOpen && (
+                <div style={{ borderTop: '1px solid var(--neutral-200)', padding: 'var(--space-3)', backgroundColor: 'var(--neutral-900)', color: 'var(--neutral-200)', overflowX: 'auto' }}>
+                  <pre style={{ margin: 0, fontSize: '11px', fontFamily: 'monospace', lineHeight: '1.5' }}>
+                    {JSON.stringify(entry.stage_payload, null, 2)}
+                  </pre>
+                </div>
+              )}
+            </div>
+          );
+        })}
     </div>
   );
 };
@@ -467,6 +572,14 @@ const LogDetailPanel = ({
           </div>
           <TracePanel correlationId={message.correlation_id} />
         </div>
+
+        {/* AI Context (platform-admin only — full per-stage payloads) */}
+        <div style={{ backgroundColor: '#ffffff', borderRadius: 'var(--radius-sm)', border: '1px solid var(--neutral-200)', padding: 'var(--space-4)' }}>
+          <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--neutral-500)', marginBottom: 'var(--space-2)' }}>
+            AI Context
+          </div>
+          <ContextPanel correlationId={message.correlation_id} />
+        </div>
       </div>
     </div>
   );
@@ -494,6 +607,8 @@ export default function Logs() {
     return sum + (lat > 0 ? lat : 0);
   }, 0);
   const avgLatency = completedMessages.length ? Math.round(totalLatency / completedMessages.length) : 0;
+
+  const sessions = groupIntoSessions(messages);
 
   const loadHistory = useCallback(() => {
     setLoading(true);
@@ -694,52 +809,94 @@ export default function Logs() {
             ) : messages.length === 0 ? (
               <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--neutral-500)' }}>No messages yet.</td></tr>
             ) : (
-              messages.map((m) => (
-                <Fragment key={m.id}>
-                  <tr
-                    style={{ cursor: 'pointer' }}
-                    onClick={() => setExpandedId(expandedId === m.correlation_id ? null : m.correlation_id)}
-                  >
-                    <td>{expandedId === m.correlation_id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
-                    <td>
-                      <div style={{ fontSize: '13px', color: 'var(--neutral-800)', fontWeight: 500 }}>{formatRelativeTime(m.received_at)}</div>
-                      <div style={{ fontSize: '11px', color: 'var(--neutral-400)', fontFamily: 'monospace', marginTop: '2px' }}>
-                        {new Date(m.received_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              sessions.map((session) => (
+                <Fragment key={session.key}>
+                  <tr>
+                    <td colSpan={7} style={{ padding: '10px 12px', backgroundColor: 'var(--neutral-50)', borderTop: '1px solid var(--neutral-200)', borderBottom: '1px solid var(--neutral-200)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: '11px', fontWeight: 600, color: 'var(--neutral-500)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        <span>{session.sender_wa_id}</span>
+                        <span style={{ fontWeight: 400, textTransform: 'none', color: 'var(--neutral-400)' }}>
+                          {session.messages.length} message{session.messages.length === 1 ? '' : 's'} · {formatRelativeTime(session.messages[session.messages.length - 1].received_at)} – {formatRelativeTime(session.messages[0].received_at)}
+                        </span>
                       </div>
                     </td>
-                    <td>{m.sender_wa_id}</td>
-                    <td>
-                      {m.message_type}
-                      {m.message_type === 'audio' && ' 🗣'}
-                    </td>
-                    <td>
-                      {m.project_name ? (
-                        <div>
-                          <div style={{ fontSize: '13px', color: 'var(--neutral-800)', fontWeight: 500 }}>{m.project_name}</div>
-                          {m.site_name && (
-                            <div style={{ fontSize: '11px', color: 'var(--neutral-400)', marginTop: '2px' }}>
-                              {m.site_name}
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <span style={{ fontSize: '11px', color: 'var(--neutral-400)', fontStyle: 'italic' }}>Unmapped</span>
-                      )}
-                    </td>
-                    <td style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {m.body_preview || <em style={{ color: 'var(--neutral-400)' }}>no text</em>}
-                    </td>
-                    <td>
-                      <span className={`badge ${statusBadgeClass(m.processing_status)}`}>{m.processing_status}</span>
-                    </td>
                   </tr>
-                  {expandedId === m.correlation_id && (
-                    <tr>
-                      <td colSpan={7} style={{ padding: 0 }}>
-                        <LogDetailPanel message={m} onUpdate={loadHistory} />
-                      </td>
-                    </tr>
-                  )}
+                  {session.messages.map((m, i) => {
+                    const prev = session.messages[i - 1];
+                    const next = session.messages[i + 1];
+                    const inWorkflow = !!m.workflow_instance_id;
+                    const startsBracket = inWorkflow && prev?.workflow_instance_id !== m.workflow_instance_id;
+                    const continuesBracket = inWorkflow && next?.workflow_instance_id === m.workflow_instance_id;
+                    return (
+                      <Fragment key={m.id}>
+                        <tr
+                          style={{ cursor: 'pointer' }}
+                          onClick={() => setExpandedId(expandedId === m.correlation_id ? null : m.correlation_id)}
+                        >
+                          <td style={{ position: 'relative' }}>
+                            {inWorkflow && (
+                              <div
+                                title={[m.workflow_key, m.workflow_phase].filter(Boolean).join(' · ') || 'workflow interaction'}
+                                style={{
+                                  position: 'absolute',
+                                  left: 2,
+                                  top: 0,
+                                  bottom: continuesBracket ? '-1px' : '50%',
+                                  width: '3px',
+                                  backgroundColor: 'var(--info)',
+                                  borderRadius: '2px',
+                                }}
+                              />
+                            )}
+                            {expandedId === m.correlation_id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                          </td>
+                          <td>
+                            <div style={{ fontSize: '13px', color: 'var(--neutral-800)', fontWeight: 500 }}>{formatRelativeTime(m.received_at)}</div>
+                            <div style={{ fontSize: '11px', color: 'var(--neutral-400)', fontFamily: 'monospace', marginTop: '2px' }}>
+                              {new Date(m.received_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </div>
+                          </td>
+                          <td>{m.sender_wa_id}</td>
+                          <td>
+                            {m.message_type}
+                            {m.message_type === 'audio' && ' 🗣'}
+                          </td>
+                          <td>
+                            {m.project_name ? (
+                              <div>
+                                <div style={{ fontSize: '13px', color: 'var(--neutral-800)', fontWeight: 500 }}>{m.project_name}</div>
+                                {m.site_name && (
+                                  <div style={{ fontSize: '11px', color: 'var(--neutral-400)', marginTop: '2px' }}>
+                                    {m.site_name}
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <span style={{ fontSize: '11px', color: 'var(--neutral-400)', fontStyle: 'italic' }}>Unmapped</span>
+                            )}
+                          </td>
+                          <td style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {startsBracket && (
+                              <span style={{ fontSize: '9px', fontWeight: 600, color: 'var(--info)', textTransform: 'uppercase', letterSpacing: '0.03em', marginRight: '6px' }}>
+                                {m.workflow_key || 'workflow'}
+                              </span>
+                            )}
+                            {m.body_preview || <em style={{ color: 'var(--neutral-400)' }}>no text</em>}
+                          </td>
+                          <td>
+                            <span className={`badge ${statusBadgeClass(m.processing_status)}`}>{m.processing_status}</span>
+                          </td>
+                        </tr>
+                        {expandedId === m.correlation_id && (
+                          <tr>
+                            <td colSpan={7} style={{ padding: 0 }}>
+                              <LogDetailPanel message={m} onUpdate={loadHistory} />
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
                 </Fragment>
               ))
             )}

@@ -158,6 +158,33 @@ class PostgresTraceLogger:
             )
         return [dict(row) for row in rows]
 
+    async def get_stage_context(self, correlation_id: str) -> list[dict[str, Any]]:
+        """Read path for the control-panel logs viewer's per-message "AI
+        Context" panel -- the one place ``stage_payload`` is deliberately
+        returned. Unlike ``get_by_correlation_id`` above, this is meant to
+        expose the full understanding/resolved-context/canonical-event/
+        planner payloads for debugging; callers MUST gate this behind
+        platform-admin auth (see admin/logs_router.py), same trust boundary
+        as the existing raw_payload/body_text detail route."""
+        from sqlalchemy import text
+
+        async with self._get_engine().connect() as conn:
+            rows = (
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT stage, stage_payload, succeeded, created_at "
+                            "FROM journey_traces WHERE correlation_id = :correlation_id "
+                            "ORDER BY created_at ASC"
+                        ),
+                        {"correlation_id": correlation_id},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return [dict(row) for row in rows]
+
     async def get_provider_executions(self, correlation_id: str) -> list[dict[str, Any]]:
         """Read path for the control-panel logs viewer's provider breakdown —
         the safe, structured answer to "which LLM/API handled this message",

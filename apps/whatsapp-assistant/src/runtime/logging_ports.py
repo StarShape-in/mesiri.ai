@@ -59,6 +59,14 @@ class MessageLogger(Protocol):
         """UPDATE the row's body_text column (e.g. after speech transcription)."""
         ...
 
+    async def link_workflow_instance(
+        self, *, correlation_id: str, workflow_instance_id: str
+    ) -> None:
+        """UPDATE the row's workflow_instance_id -- called whenever this
+        message started or resumed a workflow, so the logs viewer can group
+        the multi-turn interaction (e.g. voice expense -> confirmation)."""
+        ...
+
 
 class TraceLogger(Protocol):
     """Best-effort per-stage pipeline trace."""

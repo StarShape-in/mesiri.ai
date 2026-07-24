@@ -449,6 +449,13 @@ async def process_inbound_message(
             else:
                 await send_text(message.sender.wa_id, handled.reply_text)
             await _safe(mlog.log_reply(correlation_id=correlation_id, reply=handled.reply_text))
+            if handled.result.workflow_instance_id:
+                await _safe(
+                    mlog.link_workflow_instance(
+                        correlation_id=correlation_id,
+                        workflow_instance_id=handled.result.workflow_instance_id,
+                    )
+                )
 
             if isinstance(handled.result, WorkflowRunResult):
                 workflow_run = handled.result
@@ -673,6 +680,13 @@ async def process_inbound_message(
                     workflow_run = await workflow_runtime.start(planner_decision, canonical_event)
                     if context_debug:
                         log_workflow_run(workflow_run)
+                    if workflow_run.workflow_instance_id:
+                        await _safe(
+                            mlog.link_workflow_instance(
+                                correlation_id=correlation_id,
+                                workflow_instance_id=workflow_run.workflow_instance_id,
+                            )
+                        )
                     # Answering an inventory question ("how much cement is left?")
                     # means the next message is very likely a report about that
                     # same material ("40 bags of cement used...") -- bias the

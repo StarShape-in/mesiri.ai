@@ -128,6 +128,32 @@ class PostgresMessageLogger:
         except Exception:  # noqa: BLE001
             _log.exception("message_logger.update_context failed correlation_id=%s", correlation_id)
 
+    async def link_workflow_instance(
+        self, *, correlation_id: str, workflow_instance_id: str
+    ) -> None:
+        """UPDATE the row's workflow_instance_id -- called whenever this
+        message started or resumed a workflow, so the logs viewer can group
+        the multi-turn interaction (e.g. voice expense -> confirmation)."""
+        from sqlalchemy import text
+
+        try:
+            async with self._get_engine().begin() as conn:
+                await conn.execute(
+                    text(
+                        "UPDATE inbound_messages "
+                        "SET workflow_instance_id = CAST(:workflow_instance_id AS uuid) "
+                        "WHERE correlation_id = :correlation_id"
+                    ),
+                    {
+                        "correlation_id": correlation_id,
+                        "workflow_instance_id": workflow_instance_id,
+                    },
+                )
+        except Exception:  # noqa: BLE001
+            _log.exception(
+                "message_logger.link_workflow_instance failed correlation_id=%s", correlation_id
+            )
+
     async def mark_completed(self, *, correlation_id: str) -> None:
         from sqlalchemy import text
 
@@ -220,10 +246,12 @@ class PostgresMessageLogger:
             f"LEFT(COALESCE(im.body_text, ''), {_BODY_PREVIEW_LEN}) AS body_preview, "
             "im.processing_status, im.error_code, im.received_at, im.processed_at, "
             "im.acknowledged_at, im.acknowledged_by, im.raw_payload_captured, im.assistant_reply, "
-            "im.project_id, p.name AS project_name, im.site_id, s.name AS site_name "
+            "im.project_id, p.name AS project_name, im.site_id, s.name AS site_name, "
+            "im.workflow_instance_id, wi.workflow_key, wi.phase AS workflow_phase "
             "FROM inbound_messages im "
             "LEFT JOIN projects p ON p.id = im.project_id "
             "LEFT JOIN sites s ON s.id = im.site_id "
+            "LEFT JOIN workflow_instances wi ON wi.id = im.workflow_instance_id "
             f"WHERE {' AND '.join(where)} "
             f"ORDER BY {order_by} "
             "LIMIT :limit" + ("" if is_live_cursor else " OFFSET :offset")
@@ -254,10 +282,12 @@ class PostgresMessageLogger:
                             "im.body_text, im.raw_payload, im.normalized_message, im.media_object_key, "
                             "im.processing_status, im.error_code, im.received_at, im.processed_at, "
                             "im.raw_payload_captured, im.acknowledged_at, im.acknowledged_by, im.retry_of_id, im.assistant_reply, "
-                            "im.project_id, p.name AS project_name, im.site_id, s.name AS site_name "
+                            "im.project_id, p.name AS project_name, im.site_id, s.name AS site_name, "
+                            "im.workflow_instance_id, wi.workflow_key, wi.phase AS workflow_phase "
                             "FROM inbound_messages im "
                             "LEFT JOIN projects p ON p.id = im.project_id "
                             "LEFT JOIN sites s ON s.id = im.site_id "
+                            "LEFT JOIN workflow_instances wi ON wi.id = im.workflow_instance_id "
                             "WHERE im.id = :id"
                         ),
                         {"id": uuid.UUID(message_id)},

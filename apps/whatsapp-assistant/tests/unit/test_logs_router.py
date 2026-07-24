@@ -36,9 +36,13 @@ class FakeMessageLogger:
 @dataclass
 class FakeTraceLogger:
     rows_by_correlation: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    context_by_correlation: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
     async def get_by_correlation_id(self, correlation_id: str) -> list[dict[str, Any]]:
         return self.rows_by_correlation.get(correlation_id, [])
+
+    async def get_stage_context(self, correlation_id: str) -> list[dict[str, Any]]:
+        return self.context_by_correlation.get(correlation_id, [])
 
 
 def _token(*, role: str = "USER", org: str = "org_1") -> str:
@@ -182,3 +186,42 @@ async def test_get_trace_returns_stages_without_stage_payload():
     assert body[1]["succeeded"] is False
     assert body[1]["error_code"] == "SINGLE_ACTIVE_CONFLICT"
     assert all("stage_payload" not in entry for entry in body)
+
+
+async def test_get_context_rejects_tenant_admin():
+    app = _app(FakeMessageLogger(), FakeTraceLogger())
+    async with await _client(app) as client:
+        resp = await client.get(
+            "/admin/logs/messages/cor_1/context",
+            headers={"Authorization": f"Bearer {_token(role='ADMIN', org='org_1')}"},
+        )
+    assert resp.status_code == 403
+
+
+async def test_get_context_returns_full_stage_payload():
+    """Unlike /trace, /context is the one route that DOES return
+    stage_payload -- the control panel's AI Context panel."""
+    trace_logger = FakeTraceLogger(
+        context_by_correlation={
+            "cor_1": [
+                {
+                    "stage": "understanding",
+                    "succeeded": True,
+                    "created_at": datetime.now(UTC),
+                    "stage_payload": {"normalized_text": "20 bags of cement arrived"},
+                },
+            ]
+        }
+    )
+    app = _app(FakeMessageLogger(), trace_logger)
+    async with await _client(app) as client:
+        resp = await client.get(
+            "/admin/logs/messages/cor_1/context",
+            headers={"Authorization": f"Bearer {_token(role='ADMIN', org='')}"},
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    assert body[0]["stage"] == "understanding"
+    assert body[0]["stage_payload"] == {"normalized_text": "20 bags of cement arrived"}

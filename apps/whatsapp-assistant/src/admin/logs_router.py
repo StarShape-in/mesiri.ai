@@ -4,7 +4,7 @@ Platform-admin only (see mesiri.domains.shared.auth.require_platform_admin) --
 this exposes real customer message content and phone numbers. Reads through
 apps/whatsapp-assistant/src/backend/postgres/message_logger.py's list_recent/
 get_message_detail/acknowledge and trace_logger.py's get_by_correlation_id/
-get_provider_executions; this router adds no SQL of its own, per the
+get_provider_executions/get_stage_context; this router adds no SQL of its own, per the
 "one file owns a table's SQL" convention used throughout M8.
 """
 
@@ -39,6 +39,9 @@ class InboundMessageSummary(BaseModel):
     project_name: str | None = None
     site_id: uuid.UUID | None = None
     site_name: str | None = None
+    workflow_instance_id: uuid.UUID | None = None
+    workflow_key: str | None = None
+    workflow_phase: str | None = None
 
 
 class InboundMessageList(BaseModel):
@@ -68,6 +71,9 @@ class InboundMessageDetail(BaseModel):
     project_name: str | None = None
     site_id: uuid.UUID | None = None
     site_name: str | None = None
+    workflow_instance_id: uuid.UUID | None = None
+    workflow_key: str | None = None
+    workflow_phase: str | None = None
 
 
 class JourneyTraceEntry(BaseModel):
@@ -79,6 +85,13 @@ class JourneyTraceEntry(BaseModel):
     severity: str = "info"
     event_source: str = "pipeline_stage"
     created_at: datetime
+
+
+class StageContextEntry(BaseModel):
+    stage: str
+    succeeded: bool
+    created_at: datetime
+    stage_payload: dict | None = None
 
 
 class ProviderExecutionEntry(BaseModel):
@@ -150,6 +163,22 @@ async def get_message_trace(
     trace_logger = request.app.state.container.trace_logger
     rows = await trace_logger.get_by_correlation_id(correlation_id)
     return [JourneyTraceEntry(**row) for row in rows]
+
+
+@router.get("/messages/{correlation_id}/context", response_model=list[StageContextEntry])
+async def get_message_context(
+    request: Request,
+    correlation_id: str,
+    _admin: dict = Depends(require_platform_admin),
+) -> list[StageContextEntry]:
+    """The full per-stage AI context (understanding/resolved-context/
+    canonical-event/planner payloads) — deliberately kept on a separate route
+    from /trace, which excludes stage_payload by design (see trace_logger.py).
+    Same platform-admin guard as every other route here; this is the one
+    place a raw stage_payload is ever returned to the control panel."""
+    trace_logger = request.app.state.container.trace_logger
+    rows = await trace_logger.get_stage_context(correlation_id)
+    return [StageContextEntry(**row) for row in rows]
 
 
 @router.get("/messages/{correlation_id}/providers", response_model=list[ProviderExecutionEntry])
