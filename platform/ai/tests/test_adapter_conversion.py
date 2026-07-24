@@ -197,6 +197,64 @@ async def test_gemini_translate_raises_when_text_unchanged_for_non_english_sourc
     assert exc.value.error_code == "PROVIDER_MALFORMED_OUTPUT"
 
 
+async def test_gemini_translate_raises_when_reformatted_but_still_untranslated():
+    """Regression test: a THIRD silent-failure variant found live -- Gemini
+    reformatted punctuation/whitespace around otherwise-untouched Malayalam
+    words (the input ended in a Malayalam question mark; the "translation"
+    came back slightly different byte-for-byte but still 100% Malayalam),
+    dodging the exact-equality check while the words stayed untranslated.
+    _looks_untranslated (script-based, not string-equality) must catch this."""
+    original = "മച്ചാനേ, നമ്മുടെ ഗ്രീൻ വാലിയിൽ എന്തൊക്കെ ഉണ്ട് എന്ന് പറയാമോ?"
+    reformatted_but_still_malayalam = "മച്ചാനേ, നമ്മുടെ ഗ്രീൻ വാലിയിൽ എന്തൊക്കെ ഉണ്ട് എന്ന് പറയാമോ"  # noqa: RUF001
+
+    class _FakeModels:
+        def generate_content(self, *, model, contents, config=None):
+            return SimpleNamespace(
+                text=json.dumps(
+                    {
+                        "translated_text": reformatted_but_still_malayalam,
+                        "detected_language": "Malayalam",
+                    }
+                )
+            )
+
+    provider = GeminiProvider.__new__(GeminiProvider)
+    provider._settings = SimpleNamespace(model="gemini-test", timeout_seconds=5, max_retries=0)
+    provider._client = SimpleNamespace(models=_FakeModels())
+
+    with pytest.raises(MesiriError) as exc:
+        await provider.translate_to_english(original, correlation_id="cor_v")
+    assert exc.value.error_code == "PROVIDER_MALFORMED_OUTPUT"
+
+
+async def test_gemini_translate_allows_genuine_translation_with_small_untranslated_proper_noun():
+    """A real, working translation that leaves one proper noun in its
+    original script (e.g. a project name genuinely left untransliterated)
+    must NOT raise -- _looks_untranslated's 30% threshold exists precisely
+    so a small embedded non-Latin name doesn't false-positive against an
+    otherwise-correct English translation."""
+
+    class _FakeModels:
+        def generate_content(self, *, model, contents, config=None):
+            return SimpleNamespace(
+                text=json.dumps(
+                    {
+                        "translated_text": "How much cement is in stock at ഗ്രീൻവാലി?",
+                        "detected_language": "Malayalam",
+                    }
+                )
+            )
+
+    provider = GeminiProvider.__new__(GeminiProvider)
+    provider._settings = SimpleNamespace(model="gemini-test", timeout_seconds=5, max_retries=0)
+    provider._client = SimpleNamespace(models=_FakeModels())
+
+    result = await provider.translate_to_english(
+        "ഗ്രീൻവാലിയിൽ എത്ര സിമന്റ് ഉണ്ട്?", correlation_id=None
+    )
+    assert result.translated_text == "How much cement is in stock at ഗ്രീൻവാലി?"
+
+
 async def test_gemini_translate_allows_unchanged_text_when_source_is_already_english():
     """The prompt explicitly instructs returning the same text when the
     source is already English -- that legitimate no-op must NOT raise."""

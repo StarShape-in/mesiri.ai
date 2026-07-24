@@ -85,6 +85,24 @@ def _is_english(detected_language: object) -> bool:
     )
 
 
+def _looks_untranslated(translated_text: str) -> bool:
+    """True if the text is still predominantly non-Latin script.
+
+    A model that fails to translate can still vary punctuation/whitespace
+    around the same untranslated words (a stray trailing "?", a re-typed
+    quote), so an exact input/output string match is too easy to dodge
+    while the actual words stay untranslated -- live case: a message ending
+    in a Malayalam question mark came back with a *slightly* reformatted
+    "translation" that was still 100% Malayalam, and exact-equality missed
+    it entirely. Checking the script of the letters themselves is a much
+    harder signal to accidentally slip past."""
+    letters = [ch for ch in translated_text if ch.isalpha()]
+    if not letters:
+        return False
+    non_latin = sum(1 for ch in letters if ord(ch) > 0x024F)  # past Latin Extended-B
+    return (non_latin / len(letters)) > 0.3
+
+
 class GeminiProvider:
     provider = "gemini"
 
@@ -282,19 +300,23 @@ class GeminiProvider:
                 correlation_id=correlation_id,
             )
         detected_language = data.get("detected_language")
-        if not _is_english(detected_language) and translated_text.strip() == text.strip():
+        if not _is_english(detected_language) and (
+            translated_text.strip() == text.strip() or _looks_untranslated(translated_text)
+        ):
             # A SECOND, distinct silent-failure mode found live after the
             # fix above shipped: Gemini can return a *populated*
             # translated_text that's just the original non-English text
-            # echoed back verbatim (rather than omitting the key) --
-            # disproportionately likely for code-mixed input (a Malayalam
-            # sentence with an embedded English proper noun/project name).
-            # The prompt explicitly allows identical output only when the
-            # source is already English; anything else claiming "unchanged"
-            # is a translation that didn't happen, not a legitimate no-op.
+            # echoed back -- sometimes byte-for-byte, sometimes with a
+            # trivial punctuation/whitespace difference that dodges an
+            # exact-equality check while the words themselves stay
+            # completely untranslated (see _looks_untranslated). The
+            # prompt explicitly allows identical output only when the
+            # source is already English; anything else that's still
+            # unchanged or still non-Latin script is a translation that
+            # didn't happen, not a legitimate no-op.
             raise malformed_output(
                 "gemini",
-                f"translation returned unchanged text for detected_language={detected_language!r}",
+                f"translation returned untranslated text for detected_language={detected_language!r}",
                 correlation_id=correlation_id,
             )
         return TranslationResult(

@@ -34,6 +34,18 @@ def _is_english(detected_language: object) -> bool:
         _ENGLISH_LANGUAGE_LABELS
     )
 
+
+def _looks_untranslated(translated_text: str) -> bool:
+    """True if the text is still predominantly non-Latin script -- a much
+    harder signal to accidentally dodge than exact input/output equality
+    (a model can reformat punctuation/whitespace around otherwise-untouched
+    words). Mirrors the Gemini adapter's identical helper."""
+    letters = [ch for ch in translated_text if ch.isalpha()]
+    if not letters:
+        return False
+    non_latin = sum(1 for ch in letters if ord(ch) > 0x024F)  # past Latin Extended-B
+    return (non_latin / len(letters)) > 0.3
+
 _EXTRACTION_PROMPT = (
     "You extract structured construction-site data from a worker's message. "
     "Return STRICT JSON only, with keys: "
@@ -201,16 +213,18 @@ class DeepSeekExtractionProvider:
                 correlation_id=correlation_id,
             )
         detected_language = data.get("detected_language")
-        if not _is_english(detected_language) and translated_text.strip() == text.strip():
+        if not _is_english(detected_language) and (
+            translated_text.strip() == text.strip() or _looks_untranslated(translated_text)
+        ):
             # A second, distinct silent-failure mode: a *populated*
-            # translated_text that's just the original non-English text
-            # echoed back verbatim, rather than the key being omitted.
-            # See the Gemini adapter's identical guard for the live bug
-            # this closes (a Malayalam sentence with an embedded English
-            # proper noun/project name).
+            # translated_text that's still untranslated -- sometimes
+            # byte-for-byte identical, sometimes just reformatted
+            # punctuation/whitespace around otherwise-untouched words
+            # (see _looks_untranslated). See the Gemini adapter's
+            # identical guard for the live bug this closes.
             raise malformed_output(
                 "deepseek",
-                f"translation returned unchanged text for detected_language={detected_language!r}",
+                f"translation returned untranslated text for detected_language={detected_language!r}",
                 correlation_id=correlation_id,
             )
         return TranslationResult(
