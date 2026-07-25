@@ -38,6 +38,12 @@ class CanonicalEventType(str, Enum):
     GENERAL_QUESTION_ASKED = "GeneralQuestionAsked"
     IDENTITY_LOOKUP_REQUESTED = "IdentityLookupRequested"
     INVENTORY_QUERY_ASKED = "InventoryQueryAsked"
+    # Deterministic (non-AI) command, never produced by canonicalization/
+    # extraction -- constructed directly by
+    # runtime/account_admin_journey.py when it recognizes a "create/rename/
+    # deactivate account" phrase. Present here (rather than skipping the
+    # enum) so PlannerDecisionV2.reason and telemetry are accurate.
+    ACCOUNT_ADMIN_REQUESTED = "AccountAdminRequested"
     CLARIFICATION_REQUIRED = "ClarificationRequired"
     UNRECOGNIZED = "Unrecognized"
 

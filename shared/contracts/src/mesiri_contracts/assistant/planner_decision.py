@@ -54,6 +54,7 @@ class WorkflowKey(str, Enum):
     SITE_UPDATE = "site.update"
     WHO_AM_I = "who.am.i"
     MATERIAL_INVENTORY_QUERY = "material.inventory_query"
+    ACCOUNT_ADMIN = "finance.account_admin"
 
 
 class PlannerDecision(BaseModel):

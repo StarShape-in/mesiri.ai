@@ -20,4 +20,5 @@ WORKFLOW_KEY_BY_EVENT: dict[CanonicalEventType, WorkflowKey] = {
     CanonicalEventType.GENERAL_SITE_UPDATE_REQUESTED: WorkflowKey.SITE_UPDATE,
     CanonicalEventType.IDENTITY_LOOKUP_REQUESTED: WorkflowKey.WHO_AM_I,
     CanonicalEventType.INVENTORY_QUERY_ASKED: WorkflowKey.MATERIAL_INVENTORY_QUERY,
+    CanonicalEventType.ACCOUNT_ADMIN_REQUESTED: WorkflowKey.ACCOUNT_ADMIN,
 }

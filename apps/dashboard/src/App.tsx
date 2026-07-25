@@ -9,6 +9,7 @@ import Projects from '@/pages/Projects'
 import ProjectDetails from '@/pages/ProjectDetails'
 import FieldReportsPage from '@/pages/FieldReportsPage'
 import MaterialsPage from '@/pages/MaterialsPage'
+import ExpensesPage from '@/pages/ExpensesPage'
 import { OperationalPlaceholder } from '@/components/operational-placeholder'
 
 function IndexRedirect() {
@@ -38,7 +39,7 @@ export default function App() {
 
         {/* Finance Section */}
         <Route path="finance/overview" element={<OperationalPlaceholder title="Finance Overview" />} />
-        <Route path="finance/expenses" element={<OperationalPlaceholder title="Expenses" />} />
+        <Route path="finance/expenses" element={<ExpensesPage />} />
         <Route path="finance/accounts" element={<OperationalPlaceholder title="Accounts" />} />
         <Route path="finance/transactions" element={<OperationalPlaceholder title="Transactions" />} />
         <Route path="finance/petty-cash" element={<OperationalPlaceholder title="Petty Cash" />} />
@@ -61,7 +62,7 @@ export default function App() {
         <Route path="analytics" element={<OperationalPlaceholder title="Analytics" />} />
         <Route path="gallery" element={<OperationalPlaceholder title="Gallery" />} />
         <Route path="reports" element={<OperationalPlaceholder title="Reports" />} />
-        <Route path="expenses" element={<OperationalPlaceholder title="Expenses" />} />
+        <Route path="expenses" element={<ExpensesPage />} />
         <Route path="petty-cash" element={<OperationalPlaceholder title="Petty Cash" />} />
       </Route>
     </Routes>

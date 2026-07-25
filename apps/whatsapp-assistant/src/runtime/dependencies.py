@@ -15,6 +15,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from ingress.deduplication import InMemoryDeduplicationStore
 from ingress.media_ingestion import MetaMediaDownloader
 from ingress.receiver import InMemoryNormalizedMessageStore, WhatsAppReceiver
+from runtime.account_admin_journey import try_handle_account_admin_command
 from runtime.logging_ports import MessageLogger, TraceLogger
 
 if TYPE_CHECKING:
@@ -226,6 +227,23 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         resolver=PostgresExpenseCategoryResolver(),
     )
     expense_dispatcher = ExpenseExecutionDispatcher(expense_execution_handler)
+    # Account admin (Finance Module Slice 6, account-admin scope): same
+    # in-process capability-boundary wiring as Expenses above. The resolver
+    # finds the existing account by name for rename/deactivate, or checks
+    # for a name collision on create.
+    from mesiri.application.finance.dispatcher import AccountAdminExecutionDispatcher
+    from mesiri.application.finance.handlers import ManageMoneyAccountHandler
+    from mesiri.application.finance.resolution import PostgresAccountLookupResolver
+    from mesiri.infrastructure.postgres.repositories.account_admin_execution import (
+        PostgresAccountAdminExecutionRepository,
+    )
+
+    account_admin_execution_handler = ManageMoneyAccountHandler(
+        PostgresAccountAdminExecutionRepository(),
+        db=material_db,
+        resolver=PostgresAccountLookupResolver(),
+    )
+    account_admin_dispatcher = AccountAdminExecutionDispatcher(account_admin_execution_handler)
     # Routes a confirmed action to the dispatcher registered for its
     # action_type -- InteractionHandler only ever holds one ExecutionDispatcher.
     from interactions.execution_router import ActionTypeRoutingDispatcher
@@ -236,6 +254,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             DraftActionType.RECORD_MATERIAL_RECEIPT: material_dispatcher,
             DraftActionType.RECORD_MATERIAL_USAGE: material_dispatcher,
             DraftActionType.RECORD_EXPENSE: expense_dispatcher,
+            DraftActionType.MANAGE_MONEY_ACCOUNT: account_admin_dispatcher,
         }
     )
     # Read-only inventory lookups for the material.inventory_query workflow --
@@ -489,6 +508,31 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
                 project_id=slot_handled.project_id,
                 site_id=slot_handled.site_id,
             )
+            await message_logger.mark_completed(correlation_id=message.correlation_id)
+            return
+
+        # Deterministic "create/rename/deactivate account" command (Finance
+        # Module Slice 6, account-admin scope) -- bypasses the AI pipeline
+        # entirely, same priority as the slot-answer/confirmation fast paths
+        # above. See runtime/account_admin_journey.py.
+        try:
+            account_admin_handled = await try_handle_account_admin_command(
+                message, ctx, workflow_runtime
+            )
+        except Exception:  # noqa: BLE001 — a resume error must not drop the message
+            _log.exception("account_admin.command_failed user=%s", ctx.user_id)
+            account_admin_handled = None
+        if account_admin_handled is not None:
+            await sender.send_text(wa_id, account_admin_handled.reply_text)
+            await message_logger.log_reply(
+                correlation_id=message.correlation_id, reply=account_admin_handled.reply_text
+            )
+            run = account_admin_handled.workflow_run
+            if run is not None and run.workflow_instance_id:
+                await message_logger.link_workflow_instance(
+                    correlation_id=message.correlation_id,
+                    workflow_instance_id=run.workflow_instance_id,
+                )
             await message_logger.mark_completed(correlation_id=message.correlation_id)
             return
 
