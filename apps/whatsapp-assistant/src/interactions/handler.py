@@ -24,6 +24,7 @@ from dataclasses import dataclass
 
 from backend.ports import ActorIdentity
 from channel.replies import (
+    IMAGE_PURPOSE_SEMANTIC_HINT,
     ReplySpec,
     render_category_prompt,
     render_greeting_menu,
@@ -232,6 +233,28 @@ class InteractionHandler:
         if row_id == "dir_used":
             return render_material_direction_followup("used")
         return None
+
+    def handle_image_purpose_tap(self, message: NormalizedMessage) -> str | None:
+        """A tap on the "what is this photo for?" list (see
+        channel/replies.IMAGE_PURPOSE_ROWS, sent when a genuinely new image
+        arrives -- see runtime/dependencies.py). Deterministic, same
+        principle as handle_category_tap. Returns the raw row_id (not yet
+        the semantic hint) so the caller can special-case "img_site_update"
+        (not wired to a real workflow yet -- see
+        channel.replies.render_image_purpose_coming_soon) separately from
+        "img_expense" (re-processes the held image via
+        IMAGE_PURPOSE_SEMANTIC_HINT).
+
+        Returns None for anything that isn't a recognized menu tap, so the
+        caller falls through to the normal journey exactly like the other
+        fast-path checks.
+        """
+        if message.modality is not InputModality.INTERACTIVE:
+            return None
+        row_id = message.metadata.get("interactive_reply_id")
+        if row_id not in IMAGE_PURPOSE_SEMANTIC_HINT:
+            return None
+        return row_id
 
     def handle_greeting_trigger(
         self, message: NormalizedMessage, *, timezone: str | None = None

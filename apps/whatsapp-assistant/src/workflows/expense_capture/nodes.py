@@ -124,13 +124,23 @@ def build_draft(state: WorkflowGraphState) -> dict:
     return {"draft_action": draft}
 
 
+# Kept in draft.fields (the backend needs it -- see RecordExpenseCommand.
+# media_object_key) but never shown as a raw key:value line; a "📎 Receipt
+# attached" note is shown instead, below.
+_DISPLAY_HIDDEN_FIELD_KEYS = frozenset({"media_object_key"})
+
+
 def request_confirmation(state: WorkflowGraphState) -> dict:
     """Compose the confirmation prompt. Deterministic formatting only — no
     localization/templates/AI generation here (see workflows/material/nodes.py)."""
     draft: DraftActionV2 = state["draft_action"]
     lines = ["*Confirm this record?*", "", "💸 Expense"]
     for key, value in draft.fields.items():
+        if key in _DISPLAY_HIDDEN_FIELD_KEYS:
+            continue
         lines.append(f"   • {key}: {value}")
+    if draft.fields.get("media_object_key"):
+        lines.append("   • 📎 Receipt attached")
     lines.append("")
     lines.append("Reply YES to confirm or NO to cancel.")
     return {"pending_prompt": "\n".join(lines)}

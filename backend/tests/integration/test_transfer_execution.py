@@ -91,6 +91,8 @@ async def scenario(engine: AsyncEngine):
     async with engine.begin() as conn:
         await conn.execute(sa.text("DELETE FROM money_transactions WHERE organization_id = :id"), {"id": org_id})
         await conn.execute(sa.text("DELETE FROM money_accounts WHERE organization_id = :id"), {"id": org_id})
+        await conn.execute(sa.text("DELETE FROM users WHERE organization_id = :id"), {"id": org_id})
+        await conn.execute(sa.text("DELETE FROM idempotency_keys WHERE command_type = 'transfer_money'"))
         await conn.execute(sa.text("DELETE FROM organizations WHERE id = :id"), {"id": org_id})
 
 
