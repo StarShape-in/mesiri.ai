@@ -69,6 +69,7 @@ users_table = sa.Table(
     sa.Column("hashed_password", sa.String),
     sa.Column("full_name", sa.String),
     sa.Column("role", sa.String),
+    sa.Column("status", sa.String),
     sa.Column("whatsapp_number", sa.String),
     sa.Column("access_policy", sa.JSON),
 )
@@ -124,9 +125,14 @@ class OrgUserResponse(BaseModel):
     full_name: str | None = None
     email: str | None = None
     role: str | None = None
+    status: str = "Active"
     whatsapp_number: str | None = None
     access_mode: str = "custom_projects"
     project_access: list[ProjectAccessGrant] = []
+
+
+class UserStatusUpdate(BaseModel):
+    status: str
 
 
 # ---------------------------------------------------------------------------
@@ -245,41 +251,38 @@ async def list_organization_timeline(
     return {"items": items, "total": total}
 
 
-@router.get("/{org_id}/users", response_model=list[OrgUserResponse])
-async def list_organization_users(
-    org_id: uuid.UUID, _admin: dict = Depends(require_platform_admin)
-):
-    """Users belonging to one org — powers the "run as" picker in the control-plane
-    test harness (admin/system_graph_router.py). Only users with a
-    whatsapp_number can actually be simulated; the caller marks the rest as
-    untestable."""
-    engine = get_engine()
-    async with engine.connect() as conn:
-        result = await conn.execute(
-            sa.select(
-                users_table.c.id,
-                users_table.c.full_name,
-                users_table.c.email,
-                users_table.c.role,
-                users_table.c.whatsapp_number,
-                users_table.c.access_policy,
-            ).where(users_table.c.organization_id == org_id)
-        )
-        rows = result.fetchall()
+async def _fetch_org_users(
+    conn, org_id: uuid.UUID, user_id: uuid.UUID | None = None
+) -> list[OrgUserResponse]:
+    query = sa.select(
+        users_table.c.id,
+        users_table.c.full_name,
+        users_table.c.email,
+        users_table.c.role,
+        users_table.c.status,
+        users_table.c.whatsapp_number,
+        users_table.c.access_policy,
+    ).where(users_table.c.organization_id == org_id)
 
-        project_rows = await conn.execute(
-            sa.select(projects_table.c.id, projects_table.c.name).where(
-                projects_table.c.organization_id == org_id
-            )
-        )
-        project_names = {row.id: row.name for row in project_rows.fetchall()}
+    if user_id is not None:
+        query = query.where(users_table.c.id == user_id)
 
-        site_rows = await conn.execute(
-            sa.select(sites_table.c.id, sites_table.c.name).where(
-                sites_table.c.organization_id == org_id
-            )
+    result = await conn.execute(query)
+    rows = result.fetchall()
+
+    project_rows = await conn.execute(
+        sa.select(projects_table.c.id, projects_table.c.name).where(
+            projects_table.c.organization_id == org_id
         )
-        site_names = {row.id: row.name for row in site_rows.fetchall()}
+    )
+    project_names = {row.id: row.name for row in project_rows.fetchall()}
+
+    site_rows = await conn.execute(
+        sa.select(sites_table.c.id, sites_table.c.name).where(
+            sites_table.c.organization_id == org_id
+        )
+    )
+    site_names = {row.id: row.name for row in site_rows.fetchall()}
 
     users = []
     for row in rows:
@@ -321,12 +324,62 @@ async def list_organization_users(
                 full_name=row.full_name,
                 email=row.email,
                 role=row.role,
+                status=row.status or "Active",
                 whatsapp_number=row.whatsapp_number,
                 access_mode=mode,
                 project_access=grants,
             )
         )
     return users
+
+
+@router.get("/{org_id}/users", response_model=list[OrgUserResponse])
+async def list_organization_users(
+    org_id: uuid.UUID, _admin: dict = Depends(require_platform_admin)
+):
+    """Users belonging to one org — powers the "run as" picker in the control-plane
+    test harness (admin/system_graph_router.py). Only users with a
+    whatsapp_number can actually be simulated; the caller marks the rest as
+    untestable."""
+    engine = get_engine()
+    async with engine.connect() as conn:
+        return await _fetch_org_users(conn, org_id)
+
+
+@router.patch("/{org_id}/users/{user_id}/status", response_model=OrgUserResponse)
+async def update_organization_user_status(
+    org_id: uuid.UUID,
+    user_id: uuid.UUID,
+    body: UserStatusUpdate,
+    _admin: dict = Depends(require_platform_admin),
+):
+    valid_statuses = {"active", "inactive", "suspended"}
+    if body.status.lower() not in valid_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status '{body.status}'. Must be one of {sorted(valid_statuses)}",
+        )
+
+    normalized_status = body.status.capitalize()
+    engine = get_engine()
+    async with engine.begin() as conn:
+        result = await conn.execute(
+            sa.select(users_table.c.id).where(
+                users_table.c.id == user_id, users_table.c.organization_id == org_id
+            )
+        )
+        if result.first() is None:
+            raise HTTPException(status_code=404, detail="User not found in this organization")
+
+        await conn.execute(
+            users_table.update()
+            .where(users_table.c.id == user_id, users_table.c.organization_id == org_id)
+            .values(status=normalized_status)
+        )
+        fetched = await _fetch_org_users(conn, org_id, user_id)
+        if not fetched:
+            raise HTTPException(status_code=404, detail="User not found after update")
+        return fetched[0]
 
 
 @router.delete("/{org_id}/users/{user_id}", status_code=204)

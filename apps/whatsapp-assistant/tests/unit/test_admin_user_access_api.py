@@ -245,3 +245,41 @@ async def test_validate_access_policy_rejects_site_from_different_project():
 
     assert exc.value.status_code == 400
     assert "outside project" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_update_organization_user_status(monkeypatch):
+    from admin import router as admin_router
+    from admin.router import UserStatusUpdate
+
+    org_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+
+    conn = _Conn(
+        [
+            [SimpleNamespace(id=user_id)],  # select user check
+            [],  # update status query execution
+            [
+                SimpleNamespace(
+                    id=user_id,
+                    full_name="Jane Doe",
+                    email="jane@example.com",
+                    role="MEMBER",
+                    status="Inactive",
+                    whatsapp_number="+1234567890",
+                    access_policy=None,
+                )
+            ],  # fetch user rows
+            [],  # fetch project rows
+            [],  # fetch site rows
+        ]
+    )
+    monkeypatch.setattr(admin_router, "get_engine", lambda: _Engine(conn))
+
+    res = await admin_router.update_organization_user_status(
+        org_id, user_id, UserStatusUpdate(status="inactive")
+    )
+
+    assert res.id == user_id
+    assert res.status == "Inactive"
+
