@@ -190,11 +190,50 @@ const INITIAL_VOUCHERS: PettyCashVoucherItem[] = [
 type SortField = 'date' | 'amount' | 'voucher_number'
 type SortOrder = 'asc' | 'desc'
 
+import { fetchAccountsApi } from '@/lib/api'
+
 export default function PettyCashPage() {
   const { scope } = useScope()
 
   const [cashBoxes, setCashBoxes] = React.useState<SiteCashBoxItem[]>(INITIAL_CASH_BOXES)
   const [vouchers, setVouchers] = React.useState<PettyCashVoucherItem[]>(INITIAL_VOUCHERS)
+
+  React.useEffect(() => {
+    let active = true
+    async function loadBackendPettyCash() {
+      try {
+        const data = await fetchAccountsApi({
+          project_id: scope.mode !== 'portfolio' ? scope.projectId : undefined,
+          site_id: scope.mode === 'site' ? scope.siteId : undefined,
+        })
+        if (active && Array.isArray(data) && data.length > 0) {
+          const pettyBoxes = data.filter((a: any) => a.account_type === 'petty_cash')
+          if (pettyBoxes.length > 0) {
+            const mappedBoxes: SiteCashBoxItem[] = pettyBoxes.map((b: any, idx: number) => ({
+              id: b.id || `cb_real_${idx}`,
+              name: b.name || 'Site Float',
+              opening_balance: parseFloat(b.opening_balance) || 100000,
+              current_balance: parseFloat(b.current_balance) || 50000,
+              disbursed_month: 25000,
+              custodian_name: b.custodian_name || 'Site Supervisor',
+              project_id: b.project_id,
+              project_name: b.project_name || 'Project Site',
+              site_id: b.site_id,
+              site_name: b.site_name,
+              status: 'active',
+            }))
+            setCashBoxes(mappedBoxes)
+          }
+        }
+      } catch (err) {
+        console.warn('Live backend petty cash fetch unavailable, fallback mock data active:', err)
+      }
+    }
+    loadBackendPettyCash()
+    return () => {
+      active = false
+    }
+  }, [scope])
 
   const [search, setSearch] = React.useState('')
   const [categoryFilter, setCategoryFilter] = React.useState('ALL')

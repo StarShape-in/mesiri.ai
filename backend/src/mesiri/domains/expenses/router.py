@@ -102,6 +102,42 @@ async def record_expense(
     )
 
 
+@router.get("", response_model=list[ExpenseResponse])
+async def list_expenses(
+    project_id: uuid.UUID | None = None,
+    site_id: uuid.UUID | None = None,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    repo = PostgresExpenseRepository(conn)
+    items = await repo.list_confirmed(
+        auth_context.organization_id,
+        project_id=project_id,
+        site_id=site_id,
+    )
+    return [
+        ExpenseResponse(
+            id=item.id,
+            organization_id=item.organization_id,
+            project_id=item.project_id,
+            site_id=item.site_id,
+            category_id=item.category_id,
+            amount=item.amount,
+            currency=item.currency,
+            description=item.description,
+            occurred_date=item.occurred_date,
+            occurred_time=item.occurred_time,
+            workflow_status=item.workflow_status,
+            payment_status=item.payment_status,
+            source=item.source,
+            source_message_id=item.source_message_id,
+            correlation_id=item.correlation_id,
+            created_by=item.created_by,
+        )
+        for item in items
+    ]
+
+
 @router.get("/{expense_id}", response_model=ExpenseResponse)
 async def get_expense(
     expense_id: uuid.UUID,

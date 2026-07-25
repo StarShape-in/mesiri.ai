@@ -440,6 +440,11 @@ export async function fetchExpenseApi(expenseId: string) {
   return res.data
 }
 
+export async function fetchExpensesApi(params?: { project_id?: string; site_id?: string }) {
+  const res = await api.get('/expenses', { params })
+  return res.data
+}
+
 export interface CreateAccountApiPayload {
   name: string
   account_type: 'bank_account' | 'petty_cash' | 'corporate_card' | 'digital_wallet'

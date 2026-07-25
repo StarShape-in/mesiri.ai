@@ -203,6 +203,8 @@ const INITIAL_EXPENSES: ExpenseItem[] = [
 type SortField = 'date' | 'amount' | 'number' | 'category'
 type SortOrder = 'asc' | 'desc'
 
+import { fetchExpensesApi } from '@/lib/api'
+
 export default function ExpensesPage() {
   const { scope } = useScope()
 
@@ -212,6 +214,43 @@ export default function ExpensesPage() {
   const [paymentStatusFilter, setPaymentStatusFilter] = React.useState('ALL')
   const [sourceFilter, setSourceFilter] = React.useState('ALL')
   const [datePreset, setDatePreset] = React.useState('ALL')
+
+  React.useEffect(() => {
+    let active = true
+    async function loadBackendExpenses() {
+      try {
+        const rawData = await fetchExpensesApi({
+          project_id: scope.mode !== 'portfolio' ? scope.projectId : undefined,
+          site_id: scope.mode === 'site' ? scope.siteId : undefined,
+        })
+        if (active && Array.isArray(rawData) && rawData.length > 0) {
+          const mapped: ExpenseItem[] = rawData.map((item: any, idx: number) => ({
+            id: item.id || `exp_real_${idx}`,
+            expense_number: `EXP-${item.id ? item.id.slice(0, 4).toUpperCase() : 1000 + idx}`,
+            amount: parseFloat(item.amount) || 0,
+            currency: item.currency || 'INR',
+            category_name: item.category_id || 'General Expense',
+            category_id: item.category_id || 'general',
+            description: item.description || 'Recorded Expense',
+            vendor_name: 'Direct Payee',
+            occurred_date: item.occurred_date || new Date().toISOString().split('T')[0],
+            payment_status: item.payment_status === 'paid' ? 'paid' : item.payment_status === 'partially_paid' ? 'partially_paid' : 'unpaid',
+            workflow_status: item.workflow_status === 'reversed' ? 'reversed' : item.workflow_status === 'pending' ? 'pending' : 'confirmed',
+            source: item.source === 'whatsapp' ? 'whatsapp' : 'web',
+            project_name: scope.mode === 'portfolio' ? 'Org Wide' : scope.projectName,
+            site_name: scope.mode === 'site' ? scope.siteName : 'All Sites',
+          }))
+          setExpenses(mapped)
+        }
+      } catch (err) {
+        console.warn('Live backend expenses fetch unavailable, fallback mock data active:', err)
+      }
+    }
+    loadBackendExpenses()
+    return () => {
+      active = false
+    }
+  }, [scope])
 
   // Selection & Bulk Action state
   const [selectedIds, setSelectedIds] = React.useState<string[]>([])
