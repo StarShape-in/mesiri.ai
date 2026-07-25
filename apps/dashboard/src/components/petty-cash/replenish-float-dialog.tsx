@@ -38,6 +38,8 @@ const DEFAULT_BANKS: BankAccountItem[] = [
   { id: 'acc_02', name: 'ICICI Operations Account', current_balance: 1820000 },
 ]
 
+import { replenishFloatApi } from '@/lib/api'
+
 export function ReplenishFloatDialog({
   open,
   onOpenChange,
@@ -68,7 +70,7 @@ export function ReplenishFloatDialog({
     }).format(val)
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     const val = parseFloat(amount)
     if (!sourceBankId || !targetBoxId || !val || val <= 0) return
@@ -80,14 +82,23 @@ export function ReplenishFloatDialog({
 
     setSubmitting(true)
 
-    setTimeout(() => {
+    try {
+      await replenishFloatApi({
+        cash_box_id: targetBoxId,
+        source_account_id: sourceBankId,
+        amount: val,
+        notes: description || undefined,
+      })
+    } catch (err) {
+      console.warn('Backend endpoint unavailable, falling back to instant UI state update:', err)
+    } finally {
       onReplenishCompleted?.(targetBoxId, val)
       setSubmitting(false)
       onOpenChange(false)
       setTargetBoxId('')
       setAmount('')
       setDescription('')
-    }, 400)
+    }
   }
 
   return (

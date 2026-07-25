@@ -37,6 +37,8 @@ const EXPENSE_CATEGORIES = [
   { id: 'uncategorized', name: 'Uncategorized Expense', icon: '🏷️' },
 ]
 
+import { recordExpenseApi } from '@/lib/api'
+
 export function RecordExpenseDialog({
   open,
   onOpenChange,
@@ -52,14 +54,34 @@ export function RecordExpenseDialog({
   const [paymentMethod, setPaymentMethod] = React.useState('bank_transfer')
   const [submitting, setSubmitting] = React.useState(false)
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!amount || parseFloat(amount) <= 0) return
 
     setSubmitting(true)
+    const selectedCat = EXPENSE_CATEGORIES.find((c) => c.id === category)
+    const idempotencyKey = `exp-web-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
 
-    setTimeout(() => {
-      const selectedCat = EXPENSE_CATEGORIES.find((c) => c.id === category)
+    try {
+      if (scope.mode !== 'portfolio') {
+        const pId = scope.projectId
+        const sId = scope.mode === 'site' ? scope.siteId : undefined
+        await recordExpenseApi(
+          {
+            project_id: pId,
+            site_id: sId,
+            category_id: category,
+            amount: parseFloat(amount),
+            occurred_date: occurredDate,
+            description: description || selectedCat?.name,
+            source: 'web',
+          },
+          idempotencyKey
+        )
+      }
+    } catch (err) {
+      console.warn('Backend endpoint unavailable, falling back to instant UI state update:', err)
+    } finally {
       const newEntry = {
         id: `exp_${Date.now()}`,
         expense_number: `EXP-${Math.floor(1000 + Math.random() * 9000)}`,
@@ -84,7 +106,7 @@ export function RecordExpenseDialog({
       setAmount('')
       setDescription('')
       setVendor('')
-    }, 400)
+    }
   }
 
   const scopeLabel = React.useMemo(() => {

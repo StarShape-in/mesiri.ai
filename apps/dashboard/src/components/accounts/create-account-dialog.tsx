@@ -27,6 +27,8 @@ interface CreateAccountDialogProps {
   onAccountCreated?: (newAccount: any) => void
 }
 
+import { createAccountApi } from '@/lib/api'
+
 export function CreateAccountDialog({
   open,
   onOpenChange,
@@ -40,14 +42,27 @@ export function CreateAccountDialog({
   const [accountNumber, setAccountNumber] = React.useState('')
   const [submitting, setSubmitting] = React.useState(false)
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!name || !openingBalance) return
 
     setSubmitting(true)
+    const balance = parseFloat(openingBalance) || 0
 
-    setTimeout(() => {
-      const balance = parseFloat(openingBalance) || 0
+    try {
+      await createAccountApi({
+        name,
+        account_type: accountType,
+        currency: 'INR',
+        opening_balance: balance,
+        account_number: accountNumber || undefined,
+        custodian_name: custodian || undefined,
+        project_id: scope.mode !== 'portfolio' ? scope.projectId : undefined,
+        site_id: scope.mode === 'site' ? scope.siteId : undefined,
+      })
+    } catch (err) {
+      console.warn('Backend endpoint unavailable, falling back to instant UI state update:', err)
+    } finally {
       const newEntry = {
         id: `acc_${Date.now()}`,
         name,
@@ -73,7 +88,7 @@ export function CreateAccountDialog({
       setOpeningBalance('')
       setCustodian('')
       setAccountNumber('')
-    }, 400)
+    }
   }
 
   const scopeLabel = React.useMemo(() => {

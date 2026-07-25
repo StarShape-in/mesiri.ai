@@ -415,4 +415,93 @@ export async function fetchUserWhatsAppMessageDetail(
   return res.data
 }
 
+// --- Finance, Expenses, Accounts, and Petty Cash API Integrations ---
+
+export interface RecordExpenseApiPayload {
+  project_id: string
+  category_id: string
+  amount: number
+  occurred_date: string
+  site_id?: string
+  currency?: string
+  description?: string
+  source?: string
+}
+
+export async function recordExpenseApi(payload: RecordExpenseApiPayload, idempotencyKey: string) {
+  const res = await api.post('/expenses', payload, {
+    headers: { 'Idempotency-Key': idempotencyKey },
+  })
+  return res.data
+}
+
+export async function fetchExpenseApi(expenseId: string) {
+  const res = await api.get(`/expenses/${expenseId}`)
+  return res.data
+}
+
+export interface CreateAccountApiPayload {
+  name: string
+  account_type: 'bank_account' | 'petty_cash' | 'corporate_card' | 'digital_wallet'
+  currency: string
+  opening_balance: number
+  account_number?: string
+  bank_name?: string
+  ifsc_code?: string
+  custodian_name?: string
+  project_id?: string
+  site_id?: string
+}
+
+export async function createAccountApi(payload: CreateAccountApiPayload) {
+  const res = await api.post('/company/finance/accounts', payload)
+  return res.data
+}
+
+export async function fetchAccountsApi(params?: { project_id?: string; site_id?: string }) {
+  const res = await api.get('/company/finance/accounts', { params })
+  return res.data
+}
+
+export interface TransferMoneyApiPayload {
+  from_account_id: string
+  to_account_id: string
+  amount: number
+  description?: string
+  occurred_date?: string
+}
+
+export async function transferMoneyApi(payload: TransferMoneyApiPayload, idempotencyKey: string) {
+  const res = await api.post('/company/finance/transfers', payload, {
+    headers: { 'Idempotency-Key': idempotencyKey },
+  })
+  return res.data
+}
+
+export interface RecordVoucherApiPayload {
+  cash_box_id: string
+  amount: number
+  category: string
+  vendor_name?: string
+  description: string
+  date: string
+}
+
+export async function recordVoucherApi(payload: RecordVoucherApiPayload) {
+  const res = await api.post('/company/finance/petty-cash/vouchers', payload)
+  return res.data
+}
+
+export interface ReplenishFloatApiPayload {
+  cash_box_id: string
+  source_account_id: string
+  amount: number
+  notes?: string
+}
+
+export async function replenishFloatApi(payload: ReplenishFloatApiPayload) {
+  const res = await api.post('/company/finance/petty-cash/replenish', payload)
+  return res.data
+}
+
 

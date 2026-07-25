@@ -144,6 +144,8 @@ const INITIAL_ACCOUNTS: MoneyAccountItem[] = [
 type SortField = 'name' | 'balance' | 'type'
 type SortOrder = 'asc' | 'desc'
 
+import { fetchAccountsApi } from '@/lib/api'
+
 export default function AccountsPage() {
   const { scope } = useScope()
 
@@ -152,6 +154,27 @@ export default function AccountsPage() {
   const [typeFilter, setTypeFilter] = React.useState('ALL')
   const [statusFilter, setStatusFilter] = React.useState('ALL')
   const [viewMode, setViewMode] = React.useState<'grid' | 'table'>('grid')
+
+  React.useEffect(() => {
+    let active = true
+    async function loadBackendAccounts() {
+      try {
+        const data = await fetchAccountsApi({
+          project_id: scope.mode !== 'portfolio' ? scope.projectId || undefined : undefined,
+          site_id: scope.mode === 'site' ? scope.siteId || undefined : undefined,
+        })
+        if (active && Array.isArray(data) && data.length > 0) {
+          setAccounts(data)
+        }
+      } catch (err) {
+        console.warn('Live backend accounts fetch unavailable, fallback data active:', err)
+      }
+    }
+    loadBackendAccounts()
+    return () => {
+      active = false
+    }
+  }, [scope])
 
   // Selection state
   const [selectedIds, setSelectedIds] = React.useState<string[]>([])
