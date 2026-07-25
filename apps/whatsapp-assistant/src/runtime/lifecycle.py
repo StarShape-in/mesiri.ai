@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 import httpx
 from fastapi import FastAPI
 
+from context.reconcile_watchdog import watchdog_enabled, watchdog_loop
 from ingress.webhook import router as webhook_router
 from runtime.dependencies import Settings, build_container
 
@@ -37,10 +39,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await app.state.container.redis_client.connect()
             # M8: connect the Material execution transaction owner.
             await app.state.container.material_db.connect()
+
+            # Context-sync watchdog: dashboard project/site assignment changes
+            # are projected into the context layer best-effort (see
+            # context/projection_hooks.py, which swallows failures so a
+            # projection error can't fail the dashboard request). This
+            # periodically re-runs the idempotent reconcile so drift repairs
+            # itself, and records every run so a failing watchdog is visible
+            # instead of being the same silent failure one level up.
+            # A Postgres advisory lock inside the loop keeps the two uvicorn
+            # workers (infra/mesiri.service) from both running it.
+            reconcile_task = None
+            if watchdog_enabled():
+                reconcile_task = asyncio.create_task(watchdog_loop())
+            else:
+                logger.info("Context reconcile watchdog disabled by configuration")
+
             logger.info("WhatsApp assistant runtime initialized")
             try:
                 yield
             finally:
+                if reconcile_task is not None:
+                    reconcile_task.cancel()
+                    # Swallow the CancelledError the task raises on shutdown;
+                    # it's the expected way the loop stops, not an error.
+                    with suppress(asyncio.CancelledError):
+                        await reconcile_task
                 await app.state.container.material_db.disconnect()
                 await app.state.container.redis_client.disconnect()
                 # Only closes anything if a render actually happened (the
@@ -86,6 +110,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         import logging
 
         logging.getLogger(__name__).warning("Logs router not loaded: %s", exc)
+
+    # Context-sync watchdog status/history (platform-admin only)
+    try:
+        from admin.reconcile_router import router as reconcile_router
+
+        app.include_router(reconcile_router)
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("Reconcile router not loaded: %s", exc)
 
     # System graph — assistant pipeline visualization (platform-admin only)
     try:
@@ -166,5 +200,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         import logging
 
         logging.getLogger(__name__).warning("Timeline router not loaded: %s", exc)
+
+    # Company / tenant settings routes (dashboard Company Details screen)
+    try:
+        from mesiri.domains.organizations.router import router as organizations_router
+
+        app.include_router(organizations_router)
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("Organizations router not loaded: %s", exc)
 
     return app

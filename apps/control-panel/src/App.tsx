@@ -15,7 +15,8 @@ import {
   GitBranch,
   Tags,
   ListChecks,
-  FlaskConical
+  FlaskConical,
+  HeartPulse
 } from 'lucide-react';
 import { api } from './api';
 import { RequireAuth } from './AuthContext';
@@ -29,6 +30,7 @@ import SemanticTypes from './SemanticTypes';
 import Workflows from './Workflows';
 import TestMessage from './TestMessage';
 import OrganizationDetail from './OrganizationDetail';
+import SyncHealth from './SyncHealth';
 
 const Sidebar = () => (
   <div className="sidebar">
@@ -55,6 +57,10 @@ const Sidebar = () => (
       <NavLink to="/providers" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
         <Cpu size={16} />
         AI Providers
+      </NavLink>
+      <NavLink to="/sync-health" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+        <HeartPulse size={16} />
+        Sync Health
       </NavLink>
       <NavLink to="/system-graph" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
         <GitBranch size={16} />
@@ -321,6 +327,7 @@ function AppLayout() {
             <Route path="/organizations/:id" element={<OrganizationDetail />} />
             <Route path="/logs" element={<Logs />} />
             <Route path="/providers" element={<Providers />} />
+            <Route path="/sync-health" element={<SyncHealth />} />
             <Route path="/system-graph" element={<SystemGraph />} />
             <Route path="/semantic-types" element={<SemanticTypes />} />
             <Route path="/workflows" element={<Workflows />} />
