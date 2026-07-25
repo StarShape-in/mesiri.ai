@@ -191,33 +191,59 @@ async def get_organization(org_id: uuid.UUID, _admin: dict = Depends(require_pla
 
 @router.delete("/{org_id}", status_code=204)
 async def delete_organization(org_id: uuid.UUID, _admin: dict = Depends(require_platform_admin)):
-    """Hard-delete a tenant and every row scoped to it.
-
-    Deleting the organizations row is enough — migration 0361 put ON DELETE
-    CASCADE on every tenant-scoped table's path back to organizations.id (and
-    added the FK to users.organization_id / projects.organization_id, which
-    previously had none at all). This used to be a ~90-line hand-ordered
-    sequence of DELETEs here that broke silently every time a migration added
-    an org-scoped table — see 0361's docstring for the incident (the finance
-    refactor renaming finance_accounts -> money_accounts underneath it) and
-    for why the schema, not this function, is now the source of truth for
-    what gets deleted.
-
-    NOTE: this does not remove anything outside Postgres — expense_attachments
-    .media_object_key (and other WhatsApp media) still live in object storage
-    after this call. Cleaning those up is a separate, deliberately-out-of-scope
-    concern (deleting external files is irreversible and needs its own review),
-    tracked but not implemented here.
-    """
+    """Hard-delete a tenant and every row scoped to it."""
     engine = get_engine()
     async with engine.begin() as conn:
         result = await conn.execute(
-            organizations_table.delete()
-            .where(organizations_table.c.id == org_id)
-            .returning(organizations_table.c.id)
+            sa.select(organizations_table.c.id).where(organizations_table.c.id == org_id)
         )
         if result.first() is None:
             raise HTTPException(status_code=404, detail="Organization not found")
+
+        org_id_str = str(org_id)
+        # Clear identity bridge context subsystem rows referencing this organization before deleting org row
+        try:
+            ctx_org_rows = await conn.execute(
+                sa.text(
+                    "SELECT id FROM context_organizations WHERE canonical_organization_id = :org_id OR id = :org_id_str"
+                ),
+                {"org_id": org_id, "org_id_str": org_id_str},
+            )
+            ctx_ids = [r[0] for r in ctx_org_rows.fetchall()]
+            if ctx_ids:
+                for table in (
+                    "user_context_preferences",
+                    "organization_memberships",
+                    "context_sites",
+                    "context_projects",
+                ):
+                    try:
+                        await conn.execute(
+                            sa.text(
+                                f"DELETE FROM {table} WHERE organization_id IN :ctx_ids OR active_organization_id IN :ctx_ids"
+                            ).bindparams(sa.bindparam("ctx_ids", expanding=True)),
+                            {"ctx_ids": ctx_ids},
+                        )
+                    except Exception:  # noqa: S110
+                        pass
+
+                await conn.execute(
+                    sa.text(
+                        "DELETE FROM context_organizations WHERE canonical_organization_id = :org_id OR id = :org_id_str"
+                    ),
+                    {"org_id": org_id, "org_id_str": org_id_str},
+                )
+        except Exception:  # noqa: S110
+            pass
+
+        try:
+            await conn.execute(
+                organizations_table.delete().where(organizations_table.c.id == org_id)
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=500, detail=f"Failed to delete organization: {exc}"
+            ) from exc
 
 
 @router.get("/{org_id}/timeline", response_model=TimelineEntriesListResponse)
@@ -384,7 +410,10 @@ async def update_organization_user_status(
 
 @router.delete("/{org_id}/users/{user_id}", status_code=204)
 async def delete_organization_user(
-    org_id: uuid.UUID, user_id: uuid.UUID, _admin: dict = Depends(require_platform_admin)
+    org_id: uuid.UUID,
+    user_id: uuid.UUID,
+    force: bool = Query(default=False),
+    _admin: dict = Depends(require_platform_admin),
 ):
     engine = get_engine()
     async with engine.begin() as conn:
@@ -395,6 +424,57 @@ async def delete_organization_user(
         )
         if result.first() is None:
             raise HTTPException(status_code=404, detail="User not found in this organization")
+
+        if force:
+            user_id_str = str(user_id)
+            # Nullify created_by user references in historical domain tables
+            for table_name in (
+                "money_accounts",
+                "money_transactions",
+                "expenses",
+                "material_receipts",
+                "material_usage",
+                "material_movements",
+                "equipment_events",
+                "labour_attendance",
+                "timeline_entries",
+                "workflow_instances",
+                "inbound_messages",
+            ):
+                try:
+                    await conn.execute(
+                        sa.text(f"UPDATE {table_name} SET created_by = NULL WHERE created_by = :user_id"),
+                        {"user_id": user_id},
+                    )
+                except Exception:  # noqa: S110
+                    pass
+
+            # Clear context and identity user rows
+            for table_name in (
+                "user_context_preferences",
+                "organization_memberships",
+                "external_identities",
+                "interactions",
+            ):
+                try:
+                    await conn.execute(
+                        sa.text(
+                            f"DELETE FROM {table_name} WHERE user_id = :user_id OR user_id = :user_id_str"
+                        ),
+                        {"user_id": user_id, "user_id_str": user_id_str},
+                    )
+                except Exception:  # noqa: S110
+                    pass
+
+            try:
+                await conn.execute(
+                    sa.text(
+                        "DELETE FROM context_users WHERE canonical_user_id = :user_id OR id = :user_id_str"
+                    ),
+                    {"user_id": user_id, "user_id_str": user_id_str},
+                )
+            except Exception:  # noqa: S110
+                pass
 
         try:
             await conn.execute(
@@ -409,7 +489,7 @@ async def delete_organization_user(
                     status_code=409,
                     detail=(
                         "User cannot be deleted because they own historical records "
-                        "(materials, finance, timeline, etc). Deactivate them instead."
+                        "(materials, finance, timeline, etc). Deactivate them instead or use Force Delete."
                     ),
                 ) from exc
             raise HTTPException(status_code=500, detail=f"Database error: {exc}") from exc

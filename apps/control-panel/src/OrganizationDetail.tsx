@@ -106,6 +106,22 @@ export default function OrganizationDetail() {
       .finally(() => setUpdatingUserId(null));
   };
 
+  const handleForceDeleteUser = (user: OrgUser) => {
+    if (!id) return;
+    const confirmed = window.confirm(
+      `FORCE DELETE "${user.full_name || user.email || user.id}"?\n\nThis will unbind user ownership on historical records and PERMANENTLY delete the account. This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setDeletingUserId(user.id);
+    setError(null);
+    api
+      .delete(`/admin/organizations/${id}/users/${user.id}?force=true`)
+      .then(() => setUsers((prev) => prev.filter((u) => u.id !== user.id)))
+      .catch((err) => setError(err.response?.data?.detail || 'Failed to force delete user'))
+      .finally(() => setDeletingUserId(null));
+  };
+
   const handleDeleteUser = (user: OrgUser) => {
     if (!id) return;
     const confirmed = window.confirm(
@@ -121,10 +137,15 @@ export default function OrganizationDetail() {
       .catch((err) => {
         if (err.response?.status === 409) {
           const detail = err.response?.data?.detail || 'User owns historical records.';
-          if (window.confirm(`${detail}\n\nDeactivate user account instead?`)) {
+          const choice = window.confirm(
+            `${detail}\n\nClick OK to DEACTIVATE account (recommended).\nClick CANCEL to choice Force Delete.`
+          );
+          if (choice) {
             handleUpdateUserStatus(user, 'Inactive');
-            return;
+          } else {
+            handleForceDeleteUser(user);
           }
+          return;
         }
         setError(err.response?.data?.detail || 'Failed to remove user');
       })
