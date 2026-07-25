@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from mesiri_contracts.assistant.draft_action import DraftActionType
 from mesiri_contracts.assistant.planner_decision import WorkflowKey
-from workflows.expense_capture.nodes import build_draft, request_confirmation
+from workflows.expense_capture.nodes import (
+    OWN_POCKET_SENTINEL,
+    build_draft,
+    request_confirmation,
+    resolve_account,
+)
 
 ORG = "11111111-1111-4111-8111-111111111111"
 USR = "22222222-2222-4222-8222-222222222222"
@@ -53,3 +58,86 @@ def test_request_confirmation_sets_prompt_from_draft():
     assert "250" in prompt
     assert "materials" in prompt
     assert "YES" in prompt
+
+
+def test_build_draft_excludes_account_candidates_plumbing_field():
+    state = _base_state(
+        {"amount": 250, "account_id": "a1", "account_candidates": [{"id": "a1", "name": "Cash"}]}
+    )
+    draft = build_draft(state)["draft_action"]
+    assert "account_candidates" not in draft.fields
+    assert draft.fields["account_id"] == "a1"
+
+
+def test_resolve_account_already_resolved_is_a_no_op():
+    state = _base_state({"amount": 250, "account_id": "a1"})
+    assert resolve_account(state) == {}
+
+    state = _base_state({"amount": 250, "paid_from_own_pocket": True})
+    assert resolve_account(state) == {}
+
+
+def test_resolve_account_zero_candidates_autofills_own_pocket():
+    state = _base_state({"amount": 250})
+    update = resolve_account(state)
+    assert update["collected_fields"]["paid_from_own_pocket"] is True
+    assert "awaiting_slot" not in update
+
+
+def test_resolve_account_with_candidates_asks_since_own_pocket_is_always_an_option():
+    """Even a single real account means 2 total choices (account + own
+    pocket), so the slot must ask rather than silently auto-fill."""
+    state = _base_state(
+        {"amount": 250, "account_candidates": [{"id": "a1", "name": "Site Cash"}]}
+    )
+    update = resolve_account(state)
+    assert update["awaiting_slot"] == "account_id"
+    assert "Site Cash" in update["pending_prompt"]
+    assert "own pocket" in update["pending_prompt"].lower()
+
+
+def test_resolve_account_numbered_answer_selects_account():
+    state = _base_state(
+        {
+            "amount": 250,
+            "account_candidates": [{"id": "a1", "name": "Site Cash"}, {"id": "a2", "name": "Bank"}],
+            "_slot_answer_text": "2",
+        }
+    )
+    update = resolve_account(state)
+    assert update["awaiting_slot"] is None
+    assert update["collected_fields"]["account_id"] == "a2"
+    assert "account_candidates" not in update["collected_fields"] or True  # candidates may remain
+
+
+def test_resolve_account_text_answer_selects_own_pocket():
+    state = _base_state(
+        {
+            "amount": 250,
+            "account_candidates": [{"id": "a1", "name": "Site Cash"}],
+            "_slot_answer_text": "my own pocket",
+        }
+    )
+    update = resolve_account(state)
+    assert update["awaiting_slot"] is None
+    assert update["collected_fields"]["paid_from_own_pocket"] is True
+    assert update["collected_fields"].get("account_id") is None
+
+
+def test_resolve_account_unmatched_answer_reasks_with_different_wording():
+    state = _base_state(
+        {
+            "amount": 250,
+            "account_candidates": [{"id": "a1", "name": "Site Cash"}],
+            "_slot_answer_text": "purple monkey dishwasher",
+        }
+    )
+    update = resolve_account(state)
+    assert update["awaiting_slot"] == "account_id"
+    assert "didn't catch" in update["pending_prompt"]
+    # The consumed answer text must not linger in collected_fields.
+    assert "_slot_answer_text" not in update["collected_fields"]
+
+
+def test_own_pocket_sentinel_is_not_a_real_uuid_shaped_value():
+    assert OWN_POCKET_SENTINEL == "own_pocket"

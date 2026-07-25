@@ -148,6 +148,46 @@ class InteractionHandler:
             site_id=str(loaded.state.site_id) if loaded.state.site_id else None,
         )
 
+    async def handle_slot_answer(
+        self, user_id: str, message: NormalizedMessage
+    ) -> InteractionHandled | None:
+        """Fast path for a reply to an open COLLECTING_FIELDS slot question
+        (Finance Module Slice 1 -- e.g. "which account?"). Text/interactive
+        only, same reasoning as handle_whoami_trigger: voice has no text
+        until Sarvam transcribes it, so this can't run pre-transcription. A
+        slot question left unanswered by voice simply falls through to the
+        normal journey, where WorkflowRuntime.start()'s single-active
+        pre-check turns any new intent into a "finish this first" block
+        rather than silently starting a second workflow.
+
+        Deterministic list/number matching happens inside the workflow graph
+        (see expense_capture/nodes.py's resolve_account) via
+        WorkflowRuntime.provide_input() -- no AI call here, same "a plain
+        reply costs no tokens" principle as handle_fast_path.
+        """
+        if message.modality not in (InputModality.TEXT, InputModality.INTERACTIVE):
+            return None
+        loaded = await self._runtime.get_awaiting_input(user_id)
+        if loaded is None:
+            return None
+        if not message.text:
+            return None
+
+        result = await self._runtime.provide_input(loaded, message.text)
+        logger.info(
+            "interaction.slot_answered user=%s status=%s instance=%s",
+            user_id,
+            result.status.value,
+            result.workflow_instance_id,
+        )
+        reply_text = render_workflow_run_reply(result, pending_prompt=result.pending_prompt)
+        return InteractionHandled(
+            result=result,
+            reply_text=reply_text,
+            project_id=str(loaded.state.project_id) if loaded.state.project_id else None,
+            site_id=str(loaded.state.site_id) if loaded.state.site_id else None,
+        )
+
     def handle_category_tap(self, message: NormalizedMessage) -> ReplySpec | None:
         """A tap on the category-menu list (see channel/replies.CATEGORY_ROWS,
         sent by render_direct_reply's greeting). Deterministic -- we defined

@@ -33,5 +33,9 @@ class WorkflowStateV2(BaseModel):
     collected_fields: dict[str, Any] = Field(default_factory=dict)
     draft_action: DraftActionV2 | None = None
     pending_prompt: str | None = None
+    # Name of the single-choice field a COLLECTING_FIELDS instance is waiting
+    # on (e.g. "account_id") -- None once resolved or for phases that never
+    # ask a mid-workflow question. See workflows/slots.py.
+    awaiting_slot: str | None = None
 
     model_config = {"extra": "forbid"}

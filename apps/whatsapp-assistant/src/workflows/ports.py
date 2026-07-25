@@ -46,6 +46,16 @@ class WorkflowInstanceRepository(Protocol):
         """Return the user's single AWAITING_CONFIRMATION / active instance, or None."""
         ...
 
+    async def get_awaiting_input(self, user_id: str) -> LoadedWorkflowInstance | None:
+        """Return the user's single COLLECTING_FIELDS instance (mid-workflow
+        slot-fill question, e.g. "which account?"), or None. Mirrors
+        get_awaiting_confirmation -- there is no DB-level partial-unique
+        guard for this phase (unlike AWAITING_CONFIRMATION), so the
+        single-active property here rests on WorkflowRuntime's pre-check in
+        start() rather than a hard constraint (see Finance Module Slice 1's
+        plan doc for why that trade-off is acceptable for V1)."""
+        ...
+
     async def transition(
         self, workflow_instance_id: str, expected_version: int, new_state: WorkflowStateV2
     ) -> bool:

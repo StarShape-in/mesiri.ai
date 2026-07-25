@@ -262,6 +262,13 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from runtime.expense_category_query import ExpenseCategoryQueryService
 
     expense_category_query = ExpenseCategoryQueryService(material_db)
+    # Read-only money-account lookups + lazy default-account bootstrap, fed
+    # into expense_capture's "which account?" slot (Finance Module Slice 1)
+    # -- same reasoning and same material_db as catalog_query above. See
+    # runtime/money_account_query.py.
+    from runtime.money_account_query import MoneyAccountQueryService
+
+    money_account_query = MoneyAccountQueryService(material_db)
     # Slow-path interaction classifier: while a confirmation is pending, a
     # message that isn't a plain "yes"/"no" (e.g. "40 bags of cement" instead
     # of the drafted 50) needs an LLM to recognize it as a CORRECTION rather
@@ -453,6 +460,34 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
                 correlation_id=message.correlation_id,
                 project_id=handled.project_id,
                 site_id=handled.site_id,
+            )
+            await message_logger.mark_completed(correlation_id=message.correlation_id)
+            return
+
+        # Finance Module Slice 1: if the user has a workflow awaiting a slot
+        # answer (e.g. "which account?") and this message can answer it
+        # (text/interactive only -- see handle_slot_answer's docstring),
+        # resume it and stop, same principle and same priority as the
+        # confirmation fast path above.
+        try:
+            slot_handled = await interaction_handler.handle_slot_answer(ctx.user_id, message)
+        except Exception:  # noqa: BLE001 — a resume error must not drop the message
+            _log.exception("interaction.slot_answer_failed user=%s", ctx.user_id)
+            slot_handled = None
+        if slot_handled is not None:
+            await sender.send_text(wa_id, slot_handled.reply_text)
+            await message_logger.log_reply(
+                correlation_id=message.correlation_id, reply=slot_handled.reply_text
+            )
+            if slot_handled.result.workflow_instance_id:
+                await message_logger.link_workflow_instance(
+                    correlation_id=message.correlation_id,
+                    workflow_instance_id=slot_handled.result.workflow_instance_id,
+                )
+            await message_logger.update_context(
+                correlation_id=message.correlation_id,
+                project_id=slot_handled.project_id,
+                site_id=slot_handled.site_id,
             )
             await message_logger.mark_completed(correlation_id=message.correlation_id)
             return
@@ -761,6 +796,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             catalog_query=catalog_query,
             org_settings_query=org_settings_query,
             expense_category_query=expense_category_query,
+            money_account_query=money_account_query,
             pending_report_store=pending_report_store,
         )
 

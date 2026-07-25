@@ -17,8 +17,10 @@ from mesiri_contracts.assistant.planner_decision import (
 from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
 from mesiri_contracts.assistant.v2.draft_action import DraftActionV2
 from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
+from mesiri_contracts.assistant.v2.workflow_state import WorkflowStateV2
 from mesiri_contracts.context.enums import WorkflowPhase
 from workflows.fakes import FakeWorkflowInstanceRepository
+from workflows.ports import LoadedWorkflowInstance
 from workflows.runtime import WorkflowRunStatus, WorkflowRuntime
 
 
@@ -202,6 +204,157 @@ async def test_no_graph_does_not_mint_a_workflow_instance_id():
 
     assert result.workflow_instance_id is None
     assert registry.get_graph_calls == [WorkflowKey.MATERIAL_RECEIPT]
+
+
+async def test_start_with_awaiting_slot_persists_collecting_fields_and_returns_awaiting_input():
+    """Finance Module Slice 1: a node that asks "which one?" must persist as
+    COLLECTING_FIELDS, not AWAITING_CONFIRMATION, and carry no draft yet."""
+    graph = _FakeGraph(
+        result={
+            "awaiting_slot": "account_id",
+            "pending_prompt": "Which account?",
+            "collected_fields": {"amount": 250, "account_candidates": [{"id": "a1", "name": "Cash"}]},
+        }
+    )
+    registry = _FakeRegistry({WorkflowKey.EXPENSE_SUBMIT: graph})
+    repo = FakeWorkflowInstanceRepository()
+    runtime = WorkflowRuntime(registry=registry, repo=repo)
+
+    decision = _decision(
+        decision_type=PlannerDecisionType.START_WORKFLOW, workflow_key=WorkflowKey.EXPENSE_SUBMIT
+    )
+    result = await runtime.start(decision, _event({"amount": 250}))
+
+    assert result.status is WorkflowRunStatus.AWAITING_INPUT
+    assert result.workflow_instance_id is not None
+    assert result.draft_action is None
+    assert result.pending_prompt == "Which account?"
+
+    assert len(repo.saved) == 1
+    saved = repo.saved[0]
+    assert saved.phase is WorkflowPhase.COLLECTING_FIELDS
+    assert saved.awaiting_slot == "account_id"
+    assert saved.collected_fields["account_candidates"] == [{"id": "a1", "name": "Cash"}]
+
+
+async def test_start_blocks_when_user_already_has_a_pending_slot_question():
+    repo = FakeWorkflowInstanceRepository()
+    existing = WorkflowStateV2(
+        workflow_instance_id="wf_existing",
+        workflow_key=WorkflowKey.EXPENSE_SUBMIT,
+        correlation_id="cor_0",
+        organization_id=ORG,
+        user_id=USR,
+        phase=WorkflowPhase.COLLECTING_FIELDS,
+        awaiting_slot="account_id",
+        pending_prompt="Which account? (existing)",
+    )
+    repo.seed(existing)
+    registry = _FakeRegistry({WorkflowKey.EXPENSE_SUBMIT: _FakeGraph()})
+    runtime = WorkflowRuntime(registry=registry, repo=repo)
+
+    decision = _decision(
+        decision_type=PlannerDecisionType.START_WORKFLOW, workflow_key=WorkflowKey.EXPENSE_SUBMIT
+    )
+    result = await runtime.start(decision, _event())
+
+    assert result.status is WorkflowRunStatus.BLOCKED_PENDING_CONFIRMATION
+    assert result.pending_prompt == "Which account? (existing)"
+    # The new workflow must never have been invoked at all.
+    assert len(repo.saved) == 1  # only the seeded existing row
+
+
+async def test_provide_input_resolves_slot_and_transitions_to_awaiting_confirmation():
+    repo = FakeWorkflowInstanceRepository()
+    collecting = WorkflowStateV2(
+        workflow_instance_id="wf_1",
+        workflow_key=WorkflowKey.EXPENSE_SUBMIT,
+        correlation_id="cor_1",
+        organization_id=ORG,
+        user_id=USR,
+        phase=WorkflowPhase.COLLECTING_FIELDS,
+        collected_fields={"amount": 250, "account_candidates": [{"id": "a1", "name": "Cash"}]},
+        awaiting_slot="account_id",
+        pending_prompt="Which account?",
+    )
+    repo.seed(collecting, version=0)
+    loaded = LoadedWorkflowInstance(state=collecting, version=0)
+
+    graph = _FakeGraph(
+        result={
+            "draft_action": _draft(),
+            "pending_prompt": "Confirm?",
+            "awaiting_slot": None,
+            "collected_fields": {"amount": 250, "account_id": "a1"},
+        }
+    )
+    registry = _FakeRegistry({WorkflowKey.EXPENSE_SUBMIT: graph})
+    runtime = WorkflowRuntime(registry=registry, repo=repo)
+
+    result = await runtime.provide_input(loaded, "1")
+
+    assert result.status is WorkflowRunStatus.STARTED
+    assert result.pending_prompt == "Confirm?"
+    saved_state, _ = repo._rows["wf_1"]  # noqa: SLF001 — test introspection
+    assert saved_state.phase is WorkflowPhase.AWAITING_CONFIRMATION
+    assert saved_state.awaiting_slot is None
+    assert saved_state.collected_fields["account_id"] == "a1"
+
+
+async def test_provide_input_no_match_reasks_and_stays_collecting_fields():
+    repo = FakeWorkflowInstanceRepository()
+    collecting = WorkflowStateV2(
+        workflow_instance_id="wf_1",
+        workflow_key=WorkflowKey.EXPENSE_SUBMIT,
+        correlation_id="cor_1",
+        organization_id=ORG,
+        user_id=USR,
+        phase=WorkflowPhase.COLLECTING_FIELDS,
+        collected_fields={"amount": 250, "account_candidates": [{"id": "a1", "name": "Cash"}]},
+        awaiting_slot="account_id",
+        pending_prompt="Which account?",
+    )
+    repo.seed(collecting, version=0)
+    loaded = LoadedWorkflowInstance(state=collecting, version=0)
+
+    graph = _FakeGraph(
+        result={
+            "awaiting_slot": "account_id",
+            "pending_prompt": "Sorry, I didn't catch that. Which account?",
+            "collected_fields": {"amount": 250, "account_candidates": [{"id": "a1", "name": "Cash"}]},
+        }
+    )
+    registry = _FakeRegistry({WorkflowKey.EXPENSE_SUBMIT: graph})
+    runtime = WorkflowRuntime(registry=registry, repo=repo)
+
+    result = await runtime.provide_input(loaded, "purple monkey dishwasher")
+
+    assert result.status is WorkflowRunStatus.AWAITING_INPUT
+    assert result.draft_action is None
+    saved_state, _ = repo._rows["wf_1"]  # noqa: SLF001 — test introspection
+    assert saved_state.phase is WorkflowPhase.COLLECTING_FIELDS
+    assert saved_state.awaiting_slot == "account_id"
+
+
+async def test_provide_input_rejects_when_phase_is_not_collecting_fields():
+    repo = FakeWorkflowInstanceRepository()
+    confirming = WorkflowStateV2(
+        workflow_instance_id="wf_1",
+        workflow_key=WorkflowKey.EXPENSE_SUBMIT,
+        correlation_id="cor_1",
+        organization_id=ORG,
+        user_id=USR,
+        phase=WorkflowPhase.AWAITING_CONFIRMATION,
+        draft_action=_draft(),
+        pending_prompt="Confirm?",
+    )
+    loaded = LoadedWorkflowInstance(state=confirming, version=0)
+    registry = _FakeRegistry({WorkflowKey.EXPENSE_SUBMIT: _FakeGraph()})
+    runtime = WorkflowRuntime(registry=registry, repo=repo)
+
+    result = await runtime.provide_input(loaded, "1")
+
+    assert result.status is WorkflowRunStatus.FAILED
 
 
 def test_workflow_registry_compiles_once_and_caches(monkeypatch: pytest.MonkeyPatch) -> None:
