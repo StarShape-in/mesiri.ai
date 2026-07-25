@@ -163,7 +163,8 @@ class IdentityProjectionService:
         row = (
             conn.execute(
                 text(
-                    "SELECT id, full_name, organization_id, whatsapp_number, status "
+                    "SELECT id, full_name, organization_id, whatsapp_number, status, "
+                    "       role, access_policy "
                     "FROM users WHERE id = :id"
                 ),
                 {"id": canonical_id},
@@ -173,14 +174,24 @@ class IdentityProjectionService:
         )
         ctx_id = context_user_id(canonical_id)
         is_active = row["status"] == "active"
+        policy = row["access_policy"] or {}
+        # Same standing-bypass rule _project_membership applies, computed here
+        # too so a brand-new ADMIN (created with the role already set, before
+        # any "membership" projection ever fires) sees every project on their
+        # very first message rather than waiting for an unrelated membership
+        # event to happen to sync it.
+        is_org_wide = (row["role"] or "").upper() in _ORG_WIDE_ROLES or (
+            isinstance(policy, dict) and policy.get("mode") == "all_projects"
+        )
         conn.execute(
             text(
                 """
-                INSERT INTO context_users (id, full_name, is_active, canonical_user_id)
-                VALUES (:id, :name, :is_active, :canonical_id)
+                INSERT INTO context_users (id, full_name, is_active, is_org_wide, canonical_user_id)
+                VALUES (:id, :name, :is_active, :is_org_wide, :canonical_id)
                 ON CONFLICT (id) DO UPDATE SET
                     full_name = EXCLUDED.full_name,
                     is_active = EXCLUDED.is_active,
+                    is_org_wide = EXCLUDED.is_org_wide,
                     canonical_user_id = EXCLUDED.canonical_user_id
                 """
             ),
@@ -188,6 +199,7 @@ class IdentityProjectionService:
                 "id": ctx_id,
                 "name": row["full_name"],
                 "is_active": is_active,
+                "is_org_wide": is_org_wide,
                 "canonical_id": canonical_id,
             },
         )
@@ -352,6 +364,19 @@ class IdentityProjectionService:
         policy = user_row["access_policy"] or {}
         org_wide = (user_row["role"] or "").upper() in _ORG_WIDE_ROLES or (
             isinstance(policy, dict) and policy.get("mode") == "all_projects"
+        )
+
+        # Keep context_users.is_org_wide -- the live bypass
+        # PostgresProjectRepository's _AUTHORIZED_PROJECT_IDS checks directly
+        # -- in sync here too, since this is the path update_user_access and
+        # role changes actually call (see project_entity("membership", ...)
+        # call sites). Without this, only the membership snapshot below
+        # updates, which is what let a project created after this grant stay
+        # invisible until the next resync -- the exact bug this column
+        # exists to close.
+        conn.execute(
+            text("UPDATE context_users SET is_org_wide = :org_wide WHERE id = :id"),
+            {"org_wide": org_wide, "id": ctx_user_id},
         )
 
         if org_wide:

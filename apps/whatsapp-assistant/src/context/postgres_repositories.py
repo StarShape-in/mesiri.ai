@@ -141,13 +141,21 @@ def _site(r: Any) -> Site:
     return Site(r["id"], r["project_id"], r["organization_id"], r["name"], bool(r["is_active"]))
 
 
-# A user is authorized for a project via a direct project_membership OR (site
-# membership implies its project). Tenant-scoped by organization_id everywhere.
+# A user is authorized for a project via a direct project_membership, (site
+# membership implies its project), OR context_users.is_org_wide -- a live
+# standing bypass (ADMIN role or access_policy.mode == "all_projects", see
+# identity_projection.py's _project_user/_project_membership) that must
+# cover every project in the org, including ones created after the grant.
+# Checking it here rather than relying solely on the project_memberships
+# snapshot means a brand-new project is visible to an org-wide user the
+# moment its context_projects row is projected, with no membership resync
+# needed. Tenant-scoped by organization_id everywhere.
 _AUTHORIZED_PROJECT_IDS = (
     "SELECT p.id FROM context_projects p WHERE p.organization_id = :org AND p.is_active = true AND ("
     "  p.id IN (SELECT project_id FROM project_memberships WHERE user_id = :u)"
     "  OR p.id IN (SELECT s.project_id FROM site_memberships sm "
     "              JOIN context_sites s ON s.id = sm.site_id WHERE sm.user_id = :u)"
+    "  OR EXISTS (SELECT 1 FROM context_users cu WHERE cu.id = :u AND cu.is_org_wide = true)"
     ")"
 )
 
