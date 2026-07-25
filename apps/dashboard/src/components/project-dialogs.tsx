@@ -353,6 +353,7 @@ export function AddEditSiteDialog({
       }
 
       queryClient.invalidateQueries({ queryKey: ['project-sites', projectId] })
+      queryClient.invalidateQueries({ queryKey: ['scope-sites', projectId] })
       onSuccess()
       onOpenChange(false)
     } catch (err: any) {

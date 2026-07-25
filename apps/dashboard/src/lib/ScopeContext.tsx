@@ -109,12 +109,46 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
   }, [routeProjectId, searchParams, setSearchParams])
 
   // Fetch sites for the active project to resolve site name and validate
-  const { data: sites = [], isLoading: isSitesLoading } = useQuery<SiteItem[]>({
+  const {
+    data: sites = [],
+    isLoading: isSitesLoading,
+    isFetching: isSitesFetching,
+    refetch: refetchSites,
+  } = useQuery<SiteItem[]>({
     queryKey: ['scope-sites', projectId],
     queryFn: () => fetchSites(projectId!),
     enabled: !!projectId && allowed.includes('site'),
     staleTime: 60_000,
   })
+
+  // Refetch sites if a siteId is requested but missing from cached sites list
+  const [hasAttemptedSiteRefetch, setHasAttemptedSiteRefetch] = React.useState(false)
+
+  React.useEffect(() => {
+    setHasAttemptedSiteRefetch(false)
+  }, [siteId])
+
+  React.useEffect(() => {
+    if (
+      siteId &&
+      projectId &&
+      !isSitesLoading &&
+      !isSitesFetching &&
+      !hasAttemptedSiteRefetch &&
+      !sites.some((s) => s.id === siteId)
+    ) {
+      setHasAttemptedSiteRefetch(true)
+      refetchSites()
+    }
+  }, [
+    siteId,
+    projectId,
+    sites,
+    isSitesLoading,
+    isSitesFetching,
+    hasAttemptedSiteRefetch,
+    refetchSites,
+  ])
 
   // Restore scope from localStorage / apply role-based fallback on initial load
   const hasResolvedInitialScope = React.useRef(false)
@@ -235,7 +269,7 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
     }
 
     if (siteId) {
-      if (isSitesLoading && sites.length === 0) {
+      if ((isSitesLoading || isSitesFetching) && !sites.some((s) => s.id === siteId)) {
         return { isValid: true, reason: '' }
       }
 
@@ -246,7 +280,16 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
     }
 
     return { isValid: true, reason: '' }
-  }, [projectId, siteId, projects, sites, isProjectsLoading, isProjectsFetching, isSitesLoading])
+  }, [
+    projectId,
+    siteId,
+    projects,
+    sites,
+    isProjectsLoading,
+    isProjectsFetching,
+    isSitesLoading,
+    isSitesFetching,
+  ])
 
   const setPortfolioScope = () => {
     setSearchParams((prev) => {
@@ -275,7 +318,7 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
   // Render loading state while resolving initial scope or refetching
   const isResolving =
     (!!projectId && !projects.some((p) => p.id === projectId) && (isProjectsLoading || isProjectsFetching)) ||
-    (!!siteId && sites.length === 0 && isSitesLoading)
+    (!!siteId && !sites.some((s) => s.id === siteId) && (isSitesLoading || isSitesFetching))
 
   if (isResolving) {
     return (
