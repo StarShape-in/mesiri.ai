@@ -44,8 +44,16 @@ class FakeWorkflowInstanceRepository:
         self._rows[state.workflow_instance_id] = (state, 0)
 
     async def get_awaiting_confirmation(self, user_id: str) -> LoadedWorkflowInstance | None:
+        return self._get_by_phase(user_id, WorkflowPhase.AWAITING_CONFIRMATION)
+
+    async def get_awaiting_input(self, user_id: str) -> LoadedWorkflowInstance | None:
+        return self._get_by_phase(user_id, WorkflowPhase.COLLECTING_FIELDS)
+
+    def _get_by_phase(
+        self, user_id: str, phase: WorkflowPhase
+    ) -> LoadedWorkflowInstance | None:
         for state, version in self._rows.values():
-            if state.user_id == user_id and state.phase is WorkflowPhase.AWAITING_CONFIRMATION:
+            if state.user_id == user_id and state.phase is phase:
                 return LoadedWorkflowInstance(state=state, version=version)
         return None
 

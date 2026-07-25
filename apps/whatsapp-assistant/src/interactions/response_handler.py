@@ -62,6 +62,9 @@ def render_workflow_run_reply(
     if result.status is WorkflowRunStatus.FAILED:
         return "Sorry, I couldn't apply that update — please try again."
     if result.status is WorkflowRunStatus.BLOCKED_PENDING_CONFIRMATION:
-        return f"⏳ Please finish the pending confirmation first:\n\n{pending_prompt}"
-    # STARTED — show the workflow's confirmation request directly.
+        # Also reached when the block was actually a pending slot question
+        # (Finance Module Slice 1) rather than a confirmation -- kept generic
+        # ("this" not "the confirmation") so the wording fits both.
+        return f"⏳ Please finish this first:\n\n{pending_prompt}"
+    # STARTED / AWAITING_INPUT — show the workflow's next question directly.
     return pending_prompt or ""

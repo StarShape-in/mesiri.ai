@@ -148,6 +148,48 @@ class PostgresMoneyAccountRepository:
         )
         return await self.get_by_id(organization_id, new_id)  # type: ignore[return-value]
 
+    async def find_by_name_exact_active(
+        self, organization_id: uuid.UUID, name: str
+    ) -> MoneyAccount | None:
+        """Case-insensitive exact match against active accounts only.
+        Mirrors PostgresExpenseCategoryRepository.find_by_name_exact_active."""
+        stmt = sa.select(_money_accounts).where(
+            _money_accounts.c.organization_id == organization_id,
+            _money_accounts.c.status == "active",
+            sa.func.lower(_money_accounts.c.name) == name.strip().lower(),
+        )
+        res = await self.conn.execute(stmt)
+        row = res.mappings().first()
+        return _row_to_account(row) if row else None
+
+    async def rename(
+        self, organization_id: uuid.UUID, account_id: uuid.UUID, new_name: str, *, updated_by: uuid.UUID
+    ) -> None:
+        await self.conn.execute(
+            sa.update(_money_accounts)
+            .where(
+                _money_accounts.c.id == account_id,
+                _money_accounts.c.organization_id == organization_id,
+            )
+            .values(name=new_name, updated_by=updated_by, updated_at=sa.func.now())
+        )
+
+    async def deactivate(
+        self, organization_id: uuid.UUID, account_id: uuid.UUID, *, updated_by: uuid.UUID
+    ) -> None:
+        """Status flip only -- never a hard delete. Historical money_transactions
+        rows referencing this account stay queryable and keep counting in
+        get_balance() (see docs/execution/FINANCE_MODULE_PLAN.md's account
+        lifecycle)."""
+        await self.conn.execute(
+            sa.update(_money_accounts)
+            .where(
+                _money_accounts.c.id == account_id,
+                _money_accounts.c.organization_id == organization_id,
+            )
+            .values(status="inactive", updated_by=updated_by, updated_at=sa.func.now())
+        )
+
     async def get_balance(self, organization_id: uuid.UUID, account_id: uuid.UUID) -> Decimal:
         """opening_balance + inflows (to_account_id) - outflows (from_account_id).
 

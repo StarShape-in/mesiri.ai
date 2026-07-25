@@ -46,7 +46,7 @@ from mesiri_contracts.assistant.canonical_event import CanonicalEventType
 from mesiri_contracts.assistant.canonical_event import IntentCompleteness as _IntentCompleteness
 from mesiri_contracts.assistant.enums import InputModality
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage
-from mesiri_contracts.assistant.planner_decision import PlannerDecisionType
+from mesiri_contracts.assistant.planner_decision import PlannerDecisionType, WorkflowKey
 from mesiri_contracts.assistant.understanding_result import UnderstandingResult
 from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
 from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
@@ -56,6 +56,7 @@ from runtime.expense_category_query import ExpenseCategoryQueryService
 from runtime.inventory_query import MaterialInventoryQueryService
 from runtime.logging_ports import MessageLogger, TraceLogger
 from runtime.material_catalog_query import MaterialCatalogQueryService
+from runtime.money_account_query import MoneyAccountQueryService
 from runtime.noop_loggers import NoopMessageLogger, NoopTraceLogger
 from runtime.org_settings_query import OrganizationSettingsQueryService
 from runtime.reply_dispatch import send_reply_spec
@@ -529,6 +530,32 @@ async def _inject_inventory_context(
             event.fields["available_stock"] = levels[0]["current_stock"]
 
 
+async def _seed_account_candidates(
+    event: CanonicalEventV2,
+    decision: PlannerDecisionV2,
+    money_account_query: MoneyAccountQueryService | None,
+    actor: ActorIdentity | None,
+) -> None:
+    """Feed the org's eligible money accounts into the event's fields so
+    expense_capture's resolve_account node (Finance Module Slice 1) can
+    decide whether to auto-fill, ask "which account?", or proceed unset --
+    a node must never query a repository itself (see workflows/runtime.py's
+    docstring), so this is the seeding point, same principle as
+    _inject_inventory_context above. Only ever runs for EXPENSE_SUBMIT;
+    every other workflow key's fields are left untouched.
+    """
+    if money_account_query is None or actor is None or not actor.organization_id:
+        return
+    if decision.workflow_key is not WorkflowKey.EXPENSE_SUBMIT:
+        return
+    accounts = await money_account_query.list_accounts(
+        organization_id=actor.organization_id, created_by=actor.user_id
+    )
+    event.fields["account_candidates"] = [
+        {"id": str(account.id), "name": account.name} for account in accounts
+    ]
+
+
 async def _plan_and_run(
     event: CanonicalEventV2,
     *,
@@ -584,6 +611,7 @@ async def process_inbound_message(
     catalog_query: MaterialCatalogQueryService | None = None,
     org_settings_query: OrganizationSettingsQueryService | None = None,
     expense_category_query: ExpenseCategoryQueryService | None = None,
+    money_account_query: MoneyAccountQueryService | None = None,
     semantic_hint: str | None = None,
     direction_hint: str | None = None,
     pending_report_store: PendingReportStore | None = None,
@@ -938,6 +966,9 @@ async def process_inbound_message(
                 # --- Workflow stage ---
                 t0 = time.perf_counter()
                 try:
+                    await _seed_account_candidates(
+                        canonical_event, planner_decision, money_account_query, actor
+                    )
                     workflow_run = await workflow_runtime.start(planner_decision, canonical_event)
                     if context_debug:
                         log_workflow_run(workflow_run)

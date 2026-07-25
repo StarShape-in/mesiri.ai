@@ -45,6 +45,10 @@ class WorkflowRunStatus(str, Enum):
     # A new actionable intent arrived while the user already has a confirmation
     # pending (single-active invariant). Carries the *existing* pending prompt.
     BLOCKED_PENDING_CONFIRMATION = "blocked_pending_confirmation"
+    # A node set awaiting_slot (e.g. "which account?") -- persisted as
+    # COLLECTING_FIELDS, not yet a draft awaiting confirmation. See Finance
+    # Module Slice 1 / workflows/slots.py.
+    AWAITING_INPUT = "awaiting_input"
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +77,11 @@ class WorkflowRunResult:
                 raise ValueError("BLOCKED_PENDING_CONFIRMATION requires the pending prompt")
             if self.workflow_instance_id is not None or self.draft_action is not None:
                 raise ValueError("BLOCKED_PENDING_CONFIRMATION must carry only pending_prompt")
+        elif self.status is WorkflowRunStatus.AWAITING_INPUT:
+            if not (self.workflow_instance_id and self.pending_prompt):
+                raise ValueError("AWAITING_INPUT requires workflow_instance_id and pending_prompt")
+            if self.draft_action is not None:
+                raise ValueError("AWAITING_INPUT must not carry a draft_action")
         elif (
             self.workflow_instance_id is not None
             or self.draft_action is not None
@@ -140,6 +149,23 @@ class WorkflowRunResult:
             status=WorkflowRunStatus.COMPLETED,
             workflow_key=workflow_key,
             correlation_id=correlation_id,
+            pending_prompt=pending_prompt,
+        )
+
+    @classmethod
+    def awaiting_input(
+        cls,
+        *,
+        workflow_key: WorkflowKey,
+        correlation_id: str,
+        workflow_instance_id: str,
+        pending_prompt: str,
+    ) -> WorkflowRunResult:
+        return cls(
+            status=WorkflowRunStatus.AWAITING_INPUT,
+            workflow_key=workflow_key,
+            correlation_id=correlation_id,
+            workflow_instance_id=workflow_instance_id,
             pending_prompt=pending_prompt,
         )
 
@@ -218,6 +244,10 @@ class WorkflowRuntime:
         # rather than piling up ambiguous confirmations. (The partial unique index
         # in Postgres is the hard guarantee; this is the friendly pre-check.)
         # Informational workflows (see _INFORMATIONAL_WORKFLOW_KEYS) are exempt.
+        # A pending COLLECTING_FIELDS slot question (Finance Module Slice 1)
+        # blocks the same way -- there is no DB-level guarantee for that phase
+        # (see workflows/ports.py's get_awaiting_input docstring), so this
+        # pre-check is the only thing enforcing it.
         if workflow_key not in _INFORMATIONAL_WORKFLOW_KEYS:
             existing = await self._repo.get_awaiting_confirmation(event.user_id)
             if existing is not None and existing.state.pending_prompt:
@@ -230,6 +260,18 @@ class WorkflowRuntime:
                     workflow_key=workflow_key,
                     correlation_id=event.correlation_id,
                     pending_prompt=existing.state.pending_prompt,
+                )
+            existing_input = await self._repo.get_awaiting_input(event.user_id)
+            if existing_input is not None and existing_input.state.pending_prompt:
+                logger.info(
+                    "workflow.blocked_pending_input user=%s existing=%s",
+                    event.user_id,
+                    existing_input.state.workflow_instance_id,
+                )
+                return WorkflowRunResult.blocked_pending_confirmation(
+                    workflow_key=workflow_key,
+                    correlation_id=event.correlation_id,
+                    pending_prompt=existing_input.state.pending_prompt,
                 )
 
         # Look up the graph BEFORE minting any identity: an unmapped key must
@@ -267,6 +309,51 @@ class WorkflowRuntime:
 
         draft_action: DraftActionV2 | None = result_state.get("draft_action")
         pending_prompt: str | None = result_state.get("pending_prompt")
+        awaiting_slot: str | None = result_state.get("awaiting_slot")
+        collected_fields = result_state.get("collected_fields", dict(event.fields))
+
+        if awaiting_slot is not None:
+            # A node asked a mid-workflow question (e.g. "which account?") --
+            # persist as COLLECTING_FIELDS, not yet a draft. collected_fields
+            # must come from the graph's result (not event.fields) so the
+            # seeded candidate list survives to the next provide_input() call.
+            if pending_prompt is None:
+                logger.error(
+                    "workflow.slot_missing_prompt workflow_key=%s workflow_instance_id=%s",
+                    workflow_key.value,
+                    workflow_instance_id,
+                )
+                return WorkflowRunResult.failed(
+                    workflow_key=workflow_key, correlation_id=event.correlation_id
+                )
+            slot_state = WorkflowStateV2(
+                workflow_instance_id=workflow_instance_id,
+                workflow_key=workflow_key,
+                correlation_id=event.correlation_id,
+                organization_id=event.organization_id,
+                user_id=event.user_id,
+                project_id=event.project_id,
+                site_id=event.site_id,
+                phase=WorkflowPhase.COLLECTING_FIELDS,
+                collected_fields=collected_fields,
+                awaiting_slot=awaiting_slot,
+                pending_prompt=pending_prompt,
+            )
+            try:
+                await self._repo.save(slot_state)
+            except Exception:
+                logger.exception(
+                    "workflow.save_failed workflow_instance_id=%s", workflow_instance_id
+                )
+                return WorkflowRunResult.failed(
+                    workflow_key=workflow_key, correlation_id=event.correlation_id
+                )
+            return WorkflowRunResult.awaiting_input(
+                workflow_key=workflow_key,
+                correlation_id=event.correlation_id,
+                workflow_instance_id=workflow_instance_id,
+                pending_prompt=pending_prompt,
+            )
 
         if pending_prompt is None:
             logger.error(
@@ -304,7 +391,7 @@ class WorkflowRuntime:
             project_id=event.project_id,
             site_id=event.site_id,
             phase=WorkflowPhase.AWAITING_CONFIRMATION,
-            collected_fields=dict(event.fields),
+            collected_fields=collected_fields,
             draft_action=draft_action,
             pending_prompt=pending_prompt,
         )
@@ -412,10 +499,127 @@ class WorkflowRuntime:
             pending_prompt=pending_prompt,
         )
 
+    async def provide_input(
+        self, loaded: LoadedWorkflowInstance, answer_text: str
+    ) -> WorkflowRunResult:
+        """Answers a pending slot question (e.g. "which account?") and re-runs
+        the graph. Generalizes correct()'s merge-fields -> re-invoke ->
+        transition mechanic: the raw answer text is handed to the graph as
+        `_slot_answer_text` and the node that raised the question (e.g.
+        expense_capture's resolve_account) is responsible for matching it
+        against the candidates it seeded -- this method never matches
+        answers itself, only orchestrates the re-run and persistence
+        (workflows/ -> no domain-rule matching in the runtime layer).
+
+        Three outcomes: no match (graph re-asks) -> persisted as
+        COLLECTING_FIELDS again with the new prompt; resolved -> persisted as
+        AWAITING_CONFIRMATION with the built draft; anything else -> FAILED.
+        """
+        state = loaded.state
+        instance_id = state.workflow_instance_id
+
+        if state.phase is not WorkflowPhase.COLLECTING_FIELDS or state.awaiting_slot is None:
+            return WorkflowRunResult.failed(
+                workflow_key=state.workflow_key, correlation_id=state.correlation_id
+            )
+
+        new_fields = dict(state.collected_fields)
+        new_fields["_slot_answer_text"] = answer_text
+
+        graph = self._registry.get_graph(state.workflow_key)
+        if graph is None:
+            return WorkflowRunResult.failed(
+                workflow_key=state.workflow_key, correlation_id=state.correlation_id
+            )
+
+        graph_state: WorkflowGraphState = {
+            "workflow_instance_id": instance_id,
+            "workflow_key": state.workflow_key.value,
+            "correlation_id": state.correlation_id,
+            "organization_id": state.organization_id,
+            "user_id": state.user_id,
+            "project_id": state.project_id,
+            "site_id": state.site_id,
+            "collected_fields": new_fields,
+            "awaiting_slot": state.awaiting_slot,
+        }
+
+        try:
+            result_state = await graph.ainvoke(graph_state)
+        except Exception:
+            logger.exception("workflow.provide_input_failed workflow_instance_id=%s", instance_id)
+            return WorkflowRunResult.failed(
+                workflow_key=state.workflow_key, correlation_id=state.correlation_id
+            )
+
+        draft_action: DraftActionV2 | None = result_state.get("draft_action")
+        pending_prompt: str | None = result_state.get("pending_prompt")
+        awaiting_slot: str | None = result_state.get("awaiting_slot")
+        resolved_fields = result_state.get("collected_fields", new_fields)
+
+        if awaiting_slot is not None:
+            # Not matched (or another slot pending) -- ask again.
+            if pending_prompt is None:
+                return WorkflowRunResult.failed(
+                    workflow_key=state.workflow_key, correlation_id=state.correlation_id
+                )
+            new_state = state.model_copy(
+                update={
+                    "collected_fields": resolved_fields,
+                    "awaiting_slot": awaiting_slot,
+                    "pending_prompt": pending_prompt,
+                }
+            )
+            applied = await self._repo.transition(instance_id, loaded.version, new_state)
+            if not applied:
+                return WorkflowRunResult.failed(
+                    workflow_key=state.workflow_key, correlation_id=state.correlation_id
+                )
+            return WorkflowRunResult.awaiting_input(
+                workflow_key=state.workflow_key,
+                correlation_id=state.correlation_id,
+                workflow_instance_id=instance_id,
+                pending_prompt=pending_prompt,
+            )
+
+        if draft_action is None or pending_prompt is None:
+            return WorkflowRunResult.failed(
+                workflow_key=state.workflow_key, correlation_id=state.correlation_id
+            )
+
+        new_state = state.model_copy(
+            update={
+                "collected_fields": resolved_fields,
+                "awaiting_slot": None,
+                "phase": WorkflowPhase.AWAITING_CONFIRMATION,
+                "draft_action": draft_action,
+                "pending_prompt": pending_prompt,
+            }
+        )
+        applied = await self._repo.transition(instance_id, loaded.version, new_state)
+        if not applied:
+            return WorkflowRunResult.failed(
+                workflow_key=state.workflow_key, correlation_id=state.correlation_id
+            )
+
+        return WorkflowRunResult.started(
+            workflow_key=state.workflow_key,
+            correlation_id=state.correlation_id,
+            workflow_instance_id=instance_id,
+            draft_action=draft_action,
+            pending_prompt=pending_prompt,
+        )
+
     async def get_awaiting_confirmation(self, user_id: str) -> LoadedWorkflowInstance | None:
         """The user's single awaiting-confirmation instance, or None. Interactions
         talk only to the runtime, never the repo directly."""
         return await self._repo.get_awaiting_confirmation(user_id)
+
+    async def get_awaiting_input(self, user_id: str) -> LoadedWorkflowInstance | None:
+        """The user's single COLLECTING_FIELDS instance (pending slot
+        question), or None. Interactions talk only to the runtime, never the
+        repo directly."""
+        return await self._repo.get_awaiting_input(user_id)
 
     async def resume(
         self, loaded: LoadedWorkflowInstance, action: ResumeAction

@@ -79,6 +79,12 @@ class PostgresWorkflowInstanceRepository:
             ) from exc
 
     async def get_awaiting_confirmation(self, user_id: str) -> LoadedWorkflowInstance | None:
+        return await self._get_by_phase(user_id, "awaiting_confirmation")
+
+    async def get_awaiting_input(self, user_id: str) -> LoadedWorkflowInstance | None:
+        return await self._get_by_phase(user_id, "collecting_fields")
+
+    async def _get_by_phase(self, user_id: str, phase: str) -> LoadedWorkflowInstance | None:
         from sqlalchemy import text
 
         async with self._get_engine().connect() as conn:
@@ -87,11 +93,11 @@ class PostgresWorkflowInstanceRepository:
                     await conn.execute(
                         text(
                             "SELECT state, version FROM workflow_instances "
-                            "WHERE user_id = :user_id AND phase = 'awaiting_confirmation' "
+                            "WHERE user_id = :user_id AND phase = :phase "
                             "AND status = 'active' "
                             "ORDER BY created_at DESC LIMIT 1"
                         ),
-                        {"user_id": uuid.UUID(user_id)},
+                        {"user_id": uuid.UUID(user_id), "phase": phase},
                     )
                 )
                 .mappings()
@@ -124,13 +130,27 @@ async def transition_on_connection(
     `PostgresWorkflowInstanceRepository.transition()` (the normal M7 confirm/
     reject/cancel path) is a thin wrapper that opens its own transaction and
     calls this same function — no SQL is duplicated between the two call sites.
+
+    `status` mirrors `phase` only for the five genuinely terminal outcomes;
+    every other phase (ACTIVE, AWAITING_CONFIRMATION, COLLECTING_FIELDS,
+    PAUSED) keeps status='active'. This matters beyond cosmetics:
+    get_awaiting_confirmation/get_awaiting_input both filter on
+    status='active', and WorkflowRuntime.correct() and Finance Module Slice
+    1's provide_input() both call this function with new_state.phase still
+    AWAITING_CONFIRMATION/COLLECTING_FIELDS (not yet terminal) -- writing a
+    non-'active' status for those phases would make the very next
+    confirm/slot-answer invisible to those queries.
     """
     from sqlalchemy import text
 
-    terminal = (
-        new_state.phase.value
-    )  # confirmed | rejected | cancelled | completed | execution_rejected
-    status = "completed" if terminal == "confirmed" else terminal
+    _TERMINAL_STATUS = {
+        "confirmed": "completed",
+        "rejected": "rejected",
+        "cancelled": "cancelled",
+        "completed": "completed",
+        "execution_rejected": "execution_rejected",
+    }
+    status = _TERMINAL_STATUS.get(new_state.phase.value, "active")
     result = await conn.execute(
         text(
             "UPDATE workflow_instances "

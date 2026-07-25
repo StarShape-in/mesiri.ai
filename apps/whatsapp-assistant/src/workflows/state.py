@@ -25,3 +25,8 @@ class WorkflowGraphState(TypedDict, total=False):
     collected_fields: dict[str, Any]
     draft_action: DraftAction | None
     pending_prompt: str | None
+    # Set by a node (e.g. expense_capture's resolve_account) when a
+    # single-choice field has more than one candidate and needs the user to
+    # pick -- see workflows/slots.py. None means "not currently asking
+    # anything" (resolved, or the field had 0/1 candidates).
+    awaiting_slot: str | None

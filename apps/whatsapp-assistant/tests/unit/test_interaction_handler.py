@@ -405,3 +405,86 @@ def test_whoami_trigger_is_none_for_voice_even_with_whoami_text():
         text="who am i",
     )
     assert handler.handle_whoami_trigger(voice_message, _actor()) is None
+
+
+def _collecting_state() -> WorkflowStateV2:
+    return WorkflowStateV2(
+        workflow_instance_id=WF,
+        workflow_key=WorkflowKey.EXPENSE_SUBMIT,
+        correlation_id="c1",
+        organization_id=ORG,
+        user_id=USR,
+        phase=WorkflowPhase.COLLECTING_FIELDS,
+        collected_fields={"amount": 250, "account_candidates": [{"id": "a1", "name": "Cash"}]},
+        awaiting_slot="account_id",
+        pending_prompt="Which account?",
+    )
+
+
+class SlotResolvingFakeGraph:
+    """Resolves to a draft once `_slot_answer_text` is present, mirroring
+    expense_capture's real resolve_account -> build_draft -> request_confirmation."""
+
+    async def ainvoke(self, state: dict) -> dict:
+        fields = dict(state.get("collected_fields") or {})
+        if fields.pop("_slot_answer_text", None) == "1":
+            fields["account_id"] = "a1"
+            draft = DraftActionV2(
+                draft_id="d2",
+                correlation_id="c1",
+                workflow_instance_id=WF,
+                action_type=DraftActionType.RECORD_EXPENSE,
+                organization_id=ORG,
+                user_id=USR,
+                fields=fields,
+            )
+            return {
+                "draft_action": draft,
+                "pending_prompt": "Confirm?",
+                "awaiting_slot": None,
+                "collected_fields": fields,
+            }
+        return {
+            "awaiting_slot": "account_id",
+            "pending_prompt": "Which account?",
+            "collected_fields": fields,
+        }
+
+
+def _handler_for_expense(repo: FakeWorkflowInstanceRepository) -> InteractionHandler:
+    registry = WorkflowRegistry()
+    registry._compiled[WorkflowKey.EXPENSE_SUBMIT] = SlotResolvingFakeGraph()
+    return InteractionHandler(WorkflowRuntime(registry=registry, repo=repo))
+
+
+async def test_slot_answer_resolves_and_returns_confirmation_prompt():
+    repo = FakeWorkflowInstanceRepository()
+    repo.seed(_collecting_state(), version=0)
+    handler = _handler_for_expense(repo)
+
+    handled = await handler.handle_slot_answer(USR, _message("1"))
+
+    assert handled is not None
+    assert handled.result.status is WorkflowRunStatus.STARTED
+    assert handled.reply_text == "Confirm?"
+    assert repo._rows[WF][0].phase is WorkflowPhase.AWAITING_CONFIRMATION
+
+
+async def test_slot_answer_no_active_collecting_workflow_returns_none():
+    handler = _handler_for_expense(FakeWorkflowInstanceRepository())
+    assert await handler.handle_slot_answer(USR, _message("1")) is None
+
+
+async def test_slot_answer_ignores_voice_modality():
+    repo = FakeWorkflowInstanceRepository()
+    repo.seed(_collecting_state(), version=0)
+    handler = _handler_for_expense(repo)
+    voice_message = NormalizedMessage(
+        message_id="wamid.voice3",
+        correlation_id="cor_voice_3",
+        sender=SenderInfo(wa_id="919000000000", profile_name="Engineer"),
+        timestamp=datetime(2026, 7, 8, 10, 0, tzinfo=UTC),
+        modality=InputModality.VOICE,
+        text="1",
+    )
+    assert await handler.handle_slot_answer(USR, voice_message) is None
