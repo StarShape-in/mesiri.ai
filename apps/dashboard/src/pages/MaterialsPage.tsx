@@ -8,27 +8,31 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { InflowsView } from '@/components/materials/inflows-view'
 import { OutflowsView } from '@/components/materials/outflows-view'
 import { InventoryView } from '@/components/materials/inventory-view'
+import { CatalogueView } from '@/components/materials/catalogue-view'
 import { RecordInflowDialog } from '@/components/materials/record-inflow-dialog'
 import { RecordOutflowDialog } from '@/components/materials/record-outflow-dialog'
-import { ManageCatalogueDialog } from '@/components/materials/manage-catalogue-dialog'
 
-type MaterialsView = 'inflows' | 'outflows' | 'inventory'
+type MaterialsView = 'inflows' | 'outflows' | 'inventory' | 'catalogue'
 
-const VALID_VIEWS: MaterialsView[] = ['inflows', 'outflows', 'inventory']
+const VALID_VIEWS: MaterialsView[] = ['inflows', 'outflows', 'inventory', 'catalogue']
 
 export default function MaterialsPage() {
   const { scope } = useScope()
   const { me } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
 
+  const isAdmin = me?.role === 'ADMIN'
   const rawView = searchParams.get('view')
-  const view: MaterialsView = VALID_VIEWS.includes(rawView as MaterialsView)
+  const requestedView: MaterialsView = VALID_VIEWS.includes(rawView as MaterialsView)
     ? (rawView as MaterialsView)
     : 'inventory'
+  // Catalogue is admin-only -- a non-admin landing on ?view=catalogue
+  // (stale link, role change) falls back to Inventory rather than rendering
+  // a tab they can't see the trigger for.
+  const view: MaterialsView = requestedView === 'catalogue' && !isAdmin ? 'inventory' : requestedView
 
   const [inflowDialogOpen, setInflowDialogOpen] = React.useState(false)
   const [outflowDialogOpen, setOutflowDialogOpen] = React.useState(false)
-  const [catalogueDialogOpen, setCatalogueDialogOpen] = React.useState(false)
 
   const selectView = (next: string) => {
     setSearchParams((prev) => {
@@ -70,17 +74,6 @@ export default function MaterialsPage() {
           </div>
         </div>
         <div className="flex gap-2">
-          {me?.role === 'ADMIN' && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-8 gap-1.5 text-xs font-bold"
-              onClick={() => setCatalogueDialogOpen(true)}
-            >
-              <ListTree className="size-3.5" />
-              Manage Catalogue
-            </Button>
-          )}
           {canRecordMovements && (
             <>
               <Button
@@ -111,12 +104,19 @@ export default function MaterialsPage() {
           <TabsTrigger value="inventory">Inventory</TabsTrigger>
           <TabsTrigger value="inflows">Inflows</TabsTrigger>
           <TabsTrigger value="outflows">Outflows</TabsTrigger>
+          {isAdmin && (
+            <TabsTrigger value="catalogue" className="gap-1.5">
+              <ListTree className="size-3.5" />
+              Catalogue
+            </TabsTrigger>
+          )}
         </TabsList>
       </Tabs>
 
       {view === 'inventory' && <InventoryView projectId={projectId} siteId={siteId} />}
       {view === 'inflows' && <InflowsView projectId={projectId} siteId={siteId} />}
       {view === 'outflows' && <OutflowsView projectId={projectId} siteId={siteId} />}
+      {view === 'catalogue' && <CatalogueView />}
 
       <RecordInflowDialog
         open={inflowDialogOpen}
@@ -128,7 +128,6 @@ export default function MaterialsPage() {
         onOpenChange={setOutflowDialogOpen}
         scope={scope}
       />
-      <ManageCatalogueDialog open={catalogueDialogOpen} onOpenChange={setCatalogueDialogOpen} />
     </div>
   )
 }
