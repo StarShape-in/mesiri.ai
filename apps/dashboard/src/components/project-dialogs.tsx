@@ -123,6 +123,7 @@ export function AddEditProjectDialog({
           status,
         })
         queryClient.invalidateQueries({ queryKey: ['projects-list'] })
+        queryClient.invalidateQueries({ queryKey: ['scope-projects'] })
         queryClient.invalidateQueries({ queryKey: ['project-details', project.id] })
         onSuccess()
         onOpenChange(false)
@@ -135,6 +136,7 @@ export function AddEditProjectDialog({
           description: description.trim() || null,
         })
         queryClient.invalidateQueries({ queryKey: ['projects-list'] })
+        queryClient.invalidateQueries({ queryKey: ['scope-projects'] })
         onSuccess()
         onOpenChange(false)
         if (openAfter) {
@@ -351,6 +353,7 @@ export function AddEditSiteDialog({
       }
 
       queryClient.invalidateQueries({ queryKey: ['project-sites', projectId] })
+      queryClient.invalidateQueries({ queryKey: ['scope-sites', projectId] })
       onSuccess()
       onOpenChange(false)
     } catch (err: any) {

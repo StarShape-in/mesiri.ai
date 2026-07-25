@@ -86,6 +86,7 @@ export default function Projects() {
     mutationFn: archiveProject,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['projects-list'] })
+      queryClient.invalidateQueries({ queryKey: ['scope-projects'] })
     },
     onError: (err: any) => {
       alert(err.response?.data?.detail || 'Failed to archive project.')

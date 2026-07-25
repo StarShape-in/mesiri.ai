@@ -69,6 +69,7 @@ users_table = sa.Table(
     sa.Column("hashed_password", sa.String),
     sa.Column("full_name", sa.String),
     sa.Column("role", sa.String),
+    sa.Column("status", sa.String),
     sa.Column("whatsapp_number", sa.String),
     sa.Column("access_policy", sa.JSON),
 )
@@ -124,9 +125,14 @@ class OrgUserResponse(BaseModel):
     full_name: str | None = None
     email: str | None = None
     role: str | None = None
+    status: str = "Active"
     whatsapp_number: str | None = None
     access_mode: str = "custom_projects"
     project_access: list[ProjectAccessGrant] = []
+
+
+class UserStatusUpdate(BaseModel):
+    status: str
 
 
 # ---------------------------------------------------------------------------
@@ -185,33 +191,190 @@ async def get_organization(org_id: uuid.UUID, _admin: dict = Depends(require_pla
 
 @router.delete("/{org_id}", status_code=204)
 async def delete_organization(org_id: uuid.UUID, _admin: dict = Depends(require_platform_admin)):
-    """Hard-delete a tenant and every row scoped to it.
-
-    Deleting the organizations row is enough — migration 0361 put ON DELETE
-    CASCADE on every tenant-scoped table's path back to organizations.id (and
-    added the FK to users.organization_id / projects.organization_id, which
-    previously had none at all). This used to be a ~90-line hand-ordered
-    sequence of DELETEs here that broke silently every time a migration added
-    an org-scoped table — see 0361's docstring for the incident (the finance
-    refactor renaming finance_accounts -> money_accounts underneath it) and
-    for why the schema, not this function, is now the source of truth for
-    what gets deleted.
-
-    NOTE: this does not remove anything outside Postgres — expense_attachments
-    .media_object_key (and other WhatsApp media) still live in object storage
-    after this call. Cleaning those up is a separate, deliberately-out-of-scope
-    concern (deleting external files is irreversible and needs its own review),
-    tracked but not implemented here.
-    """
+    """Hard-delete a tenant and every row scoped to it."""
     engine = get_engine()
     async with engine.begin() as conn:
         result = await conn.execute(
-            organizations_table.delete()
-            .where(organizations_table.c.id == org_id)
-            .returning(organizations_table.c.id)
+            sa.select(organizations_table.c.id).where(organizations_table.c.id == org_id)
         )
         if result.first() is None:
             raise HTTPException(status_code=404, detail="Organization not found")
+
+        org_id_str = str(org_id)
+
+        # 1. Fetch user IDs belonging to this organization
+        user_rows = await conn.execute(
+            sa.select(users_table.c.id).where(users_table.c.organization_id == org_id)
+        )
+        user_ids = [r[0] for r in user_rows.fetchall()]
+        user_id_strs = [str(uid) for uid in user_ids]
+
+        # 2. Fetch context_user IDs linked to these users
+        if user_ids:
+            ctx_user_rows = await conn.execute(
+                sa.text(
+                    "SELECT id FROM context_users WHERE canonical_user_id IN :uids OR id IN :uid_strs"
+                ).bindparams(
+                    sa.bindparam("uids", expanding=True),
+                    sa.bindparam("uid_strs", expanding=True),
+                ),
+                {"uids": user_ids, "uid_strs": user_id_strs},
+            )
+            ctx_uids = [r[0] for r in ctx_user_rows.fetchall()]
+        else:
+            ctx_uids = []
+
+        # 3. Clean user-level context & identity subsystem rows to prevent FK violation on users table deletion
+        if ctx_uids or user_ids:
+            all_uids_str = list(set(ctx_uids + user_id_strs))
+            await conn.execute(
+                sa.text(
+                    "DELETE FROM user_context_preferences WHERE user_id IN :u_strs"
+                ).bindparams(sa.bindparam("u_strs", expanding=True)),
+                {"u_strs": all_uids_str},
+            )
+            await conn.execute(
+                sa.text(
+                    "DELETE FROM site_memberships WHERE user_id IN :u_strs"
+                ).bindparams(sa.bindparam("u_strs", expanding=True)),
+                {"u_strs": all_uids_str},
+            )
+            await conn.execute(
+                sa.text(
+                    "DELETE FROM project_memberships WHERE user_id IN :u_strs"
+                ).bindparams(sa.bindparam("u_strs", expanding=True)),
+                {"u_strs": all_uids_str},
+            )
+            await conn.execute(
+                sa.text(
+                    "DELETE FROM membership_roles WHERE membership_id IN (SELECT id FROM organization_memberships WHERE user_id IN :u_strs)"
+                ).bindparams(sa.bindparam("u_strs", expanding=True)),
+                {"u_strs": all_uids_str},
+            )
+            await conn.execute(
+                sa.text(
+                    "DELETE FROM organization_memberships WHERE user_id IN :u_strs"
+                ).bindparams(sa.bindparam("u_strs", expanding=True)),
+                {"u_strs": all_uids_str},
+            )
+            await conn.execute(
+                sa.text(
+                    "DELETE FROM external_identities WHERE user_id IN :u_strs"
+                ).bindparams(sa.bindparam("u_strs", expanding=True)),
+                {"u_strs": all_uids_str},
+            )
+            if user_ids:
+                await conn.execute(
+                    sa.text(
+                        "DELETE FROM interactions WHERE user_id IN :uids"
+                    ).bindparams(sa.bindparam("uids", expanding=True)),
+                    {"uids": user_ids},
+                )
+            if user_ids:
+                await conn.execute(
+                    sa.text(
+                        "DELETE FROM context_users WHERE canonical_user_id IN :uids OR id IN :u_strs"
+                    ).bindparams(
+                        sa.bindparam("uids", expanding=True),
+                        sa.bindparam("u_strs", expanding=True),
+                    ),
+                    {"uids": user_ids, "u_strs": all_uids_str},
+                )
+            else:
+                await conn.execute(
+                    sa.text(
+                        "DELETE FROM context_users WHERE id IN :u_strs"
+                    ).bindparams(sa.bindparam("u_strs", expanding=True)),
+                    {"u_strs": all_uids_str},
+                )
+
+        # 4. Clean org-level context subsystem rows referencing this organization
+        ctx_org_rows = await conn.execute(
+            sa.text(
+                "SELECT id FROM context_organizations WHERE canonical_organization_id = :org_id OR id = :org_id_str"
+            ),
+            {"org_id": org_id, "org_id_str": org_id_str},
+        )
+        ctx_ids = [r[0] for r in ctx_org_rows.fetchall()]
+
+        if ctx_ids:
+            await conn.execute(
+                sa.text(
+                    "DELETE FROM user_context_preferences WHERE organization_id IN :ctx_ids"
+                ).bindparams(sa.bindparam("ctx_ids", expanding=True)),
+                {"ctx_ids": ctx_ids},
+            )
+            await conn.execute(
+                sa.text(
+                    "DELETE FROM site_memberships WHERE site_id IN (SELECT id FROM context_sites WHERE organization_id IN :ctx_ids)"
+                ).bindparams(sa.bindparam("ctx_ids", expanding=True)),
+                {"ctx_ids": ctx_ids},
+            )
+            await conn.execute(
+                sa.text(
+                    "DELETE FROM project_memberships WHERE project_id IN (SELECT id FROM context_projects WHERE organization_id IN :ctx_ids)"
+                ).bindparams(sa.bindparam("ctx_ids", expanding=True)),
+                {"ctx_ids": ctx_ids},
+            )
+            await conn.execute(
+                sa.text(
+                    "DELETE FROM context_sites WHERE organization_id IN :ctx_ids"
+                ).bindparams(sa.bindparam("ctx_ids", expanding=True)),
+                {"ctx_ids": ctx_ids},
+            )
+            await conn.execute(
+                sa.text(
+                    "DELETE FROM context_projects WHERE organization_id IN :ctx_ids"
+                ).bindparams(sa.bindparam("ctx_ids", expanding=True)),
+                {"ctx_ids": ctx_ids},
+            )
+            await conn.execute(
+                sa.text(
+                    "DELETE FROM membership_roles WHERE membership_id IN (SELECT id FROM organization_memberships WHERE organization_id IN :ctx_ids)"
+                ).bindparams(sa.bindparam("ctx_ids", expanding=True)),
+                {"ctx_ids": ctx_ids},
+            )
+            await conn.execute(
+                sa.text(
+                    "DELETE FROM role_permissions WHERE role_id IN (SELECT id FROM roles WHERE organization_id IN :ctx_ids)"
+                ).bindparams(sa.bindparam("ctx_ids", expanding=True)),
+                {"ctx_ids": ctx_ids},
+            )
+            await conn.execute(
+                sa.text(
+                    "DELETE FROM organization_memberships WHERE organization_id IN :ctx_ids"
+                ).bindparams(sa.bindparam("ctx_ids", expanding=True)),
+                {"ctx_ids": ctx_ids},
+            )
+            await conn.execute(
+                sa.text(
+                    "DELETE FROM roles WHERE organization_id IN :ctx_ids"
+                ).bindparams(sa.bindparam("ctx_ids", expanding=True)),
+                {"ctx_ids": ctx_ids},
+            )
+            await conn.execute(
+                sa.text(
+                    "DELETE FROM context_organizations WHERE id IN :ctx_ids OR canonical_organization_id = :org_id"
+                ).bindparams(sa.bindparam("ctx_ids", expanding=True)),
+                {"ctx_ids": ctx_ids, "org_id": org_id},
+            )
+        else:
+            await conn.execute(
+                sa.text(
+                    "DELETE FROM context_organizations WHERE canonical_organization_id = :org_id OR id = :org_id_str"
+                ),
+                {"org_id": org_id, "org_id_str": org_id_str},
+            )
+
+        # 5. Delete main organization row (ON DELETE CASCADE sweeps all domain tables)
+        try:
+            await conn.execute(
+                organizations_table.delete().where(organizations_table.c.id == org_id)
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=500, detail=f"Failed to delete organization: {exc}"
+            ) from exc
 
 
 @router.get("/{org_id}/timeline", response_model=TimelineEntriesListResponse)
@@ -245,41 +408,38 @@ async def list_organization_timeline(
     return {"items": items, "total": total}
 
 
-@router.get("/{org_id}/users", response_model=list[OrgUserResponse])
-async def list_organization_users(
-    org_id: uuid.UUID, _admin: dict = Depends(require_platform_admin)
-):
-    """Users belonging to one org — powers the "run as" picker in the control-plane
-    test harness (admin/system_graph_router.py). Only users with a
-    whatsapp_number can actually be simulated; the caller marks the rest as
-    untestable."""
-    engine = get_engine()
-    async with engine.connect() as conn:
-        result = await conn.execute(
-            sa.select(
-                users_table.c.id,
-                users_table.c.full_name,
-                users_table.c.email,
-                users_table.c.role,
-                users_table.c.whatsapp_number,
-                users_table.c.access_policy,
-            ).where(users_table.c.organization_id == org_id)
-        )
-        rows = result.fetchall()
+async def _fetch_org_users(
+    conn, org_id: uuid.UUID, user_id: uuid.UUID | None = None
+) -> list[OrgUserResponse]:
+    query = sa.select(
+        users_table.c.id,
+        users_table.c.full_name,
+        users_table.c.email,
+        users_table.c.role,
+        users_table.c.status,
+        users_table.c.whatsapp_number,
+        users_table.c.access_policy,
+    ).where(users_table.c.organization_id == org_id)
 
-        project_rows = await conn.execute(
-            sa.select(projects_table.c.id, projects_table.c.name).where(
-                projects_table.c.organization_id == org_id
-            )
-        )
-        project_names = {row.id: row.name for row in project_rows.fetchall()}
+    if user_id is not None:
+        query = query.where(users_table.c.id == user_id)
 
-        site_rows = await conn.execute(
-            sa.select(sites_table.c.id, sites_table.c.name).where(
-                sites_table.c.organization_id == org_id
-            )
+    result = await conn.execute(query)
+    rows = result.fetchall()
+
+    project_rows = await conn.execute(
+        sa.select(projects_table.c.id, projects_table.c.name).where(
+            projects_table.c.organization_id == org_id
         )
-        site_names = {row.id: row.name for row in site_rows.fetchall()}
+    )
+    project_names = {row.id: row.name for row in project_rows.fetchall()}
+
+    site_rows = await conn.execute(
+        sa.select(sites_table.c.id, sites_table.c.name).where(
+            sites_table.c.organization_id == org_id
+        )
+    )
+    site_names = {row.id: row.name for row in site_rows.fetchall()}
 
     users = []
     for row in rows:
@@ -321,6 +481,7 @@ async def list_organization_users(
                 full_name=row.full_name,
                 email=row.email,
                 role=row.role,
+                status=row.status or "Active",
                 whatsapp_number=row.whatsapp_number,
                 access_mode=mode,
                 project_access=grants,
@@ -329,9 +490,61 @@ async def list_organization_users(
     return users
 
 
+@router.get("/{org_id}/users", response_model=list[OrgUserResponse])
+async def list_organization_users(
+    org_id: uuid.UUID, _admin: dict = Depends(require_platform_admin)
+):
+    """Users belonging to one org — powers the "run as" picker in the control-plane
+    test harness (admin/system_graph_router.py). Only users with a
+    whatsapp_number can actually be simulated; the caller marks the rest as
+    untestable."""
+    engine = get_engine()
+    async with engine.connect() as conn:
+        return await _fetch_org_users(conn, org_id)
+
+
+@router.patch("/{org_id}/users/{user_id}/status", response_model=OrgUserResponse)
+async def update_organization_user_status(
+    org_id: uuid.UUID,
+    user_id: uuid.UUID,
+    body: UserStatusUpdate,
+    _admin: dict = Depends(require_platform_admin),
+):
+    valid_statuses = {"active", "inactive", "suspended"}
+    if body.status.lower() not in valid_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status '{body.status}'. Must be one of {sorted(valid_statuses)}",
+        )
+
+    normalized_status = body.status.capitalize()
+    engine = get_engine()
+    async with engine.begin() as conn:
+        result = await conn.execute(
+            sa.select(users_table.c.id).where(
+                users_table.c.id == user_id, users_table.c.organization_id == org_id
+            )
+        )
+        if result.first() is None:
+            raise HTTPException(status_code=404, detail="User not found in this organization")
+
+        await conn.execute(
+            users_table.update()
+            .where(users_table.c.id == user_id, users_table.c.organization_id == org_id)
+            .values(status=normalized_status)
+        )
+        fetched = await _fetch_org_users(conn, org_id, user_id)
+        if not fetched:
+            raise HTTPException(status_code=404, detail="User not found after update")
+        return fetched[0]
+
+
 @router.delete("/{org_id}/users/{user_id}", status_code=204)
 async def delete_organization_user(
-    org_id: uuid.UUID, user_id: uuid.UUID, _admin: dict = Depends(require_platform_admin)
+    org_id: uuid.UUID,
+    user_id: uuid.UUID,
+    force: bool = Query(default=False),
+    _admin: dict = Depends(require_platform_admin),
 ):
     engine = get_engine()
     async with engine.begin() as conn:
@@ -342,6 +555,73 @@ async def delete_organization_user(
         )
         if result.first() is None:
             raise HTTPException(status_code=404, detail="User not found in this organization")
+
+        if force:
+            user_id_str = str(user_id)
+            # Nullify created_by user references in domain tables that have created_by
+            for table_name in (
+                "money_accounts",
+                "money_transactions",
+                "expenses",
+                "material_receipts",
+                "material_usage",
+                "material_movements",
+                "equipment_events",
+                "labour_attendance",
+                "timeline_entries",
+            ):
+                await conn.execute(
+                    sa.text(f"UPDATE {table_name} SET created_by = NULL WHERE created_by = :user_id"),
+                    {"user_id": user_id},
+                )
+
+            # Nullify user_id / actor_user_id in workflow and logging tables
+            await conn.execute(
+                sa.text("UPDATE workflow_instances SET user_id = NULL WHERE user_id = :user_id"),
+                {"user_id": user_id},
+            )
+            await conn.execute(
+                sa.text("UPDATE inbound_messages SET actor_user_id = NULL WHERE actor_user_id = :user_id"),
+                {"user_id": user_id},
+            )
+
+            # Clear context and identity user rows
+            await conn.execute(
+                sa.text("DELETE FROM user_context_preferences WHERE user_id = :user_id_str"),
+                {"user_id_str": user_id_str},
+            )
+            await conn.execute(
+                sa.text("DELETE FROM site_memberships WHERE user_id = :user_id_str"),
+                {"user_id_str": user_id_str},
+            )
+            await conn.execute(
+                sa.text("DELETE FROM project_memberships WHERE user_id = :user_id_str"),
+                {"user_id_str": user_id_str},
+            )
+            await conn.execute(
+                sa.text(
+                    "DELETE FROM membership_roles WHERE membership_id IN (SELECT id FROM organization_memberships WHERE user_id = :user_id_str)"
+                ),
+                {"user_id_str": user_id_str},
+            )
+            await conn.execute(
+                sa.text("DELETE FROM organization_memberships WHERE user_id = :user_id_str"),
+                {"user_id_str": user_id_str},
+            )
+            await conn.execute(
+                sa.text("DELETE FROM external_identities WHERE user_id = :user_id_str"),
+                {"user_id_str": user_id_str},
+            )
+            await conn.execute(
+                sa.text("DELETE FROM interactions WHERE user_id = :user_id"),
+                {"user_id": user_id},
+            )
+            await conn.execute(
+                sa.text(
+                    "DELETE FROM context_users WHERE canonical_user_id = :user_id OR id = :user_id_str"
+                ),
+                {"user_id": user_id, "user_id_str": user_id_str},
+            )
 
         try:
             await conn.execute(
@@ -356,7 +636,7 @@ async def delete_organization_user(
                     status_code=409,
                     detail=(
                         "User cannot be deleted because they own historical records "
-                        "(materials, finance, timeline, etc). Deactivate them instead."
+                        "(materials, finance, timeline, etc). Deactivate them instead or use Force Delete."
                     ),
                 ) from exc
             raise HTTPException(status_code=500, detail=f"Database error: {exc}") from exc

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Cloud, Server, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Cloud, Server, Trash2, X } from 'lucide-react';
 import { api } from './api';
 
 interface Organization {
@@ -23,6 +23,7 @@ interface OrgUser {
   email: string | null;
   full_name: string | null;
   role: string | null;
+  status?: string;
   whatsapp_number: string | null;
   access_mode: string;
   project_access: ProjectAccessGrant[];
@@ -52,7 +53,9 @@ export default function OrganizationDetail() {
   const [tab, setTab] = useState<Tab>('users');
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
+  const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -72,21 +75,49 @@ export default function OrganizationDetail() {
       .finally(() => setLoading(false));
   }, [id]);
 
-  const handleDelete = () => {
+  const executeDelete = () => {
     if (!org) return;
-    const confirmed = window.confirm(
-      `Delete "${org.name}"? This permanently removes the organization and all of its user accounts. This cannot be undone.`
-    );
-    if (!confirmed) return;
-
     setDeleting(true);
+    setError(null);
     api
       .delete(`/admin/organizations/${org.id}`)
       .then(() => navigate('/organizations'))
       .catch((err) => {
         setError(err.response?.data?.detail || 'Failed to delete organization');
         setDeleting(false);
+        setShowDeleteModal(false);
       });
+  };
+
+  const handleUpdateUserStatus = (user: OrgUser, newStatus: string) => {
+    if (!id) return;
+    setUpdatingUserId(user.id);
+    setError(null);
+    api
+      .patch<OrgUser>(`/admin/organizations/${id}/users/${user.id}/status`, { status: newStatus })
+      .then((res) => {
+        setUsers((prev) =>
+          prev.map((u) => (u.id === user.id ? { ...u, status: res.data.status || newStatus } : u))
+        );
+      })
+      .catch((err) => setError(err.response?.data?.detail || 'Failed to update user status'))
+      .finally(() => setUpdatingUserId(null));
+  };
+
+  const handleForceDeleteUser = (user: OrgUser) => {
+    if (!id) return;
+    const confirmed = window.confirm(
+      `FORCE DELETE "${user.full_name || user.email || user.id}"?\n\nThis will unbind user ownership on historical records and PERMANENTLY delete the account. This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setDeletingUserId(user.id);
+    setError(null);
+    api
+      .delete(`/admin/organizations/${id}/users/${user.id}?force=true`)
+      .then(() => setUsers((prev) => prev.filter((u) => u.id !== user.id)))
+      .catch((err) => setError(err.response?.data?.detail || 'Failed to force delete user'))
+      .finally(() => setDeletingUserId(null));
   };
 
   const handleDeleteUser = (user: OrgUser) => {
@@ -101,7 +132,21 @@ export default function OrganizationDetail() {
     api
       .delete(`/admin/organizations/${id}/users/${user.id}`)
       .then(() => setUsers((prev) => prev.filter((u) => u.id !== user.id)))
-      .catch((err) => setError(err.response?.data?.detail || 'Failed to remove user'))
+      .catch((err) => {
+        if (err.response?.status === 409) {
+          const detail = err.response?.data?.detail || 'User owns historical records.';
+          const choice = window.confirm(
+            `${detail}\n\nClick OK to DEACTIVATE account (recommended).\nClick CANCEL to choice Force Delete.`
+          );
+          if (choice) {
+            handleUpdateUserStatus(user, 'Inactive');
+          } else {
+            handleForceDeleteUser(user);
+          }
+          return;
+        }
+        setError(err.response?.data?.detail || 'Failed to remove user');
+      })
       .finally(() => setDeletingUserId(null));
   };
 
@@ -142,10 +187,10 @@ export default function OrganizationDetail() {
         <button
           className="btn-secondary"
           style={{ color: 'var(--error)', borderColor: 'var(--error)' }}
-          onClick={handleDelete}
+          onClick={() => setShowDeleteModal(true)}
           disabled={deleting}
         >
-          <Trash2 size={16} /> {deleting ? 'Deleting…' : 'Delete Tenant'}
+          <Trash2 size={16} /> Delete Tenant
         </button>
       </header>
 
@@ -197,6 +242,7 @@ export default function OrganizationDetail() {
                 <th>Name</th>
                 <th>Email</th>
                 <th>Role</th>
+                <th>Status</th>
                 <th>WhatsApp</th>
                 <th>Project &amp; Site Access</th>
                 <th style={{ textAlign: 'right' }}>Actions</th>
@@ -204,41 +250,64 @@ export default function OrganizationDetail() {
             </thead>
             <tbody>
               {users.length === 0 ? (
-                <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--neutral-500)' }}>No users in this organization.</td></tr>
+                <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--neutral-500)' }}>No users in this organization.</td></tr>
               ) : (
-                users.map((u) => (
-                  <tr key={u.id}>
-                    <td style={{ fontWeight: 500, color: 'var(--neutral-900)' }}>{u.full_name || '—'}</td>
-                    <td>{u.email || '—'}</td>
-                    <td style={{ textTransform: 'capitalize' }}>{(u.role || '').toLowerCase()}</td>
-                    <td style={{ fontSize: '13px', color: 'var(--neutral-500)' }}>{u.whatsapp_number || 'Not mapped'}</td>
-                    <td style={{ fontSize: '13px' }}>
-                      {u.access_mode === 'all_projects' ? (
-                        <span className="badge badge-info">All Projects</span>
-                      ) : u.project_access.length === 0 ? (
-                        <span style={{ color: 'var(--neutral-500)' }}>No projects assigned</span>
-                      ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                          {u.project_access.map((grant) => (
-                            <div key={grant.project_id}>
-                              <span style={{ fontWeight: 500 }}>{grant.project_name}</span>
-                              <span style={{ color: 'var(--neutral-500)' }}> — {grant.site_access}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      <button
-                        style={{ background: 'none', border: 'none', color: 'var(--error)', fontWeight: 500, cursor: 'pointer', fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                        onClick={() => handleDeleteUser(u)}
-                        disabled={deletingUserId === u.id}
-                      >
-                        <X size={13} /> {deletingUserId === u.id ? 'Removing…' : 'Remove'}
-                      </button>
-                    </td>
-                  </tr>
-                ))
+                users.map((u) => {
+                  const isInactive = (u.status || 'Active').toLowerCase() === 'inactive';
+                  return (
+                    <tr key={u.id}>
+                      <td style={{ fontWeight: 500, color: 'var(--neutral-900)' }}>{u.full_name || '—'}</td>
+                      <td>{u.email || '—'}</td>
+                      <td style={{ textTransform: 'capitalize' }}>{(u.role || '').toLowerCase()}</td>
+                      <td>
+                        <span className={`badge ${statusBadgeClass(u.status || 'Active')}`}>
+                          {u.status || 'Active'}
+                        </span>
+                      </td>
+                      <td style={{ fontSize: '13px', color: 'var(--neutral-500)' }}>{u.whatsapp_number || 'Not mapped'}</td>
+                      <td style={{ fontSize: '13px' }}>
+                        {u.access_mode === 'all_projects' ? (
+                          <span className="badge badge-info">All Projects</span>
+                        ) : u.project_access.length === 0 ? (
+                          <span style={{ color: 'var(--neutral-500)' }}>No projects assigned</span>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                            {u.project_access.map((grant) => (
+                              <div key={grant.project_id}>
+                                <span style={{ fontWeight: 500 }}>{grant.project_name}</span>
+                                <span style={{ color: 'var(--neutral-500)' }}> — {grant.site_access}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        <button
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: isInactive ? 'var(--primary)' : 'var(--neutral-600)',
+                            fontWeight: 500,
+                            cursor: 'pointer',
+                            fontSize: '13px',
+                            marginRight: '12px',
+                          }}
+                          onClick={() => handleUpdateUserStatus(u, isInactive ? 'Active' : 'Inactive')}
+                          disabled={updatingUserId === u.id}
+                        >
+                          {updatingUserId === u.id ? 'Updating…' : isInactive ? 'Reactivate' : 'Deactivate'}
+                        </button>
+                        <button
+                          style={{ background: 'none', border: 'none', color: 'var(--error)', fontWeight: 500, cursor: 'pointer', fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                          onClick={() => handleDeleteUser(u)}
+                          disabled={deletingUserId === u.id}
+                        >
+                          <X size={13} /> {deletingUserId === u.id ? 'Removing…' : 'Remove'}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -273,6 +342,160 @@ export default function OrganizationDetail() {
           </table>
         </div>
       )}
+
+      {showDeleteModal && (
+        <DeleteOrgModal
+          orgName={org.name}
+          isOpen={showDeleteModal}
+          deleting={deleting}
+          onClose={() => setShowDeleteModal(false)}
+          onConfirm={executeDelete}
+        />
+      )}
+    </div>
+  );
+}
+
+interface DeleteOrgModalProps {
+  orgName: string;
+  isOpen: boolean;
+  deleting: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}
+
+function DeleteOrgModal({ orgName, isOpen, deleting, onClose, onConfirm }: DeleteOrgModalProps) {
+  const [typedName, setTypedName] = useState('');
+
+  if (!isOpen) return null;
+
+  const isConfirmed = typedName.trim() === orgName.trim();
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        backgroundColor: 'rgba(14, 17, 22, 0.65)',
+        backdropFilter: 'blur(4px)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1000,
+        padding: '16px',
+      }}
+      onClick={onClose}
+    >
+      <div
+        className="animate-fade-in"
+        style={{
+          background: 'var(--surface-primary, #FFFFFF)',
+          border: '1px solid var(--border-default, #E5E7EB)',
+          borderRadius: 'var(--radius-md, 12px)',
+          padding: '24px',
+          maxWidth: '480px',
+          width: '100%',
+          boxShadow: 'var(--shadow-overlay, 0 20px 48px rgba(16,24,40,0.18))',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', marginBottom: '16px' }}>
+          <div
+            style={{
+              padding: '10px',
+              borderRadius: '50%',
+              background: 'var(--error-soft, #FEE2E2)',
+              color: 'var(--error, #EF4444)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+            }}
+          >
+            <AlertTriangle size={22} />
+          </div>
+          <div>
+            <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 600, color: 'var(--neutral-900)' }}>
+              Delete Tenant Organization?
+            </h3>
+            <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--neutral-500)' }}>
+              This action <strong style={{ color: 'var(--error)' }}>cannot be undone</strong>.
+            </p>
+          </div>
+        </div>
+
+        <div
+          style={{
+            background: 'var(--surface-secondary, #F3F4F6)',
+            borderRadius: '8px',
+            padding: '12px 14px',
+            marginBottom: '16px',
+            fontSize: '13px',
+            color: 'var(--neutral-700)',
+            lineHeight: 1.5,
+          }}
+        >
+          Deleting <strong>"{orgName}"</strong> will permanently purge:
+          <ul style={{ margin: '6px 0 0 18px', padding: 0 }}>
+            <li>All user accounts, roles & access policies</li>
+            <li>All projects, job sites & assigned memberships</li>
+            <li>All money accounts, expenses & transaction ledgers</li>
+            <li>All material catalogues, receipts & movement logs</li>
+            <li>All timeline activity & message logs</li>
+          </ul>
+        </div>
+
+        <div style={{ marginBottom: '20px' }}>
+          <label
+            htmlFor="confirm-org-name"
+            style={{ display: 'block', fontSize: '13px', fontWeight: 500, marginBottom: '6px', color: 'var(--neutral-700)' }}
+          >
+            Type <code style={{ background: '#E5E7EB', padding: '2px 6px', borderRadius: '4px' }}>{orgName}</code> to confirm:
+          </label>
+          <input
+            id="confirm-org-name"
+            type="text"
+            className="form-input"
+            style={{ width: '100%', boxSizing: 'border-box' }}
+            placeholder={orgName}
+            value={typedName}
+            onChange={(e) => setTypedName(e.target.value)}
+            disabled={deleting}
+            autoFocus
+          />
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={onClose}
+            disabled={deleting}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            style={{
+              background: isConfirmed ? 'var(--error)' : 'var(--neutral-300)',
+              color: 'var(--white)',
+              border: 'none',
+              borderRadius: 'var(--radius-sm, 8px)',
+              padding: '8px 16px',
+              fontWeight: 500,
+              fontSize: '14px',
+              cursor: isConfirmed && !deleting ? 'pointer' : 'not-allowed',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+            }}
+            onClick={onConfirm}
+            disabled={!isConfirmed || deleting}
+          >
+            <Trash2 size={15} /> {deleting ? 'Deleting…' : 'Permanently Delete'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
