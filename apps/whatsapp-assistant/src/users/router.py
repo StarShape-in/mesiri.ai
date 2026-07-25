@@ -78,6 +78,29 @@ sites_table = sa.Table(
     sa.Column("organization_id", sa.UUID),
 )
 
+# project_members/site_members are the tables AuthorizationService (REST) and
+# the WhatsApp context resolver (via identity_projection's membership
+# projection) actually authorize against -- see migration 0350. access_policy
+# below is written alongside for GET /me backward compatibility only; it is
+# no longer read for authorization decisions anywhere.
+project_members_table = sa.Table(
+    "project_members",
+    sa.MetaData(),
+    sa.Column("id", sa.UUID, primary_key=True),
+    sa.Column("project_id", sa.UUID),
+    sa.Column("user_id", sa.UUID),
+    sa.Column("role", sa.String),
+    sa.Column("site_access_mode", sa.String),
+)
+
+site_members_table = sa.Table(
+    "site_members",
+    sa.MetaData(),
+    sa.Column("id", sa.UUID, primary_key=True),
+    sa.Column("site_id", sa.UUID),
+    sa.Column("user_id", sa.UUID),
+)
+
 _DEFAULT_ACCESS_POLICY: dict = {"mode": "custom_projects", "projects": []}
 
 
@@ -370,6 +393,15 @@ async def update_user(
 
     if values:
         await project_entity("user", user_id)
+        if "role" in values:
+            # A role change can move a user into or out of an org-wide role
+            # (_ORG_WIDE_ROLES) -- promoting to ADMIN should grant every
+            # project immediately, demoting away from it should drop the
+            # bypass, and _project_membership is what applies that rule.
+            # project_entity("user", ...) alone only re-syncs the profile
+            # row; without this, the grant/revoke waited for the next full
+            # reconcile instead of taking effect on save.
+            await project_entity("membership", user_id)
     return _row_to_response(row)
 
 
@@ -443,17 +475,36 @@ async def update_user_access(
     policy: AccessPolicy,
     admin_payload: dict = Depends(get_current_admin),
 ):
+    """Set a user's project/site access.
+
+    Used to only write ``users.access_policy`` -- a JSONB column that
+    AuthorizationService and the WhatsApp context resolver stopped reading
+    after migration 0350 (see that migration's docstring: three disconnected
+    access mechanisms existed, and project_members/site_members is the one
+    both consult). That made this endpoint a no-op in practice: an admin
+    granting or revoking access here saw the change reflected in the
+    dashboard's own UserDetails/Users pages (which still render
+    access_policy) while the user's actual REST and WhatsApp access were
+    untouched. This now writes project_members/site_members -- a full
+    replace of this user's membership set, same approach as
+    identity_projection.py's _project_membership -- and re-runs the identity
+    projection so the WhatsApp context resolver picks it up without waiting
+    for the next reconcile. access_policy is still written alongside so
+    GET /me (documented as reading it for backward compatibility) keeps
+    working.
+    """
     engine = get_engine()
     org_id = admin_payload.get("org")
 
     async with engine.begin() as conn:
         result = await conn.execute(
-            sa.select(users_table.c.id).where(
+            sa.select(users_table.c.id, users_table.c.role).where(
                 users_table.c.id == user_id,
                 users_table.c.organization_id == org_id,
             )
         )
-        if result.first() is None:
+        user_row = result.first()
+        if user_row is None:
             raise HTTPException(status_code=404, detail="User not found")
 
         await _validate_access_policy(conn, org_id, policy)
@@ -466,6 +517,75 @@ async def update_user_access(
             )
             .values(access_policy=policy.model_dump())
         )
+
+        # Full replace: this user's grants are a set, and the set can shrink
+        # (a project removed via this same dialog) as easily as it can grow.
+        existing_project_ids = await conn.execute(
+            sa.select(project_members_table.c.project_id).where(
+                project_members_table.c.user_id == user_id
+            )
+        )
+        project_ids_to_clear = [r.project_id for r in existing_project_ids.fetchall()]
+        if project_ids_to_clear:
+            await conn.execute(
+                site_members_table.delete().where(
+                    site_members_table.c.user_id == user_id,
+                    site_members_table.c.site_id.in_(
+                        sa.select(sites_table.c.id).where(
+                            sites_table.c.project_id.in_(project_ids_to_clear)
+                        )
+                    ),
+                )
+            )
+        await conn.execute(
+            project_members_table.delete().where(project_members_table.c.user_id == user_id)
+        )
+
+        if policy.mode == "all_projects":
+            # Unlike the ADMIN role's org-wide bypass (_ORG_WIDE_ROLES --
+            # present AND future projects, no rows needed), a non-admin
+            # granted "all_projects" through this dialog gets an explicit
+            # project_members row per project that exists right now. It's a
+            # snapshot, not a standing bypass: a project created afterwards
+            # needs its own grant, same as any other membership-based access.
+            project_rows = await conn.execute(
+                sa.select(projects_table.c.id).where(projects_table.c.organization_id == org_id)
+            )
+            for row in project_rows.fetchall():
+                await conn.execute(
+                    project_members_table.insert().values(
+                        id=uuid.uuid4(),
+                        project_id=row.id,
+                        user_id=user_id,
+                        role=user_row.role,
+                        site_access_mode="all_sites",
+                    )
+                )
+        elif policy.mode == "custom_projects":
+            for grant in policy.projects or []:
+                project_id = _as_uuid(grant["projectId"], "projectId")
+                site_access = grant.get("siteAccess") or {}
+                site_mode = site_access.get("mode", "all_sites")
+                await conn.execute(
+                    project_members_table.insert().values(
+                        id=uuid.uuid4(),
+                        project_id=project_id,
+                        user_id=user_id,
+                        role=user_row.role,
+                        site_access_mode=site_mode,
+                    )
+                )
+                if site_mode == "custom_sites":
+                    for site_id in site_access.get("siteIds") or []:
+                        await conn.execute(
+                            site_members_table.insert().values(
+                                id=uuid.uuid4(),
+                                site_id=_as_uuid(site_id, "siteId"),
+                                user_id=user_id,
+                            )
+                        )
+
+    await project_entity("membership", user_id)
     return policy
 
 

@@ -1019,6 +1019,18 @@ async def resume_pending_report_with_project(
         return ReplySpec(text="That selection expired — please resend your report.")
 
     project_id = row_id.removeprefix(_PROJECT_ROW_PREFIX)
+
+    # The picker only ever renders actor.projects (see _run_project_gate), but
+    # the tapped row_id is untrusted client input -- WhatsApp interactive
+    # replies echo back whatever id the button carried, and nothing stops a
+    # replayed/crafted payload from naming a project the picker never offered.
+    # Re-checking against the same authorized set the picker was built from
+    # closes that gap instead of trusting the tap at face value.
+    authorized_ids = {p.id for p in actor.projects} if actor is not None else set()
+    if project_id not in authorized_ids:
+        await _complete_resume_leg(message, event, message_logger)
+        return ReplySpec(text="That project isn't available to you — please resend your report.")
+
     event = event.model_copy(update={"project_id": project_id})
 
     held_reply = await _run_site_gate(
@@ -1208,6 +1220,7 @@ async def resume_pending_report_with_site(
     pending_report_store: PendingReportStore,
     planner: Planner,
     workflow_runtime: WorkflowRuntime,
+    actor: ActorIdentity | None = None,
     inventory_query: MaterialInventoryQueryService | None = None,
     message_logger: MessageLogger | None = None,
 ) -> ReplySpec | None:
@@ -1234,7 +1247,18 @@ async def resume_pending_report_with_site(
             await _safe(message_logger.mark_completed(correlation_id=message.correlation_id))
         return ReplySpec(text="That selection expired — please resend your report.")
 
-    site_id = None if row_id == ALL_SITES_ROW_ID else row_id.removeprefix(_SITE_ROW_PREFIX)
+    if row_id == ALL_SITES_ROW_ID:
+        site_id = None
+    else:
+        site_id = row_id.removeprefix(_SITE_ROW_PREFIX)
+        # Same untrusted-tap concern as the project resume leg above: the
+        # picker only ever renders sites from actor.sites for this project
+        # (_run_site_gate), so re-check the tap against that same set rather
+        # than trusting whatever site_id the interactive reply carried.
+        authorized_ids = {s.id for s in actor.sites} if actor is not None else set()
+        if site_id not in authorized_ids:
+            await _complete_resume_leg(message, event, message_logger)
+            return ReplySpec(text="That site isn't available to you — please resend your report.")
     event = event.model_copy(update={"site_id": site_id})
 
     reply = await _plan_and_run(

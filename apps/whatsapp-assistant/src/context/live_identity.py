@@ -144,7 +144,11 @@ def whoami_reply(actor: ActorIdentity) -> str:
             detail = " · ".join(parts) if parts else "—"
             lines.append(f"   • {p.name} — {detail}")
     else:
-        lines += ["", "🏗 Projects: none assigned to your organization yet"]
+        lines += [
+            "",
+            "🏗 Projects: none assigned to you yet — ask your administrator "
+            "to give you project access.",
+        ]
 
     if actor.sites:
         lines += ["", f"📍 Sites ({len(actor.sites)}):"]

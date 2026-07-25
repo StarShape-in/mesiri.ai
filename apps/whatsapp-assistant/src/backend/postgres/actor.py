@@ -19,6 +19,67 @@ from backend.ports import ActorIdentity, ProjectSummary, SiteSummary
 
 _ORG_ACTIVE_STATUS = "Active"
 
+# Org-level roles that bypass explicit project_members rows entirely. Must stay
+# in sync with authorization/service.py's _ORG_WIDE_ROLES and
+# context/identity_projection.py's _ORG_WIDE_ROLES -- three readers of the same
+# rule. An admin sees every project in their org, present and future, without
+# needing a project_members row per project.
+_ORG_WIDE_ROLES = {"ADMIN"}
+
+# A user reaches a project via a direct project_members row, or via a
+# site_members row on one of its sites (site access implies its project --
+# same rule the M4 context layer applies in context/postgres_repositories.py's
+# _AUTHORIZED_PROJECT_IDS). Non-admins get exactly this and nothing more.
+_MEMBER_PROJECTS_SQL = """
+SELECT p.id, p.name, p.location, p.code, p.status, p.progress, p.open_issues
+FROM projects p
+WHERE p.organization_id = :org
+  AND (
+    p.id IN (SELECT pm.project_id FROM project_members pm WHERE pm.user_id = :uid)
+    OR p.id IN (
+      SELECT s.project_id FROM site_members sm
+      JOIN sites s ON s.id = sm.site_id
+      WHERE sm.user_id = :uid
+    )
+  )
+ORDER BY p.name
+"""
+
+_ALL_ORG_PROJECTS_SQL = """
+SELECT id, name, location, code, status, progress, open_issues
+FROM projects
+WHERE organization_id = :org
+ORDER BY name
+"""
+
+# Sites follow project_members.site_access_mode: 'all_sites' (the default)
+# exposes every site under a project the user is a member of; 'custom_sites'
+# narrows to explicit site_members rows. Deliberately NOT expanded into
+# site_members rows at write time -- that would go stale the moment a new site
+# is added to the project (see migration 0350's note).
+_MEMBER_SITES_SQL = """
+SELECT s.id, s.name, s.project_id
+FROM sites s
+WHERE s.organization_id = :org
+  AND s.status = 'active'
+  AND (
+    s.project_id IN (
+      SELECT pm.project_id FROM project_members pm
+      WHERE pm.user_id = :uid AND pm.site_access_mode = 'all_sites'
+    )
+    OR s.id IN (SELECT sm.site_id FROM site_members sm WHERE sm.user_id = :uid)
+  )
+ORDER BY s.name
+"""
+
+_ALL_ORG_SITES_SQL = """
+SELECT id, name, project_id
+FROM sites
+WHERE organization_id = :org
+  AND status = 'active'
+ORDER BY name
+"""
+
 
 def _digits(value: str | None) -> str:
     return re.sub(r"\D", "", value or "")
@@ -70,6 +131,16 @@ class PostgresActorReader:
             # ----------------------------------------------------------------
             # 1. Resolve the user + organization in one query.
             # ----------------------------------------------------------------
+            # u.status = 'active' excludes a deactivated/suspended user (see
+            # users/router.py's PATCH /users/{id}/status) from resolving at
+            # all -- without it, this query only ever checked org status,
+            # so deactivating a user from the dashboard had zero effect on
+            # their WhatsApp access: they'd still resolve to a full
+            # ActorIdentity and reach whoami, the project/site pickers, and
+            # report recording. Falling through to `row is None` below reuses
+            # the existing "unregistered sender" reply -- no new branch
+            # needed, and no distinct wording that would tell a deactivated
+            # user *why* they were locked out.
             row = (
                 (
                     await conn.execute(
@@ -80,6 +151,7 @@ class PostgresActorReader:
                             "LEFT JOIN organizations o ON o.id = u.organization_id "
                             "WHERE u.whatsapp_number IS NOT NULL "
                             "  AND regexp_replace(u.whatsapp_number, '\\D', '', 'g') = :d "
+                            "  AND u.status = 'active' "
                             "LIMIT 1"
                         ),
                         {"d": digits},
@@ -93,25 +165,30 @@ class PostgresActorReader:
                 return None
 
             org_id = row["organization_id"]
+            user_id = str(row["id"])
+            org_wide = str(row["role"] or "").upper() in _ORG_WIDE_ROLES
 
             # ----------------------------------------------------------------
-            # 2. Projects for this organization.
+            # 2. Projects THIS USER can reach -- not every project in the org.
+            #
+            # This used to be a bare `WHERE organization_id = :org`, which made
+            # every reply built from ActorIdentity (whoami, the project picker,
+            # the site picker, and the actor_profile injected into the planner
+            # prompt) show every project in the organization to every member of
+            # it, regardless of whether access had been granted in the
+            # dashboard. Membership is the filter now, matching what
+            # AuthorizationService already enforces on the REST side.
             # ----------------------------------------------------------------
             project_rows: list = []
             site_rows: list = []
 
             if org_id is not None:
+                params = {"org": str(org_id), "uid": user_id}
                 project_rows = (
                     (
                         await conn.execute(
-                            text(
-                                "SELECT id, name, location, code, status,"
-                                "       progress, open_issues "
-                                "FROM projects "
-                                "WHERE organization_id = :org "
-                                "ORDER BY name"
-                            ),
-                            {"org": str(org_id)},
+                            text(_ALL_ORG_PROJECTS_SQL if org_wide else _MEMBER_PROJECTS_SQL),
+                            {"org": str(org_id)} if org_wide else params,
                         )
                     )
                     .mappings()
@@ -119,21 +196,15 @@ class PostgresActorReader:
                 )
 
                 # ------------------------------------------------------------
-                # 3. Sites from the control-plane sites table.
-                #    Falls back gracefully if the migration hasn't run yet.
+                # 3. Sites the user can reach, from the control-plane sites
+                #    table. Falls back gracefully if the migration hasn't run.
                 # ------------------------------------------------------------
                 try:
                     site_rows = (
                         (
                             await conn.execute(
-                                text(
-                                    "SELECT id, name, project_id "
-                                    "FROM sites "
-                                    "WHERE organization_id = :org "
-                                    "  AND status = 'active' "
-                                    "ORDER BY name"
-                                ),
-                                {"org": str(org_id)},
+                                text(_ALL_ORG_SITES_SQL if org_wide else _MEMBER_SITES_SQL),
+                                {"org": str(org_id)} if org_wide else params,
                             )
                         )
                         .mappings()

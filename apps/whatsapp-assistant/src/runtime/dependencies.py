@@ -609,6 +609,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             pending_report_store=pending_report_store,
             planner=planner,
             workflow_runtime=workflow_runtime,
+            actor=ctx,
             inventory_query=inventory_query,
             message_logger=message_logger,
         )

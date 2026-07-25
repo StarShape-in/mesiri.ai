@@ -263,6 +263,7 @@ async def test_resume_with_specific_site_tap_sets_site_id():
     store = PendingReportStore(_FakeRedis())
     await store.set_pending(user_id=USR, event=_event())
     runtime = _RecordingWorkflowRuntime()
+    actor = _actor(sites=[SiteSummary(id=SITE_A, name="Site A", project_id=PRJ)])
 
     reply = await resume_pending_report_with_site(
         _site_tap_message(f"site_{SITE_A}"),
@@ -270,6 +271,7 @@ async def test_resume_with_specific_site_tap_sets_site_id():
         pending_report_store=store,
         planner=Planner(),
         workflow_runtime=runtime,
+        actor=actor,
     )
 
     assert reply is not None
@@ -295,6 +297,28 @@ async def test_resume_with_all_sites_combined_tap_sets_site_id_none():
     assert reply is not None
     assert runtime.started_with_event is not None
     assert runtime.started_with_event.site_id is None
+
+
+async def test_resume_rejects_site_tap_outside_authorized_set():
+    """A tapped row_id naming a site the actor isn't authorized for (a
+    replayed/crafted interactive reply, or a site whose access was revoked
+    between the picker render and the tap) must not be recorded."""
+    store = PendingReportStore(_FakeRedis())
+    await store.set_pending(user_id=USR, event=_event())
+    runtime = _RecordingWorkflowRuntime()
+    actor = _actor(sites=[SiteSummary(id=SITE_B, name="Site B", project_id=PRJ)])
+
+    reply = await resume_pending_report_with_site(
+        _site_tap_message(f"site_{SITE_A}"),
+        USR,
+        pending_report_store=store,
+        planner=Planner(),
+        workflow_runtime=runtime,
+        actor=actor,
+    )
+
+    assert reply is not None
+    assert runtime.started_with_event is None
 
 
 async def test_resume_ignores_unrelated_row_ids():

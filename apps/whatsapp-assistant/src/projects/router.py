@@ -88,7 +88,21 @@ project_members_table = sa.Table(
     sa.Column("project_id", sa.UUID),
     sa.Column("user_id", sa.UUID),
     sa.Column("role", sa.String),
+    sa.Column("site_access_mode", sa.String),
 )
+
+site_members_table = sa.Table(
+    "site_members",
+    sa.MetaData(),
+    sa.Column("id", sa.UUID, primary_key=True),
+    sa.Column("site_id", sa.UUID),
+    sa.Column("user_id", sa.UUID),
+)
+
+# Org-level roles that bypass explicit project_members rows entirely. Must
+# stay in sync with authorization/service.py, identity_projection.py, and
+# backend/postgres/actor.py's copies of the same rule.
+_ORG_WIDE_ROLES = {"ADMIN"}
 
 # Minimal shim -- only the columns this router needs (email/full_name/status
 # for rendering a member row, organization_id to scope user lookups). See
@@ -101,6 +115,7 @@ users_table = sa.Table(
     sa.Column("email", sa.String),
     sa.Column("full_name", sa.String),
     sa.Column("status", sa.String),
+    sa.Column("role", sa.String),
 )
 
 
@@ -190,6 +205,28 @@ async def get_current_user(authorization: str = Header(None)) -> dict:
     return _decode(authorization)
 
 
+def _is_org_wide(payload: dict) -> bool:
+    return (payload.get("role") or "").upper() in _ORG_WIDE_ROLES
+
+
+def _member_project_ids_clause(user_id: uuid.UUID):
+    """id IN (...) clause: a direct project_members row, or a site_members row
+    on one of the project's sites (site access implies its project) -- same
+    rule context/postgres_repositories.py's _AUTHORIZED_PROJECT_IDS applies
+    for the WhatsApp side, kept consistent here for the REST side."""
+    return projects_table.c.id.in_(
+        sa.select(project_members_table.c.project_id).where(
+            project_members_table.c.user_id == user_id
+        )
+    ) | projects_table.c.id.in_(
+        sa.select(sites_table.c.project_id)
+        .select_from(
+            site_members_table.join(sites_table, sites_table.c.id == site_members_table.c.site_id)
+        )
+        .where(site_members_table.c.user_id == user_id)
+    )
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -198,14 +235,14 @@ async def list_projects(payload: dict = Depends(get_current_user)):
     org_id = payload.get("org")
     if not org_id:
         raise HTTPException(status_code=400, detail="User has no organization")
+    user_id = payload.get("sub")
 
     engine = get_engine()
     async with engine.connect() as conn:
-        result = await conn.execute(
-            sa.select(projects_table)
-            .where(projects_table.c.organization_id == org_id)
-            .order_by(projects_table.c.name)
-        )
+        query = sa.select(projects_table).where(projects_table.c.organization_id == org_id)
+        if not _is_org_wide(payload):
+            query = query.where(_member_project_ids_clause(user_id))
+        result = await conn.execute(query.order_by(projects_table.c.name))
         rows = result.fetchall()
     return [_to_response(r) for r in rows]
 
@@ -215,15 +252,17 @@ async def get_project(project_id: uuid.UUID, payload: dict = Depends(get_current
     org_id = payload.get("org")
     if not org_id:
         raise HTTPException(status_code=400, detail="User has no organization")
+    user_id = payload.get("sub")
 
     engine = get_engine()
     async with engine.connect() as conn:
-        result = await conn.execute(
-            sa.select(projects_table).where(
-                projects_table.c.id == project_id,
-                projects_table.c.organization_id == org_id,
-            )
+        query = sa.select(projects_table).where(
+            projects_table.c.id == project_id,
+            projects_table.c.organization_id == org_id,
         )
+        if not _is_org_wide(payload):
+            query = query.where(_member_project_ids_clause(user_id))
+        result = await conn.execute(query)
         row = result.first()
 
     if row is None:
@@ -236,26 +275,41 @@ async def list_project_sites(project_id: uuid.UUID, payload: dict = Depends(get_
     org_id = payload.get("org")
     if not org_id:
         raise HTTPException(status_code=400, detail="User has no organization")
+    user_id = payload.get("sub")
+    org_wide = _is_org_wide(payload)
 
     engine = get_engine()
     async with engine.connect() as conn:
-        project_result = await conn.execute(
-            sa.select(projects_table.c.id).where(
-                projects_table.c.id == project_id,
-                projects_table.c.organization_id == org_id,
-            )
+        project_query = sa.select(projects_table.c.id).where(
+            projects_table.c.id == project_id,
+            projects_table.c.organization_id == org_id,
         )
+        if not org_wide:
+            project_query = project_query.where(_member_project_ids_clause(user_id))
+        project_result = await conn.execute(project_query)
         if project_result.first() is None:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        result = await conn.execute(
-            sa.select(sites_table)
-            .where(
-                sites_table.c.project_id == project_id,
-                sites_table.c.organization_id == org_id,
-            )
-            .order_by(sites_table.c.name)
+        sites_query = sa.select(sites_table).where(
+            sites_table.c.project_id == project_id,
+            sites_table.c.organization_id == org_id,
         )
+        if not org_wide:
+            # project_members.site_access_mode governs whether membership on
+            # this project implies every site or only explicitly granted
+            # ones -- mirrors backend/postgres/actor.py's _MEMBER_SITES_SQL.
+            all_sites_member = sa.exists(
+                sa.select(project_members_table.c.id).where(
+                    project_members_table.c.project_id == project_id,
+                    project_members_table.c.user_id == user_id,
+                    project_members_table.c.site_access_mode == "all_sites",
+                )
+            )
+            explicit_site_ids = sa.select(site_members_table.c.site_id).where(
+                site_members_table.c.user_id == user_id
+            )
+            sites_query = sites_query.where(all_sites_member | sites_table.c.id.in_(explicit_site_ids))
+        result = await conn.execute(sites_query.order_by(sites_table.c.name))
         rows = result.fetchall()
 
     return [
@@ -308,7 +362,32 @@ async def create_project_site(
             )
         )
 
+        # Users whose access to this project already implies "every site" --
+        # an org-wide role, or an explicit all_sites project_members row --
+        # need their membership set re-synced once the new site exists in the
+        # context layer below. Without this, a site created after a member's
+        # last sync stayed invisible to them until the next full reconcile
+        # (see identity_projection.py's _project_membership docstring on why
+        # a project's site set can't be cached at grant time).
+        all_sites_members = await conn.execute(
+            sa.select(users_table.c.id).where(
+                users_table.c.organization_id == org_id,
+                sa.or_(
+                    sa.func.upper(users_table.c.role).in_(_ORG_WIDE_ROLES),
+                    users_table.c.id.in_(
+                        sa.select(project_members_table.c.user_id).where(
+                            project_members_table.c.project_id == project_id,
+                            project_members_table.c.site_access_mode == "all_sites",
+                        )
+                    ),
+                ),
+            )
+        )
+        member_ids_to_resync = [r.id for r in all_sites_members.fetchall()]
+
     await project_entity("site", site_id)
+    for member_id in member_ids_to_resync:
+        await project_entity("membership", member_id)
     return SiteResponse(id=site_id, project_id=project_id, name=name, status=status)
 
 
