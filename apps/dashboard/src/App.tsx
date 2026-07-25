@@ -25,14 +25,38 @@ export default function App() {
         <Route path="overview" element={<Overview />} />
         <Route path="company" element={<CompanyDetails />} />
         <Route path="users" element={<Users />} />
-
         <Route path="users/:id" element={<UserDetails />} />
         <Route path="projects" element={<Projects />} />
         <Route path="projects/:id" element={<ProjectDetails />} />
-        <Route path="field-reports" element={<FieldReportsPage />} />
-        <Route path="materials" element={<MaterialsPage />} />
 
-        {/* Reusable Operational Shared Placeholders */}
+        {/* Operations Section */}
+        <Route path="operations/overview" element={<Overview />} />
+        <Route path="operations/timeline" element={<OperationalPlaceholder title="Timeline" />} />
+        <Route path="operations/field-reports" element={<FieldReportsPage />} />
+        <Route path="operations/gallery" element={<OperationalPlaceholder title="Gallery" />} />
+        <Route path="operations/analytics" element={<OperationalPlaceholder title="Analytics" />} />
+
+        {/* Finance Section */}
+        <Route path="finance/overview" element={<OperationalPlaceholder title="Finance Overview" />} />
+        <Route path="finance/expenses" element={<OperationalPlaceholder title="Expenses" />} />
+        <Route path="finance/accounts" element={<OperationalPlaceholder title="Accounts" />} />
+        <Route path="finance/transactions" element={<OperationalPlaceholder title="Transactions" />} />
+        <Route path="finance/petty-cash" element={<OperationalPlaceholder title="Petty Cash" />} />
+        <Route path="finance/vendors" element={<OperationalPlaceholder title="Vendors" />} />
+        <Route path="finance/categories" element={<OperationalPlaceholder title="Finance Categories" />} />
+        <Route path="finance/reports" element={<OperationalPlaceholder title="Finance Reports" />} />
+        <Route path="finance/settings" element={<OperationalPlaceholder title="Finance Settings" />} />
+
+        {/* Materials Section */}
+        <Route path="materials" element={<MaterialsPage />} />
+        <Route path="materials/overview" element={<MaterialsPage />} />
+        <Route path="materials/inventory" element={<OperationalPlaceholder title="Material Inventory" />} />
+        <Route path="materials/purchases" element={<OperationalPlaceholder title="Material Purchases" />} />
+        <Route path="materials/suppliers" element={<OperationalPlaceholder title="Suppliers" />} />
+        <Route path="materials/categories" element={<OperationalPlaceholder title="Material Categories" />} />
+
+        {/* Legacy operational routes fallbacks */}
+        <Route path="field-reports" element={<FieldReportsPage />} />
         <Route path="timeline" element={<OperationalPlaceholder title="Timeline" />} />
         <Route path="analytics" element={<OperationalPlaceholder title="Analytics" />} />
         <Route path="gallery" element={<OperationalPlaceholder title="Gallery" />} />
