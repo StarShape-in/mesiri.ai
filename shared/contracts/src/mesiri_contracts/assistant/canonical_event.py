@@ -38,6 +38,8 @@ class CanonicalEventType(str, Enum):
     GENERAL_QUESTION_ASKED = "GeneralQuestionAsked"
     IDENTITY_LOOKUP_REQUESTED = "IdentityLookupRequested"
     INVENTORY_QUERY_ASKED = "InventoryQueryAsked"
+    ACCOUNT_BALANCE_QUERY_ASKED = "AccountBalanceQueryAsked"
+    EXPENSE_QUERY_ASKED = "ExpenseQueryAsked"
     # Deterministic (non-AI) command, never produced by canonicalization/
     # extraction -- constructed directly by
     # runtime/account_admin_journey.py when it recognizes a "create/rename/

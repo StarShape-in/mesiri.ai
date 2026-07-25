@@ -357,6 +357,53 @@ async def test_provide_input_rejects_when_phase_is_not_collecting_fields():
     assert result.status is WorkflowRunStatus.FAILED
 
 
+async def test_informational_workflow_completes_without_confirmation():
+    """Finance Module Slice 2: a query workflow (no draft_action, ever) must
+    complete straight away -- never persisted, never AWAITING_CONFIRMATION,
+    and exempt from the single-active pending-confirmation block."""
+    graph = _FakeGraph(result={"pending_prompt": "💰 Site Cash: ₹3800"})
+    registry = _FakeRegistry({WorkflowKey.ACCOUNT_BALANCE_QUERY: graph})
+    repo = FakeWorkflowInstanceRepository()
+    runtime = WorkflowRuntime(registry=registry, repo=repo)
+
+    decision = _decision(
+        decision_type=PlannerDecisionType.START_WORKFLOW,
+        workflow_key=WorkflowKey.ACCOUNT_BALANCE_QUERY,
+    )
+    result = await runtime.start(decision, _event())
+
+    assert result.status is WorkflowRunStatus.COMPLETED
+    assert result.pending_prompt == "💰 Site Cash: ₹3800"
+    assert result.workflow_instance_id is None
+    assert repo.saved == []
+
+
+async def test_informational_workflow_is_exempt_from_pending_confirmation_block():
+    repo = FakeWorkflowInstanceRepository()
+    existing = WorkflowStateV2(
+        workflow_instance_id="wf_existing",
+        workflow_key=WorkflowKey.MATERIAL_RECEIPT,
+        correlation_id="cor_0",
+        organization_id=ORG,
+        user_id=USR,
+        phase=WorkflowPhase.AWAITING_CONFIRMATION,
+        draft_action=_draft(),
+        pending_prompt="Confirm the pending receipt?",
+    )
+    repo.seed(existing)
+    graph = _FakeGraph(result={"pending_prompt": "💰 Site Cash: ₹3800"})
+    registry = _FakeRegistry({WorkflowKey.ACCOUNT_BALANCE_QUERY: graph})
+    runtime = WorkflowRuntime(registry=registry, repo=repo)
+
+    decision = _decision(
+        decision_type=PlannerDecisionType.START_WORKFLOW,
+        workflow_key=WorkflowKey.ACCOUNT_BALANCE_QUERY,
+    )
+    result = await runtime.start(decision, _event())
+
+    assert result.status is WorkflowRunStatus.COMPLETED
+
+
 def test_workflow_registry_compiles_once_and_caches(monkeypatch: pytest.MonkeyPatch) -> None:
     """The real WorkflowRegistry must compile a graph exactly once per key."""
     import workflows.registry as registry_module

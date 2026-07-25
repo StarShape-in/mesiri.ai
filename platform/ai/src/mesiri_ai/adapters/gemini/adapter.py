@@ -34,7 +34,8 @@ _VISION_PROMPT = (
 _EXTRACTION_PROMPT = (
     "Extract structured construction data from the text. Return strict JSON with "
     'keys: "semantic_type" (expense|equipment_usage|material_update|labour_update|'
-    "general_site_update|general_question|whoami_question|inventory_query|unknown), "
+    "general_site_update|general_question|whoami_question|inventory_query|"
+    "finance_query|unknown), "
     '"fields" (object), "missing_fields" (array), '
     '"field_confidences" (object of field->0..1). '
     "Never invent values. quantity is always a plain number: strip approximation "
@@ -62,7 +63,20 @@ _EXTRACTION_PROMPT = (
     'materials, e.g. "show inventory"). Use this type for questions about how '
     'much of a material is currently in stock (e.g. "how much cement is left?", '
     '"current stock of steel") or its movement history '
-    '(e.g. "show today\'s cement history"). This is a question, never an update.'
+    '(e.g. "show today\'s cement history"). This is a question, never an update.\n'
+    "- finance_query: query_kind, account_name, category_name, date_range, project_name. "
+    'query_kind MUST be exactly "balance" or "expenses" -- never any other word. '
+    'Use "balance" for questions about how much money/cash is in an account '
+    '(e.g. "how much cash do I have?", "balance of Site Cash", "how much money is left?"). '
+    'account_name is the specific account asked about, if any (omit if asking about all '
+    'accounts, e.g. "how much cash do I have"). '
+    'Use "expenses" for questions about past spending '
+    '(e.g. "show my expenses today", "how much did we spend on diesel?", '
+    '"what did we spend this week?"). category_name is the expense category asked about, '
+    'if any (e.g. "diesel", "fuel") -- omit if asking about all expenses. date_range is '
+    'exactly one of "today", "this_week", "this_month" if a time period is stated or implied; '
+    "omit if no time period is mentioned. This is always a question, never an update -- "
+    "never confuse with expense (which records a NEW expense being reported)."
 )
 
 

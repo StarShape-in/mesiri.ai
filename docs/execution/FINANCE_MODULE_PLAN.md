@@ -1,6 +1,6 @@
 # Finance Module — Domain Design & LangGraph Workflow Roadmap
 
-**Status:** In progress. Slice 0 (money wiring), Slice 1 (LangGraph slot-filling spine), and the account-admin portion of Slice 6 (create/rename/deactivate accounts, done out of order — see note below) are done as of 2026-07-25. Slices 2–5 and the receipt/missing-receipt portion of Slice 6 remain (V1); Slices 9–12 + dashboard are V2, explicitly deferred.
+**Status:** In progress. Slice 0 (money wiring), Slice 1 (LangGraph slot-filling spine), Slice 2 (expense & balance queries), and the account-admin portion of Slice 6 (create/rename/deactivate accounts, done out of order — see note below) are done as of 2026-07-25. Slices 3–5 and the receipt/missing-receipt portion of Slice 6 remain (V1); Slices 9–12 + dashboard are V2, explicitly deferred.
 
 **Out-of-order note:** Slice 6 as originally ticketed ([STA-148](https://linear.app/starshape-pvt/issue/STA-148)) bundled two unrelated things — account admin, and receipt/attachment capture + missing-receipt nudges. Only account admin was built now, jumping ahead of Slices 2–5, because it was blocking realistic multi-account testing (every org only ever had the one auto-bootstrapped "Site Cash" account otherwise). STA-148 was split: account admin is done; the receipt/attachment portion is tracked as a new follow-up ticket, not yet started.
 **Author:** Written and approved 2026-07-25 (Linear epics [STA-140](https://linear.app/starshape-pvt/issue/STA-140) / [STA-141](https://linear.app/starshape-pvt/issue/STA-141), sub-issues STA-142..154). Re-read before extending — the design below reflects what actually shipped in Slices 0–1; verify against the live code before assuming later slices are still exactly as described.
@@ -99,9 +99,25 @@ Backend: new `application/finance/` package (`commands`, `validation`, `resoluti
 
 Tests: `test_account_admin_parser.py`, `test_account_admin_nodes.py`, `test_account_admin_journey.py` (role gate, voice-ignored, unrecognized-text), `test_account_admin_graph.py` (real LangGraph, no DB), backend `test_account_admin_{validation,mapper,handler}.py` (fakes), `test_account_admin_execution.py` (real DB — create/rename/deactivate, duplicate-name rejection, not-found rejection, idempotent replay).
 
-## Slices 2–5 (V1, not yet started)
+## Slice 2 — Expense & balance queries ([STA-144](https://linear.app/starshape-pvt/issue/STA-144)) — DONE
 
-See Linear [STA-144](https://linear.app/starshape-pvt/issue/STA-144)–[STA-147](https://linear.app/starshape-pvt/issue/STA-147) for full detail: expense/balance queries, transfers, vendor/payee (fixes a real schema drift — `expenses.vendor_id` has no backing migration), petty cash (a transfer convenience shape, no new transaction type).
+Covers "how much cash do I have?", "balance of Site Cash", "show my expenses today", "how much did we spend on diesel?". Informational (no draft, no confirmation) — mirrors `workflows/material_inventory_query/`'s shape exactly: a single-node graph reading data already seeded into `collected_fields`.
+
+**Real AI classification, not a deterministic bypass** (unlike Slice 6a's account admin) — "how much cash do I have" genuinely needs NLU to recognize the intent and extract `account_name`/`category_name`/`date_range`. Added one new `SemanticType.FINANCE_QUERY` (not two), which splits into two `CanonicalEventType`s by an extracted `query_kind` field ("balance"|"expenses"), the same pattern `MATERIAL_UPDATE` already uses to split by `direction` — kept the AI-facing surface to one new concept rather than two. Both Gemini and DeepSeek extraction prompts updated with the new semantic type and its field schema (the two providers implementing `StructuredExtractionProvider`); `FinanceQueryCandidate` added to the shared candidate registry.
+
+Two new `WorkflowKey`s (`finance.account_query`, `expense.query`), both added to `_INFORMATIONAL_WORKFLOW_KEYS` — exempt from the single-active confirmation gate, same as `WHO_AM_I`/`MATERIAL_INVENTORY_QUERY`.
+
+**Data seeding** (a node must never query a repository itself): `runtime/inbound_journey.py` gained `_seed_finance_query_context()`, mirroring `_inject_inventory_context`'s existing pattern — one new function, no new branches in the file's main control flow. For a balance query it resolves `account_name` against the org's accounts (reusing `workflows.slots.match_slot_answer` — one matching rule for the whole finance module, not a second one invented here) and fetches each match's balance. For an expense query it resolves the `date_range` bucket ("today"/"this_week"/"this_month", default "this_month") to concrete dates and queries confirmed expenses, optionally filtered by category name — **a named-but-unresolvable category returns zero results, not "ignore the filter and show everything."**
+
+Backend: `PostgresExpenseRepository` gained `list_confirmed()` (project/site/date-range/category filters, additive AND). No new migration — all filtering is on columns `expenses` already had. `MoneyAccountQueryService` (from Slice 0) gained `find_matching_accounts()`/`get_balances()`.
+
+**Scope cut, deliberate**: queries are always scoped to the user's currently-resolved project (no org-wide "all projects" variant yet, even for ADMIN/FINANCE) — parsing "across all projects" from free text was judged unnecessary complexity for this pass. Revisit if it turns out to matter in practice.
+
+Tests: `test_expense_query_service.py` (date-range buckets, total — pure), `test_account_balance_query_workflow.py` / `test_expense_query_workflow.py` (node formatting), `test_canonicalization.py` (FINANCE_QUERY → the two event types, plus the existing all-semantic-types parametrized test), `test_finance_query_graphs.py` (real LangGraph, no DB), backend `test_finance_query_services.py` (real DB — account matching, balances, `list_confirmed` filters).
+
+## Slices 3–5 (V1, not yet started)
+
+See Linear [STA-145](https://linear.app/starshape-pvt/issue/STA-145)–[STA-147](https://linear.app/starshape-pvt/issue/STA-147) for full detail: transfers, vendor/payee (fixes a real schema drift — `expenses.vendor_id` has no backing migration), petty cash (a transfer convenience shape, no new transaction type).
 
 ## Slice 6 (receipt/attachment portion) and Slices 7–8 (V1, not yet started)
 
@@ -120,6 +136,8 @@ See [STA-151](https://linear.app/starshape-pvt/issue/STA-151)–[STA-154](https:
 **Slice 1:** `shared/contracts/src/mesiri_contracts/assistant/v2/workflow_state.py` · `apps/whatsapp-assistant/src/workflows/{state,slots,ports,fakes,runtime}.py` · `.../workflows/expense_capture/{nodes,graph}.py` · `.../backend/postgres/workflow_instance.py` · `.../interactions/{handler,response_handler}.py` · `.../runtime/{inbound_journey,dependencies}.py`.
 
 **Slice 6 (account-admin portion):** `shared/contracts/src/mesiri_contracts/assistant/{draft_action,planner_decision,canonical_event}.py` · `backend/src/mesiri/application/finance/` (new package) · `.../infrastructure/postgres/repositories/{finance,account_admin_execution}.py` · `apps/whatsapp-assistant/src/workflows/account_admin/` (new package) · `.../workflows/registry.py` · `.../planner/routing.py` · `.../runtime/{account_admin_parser,account_admin_journey,dependencies}.py`.
+
+**Slice 2:** `shared/contracts/src/mesiri_contracts/assistant/{enums,canonical_event,planner_decision,candidates}.py` · `platform/ai/src/mesiri_ai/adapters/{gemini,deepseek}/adapter.py` (extraction prompts) · `backend/src/mesiri/infrastructure/postgres/repositories/expenses.py` (`list_confirmed`) · `apps/whatsapp-assistant/src/canonicalization/mapping.py` · `.../understanding/pipeline.py` · `.../workflows/{runtime,registry}.py` · `.../workflows/{account_balance_query,expense_query}/` (new packages) · `.../planner/routing.py` · `.../runtime/{money_account_query,expense_query_service,inbound_journey,dependencies}.py`.
 
 ## Verification
 

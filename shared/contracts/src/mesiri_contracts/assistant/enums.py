@@ -46,4 +46,11 @@ class SemanticType(str, Enum):
     # MATERIAL_UPDATE the same way WHOAMI_QUESTION is distinct from a report:
     # it carries no business record to save, only a query to answer.
     INVENTORY_QUERY = "inventory_query"
+    # A question about cash/account balances or past expenses (e.g. "how much
+    # cash do I have?", "balance of Site Cash", "how much did we spend on
+    # diesel?") -- read-only, never an update. Splits into two
+    # CanonicalEventTypes by the extracted `query_kind` field ("balance" or
+    # "expenses"), the same way MATERIAL_UPDATE splits by `direction` (see
+    # canonicalization/mapping.py).
+    FINANCE_QUERY = "finance_query"
     UNKNOWN = "unknown"

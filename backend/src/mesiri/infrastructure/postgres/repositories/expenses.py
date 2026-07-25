@@ -247,6 +247,42 @@ class PostgresExpenseRepository:
         row = res.mappings().first()
         return _row_to_expense(row) if row else None
 
+    async def list_confirmed(
+        self,
+        organization_id: uuid.UUID,
+        *,
+        project_id: uuid.UUID | None = None,
+        site_id: uuid.UUID | None = None,
+        start_date: datetime.date | None = None,
+        end_date: datetime.date | None = None,
+        category_id: uuid.UUID | None = None,
+    ) -> list[Expense]:
+        """Confirmed (non-voided, non-draft) expenses matching the given
+        filters -- read path for Finance Module Slice 2's expense query
+        workflow. All filters are optional and additive (AND'd together)."""
+        where_clauses = [
+            _expenses.c.organization_id == organization_id,
+            _expenses.c.workflow_status == "confirmed",
+        ]
+        if project_id is not None:
+            where_clauses.append(_expenses.c.project_id == project_id)
+        if site_id is not None:
+            where_clauses.append(_expenses.c.site_id == site_id)
+        if start_date is not None:
+            where_clauses.append(_expenses.c.occurred_date >= start_date)
+        if end_date is not None:
+            where_clauses.append(_expenses.c.occurred_date <= end_date)
+        if category_id is not None:
+            where_clauses.append(_expenses.c.category_id == category_id)
+
+        stmt = (
+            sa.select(_expenses)
+            .where(*where_clauses)
+            .order_by(_expenses.c.occurred_date.desc())
+        )
+        res = await self.conn.execute(stmt)
+        return [_row_to_expense(r) for r in res.mappings().all()]
+
 
 class PostgresExpenseAttachmentRepository:
     def __init__(self, conn: AsyncConnection):

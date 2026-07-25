@@ -33,7 +33,12 @@ logger = logging.getLogger(__name__)
 # no business record to confirm, so they are exempt from the single-active
 # pending-confirmation gate and complete without AWAITING_CONFIRMATION.
 _INFORMATIONAL_WORKFLOW_KEYS = frozenset(
-    {WorkflowKey.WHO_AM_I, WorkflowKey.MATERIAL_INVENTORY_QUERY}
+    {
+        WorkflowKey.WHO_AM_I,
+        WorkflowKey.MATERIAL_INVENTORY_QUERY,
+        WorkflowKey.ACCOUNT_BALANCE_QUERY,
+        WorkflowKey.EXPENSE_QUERY,
+    }
 )
 
 

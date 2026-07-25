@@ -55,6 +55,8 @@ class WorkflowKey(str, Enum):
     WHO_AM_I = "who.am.i"
     MATERIAL_INVENTORY_QUERY = "material.inventory_query"
     ACCOUNT_ADMIN = "finance.account_admin"
+    ACCOUNT_BALANCE_QUERY = "finance.account_query"
+    EXPENSE_QUERY = "expense.query"
 
 
 class PlannerDecision(BaseModel):

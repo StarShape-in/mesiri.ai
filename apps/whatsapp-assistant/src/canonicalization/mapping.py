@@ -28,6 +28,14 @@ _MATERIAL_DIRECTION_EVENT_TYPE: dict[str, CanonicalEventType] = {
     "used": CanonicalEventType.MATERIAL_USAGE_REQUESTED,
 }
 
+# FINANCE_QUERY is the other semantic type that splits by a candidate field
+# -- `query_kind` ("balance" -> account balance, "expenses" -> expense
+# list/sum), same pattern as MATERIAL_UPDATE/direction above.
+_FINANCE_QUERY_KIND_EVENT_TYPE: dict[str, CanonicalEventType] = {
+    "balance": CanonicalEventType.ACCOUNT_BALANCE_QUERY_ASKED,
+    "expenses": CanonicalEventType.EXPENSE_QUERY_ASKED,
+}
+
 # Business fields required for an event of this type to be ACTIONABLE.
 # Question/Unrecognized events require nothing — they carry no business record.
 REQUIRED_FIELDS: dict[CanonicalEventType, tuple[str, ...]] = {
@@ -40,6 +48,8 @@ REQUIRED_FIELDS: dict[CanonicalEventType, tuple[str, ...]] = {
     CanonicalEventType.GENERAL_QUESTION_ASKED: (),
     CanonicalEventType.IDENTITY_LOOKUP_REQUESTED: (),
     CanonicalEventType.INVENTORY_QUERY_ASKED: (),
+    CanonicalEventType.ACCOUNT_BALANCE_QUERY_ASKED: (),
+    CanonicalEventType.EXPENSE_QUERY_ASKED: (),
     CanonicalEventType.CLARIFICATION_REQUIRED: (),
     CanonicalEventType.UNRECOGNIZED: (),
 }
@@ -48,10 +58,14 @@ REQUIRED_FIELDS: dict[CanonicalEventType, tuple[str, ...]] = {
 def resolve_event_type(semantic_type: SemanticType, fields: dict) -> CanonicalEventType:
     """Map a semantic type (+ its candidate fields) to a CanonicalEventType.
 
-    MATERIAL_UPDATE is direction-dependent; an unrecognized or missing direction
-    falls back to UNRECOGNIZED rather than guessing.
+    MATERIAL_UPDATE is direction-dependent and FINANCE_QUERY is
+    query_kind-dependent; an unrecognized or missing split field falls back
+    to UNRECOGNIZED rather than guessing.
     """
     if semantic_type is SemanticType.MATERIAL_UPDATE:
         direction = str(fields.get("direction", "")).strip().lower()
         return _MATERIAL_DIRECTION_EVENT_TYPE.get(direction, CanonicalEventType.UNRECOGNIZED)
+    if semantic_type is SemanticType.FINANCE_QUERY:
+        query_kind = str(fields.get("query_kind", "")).strip().lower()
+        return _FINANCE_QUERY_KIND_EVENT_TYPE.get(query_kind, CanonicalEventType.UNRECOGNIZED)
     return _SIMPLE_EVENT_TYPE.get(semantic_type, CanonicalEventType.UNRECOGNIZED)

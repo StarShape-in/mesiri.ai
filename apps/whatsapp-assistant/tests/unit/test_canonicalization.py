@@ -8,6 +8,7 @@ from canonicalization import build_canonical_event
 from mesiri_contracts.assistant.candidates import (
     Candidate,
     ExpenseCandidate,
+    FinanceQueryCandidate,
     GeneralQuestionCandidate,
     InventoryQueryCandidate,
     MaterialUpdateCandidate,
@@ -254,6 +255,54 @@ def test_inventory_query_without_material_name_is_still_actionable():
     assert event.event_type is CanonicalEventType.INVENTORY_QUERY_ASKED
     assert event.completeness is IntentCompleteness.ACTIONABLE
     assert event.missing_fields == []
+
+
+def test_finance_query_balance_maps_to_account_balance_query_asked():
+    understanding = _understanding(
+        semantic_type=SemanticType.FINANCE_QUERY,
+        candidates=[FinanceQueryCandidate(fields={"query_kind": "balance", "account_name": "Site Cash"})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.ACCOUNT_BALANCE_QUERY_ASKED
+    assert event.completeness is IntentCompleteness.ACTIONABLE
+    assert event.fields["account_name"] == "Site Cash"
+
+
+def test_finance_query_balance_without_account_name_is_still_actionable():
+    """account_name is optional -- absent means "all accounts", not incomplete."""
+    understanding = _understanding(
+        semantic_type=SemanticType.FINANCE_QUERY,
+        candidates=[FinanceQueryCandidate(fields={"query_kind": "balance"})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.ACCOUNT_BALANCE_QUERY_ASKED
+    assert event.completeness is IntentCompleteness.ACTIONABLE
+    assert event.missing_fields == []
+
+
+def test_finance_query_expenses_maps_to_expense_query_asked():
+    understanding = _understanding(
+        semantic_type=SemanticType.FINANCE_QUERY,
+        candidates=[
+            FinanceQueryCandidate(
+                fields={"query_kind": "expenses", "category_name": "diesel", "date_range": "today"}
+            )
+        ],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.EXPENSE_QUERY_ASKED
+    assert event.completeness is IntentCompleteness.ACTIONABLE
+    assert event.fields["category_name"] == "diesel"
+    assert event.fields["date_range"] == "today"
+
+
+def test_finance_query_missing_query_kind_is_unrecognized():
+    understanding = _understanding(
+        semantic_type=SemanticType.FINANCE_QUERY,
+        candidates=[FinanceQueryCandidate(fields={})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.UNRECOGNIZED
 
 
 def test_general_question_is_not_actionable():

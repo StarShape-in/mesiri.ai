@@ -53,6 +53,7 @@ from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
 from mesiri_contracts.assistant.v2.resolved_context import ResolvedContextV2
 from planner import Planner, log_planner_decision
 from runtime.expense_category_query import ExpenseCategoryQueryService
+from runtime.expense_query_service import ExpenseQueryService, resolve_date_range
 from runtime.inventory_query import MaterialInventoryQueryService
 from runtime.logging_ports import MessageLogger, TraceLogger
 from runtime.material_catalog_query import MaterialCatalogQueryService
@@ -556,6 +557,67 @@ async def _seed_account_candidates(
     ]
 
 
+async def _seed_finance_query_context(
+    event: CanonicalEventV2,
+    decision: PlannerDecisionV2,
+    money_account_query: MoneyAccountQueryService | None,
+    expense_query_service: ExpenseQueryService | None,
+    actor: ActorIdentity | None,
+) -> None:
+    """Feed resolved balance/expense data into the event's fields for
+    Finance Module Slice 2's read-only query workflows -- same principle as
+    _seed_account_candidates above: a node must never query a repository
+    itself, so this is the seeding point. Runs only for
+    ACCOUNT_BALANCE_QUERY / EXPENSE_QUERY; every other workflow key's
+    fields are left untouched."""
+    if actor is None or not actor.organization_id:
+        return
+
+    if decision.workflow_key is WorkflowKey.ACCOUNT_BALANCE_QUERY:
+        if money_account_query is None:
+            return
+        account_name = event.fields.get("account_name")
+        accounts = await money_account_query.find_matching_accounts(
+            organization_id=actor.organization_id,
+            created_by=actor.user_id,
+            account_name=account_name,
+        )
+        balances = await money_account_query.get_balances(
+            organization_id=actor.organization_id, accounts=accounts
+        )
+        event.fields["balance_results"] = [
+            {"name": account.name, "balance": str(balances[account.id])} for account in accounts
+        ]
+        return
+
+    if decision.workflow_key is WorkflowKey.EXPENSE_QUERY:
+        if expense_query_service is None:
+            return
+        category_name = event.fields.get("category_name")
+        start_date, end_date, date_range_label = resolve_date_range(event.fields.get("date_range"))
+        expenses = await expense_query_service.list_expenses(
+            organization_id=actor.organization_id,
+            project_id=event.project_id,
+            site_id=event.site_id,
+            start_date=start_date,
+            end_date=end_date,
+            category_name=category_name,
+        )
+        event.fields["expense_results"] = {
+            "total": str(ExpenseQueryService.total(expenses)),
+            "count": len(expenses),
+            "date_range_label": date_range_label,
+            "items": [
+                {
+                    "amount": str(expense.amount),
+                    "description": expense.description,
+                    "occurred_date": expense.occurred_date.isoformat(),
+                }
+                for expense in expenses
+            ],
+        }
+
+
 async def _plan_and_run(
     event: CanonicalEventV2,
     *,
@@ -612,6 +674,7 @@ async def process_inbound_message(
     org_settings_query: OrganizationSettingsQueryService | None = None,
     expense_category_query: ExpenseCategoryQueryService | None = None,
     money_account_query: MoneyAccountQueryService | None = None,
+    expense_query_service: ExpenseQueryService | None = None,
     semantic_hint: str | None = None,
     direction_hint: str | None = None,
     pending_report_store: PendingReportStore | None = None,
@@ -968,6 +1031,13 @@ async def process_inbound_message(
                 try:
                     await _seed_account_candidates(
                         canonical_event, planner_decision, money_account_query, actor
+                    )
+                    await _seed_finance_query_context(
+                        canonical_event,
+                        planner_decision,
+                        money_account_query,
+                        expense_query_service,
+                        actor,
                     )
                     workflow_run = await workflow_runtime.start(planner_decision, canonical_event)
                     if context_debug:

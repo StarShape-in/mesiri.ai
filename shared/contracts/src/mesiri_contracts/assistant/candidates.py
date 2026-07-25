@@ -80,6 +80,13 @@ class InventoryQueryCandidate(Candidate):
     # Conventional keys: material_name (optional -- absent means "all materials").
 
 
+class FinanceQueryCandidate(Candidate):
+    semantic_type: SemanticType = SemanticType.FINANCE_QUERY
+    # Conventional keys: query_kind (balance/expenses, required to route --
+    # see canonicalization/mapping.py), account_name, category_name,
+    # date_range (today/this_week/this_month).
+
+
 # Registry so callers can build the right candidate from a semantic type.
 CANDIDATE_TYPES: dict[SemanticType, type[Candidate]] = {
     SemanticType.EXPENSE: ExpenseCandidate,
@@ -89,4 +96,5 @@ CANDIDATE_TYPES: dict[SemanticType, type[Candidate]] = {
     SemanticType.GENERAL_SITE_UPDATE: GeneralSiteUpdateCandidate,
     SemanticType.GENERAL_QUESTION: GeneralQuestionCandidate,
     SemanticType.INVENTORY_QUERY: InventoryQueryCandidate,
+    SemanticType.FINANCE_QUERY: FinanceQueryCandidate,
 }

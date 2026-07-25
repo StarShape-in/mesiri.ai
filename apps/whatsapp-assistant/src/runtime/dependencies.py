@@ -288,6 +288,12 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from runtime.money_account_query import MoneyAccountQueryService
 
     money_account_query = MoneyAccountQueryService(material_db)
+    # Read-only expense list/sum lookups for the expense-query workflow
+    # (Finance Module Slice 2) -- same reasoning and same material_db as
+    # money_account_query above. See runtime/expense_query_service.py.
+    from runtime.expense_query_service import ExpenseQueryService
+
+    expense_query_service = ExpenseQueryService(material_db)
     # Slow-path interaction classifier: while a confirmation is pending, a
     # message that isn't a plain "yes"/"no" (e.g. "40 bags of cement" instead
     # of the drafted 50) needs an LLM to recognize it as a CORRECTION rather
@@ -841,6 +847,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             org_settings_query=org_settings_query,
             expense_category_query=expense_category_query,
             money_account_query=money_account_query,
+            expense_query_service=expense_query_service,
             pending_report_store=pending_report_store,
         )
 
