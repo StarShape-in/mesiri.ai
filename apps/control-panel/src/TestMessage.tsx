@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { RefreshCw, AlertCircle, MessageSquare, Send, FlaskConical, Cpu, Zap } from 'lucide-react';
 import { api } from './api';
-import { Organization, OrgUser, SimulateResponse, ROUTED_VIA_LABELS } from './systemGraphShared';
+import { type Organization, type OrgUser, type SimulateResponse, ROUTED_VIA_LABELS } from './systemGraphShared';
 
 const TestMessage = () => {
   const location = useLocation();

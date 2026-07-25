@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { RefreshCw, AlertCircle, Tags, MessageSquare, CheckCircle2, Circle, Play } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { api } from './api';
-import { SystemGraphResponse, chipStyle, RoutingFlow } from './systemGraphShared';
+import { type SystemGraphResponse, chipStyle, RoutingFlow } from './systemGraphShared';
 
 const SemanticTypes = () => {
   const [data, setData] = useState<SystemGraphResponse | null>(null);

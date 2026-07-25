@@ -15,7 +15,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { api } from './api';
-import { SystemGraphResponse, MermaidDiagram, chipStyle } from './systemGraphShared';
+import { type SystemGraphResponse, MermaidDiagram, chipStyle } from './systemGraphShared';
 
 const SystemGraph = () => {
   const [data, setData] = useState<SystemGraphResponse | null>(null);

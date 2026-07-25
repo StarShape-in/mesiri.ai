@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { RefreshCw, AlertCircle, ChevronDown, ChevronRight, CheckCircle2, Circle, Play } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { api } from './api';
-import { SystemGraphResponse, MermaidDiagram, chipStyle } from './systemGraphShared';
+import { type SystemGraphResponse, MermaidDiagram, chipStyle } from './systemGraphShared';
 
 const Workflows = () => {
   const [data, setData] = useState<SystemGraphResponse | null>(null);
