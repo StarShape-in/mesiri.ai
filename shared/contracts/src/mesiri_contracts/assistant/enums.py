@@ -66,4 +66,14 @@ class SemanticType(str, Enum):
     # ("issue" or "return"), the same way MATERIAL_UPDATE splits by
     # `direction` (see canonicalization/mapping.py).
     PETTY_CASH = "petty_cash"
+    # Undo the user's most recently recorded expense or transfer (e.g.
+    # "reverse my last expense", "cancel that transfer") -- Finance Module
+    # Slice 7. Splits into two CanonicalEventTypes by the extracted
+    # `target_kind` field ("expense" or "transfer"), the same way
+    # MATERIAL_UPDATE/PETTY_CASH split by their own field (see
+    # canonicalization/mapping.py). Deliberately targets only the *most
+    # recent* record of that kind -- no slot-fill/disambiguation UI for
+    # picking among several, per the V1 scope in
+    # docs/execution/FINANCE_MODULE_PLAN.md.
+    REVERSAL = "reversal"
     UNKNOWN = "unknown"

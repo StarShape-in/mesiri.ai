@@ -32,12 +32,22 @@ logger = logging.getLogger(__name__)
 # Workflows that only answer a question and never produce a draft_action --
 # no business record to confirm, so they are exempt from the single-active
 # pending-confirmation gate and complete without AWAITING_CONFIRMATION.
+#
+# WorkflowKey.REVERSE is a mixed case, not purely informational: when
+# runtime/inbound_journey.py's seeding step finds nothing to reverse (no
+# recent expense/transfer of the requested kind), workflows/reverse/nodes.py
+# omits draft_action and completes with a "nothing to reverse" reply --
+# exactly the same no-draft outcome as a real informational workflow. When a
+# target *is* found, the same graph still produces a draft_action and the
+# normal AWAITING_CONFIRMATION path below runs unaffected (this set is only
+# consulted when draft_action is None).
 _INFORMATIONAL_WORKFLOW_KEYS = frozenset(
     {
         WorkflowKey.WHO_AM_I,
         WorkflowKey.MATERIAL_INVENTORY_QUERY,
         WorkflowKey.ACCOUNT_BALANCE_QUERY,
         WorkflowKey.EXPENSE_QUERY,
+        WorkflowKey.REVERSE,
     }
 )
 

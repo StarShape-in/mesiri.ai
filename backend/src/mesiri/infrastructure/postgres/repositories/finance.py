@@ -291,3 +291,50 @@ class PostgresMoneyTransactionRepository:
             source_type="money_transaction",
             source_id=original.id,
         )
+
+    async def is_reversed(self, organization_id: uuid.UUID, transaction_id: uuid.UUID) -> bool:
+        """True if a `transaction_type='reversal'` row already points at
+        `transaction_id` (via `source_type='money_transaction'`) -- Finance
+        Module Slice 7's re-verify-at-confirm-time guard against reversing
+        the same transfer twice."""
+        stmt = sa.select(sa.func.count()).where(
+            _money_transactions.c.organization_id == organization_id,
+            _money_transactions.c.transaction_type == "reversal",
+            _money_transactions.c.source_type == "money_transaction",
+            _money_transactions.c.source_id == transaction_id,
+        )
+        count = (await self.conn.execute(stmt)).scalar_one()
+        return count > 0
+
+    async def find_latest_reversible_transfer(
+        self, organization_id: uuid.UUID
+    ) -> MoneyTransaction | None:
+        """Finance Module Slice 7: the most recently recorded `transfer`
+        transaction for the org that has not already been reversed --
+        candidate for "reverse my last transfer". A left join against any
+        existing reversal row (matched by source_type/source_id) filters
+        out transfers that already have one, then the newest remaining row
+        wins."""
+        reversals = _money_transactions.alias("reversals")
+        stmt = (
+            sa.select(_money_transactions)
+            .select_from(
+                _money_transactions.outerjoin(
+                    reversals,
+                    sa.and_(
+                        reversals.c.transaction_type == "reversal",
+                        reversals.c.source_type == "money_transaction",
+                        reversals.c.source_id == _money_transactions.c.id,
+                    ),
+                )
+            )
+            .where(
+                _money_transactions.c.organization_id == organization_id,
+                _money_transactions.c.transaction_type == "transfer",
+                reversals.c.id.is_(None),
+            )
+            .order_by(_money_transactions.c.created_at.desc())
+            .limit(1)
+        )
+        row = (await self.conn.execute(stmt)).mappings().first()
+        return _row_to_transaction(row) if row else None

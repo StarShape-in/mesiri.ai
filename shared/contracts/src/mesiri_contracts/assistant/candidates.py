@@ -104,6 +104,14 @@ class PettyCashCandidate(Candidate):
     # (see workflows/petty_cash/nodes.py).
 
 
+class ReversalCandidate(Candidate):
+    semantic_type: SemanticType = SemanticType.REVERSAL
+    # Conventional keys: target_kind (expense/transfer, required to route --
+    # see canonicalization/mapping.py). No amount/reference fields -- the
+    # target is always "the most recent one of this kind", resolved by
+    # runtime/reversal_query.py, not stated by the user.
+
+
 # Registry so callers can build the right candidate from a semantic type.
 CANDIDATE_TYPES: dict[SemanticType, type[Candidate]] = {
     SemanticType.EXPENSE: ExpenseCandidate,
@@ -116,4 +124,5 @@ CANDIDATE_TYPES: dict[SemanticType, type[Candidate]] = {
     SemanticType.FINANCE_QUERY: FinanceQueryCandidate,
     SemanticType.TRANSFER: TransferCandidate,
     SemanticType.PETTY_CASH: PettyCashCandidate,
+    SemanticType.REVERSAL: ReversalCandidate,
 }

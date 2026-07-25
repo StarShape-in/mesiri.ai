@@ -223,7 +223,7 @@ export default function ExpensesPage() {
           project_id: scope.mode !== 'portfolio' ? scope.projectId : undefined,
           site_id: scope.mode === 'site' ? scope.siteId : undefined,
         })
-        if (active && Array.isArray(rawData) && rawData.length > 0) {
+        if (active && Array.isArray(rawData)) {
           const mapped: ExpenseItem[] = rawData.map((item: any, idx: number) => ({
             id: item.id || `exp_real_${idx}`,
             expense_number: `EXP-${item.id ? item.id.slice(0, 4).toUpperCase() : 1000 + idx}`,
@@ -240,7 +240,10 @@ export default function ExpensesPage() {
             project_name: scope.mode === 'portfolio' ? 'Org Wide' : scope.projectName,
             site_name: scope.mode === 'site' ? scope.siteName : 'All Sites',
           }))
-          setExpenses(mapped)
+          // Merge real backend expenses with initial sample records (deduplicated by ID)
+          const existingIds = new Set(mapped.map((m) => m.id))
+          const combined = [...mapped, ...INITIAL_EXPENSES.filter((init) => !existingIds.has(init.id))]
+          setExpenses(combined)
         }
       } catch (err) {
         console.warn('Live backend expenses fetch unavailable, fallback mock data active:', err)

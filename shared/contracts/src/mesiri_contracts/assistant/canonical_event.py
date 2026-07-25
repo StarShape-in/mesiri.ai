@@ -43,6 +43,8 @@ class CanonicalEventType(str, Enum):
     TRANSFER_REQUESTED = "TransferRequested"
     PETTY_CASH_ISSUE_REQUESTED = "PettyCashIssueRequested"
     PETTY_CASH_RETURN_REQUESTED = "PettyCashReturnRequested"
+    EXPENSE_REVERSAL_REQUESTED = "ExpenseReversalRequested"
+    TRANSFER_REVERSAL_REQUESTED = "TransferReversalRequested"
     # Deterministic (non-AI) command, never produced by canonicalization/
     # extraction -- constructed directly by
     # runtime/account_admin_journey.py when it recognizes a "create/rename/

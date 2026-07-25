@@ -271,6 +271,25 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         resolver=PostgresTransferAccountResolver(),
     )
     transfer_dispatcher = TransferExecutionDispatcher(transfer_execution_handler)
+    # Reversal (Finance Module Slice 7): same in-process capability-boundary
+    # wiring as transfer above. The resolver re-verifies the target still
+    # exists and hasn't already been reversed/voided at confirm time -- the
+    # WhatsApp workflow already resolved "the most recent expense/transfer"
+    # into a concrete id during seeding (runtime/inbound_journey.py), so this
+    # is defense-in-depth, not name resolution.
+    from mesiri.application.finance.reverse_dispatcher import ReverseExecutionDispatcher
+    from mesiri.application.finance.reverse_handler import ReverseTransactionHandler
+    from mesiri.application.finance.reverse_resolution import PostgresReverseTargetResolver
+    from mesiri.infrastructure.postgres.repositories.reverse_execution import (
+        PostgresReverseExecutionRepository,
+    )
+
+    reverse_execution_handler = ReverseTransactionHandler(
+        PostgresReverseExecutionRepository(),
+        db=material_db,
+        resolver=PostgresReverseTargetResolver(),
+    )
+    reverse_dispatcher = ReverseExecutionDispatcher(reverse_execution_handler)
     # Routes a confirmed action to the dispatcher registered for its
     # action_type -- InteractionHandler only ever holds one ExecutionDispatcher.
     from interactions.execution_router import ActionTypeRoutingDispatcher
@@ -283,6 +302,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             DraftActionType.RECORD_EXPENSE: expense_dispatcher,
             DraftActionType.MANAGE_MONEY_ACCOUNT: account_admin_dispatcher,
             DraftActionType.TRANSFER_MONEY: transfer_dispatcher,
+            DraftActionType.REVERSE_TRANSACTION: reverse_dispatcher,
         }
     )
     # Read-only inventory lookups for the material.inventory_query workflow --
@@ -324,6 +344,12 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from runtime.petty_cash_query import PettyCashRecipientQueryService
 
     petty_cash_query = PettyCashRecipientQueryService(material_db)
+    # Resolves "the most recent expense/transfer" for the reverse workflow's
+    # target (Finance Module Slice 7) -- same reasoning and same material_db
+    # as catalog_query above. See runtime/reversal_query.py.
+    from runtime.reversal_query import ReversalTargetQueryService
+
+    reversal_query = ReversalTargetQueryService(material_db)
     # Read-only expense list/sum lookups for the expense-query workflow
     # (Finance Module Slice 2) -- same reasoning and same material_db as
     # money_account_query above. See runtime/expense_query_service.py.
@@ -683,6 +709,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
                 expense_category_query=expense_category_query,
                 money_account_query=money_account_query,
                 petty_cash_query=petty_cash_query,
+                reversal_query=reversal_query,
                 expense_query_service=expense_query_service,
                 pending_report_store=pending_report_store,
             )
@@ -968,6 +995,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             expense_category_query=expense_category_query,
             money_account_query=money_account_query,
             petty_cash_query=petty_cash_query,
+            reversal_query=reversal_query,
             expense_query_service=expense_query_service,
             pending_report_store=pending_report_store,
         )

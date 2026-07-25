@@ -59,6 +59,7 @@ class WorkflowKey(str, Enum):
     EXPENSE_QUERY = "expense.query"
     TRANSFER = "finance.transfer"
     PETTY_CASH = "finance.petty_cash"
+    REVERSE = "finance.reverse"
 
 
 class PlannerDecision(BaseModel):

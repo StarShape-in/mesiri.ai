@@ -62,6 +62,7 @@ from runtime.noop_loggers import NoopMessageLogger, NoopTraceLogger
 from runtime.org_settings_query import OrganizationSettingsQueryService
 from runtime.petty_cash_query import PettyCashRecipientQueryService
 from runtime.reply_dispatch import send_reply_spec
+from runtime.reversal_query import ReversalTargetQueryService
 from understanding.pipeline import UnderstandingPipeline
 from workflows import (
     WorkflowResumeResult,
@@ -603,6 +604,46 @@ async def _seed_petty_cash_recipient(
         event.fields["recipient_account_name"] = account.name
 
 
+async def _seed_reversal_target(
+    event: CanonicalEventV2,
+    decision: PlannerDecisionV2,
+    reversal_query: ReversalTargetQueryService | None,
+    actor: ActorIdentity | None,
+) -> None:
+    """Resolve "the most recent expense/transfer" into a concrete id --
+    Finance Module Slice 7. A node must never query a repository itself, so
+    this is the seeding point, same principle as _seed_account_candidates
+    above. Only ever runs for REVERSE; finding nothing simply leaves
+    `expense_id`/`money_transaction_id` unset -- workflows/reverse/nodes.py's
+    build_draft then completes with a "nothing to reverse" reply instead of
+    a draft (see that module's docstring and workflows/runtime.py's
+    `_INFORMATIONAL_WORKFLOW_KEYS`)."""
+    if reversal_query is None or actor is None or not actor.organization_id:
+        return
+    if decision.workflow_key is not WorkflowKey.REVERSE:
+        return
+    event.fields["created_by_role"] = actor.role
+    target_kind = str(event.fields.get("target_kind", "")).strip().lower()
+
+    if target_kind == "transfer":
+        transfer = await reversal_query.find_latest_transfer(organization_id=actor.organization_id)
+        if transfer is not None:
+            event.fields["money_transaction_id"] = transfer["money_transaction_id"]
+            event.fields["reversal_amount"] = transfer["amount"]
+            event.fields["reversal_from_account_name"] = transfer["from_account_name"]
+            event.fields["reversal_to_account_name"] = transfer["to_account_name"]
+        return
+
+    expense = await reversal_query.find_latest_expense(
+        organization_id=actor.organization_id, project_id=event.project_id, site_id=event.site_id
+    )
+    if expense is not None:
+        event.fields["expense_id"] = expense["expense_id"]
+        event.fields["reversal_amount"] = expense["amount"]
+        event.fields["reversal_description"] = expense["description"]
+        event.fields["reversal_occurred_date"] = expense["occurred_date"]
+
+
 async def _seed_finance_query_context(
     event: CanonicalEventV2,
     decision: PlannerDecisionV2,
@@ -723,6 +764,7 @@ async def process_inbound_message(
     expense_category_query: ExpenseCategoryQueryService | None = None,
     money_account_query: MoneyAccountQueryService | None = None,
     petty_cash_query: PettyCashRecipientQueryService | None = None,
+    reversal_query: ReversalTargetQueryService | None = None,
     expense_query_service: ExpenseQueryService | None = None,
     semantic_hint: str | None = None,
     direction_hint: str | None = None,
@@ -1083,6 +1125,9 @@ async def process_inbound_message(
                     )
                     await _seed_petty_cash_recipient(
                         canonical_event, planner_decision, petty_cash_query, actor
+                    )
+                    await _seed_reversal_target(
+                        canonical_event, planner_decision, reversal_query, actor
                     )
                     await _seed_finance_query_context(
                         canonical_event,

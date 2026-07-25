@@ -249,6 +249,32 @@ class PostgresExpenseRepository:
         row = res.mappings().first()
         return _row_to_expense(row) if row else None
 
+    async def find_latest_confirmed(
+        self,
+        organization_id: uuid.UUID,
+        *,
+        project_id: uuid.UUID | None = None,
+        site_id: uuid.UUID | None = None,
+    ) -> Expense | None:
+        """Finance Module Slice 7: the most recently recorded confirmed
+        (non-voided) expense -- candidate for "reverse my last expense"."""
+        where_clauses = [
+            _expenses.c.organization_id == organization_id,
+            _expenses.c.workflow_status == "confirmed",
+        ]
+        if project_id is not None:
+            where_clauses.append(_expenses.c.project_id == project_id)
+        if site_id is not None:
+            where_clauses.append(_expenses.c.site_id == site_id)
+        stmt = (
+            sa.select(_expenses)
+            .where(*where_clauses)
+            .order_by(_expenses.c.created_at.desc())
+            .limit(1)
+        )
+        row = (await self.conn.execute(stmt)).mappings().first()
+        return _row_to_expense(row) if row else None
+
     async def list_confirmed(
         self,
         organization_id: uuid.UUID,

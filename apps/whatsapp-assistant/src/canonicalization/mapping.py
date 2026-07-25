@@ -45,6 +45,15 @@ _PETTY_CASH_DIRECTION_EVENT_TYPE: dict[str, CanonicalEventType] = {
     "return": CanonicalEventType.PETTY_CASH_RETURN_REQUESTED,
 }
 
+# REVERSAL is the fourth semantic type that splits by a candidate field --
+# `target_kind` ("expense" -> void an expense + reverse its payment,
+# "transfer" -> reverse a transfer's ledger row directly), same pattern as
+# MATERIAL_UPDATE/direction above.
+_REVERSAL_TARGET_EVENT_TYPE: dict[str, CanonicalEventType] = {
+    "expense": CanonicalEventType.EXPENSE_REVERSAL_REQUESTED,
+    "transfer": CanonicalEventType.TRANSFER_REVERSAL_REQUESTED,
+}
+
 # Business fields required for an event of this type to be ACTIONABLE.
 # Question/Unrecognized events require nothing — they carry no business record.
 REQUIRED_FIELDS: dict[CanonicalEventType, tuple[str, ...]] = {
@@ -62,6 +71,11 @@ REQUIRED_FIELDS: dict[CanonicalEventType, tuple[str, ...]] = {
     CanonicalEventType.TRANSFER_REQUESTED: ("amount",),
     CanonicalEventType.PETTY_CASH_ISSUE_REQUESTED: ("amount", "recipient_name"),
     CanonicalEventType.PETTY_CASH_RETURN_REQUESTED: ("amount", "recipient_name"),
+    # No required fields -- the target is always "the most recent one of
+    # this kind", resolved by seeding (runtime/inbound_journey.py), not
+    # stated by the user.
+    CanonicalEventType.EXPENSE_REVERSAL_REQUESTED: (),
+    CanonicalEventType.TRANSFER_REVERSAL_REQUESTED: (),
     CanonicalEventType.CLARIFICATION_REQUIRED: (),
     CanonicalEventType.UNRECOGNIZED: (),
 }
@@ -83,4 +97,7 @@ def resolve_event_type(semantic_type: SemanticType, fields: dict) -> CanonicalEv
     if semantic_type is SemanticType.PETTY_CASH:
         direction = str(fields.get("direction", "")).strip().lower()
         return _PETTY_CASH_DIRECTION_EVENT_TYPE.get(direction, CanonicalEventType.UNRECOGNIZED)
+    if semantic_type is SemanticType.REVERSAL:
+        target_kind = str(fields.get("target_kind", "")).strip().lower()
+        return _REVERSAL_TARGET_EVENT_TYPE.get(target_kind, CanonicalEventType.UNRECOGNIZED)
     return _SIMPLE_EVENT_TYPE.get(semantic_type, CanonicalEventType.UNRECOGNIZED)

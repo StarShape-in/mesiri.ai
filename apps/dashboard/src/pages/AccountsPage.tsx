@@ -163,8 +163,10 @@ export default function AccountsPage() {
           project_id: scope.mode !== 'portfolio' ? scope.projectId || undefined : undefined,
           site_id: scope.mode === 'site' ? scope.siteId || undefined : undefined,
         })
-        if (active && Array.isArray(data) && data.length > 0) {
-          setAccounts(data)
+        if (active && Array.isArray(data)) {
+          const existingIds = new Set(data.map((a: any) => a.id))
+          const combined = [...data, ...INITIAL_ACCOUNTS.filter((init) => !existingIds.has(init.id))]
+          setAccounts(combined)
         }
       } catch (err) {
         console.warn('Live backend accounts fetch unavailable, fallback data active:', err)

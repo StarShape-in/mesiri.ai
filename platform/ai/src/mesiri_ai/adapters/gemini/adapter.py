@@ -35,7 +35,7 @@ _EXTRACTION_PROMPT = (
     "Extract structured construction data from the text. Return strict JSON with "
     'keys: "semantic_type" (expense|equipment_usage|material_update|labour_update|'
     "general_site_update|general_question|whoami_question|inventory_query|"
-    "finance_query|transfer|petty_cash|unknown), "
+    "finance_query|transfer|petty_cash|reversal|unknown), "
     '"fields" (object), "missing_fields" (array), '
     '"field_confidences" (object of field->0..1). '
     "Never invent values. quantity is always a plain number: strip approximation "
@@ -103,7 +103,16 @@ _EXTRACTION_PROMPT = (
     'the person) -- never any other word. Never confuse with transfer '
     "(which moves money between the organization's own accounts, not to/from "
     "a person) or expense (paying an outside vendor/bill, not handing cash "
-    "to a colleague)."
+    "to a colleague).\n"
+    "- reversal: target_kind. Use this type when the user wants to undo, "
+    "reverse, cancel, or void their most recently recorded expense or "
+    'transfer (e.g. "reverse my last expense", "cancel that transfer", '
+    '"undo the diesel expense I just added", "void my last transaction"). '
+    'target_kind MUST be exactly "expense" or "transfer" -- never any other '
+    'word; infer it from what the user refers to, defaulting to "expense" '
+    "if genuinely ambiguous, since that is the more common case. This "
+    "always targets the single most recent record of that kind -- never "
+    "extract an amount, date, or description for it."
 )
 
 

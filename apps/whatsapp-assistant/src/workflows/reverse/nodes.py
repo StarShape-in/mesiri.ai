@@ -1,0 +1,101 @@
+"""Reverse workflow nodes — pure functions, no LangGraph, no I/O, no SQL, no domain rules.
+
+Finance Module Slice 7: "reverse my last expense"/"cancel that transfer".
+No slot-filling here -- runtime/inbound_journey.py's seeding step
+(`_seed_reversal_target`) already resolved "the most recent expense/transfer
+of the requested kind" into a concrete `expense_id`/`money_transaction_id`
+before this graph ever runs (a node must never query a repository itself,
+see workflows/runtime.py's docstring), mirroring how account admin's
+deterministic parser resolves everything before its own graph runs.
+
+Unlike every other finance workflow, there is a genuine "nothing to
+reverse" outcome: when the seeding step found no matching record,
+`build_draft` deliberately omits `draft_action` and returns a friendly
+`pending_prompt` instead -- workflows/runtime.py's `_INFORMATIONAL_WORKFLOW_KEYS`
+allows `WorkflowKey.REVERSE` to complete without a draft for exactly this case.
+"""
+
+from __future__ import annotations
+
+from mesiri_contracts.assistant.draft_action import DraftActionType
+from mesiri_contracts.assistant.v2.draft_action import DraftActionV2
+from mesiri_contracts.common.ids import new_id
+
+from ..state import WorkflowGraphState
+
+_INTERNAL_FIELD_KEYS = frozenset(
+    {
+        "reversal_amount",
+        "reversal_description",
+        "reversal_occurred_date",
+        "reversal_from_account_name",
+        "reversal_to_account_name",
+    }
+)
+
+_NOTHING_TO_REVERSE = {
+    "expense": "You have no confirmed expenses to reverse.",
+    "transfer": "You have no transfers to reverse.",
+}
+
+
+def build_draft(state: WorkflowGraphState) -> dict:
+    """Map already-resolved fields into a DraftAction, or -- if nothing was
+    found to reverse -- complete with a friendly reply and no draft at all."""
+    fields = dict(state.get("collected_fields") or {})
+    target_kind = str(fields.get("target_kind", "")).strip().lower()
+    has_target = bool(fields.get("expense_id") or fields.get("money_transaction_id"))
+
+    if not has_target:
+        return {
+            "pending_prompt": _NOTHING_TO_REVERSE.get(target_kind, "Nothing found to reverse.")
+        }
+
+    draft_fields = {key: value for key, value in fields.items() if key not in _INTERNAL_FIELD_KEYS}
+    draft = DraftActionV2(
+        draft_id=new_id("draft"),
+        correlation_id=state["correlation_id"],
+        workflow_instance_id=state["workflow_instance_id"],
+        action_type=DraftActionType.REVERSE_TRANSACTION,
+        organization_id=state["organization_id"],
+        user_id=state["user_id"],
+        project_id=state.get("project_id"),
+        site_id=state.get("site_id"),
+        fields=draft_fields,
+    )
+    return {"draft_action": draft}
+
+
+def request_confirmation(state: WorkflowGraphState) -> dict:
+    """Deterministic formatting only, using the display fields seeded
+    alongside the resolved target (still in collected_fields at this point,
+    even though build_draft excluded them from draft.fields)."""
+    all_fields = state.get("collected_fields") or {}
+    target_kind = str(all_fields.get("target_kind", "")).strip().lower()
+    amount = all_fields.get("reversal_amount")
+
+    if target_kind == "transfer":
+        from_name = all_fields.get("reversal_from_account_name")
+        to_name = all_fields.get("reversal_to_account_name")
+        lines = [
+            "*Confirm this reversal?*",
+            "",
+            "↩️ Reverse transfer",
+            f"   • Amount: {amount}",
+            f"   • {from_name} → {to_name}",
+            "",
+            "Reply YES to confirm or NO to cancel.",
+        ]
+    else:
+        description = all_fields.get("reversal_description") or "—"
+        occurred_date = all_fields.get("reversal_occurred_date")
+        lines = [
+            "*Confirm this reversal?*",
+            "",
+            "↩️ Reverse expense",
+            f"   • Amount: {amount}",
+            f"   • {description} ({occurred_date})",
+            "",
+            "Reply YES to confirm or NO to cancel.",
+        ]
+    return {"pending_prompt": "\n".join(lines)}
