@@ -53,4 +53,8 @@ class SemanticType(str, Enum):
     # "expenses"), the same way MATERIAL_UPDATE splits by `direction` (see
     # canonicalization/mapping.py).
     FINANCE_QUERY = "finance_query"
+    # Moving money between two of the org's own accounts (e.g. "transfer
+    # ₹50,000 from Company Account to Site Cash") -- a business-affecting
+    # write, unlike FINANCE_QUERY, so it still goes through draft/confirm.
+    TRANSFER = "transfer"
     UNKNOWN = "unknown"

@@ -12,6 +12,7 @@ from mesiri_contracts.assistant.candidates import (
     GeneralQuestionCandidate,
     InventoryQueryCandidate,
     MaterialUpdateCandidate,
+    TransferCandidate,
 )
 from mesiri_contracts.assistant.canonical_event import CanonicalEventType, IntentCompleteness
 from mesiri_contracts.assistant.confidence import ConfidenceLevel
@@ -303,6 +304,44 @@ def test_finance_query_missing_query_kind_is_unrecognized():
     )
     event = build_canonical_event(understanding, _context())
     assert event.event_type is CanonicalEventType.UNRECOGNIZED
+
+
+def test_transfer_maps_to_transfer_requested_actionable():
+    understanding = _understanding(
+        semantic_type=SemanticType.TRANSFER,
+        candidates=[
+            TransferCandidate(
+                fields={"amount": 50000, "from_account_name": "Company Account", "to_account_name": "Site Cash"}
+            )
+        ],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.TRANSFER_REQUESTED
+    assert event.completeness is IntentCompleteness.ACTIONABLE
+    assert event.fields["from_account_name"] == "Company Account"
+    assert event.fields["to_account_name"] == "Site Cash"
+
+
+def test_transfer_missing_amount_needs_clarification():
+    understanding = _understanding(
+        semantic_type=SemanticType.TRANSFER,
+        candidates=[TransferCandidate(fields={"from_account_name": "Company Account"})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.completeness is IntentCompleteness.NEEDS_CLARIFICATION
+    assert "amount" in event.missing_fields
+
+
+def test_transfer_without_account_names_is_still_actionable():
+    """Account names are optional -- absent means the transfer workflow's
+    slot-fill will ask (Finance Module Slice 3)."""
+    understanding = _understanding(
+        semantic_type=SemanticType.TRANSFER,
+        candidates=[TransferCandidate(fields={"amount": 50000})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.TRANSFER_REQUESTED
+    assert event.completeness is IntentCompleteness.ACTIONABLE
 
 
 def test_general_question_is_not_actionable():

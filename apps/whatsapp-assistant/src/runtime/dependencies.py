@@ -244,6 +244,24 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         resolver=PostgresAccountLookupResolver(),
     )
     account_admin_dispatcher = AccountAdminExecutionDispatcher(account_admin_execution_handler)
+    # Transfers (Finance Module Slice 3): same in-process capability-boundary
+    # wiring as account admin above. The resolver re-verifies both accounts
+    # are still active at confirm time -- the WhatsApp workflow already
+    # resolved from/to to real account ids during slot-fill, so this is
+    # defense-in-depth, not name resolution.
+    from mesiri.application.finance.transfer_dispatcher import TransferExecutionDispatcher
+    from mesiri.application.finance.transfer_handler import TransferMoneyHandler
+    from mesiri.application.finance.transfer_resolution import PostgresTransferAccountResolver
+    from mesiri.infrastructure.postgres.repositories.transfer_execution import (
+        PostgresTransferExecutionRepository,
+    )
+
+    transfer_execution_handler = TransferMoneyHandler(
+        PostgresTransferExecutionRepository(),
+        db=material_db,
+        resolver=PostgresTransferAccountResolver(),
+    )
+    transfer_dispatcher = TransferExecutionDispatcher(transfer_execution_handler)
     # Routes a confirmed action to the dispatcher registered for its
     # action_type -- InteractionHandler only ever holds one ExecutionDispatcher.
     from interactions.execution_router import ActionTypeRoutingDispatcher
@@ -255,6 +273,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             DraftActionType.RECORD_MATERIAL_USAGE: material_dispatcher,
             DraftActionType.RECORD_EXPENSE: expense_dispatcher,
             DraftActionType.MANAGE_MONEY_ACCOUNT: account_admin_dispatcher,
+            DraftActionType.TRANSFER_MONEY: transfer_dispatcher,
         }
     )
     # Read-only inventory lookups for the material.inventory_query workflow --

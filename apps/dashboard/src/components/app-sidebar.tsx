@@ -27,6 +27,7 @@ import {
   Layers,
   ChevronRight,
   ChevronDown,
+  Bot,
 } from 'lucide-react'
 import { NavLink, Link, useLocation } from 'react-router-dom'
 import {
@@ -94,6 +95,7 @@ const FINANCE_CATEGORY: NavCategory = {
     { title: 'Overview', url: '/finance/overview', icon: PieChart },
     { title: 'Expenses', url: '/finance/expenses', icon: DollarSign },
     { title: 'Accounts', url: '/finance/accounts', icon: Landmark },
+    { title: 'WhatsApp Automations', url: '/finance/whatsapp', icon: Bot },
     { title: 'Transactions', url: '/finance/transactions', icon: ArrowLeftRight },
     { title: 'Petty Cash', url: '/finance/petty-cash', icon: Wallet },
     { title: 'Vendors', url: '/finance/vendors', icon: Store },

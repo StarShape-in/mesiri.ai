@@ -538,16 +538,23 @@ async def _seed_account_candidates(
     actor: ActorIdentity | None,
 ) -> None:
     """Feed the org's eligible money accounts into the event's fields so
-    expense_capture's resolve_account node (Finance Module Slice 1) can
+    expense_capture's resolve_account node (Finance Module Slice 1) and
+    transfer's resolve_from_account/resolve_to_account nodes (Slice 3) can
     decide whether to auto-fill, ask "which account?", or proceed unset --
     a node must never query a repository itself (see workflows/runtime.py's
     docstring), so this is the seeding point, same principle as
-    _inject_inventory_context above. Only ever runs for EXPENSE_SUBMIT;
-    every other workflow key's fields are left untouched.
+    _inject_inventory_context above. Only ever runs for EXPENSE_SUBMIT and
+    TRANSFER; every other workflow key's fields are left untouched.
+
+    TRANSFER additionally gets `created_by_role` seeded here -- it travels
+    through the draft the same way amount/from/to do, so
+    application/finance/transfer_validation.py can enforce who may transfer
+    money without threading actor identity through the ExecutionDispatcher
+    protocol for every domain (see transfer_commands.py's docstring).
     """
     if money_account_query is None or actor is None or not actor.organization_id:
         return
-    if decision.workflow_key is not WorkflowKey.EXPENSE_SUBMIT:
+    if decision.workflow_key not in (WorkflowKey.EXPENSE_SUBMIT, WorkflowKey.TRANSFER):
         return
     accounts = await money_account_query.list_accounts(
         organization_id=actor.organization_id, created_by=actor.user_id
@@ -555,6 +562,8 @@ async def _seed_account_candidates(
     event.fields["account_candidates"] = [
         {"id": str(account.id), "name": account.name} for account in accounts
     ]
+    if decision.workflow_key is WorkflowKey.TRANSFER:
+        event.fields["created_by_role"] = actor.role
 
 
 async def _seed_finance_query_context(

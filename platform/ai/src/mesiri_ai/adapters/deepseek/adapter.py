@@ -51,7 +51,7 @@ _EXTRACTION_PROMPT = (
     "Return STRICT JSON only, with keys: "
     '"semantic_type" (one of: expense, equipment_usage, material_update, '
     "labour_update, general_site_update, general_question, inventory_query, "
-    "finance_query, unknown), "
+    "finance_query, transfer, unknown), "
     '"fields" (object of extracted values), '
     '"missing_fields" (array of expected-but-absent keys), '
     '"field_confidences" (object mapping each field to 0..1). '
@@ -93,7 +93,16 @@ _EXTRACTION_PROMPT = (
     'if any (e.g. "diesel", "fuel") -- omit if asking about all expenses. date_range is '
     'exactly one of "today", "this_week", "this_month" if a time period is stated or implied; '
     "omit if no time period is mentioned. This is always a question, never an update -- "
-    "never confuse with expense (which records a NEW expense being reported)."
+    "never confuse with expense (which records a NEW expense being reported).\n"
+    "- transfer: amount, from_account_name, to_account_name, description, project_name. "
+    "Use this type for moving money between two of the organization's own accounts "
+    '(e.g. "transfer ₹50,000 from Company Account to Site Cash", "move 10000 from '
+    'the bank to petty cash"). from_account_name/to_account_name are the account '
+    "names as stated -- extract them even if you're not sure they're real account "
+    "names, they will be matched against the organization's actual accounts "
+    "afterwards. Omit either name if not stated (the user will be asked to clarify). "
+    "Never confuse with expense (paying someone/something outside the organization) "
+    "or finance_query (a question, not a movement of money)."
 )
 
 

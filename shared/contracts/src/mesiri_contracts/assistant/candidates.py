@@ -87,6 +87,14 @@ class FinanceQueryCandidate(Candidate):
     # date_range (today/this_week/this_month).
 
 
+class TransferCandidate(Candidate):
+    semantic_type: SemanticType = SemanticType.TRANSFER
+    # Conventional keys: amount, from_account_name, to_account_name,
+    # description. Account names are best-effort hints -- resolved against
+    # the org's real accounts by workflows/transfer/nodes.py, which asks
+    # when a name doesn't resolve (see workflows/slots.py).
+
+
 # Registry so callers can build the right candidate from a semantic type.
 CANDIDATE_TYPES: dict[SemanticType, type[Candidate]] = {
     SemanticType.EXPENSE: ExpenseCandidate,
@@ -97,4 +105,5 @@ CANDIDATE_TYPES: dict[SemanticType, type[Candidate]] = {
     SemanticType.GENERAL_QUESTION: GeneralQuestionCandidate,
     SemanticType.INVENTORY_QUERY: InventoryQueryCandidate,
     SemanticType.FINANCE_QUERY: FinanceQueryCandidate,
+    SemanticType.TRANSFER: TransferCandidate,
 }
