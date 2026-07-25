@@ -1,6 +1,8 @@
 # Finance Module — Domain Design & LangGraph Workflow Roadmap
 
-**Status:** In progress. Slice 0 (money wiring) and Slice 1 (LangGraph slot-filling spine) done as of 2026-07-25. Slices 2–8 remain (V1); Slices 9–12 + dashboard are V2, explicitly deferred.
+**Status:** In progress. Slice 0 (money wiring), Slice 1 (LangGraph slot-filling spine), and the account-admin portion of Slice 6 (create/rename/deactivate accounts, done out of order — see note below) are done as of 2026-07-25. Slices 2–5 and the receipt/missing-receipt portion of Slice 6 remain (V1); Slices 9–12 + dashboard are V2, explicitly deferred.
+
+**Out-of-order note:** Slice 6 as originally ticketed ([STA-148](https://linear.app/starshape-pvt/issue/STA-148)) bundled two unrelated things — account admin, and receipt/attachment capture + missing-receipt nudges. Only account admin was built now, jumping ahead of Slices 2–5, because it was blocking realistic multi-account testing (every org only ever had the one auto-bootstrapped "Site Cash" account otherwise). STA-148 was split: account admin is done; the receipt/attachment portion is tracked as a new follow-up ticket, not yet started.
 **Author:** Written and approved 2026-07-25 (Linear epics [STA-140](https://linear.app/starshape-pvt/issue/STA-140) / [STA-141](https://linear.app/starshape-pvt/issue/STA-141), sub-issues STA-142..154). Re-read before extending — the design below reflects what actually shipped in Slices 0–1; verify against the live code before assuming later slices are still exactly as described.
 **Scope: WhatsApp assistant + the backend it writes through. No web dashboard work in this plan** — the dashboard Finance section is deferred (needs REST endpoints this plan deliberately skips; tracked separately as [STA-84](https://linear.app/starshape-pvt/issue/STA-84)).
 **Scope exclusion:** Purchases/procurement are out of scope — expense must never touch stock. Multi-currency is deferred (schema carries `currency`, no conversion).
@@ -83,9 +85,27 @@ The architectural spine every later slice reuses.
 
 Tests: `test_workflow_slots.py`, `test_expense_capture_nodes.py` (resolve_account), `test_workflow_runtime.py` (awaiting_input persistence, blocking, provide_input resolve/no-match/wrong-phase), `test_interaction_handler.py` (handle_slot_answer), `test_expense_capture_graph.py` (real LangGraph, no DB — zero-account auto-fill, one-account-still-asks, full ask→answer→confirm round trip).
 
-## Slices 2–8 (V1, not yet started)
+## Slice 6 (account-admin portion only) — DONE, done out of order
 
-See Linear [STA-144](https://linear.app/starshape-pvt/issue/STA-144)–[STA-150](https://linear.app/starshape-pvt/issue/STA-150) for full detail: expense/balance queries, transfers, vendor/payee (fixes a real schema drift — `expenses.vendor_id` has no backing migration), petty cash (a transfer convenience shape, no new transaction type), receipt/attachment capture + account admin, edit/cancel/reverse, duplicate detection.
+Built ahead of Slices 2–5 because every org otherwise only ever had the single auto-bootstrapped "Site Cash" account (Slice 0), making multi-account scenarios (the interesting "which of three accounts?" slot-fill case) untestable. The receipt/attachment-capture + missing-receipt-nudge half of the original Slice 6 ticket is **not** built — split into its own follow-up, unstarted.
+
+**Deliberately deterministic, not AI-routed:** "create account X" / "rename X to Y" / "deactivate X" are recognized by a regex parser (`runtime/account_admin_parser.py`), not the extraction/canonicalization pipeline — these are ADMIN/FINANCE-only, low-volume commands where a predictable syntax beats an LLM guess for something that mutates the chart of accounts. A new `CanonicalEventType.ACCOUNT_ADMIN_REQUESTED` and `WorkflowKey.ACCOUNT_ADMIN` exist (routing table entry included) purely so `PlannerDecisionV2.reason`/telemetry stay accurate — `runtime/account_admin_journey.py` constructs the `CanonicalEventV2`/`PlannerDecisionV2` directly and calls `WorkflowRuntime.start()`, bypassing `planner.decide()` and the understanding pipeline entirely (there is nothing for the AI to extract; the regex parser already has every field).
+
+**Every write is still confirmed before it commits** (architecture rule #4) — `workflows/account_admin/` is a plain 2-node graph (`build_draft → request_confirmation`, no slot-filling needed since the parser front-loads all fields), producing a `DraftActionType.MANAGE_MONEY_ACCOUNT` draft that sits `AWAITING_CONFIRMATION` exactly like an expense draft. **No new confirm-path code was needed**: `InteractionHandler.handle_fast_path`'s existing `ActionTypeRoutingDispatcher` routing is already generic on `DraftActionType`, so registering `MANAGE_MONEY_ACCOUNT → AccountAdminExecutionDispatcher` in `runtime/dependencies.py` was the only wiring required for the "YES" reply to actually execute.
+
+Role gate: `ADMIN`/`FINANCE` only (matches the plan's permission table), checked against `ActorIdentity.role` using the same normalization idiom as `mesiri.authorization.roles.role_is_org_wide` (`str(role or "").strip().upper()`) — confirmed empirically that `users.role` is stored uppercase (`'ADMIN'`), not the lowercase `UserRole` SQLAlchemy enum in `infrastructure/postgres/models/user.py`, which is unused by any real query path.
+
+Backend: new `application/finance/` package (`commands`, `validation`, `resolution`, `handlers`, `mapper`, `dispatcher`, `fakes`) mirroring `application/expenses/`'s shape exactly, plus `infrastructure/postgres/repositories/account_admin_execution.py` (idempotency-claim pattern identical to `expense_execution.py`). `PostgresMoneyAccountRepository` gained `find_by_name_exact_active`, `rename`, `deactivate` (deactivate is a status flip only, never a hard delete, per the account lifecycle above). No new migration — all three operations use columns `money_accounts` already had.
+
+Tests: `test_account_admin_parser.py`, `test_account_admin_nodes.py`, `test_account_admin_journey.py` (role gate, voice-ignored, unrecognized-text), `test_account_admin_graph.py` (real LangGraph, no DB), backend `test_account_admin_{validation,mapper,handler}.py` (fakes), `test_account_admin_execution.py` (real DB — create/rename/deactivate, duplicate-name rejection, not-found rejection, idempotent replay).
+
+## Slices 2–5 (V1, not yet started)
+
+See Linear [STA-144](https://linear.app/starshape-pvt/issue/STA-144)–[STA-147](https://linear.app/starshape-pvt/issue/STA-147) for full detail: expense/balance queries, transfers, vendor/payee (fixes a real schema drift — `expenses.vendor_id` has no backing migration), petty cash (a transfer convenience shape, no new transaction type).
+
+## Slice 6 (receipt/attachment portion) and Slices 7–8 (V1, not yet started)
+
+Receipt/attachment capture + missing-receipt nudge (split out of the original STA-148, new follow-up ticket not yet created in Linear), edit/cancel/reverse ([STA-149](https://linear.app/starshape-pvt/issue/STA-149)), duplicate detection ([STA-150](https://linear.app/starshape-pvt/issue/STA-150)).
 
 ## Slices 9–12 + dashboard (V2, deferred)
 
@@ -98,6 +118,8 @@ See [STA-151](https://linear.app/starshape-pvt/issue/STA-151)–[STA-154](https:
 **Slice 0:** `backend/src/mesiri/application/expenses/{commands,mapper,validation}.py` · `.../infrastructure/postgres/repositories/expense_execution.py` · `backend/migrations/versions/0367_finance_money_transaction_idempotency.py` · `apps/whatsapp-assistant/src/runtime/money_account_query.py`.
 
 **Slice 1:** `shared/contracts/src/mesiri_contracts/assistant/v2/workflow_state.py` · `apps/whatsapp-assistant/src/workflows/{state,slots,ports,fakes,runtime}.py` · `.../workflows/expense_capture/{nodes,graph}.py` · `.../backend/postgres/workflow_instance.py` · `.../interactions/{handler,response_handler}.py` · `.../runtime/{inbound_journey,dependencies}.py`.
+
+**Slice 6 (account-admin portion):** `shared/contracts/src/mesiri_contracts/assistant/{draft_action,planner_decision,canonical_event}.py` · `backend/src/mesiri/application/finance/` (new package) · `.../infrastructure/postgres/repositories/{finance,account_admin_execution}.py` · `apps/whatsapp-assistant/src/workflows/account_admin/` (new package) · `.../workflows/registry.py` · `.../planner/routing.py` · `.../runtime/{account_admin_parser,account_admin_journey,dependencies}.py`.
 
 ## Verification
 
