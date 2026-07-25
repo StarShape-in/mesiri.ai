@@ -141,3 +141,28 @@ def test_resolve_account_unmatched_answer_reasks_with_different_wording():
 
 def test_own_pocket_sentinel_is_not_a_real_uuid_shaped_value():
     assert OWN_POCKET_SENTINEL == "own_pocket"
+
+
+def test_build_draft_keeps_media_object_key_for_the_backend():
+    """Unlike account_candidates, media_object_key is real data the backend
+    needs (RecordExpenseCommand.media_object_key writes an
+    expense_attachments row) -- it must survive into draft.fields."""
+    state = _base_state({"amount": 250, "media_object_key": "media/wamid.1/abc123"})
+    draft = build_draft(state)["draft_action"]
+    assert draft.fields["media_object_key"] == "media/wamid.1/abc123"
+
+
+def test_request_confirmation_hides_the_raw_key_but_notes_a_receipt():
+    state = _base_state({"amount": 250, "media_object_key": "media/wamid.1/abc123"})
+    state.update(build_draft(state))
+    prompt = request_confirmation(state)["pending_prompt"]
+    assert "media_object_key" not in prompt
+    assert "media/wamid.1/abc123" not in prompt
+    assert "Receipt attached" in prompt
+
+
+def test_request_confirmation_has_no_receipt_note_without_an_image():
+    state = _base_state({"amount": 250})
+    state.update(build_draft(state))
+    prompt = request_confirmation(state)["pending_prompt"]
+    assert "Receipt attached" not in prompt

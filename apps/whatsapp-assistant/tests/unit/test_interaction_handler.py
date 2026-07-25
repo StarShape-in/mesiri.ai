@@ -339,6 +339,29 @@ def test_category_tap_does_not_touch_workflow_state():
     assert repo._rows == {}
 
 
+def test_image_purpose_tap_returns_the_row_id_for_expense():
+    handler = _handler(FakeWorkflowInstanceRepository())
+    assert handler.handle_image_purpose_tap(_interactive_message("img_expense")) == "img_expense"
+
+
+def test_image_purpose_tap_returns_the_row_id_for_site_update():
+    handler = _handler(FakeWorkflowInstanceRepository())
+    assert (
+        handler.handle_image_purpose_tap(_interactive_message("img_site_update"))
+        == "img_site_update"
+    )
+
+
+def test_image_purpose_tap_is_none_for_an_unrecognized_row_id():
+    handler = _handler(FakeWorkflowInstanceRepository())
+    assert handler.handle_image_purpose_tap(_interactive_message("cat_expense")) is None
+
+
+def test_image_purpose_tap_is_none_for_plain_text():
+    handler = _handler(FakeWorkflowInstanceRepository())
+    assert handler.handle_image_purpose_tap(_message("img_expense")) is None
+
+
 def test_greeting_trigger_returns_the_menu_for_a_bare_hi():
     handler = _handler(FakeWorkflowInstanceRepository())
     spec = handler.handle_greeting_trigger(_message("hi"))

@@ -32,6 +32,7 @@ def _understanding(
     semantic_type: SemanticType,
     candidates: list[Candidate] | None = None,
     overall_confidence: ConfidenceLevel = ConfidenceLevel.HIGH,
+    original_content_reference: str | None = None,
 ) -> UnderstandingResult:
     return UnderstandingResult(
         source_message_id="msg_1",
@@ -40,6 +41,7 @@ def _understanding(
         semantic_type=semantic_type,
         candidates=candidates or [],
         overall_confidence=overall_confidence,
+        original_content_reference=original_content_reference,
     )
 
 
@@ -342,6 +344,28 @@ def test_transfer_without_account_names_is_still_actionable():
     event = build_canonical_event(understanding, _context())
     assert event.event_type is CanonicalEventType.TRANSFER_REQUESTED
     assert event.completeness is IntentCompleteness.ACTIONABLE
+
+
+def test_media_object_key_is_carried_onto_the_event_fields_when_present():
+    """Generic across every event type -- not expense-specific -- so a
+    confirmed workflow execution can save it as evidence later (see
+    RecordExpenseCommand.media_object_key)."""
+    understanding = _understanding(
+        semantic_type=SemanticType.EXPENSE,
+        candidates=[ExpenseCandidate(fields={"amount": 350, "category": "diesel"})],
+        original_content_reference="media/wamid.1/abc123",
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.fields["media_object_key"] == "media/wamid.1/abc123"
+
+
+def test_media_object_key_is_absent_when_not_an_image():
+    understanding = _understanding(
+        semantic_type=SemanticType.EXPENSE,
+        candidates=[ExpenseCandidate(fields={"amount": 350})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert "media_object_key" not in event.fields
 
 
 def test_general_question_is_not_actionable():

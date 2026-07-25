@@ -247,3 +247,53 @@ async def test_replayed_idempotency_key_does_not_double_post_the_ledger(
 
     assert payment_count == 1
     assert balance == Decimal("5000.00") - Decimal("1200.00")
+
+
+async def test_expense_with_media_object_key_creates_one_receipt_attachment(
+    engine: AsyncEngine, scenario: dict
+):
+    """A WhatsApp image tapped as "Expense" in the image-purpose picker
+    (interactions/image_purpose.py) carries media_object_key all the way
+    through to confirmation -- this proves the attachment actually gets
+    written, not just threaded through as inert data."""
+    handler = RecordExpenseHandler(PostgresExpenseExecutionRepository())
+    cmd = _command(scenario, media_object_key="media/wamid.1/abc123")
+
+    async with engine.begin() as conn:
+        result = await handler.handle(conn, cmd)
+
+    assert result.status == ExecutionStatus.SUCCEEDED
+    expense_id = uuid.UUID(result.material_row_id)
+
+    async with engine.connect() as conn:
+        row = (
+            await conn.execute(
+                sa.text(
+                    "SELECT media_object_key, attachment_type FROM expense_attachments "
+                    "WHERE expense_id = :id"
+                ),
+                {"id": expense_id},
+            )
+        ).mappings().one()
+    assert row["media_object_key"] == "media/wamid.1/abc123"
+    assert row["attachment_type"] == "receipt"
+
+
+async def test_expense_without_media_object_key_creates_no_attachment(
+    engine: AsyncEngine, scenario: dict
+):
+    handler = RecordExpenseHandler(PostgresExpenseExecutionRepository())
+    cmd = _command(scenario)
+
+    async with engine.begin() as conn:
+        result = await handler.handle(conn, cmd)
+
+    expense_id = uuid.UUID(result.material_row_id)
+    async with engine.connect() as conn:
+        count = (
+            await conn.execute(
+                sa.text("SELECT count(*) FROM expense_attachments WHERE expense_id = :id"),
+                {"id": expense_id},
+            )
+        ).scalar_one()
+    assert count == 0

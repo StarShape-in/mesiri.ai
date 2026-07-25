@@ -85,3 +85,15 @@ def test_paid_from_own_pocket_is_mapped_when_present():
     confirmed = _confirmed({"amount": 100, "paid_from_own_pocket": True})
     cmd = build_command(confirmed)
     assert cmd.paid_from_own_pocket is True
+
+
+def test_media_object_key_is_mapped_when_present():
+    confirmed = _confirmed({"amount": 100, "media_object_key": "media/wamid.1/abc123"})
+    cmd = build_command(confirmed)
+    assert cmd.media_object_key == "media/wamid.1/abc123"
+
+
+def test_media_object_key_is_none_when_absent():
+    confirmed = _confirmed({"amount": 100})
+    cmd = build_command(confirmed)
+    assert cmd.media_object_key is None
