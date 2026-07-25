@@ -153,7 +153,10 @@ def _render_reply(
             buttons=CONFIRM_BUTTONS,
         )
 
-    if workflow_run is not None and workflow_run.status is WorkflowRunStatus.COMPLETED:
+    if workflow_run is not None and workflow_run.status in (
+        WorkflowRunStatus.COMPLETED,
+        WorkflowRunStatus.AWAITING_INPUT,
+    ):
         return ReplySpec(
             text=render_workflow_run_reply(workflow_run, pending_prompt=workflow_run.pending_prompt)
         )
