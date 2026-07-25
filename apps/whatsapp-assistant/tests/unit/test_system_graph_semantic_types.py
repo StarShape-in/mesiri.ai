@@ -22,8 +22,8 @@ def test_material_update_fans_out_to_both_material_workflows() -> None:
     info = _by_type()["material_update"]
     assert info.workflow_keys == ["material.receipt", "material.usage"]
     assert info.canonical_events == [
-        "material_receipt_requested",
-        "material_usage_requested",
+        "MaterialReceiptRequested",
+        "MaterialUsageRequested",
     ]
     assert info.implemented is True
 
