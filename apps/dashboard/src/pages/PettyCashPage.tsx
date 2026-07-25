@@ -1,0 +1,783 @@
+import * as React from 'react'
+import {
+  Wallet,
+  Plus,
+  ArrowLeftRight,
+  Search,
+  Download,
+  Building2,
+  User,
+  MoreVertical,
+  Eye,
+  Grid,
+  List,
+  ChevronLeft,
+  ChevronRight,
+  AlertTriangle,
+  Receipt,
+  CheckCircle2,
+  Clock,
+  Smartphone,
+} from 'lucide-react'
+import { useScope } from '@/lib/ScopeContext'
+import { KpiCard } from '@/components/ui/kpi-card'
+import { BulkActionBar } from '@/components/ui/bulk-action-bar'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
+import { Card } from '@/components/ui/card'
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from '@/components/ui/table'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+
+import { RecordVoucherDialog } from '@/components/petty-cash/record-voucher-dialog'
+import { ReplenishFloatDialog } from '@/components/petty-cash/replenish-float-dialog'
+import { CashBoxDetailSheet } from '@/components/petty-cash/cash-box-detail-sheet'
+
+export interface SiteCashBoxItem {
+  id: string
+  name: string
+  opening_balance: number
+  current_balance: number
+  disbursed_month: number
+  custodian_name: string
+  project_id?: string
+  project_name: string
+  site_id?: string
+  site_name?: string
+  status: 'active' | 'inactive'
+}
+
+export interface PettyCashVoucherItem {
+  id: string
+  voucher_number: string
+  cash_box_id: string
+  cash_box_name: string
+  amount: number
+  category: string
+  vendor_name: string
+  description: string
+  date: string
+  custodian_name: string
+  project_name: string
+  status: 'verified' | 'pending'
+  source: string
+}
+
+const INITIAL_CASH_BOXES: SiteCashBoxItem[] = [
+  {
+    id: 'cb_01',
+    name: 'Riverside Commercial Site Float',
+    opening_balance: 300000,
+    current_balance: 240000,
+    disbursed_month: 60000,
+    custodian_name: 'Ramesh Kumar (Site PM)',
+    project_id: 'p_riverside',
+    project_name: 'Riverside Commercial Center',
+    site_id: 's_tower_a',
+    site_name: 'Tower A Excavation',
+    status: 'active',
+  },
+  {
+    id: 'cb_02',
+    name: 'Green Valley Housing Petty Cash',
+    opening_balance: 150000,
+    current_balance: 35000, // Low balance alert
+    disbursed_month: 115000,
+    custodian_name: 'Suresh Patil (Supervisor)',
+    project_id: 'p_green_valley',
+    project_name: 'Green Valley Housing',
+    site_id: 's_block_b',
+    site_name: 'Block B Concreting',
+    status: 'active',
+  },
+  {
+    id: 'cb_03',
+    name: 'Metro Line Corridor Float',
+    opening_balance: 200000,
+    current_balance: 145000,
+    disbursed_month: 55000,
+    custodian_name: 'Vikram Singh (Site Lead)',
+    project_id: 'p_metro',
+    project_name: 'Metro Line Corridor',
+    site_id: 's_pier_4',
+    site_name: 'Pier 4 Substructure',
+    status: 'active',
+  },
+]
+
+const INITIAL_VOUCHERS: PettyCashVoucherItem[] = [
+  {
+    id: 'vch_01',
+    voucher_number: 'VCH-108',
+    cash_box_id: 'cb_01',
+    cash_box_name: 'Riverside Commercial Site Float',
+    amount: 4500,
+    category: 'Fuel & Logistics',
+    vendor_name: 'Indian Oil Bunk #4',
+    description: 'Diesel for JCB Excavator #2',
+    date: '2026-07-25',
+    custodian_name: 'Ramesh Kumar',
+    project_name: 'Riverside Commercial Center',
+    status: 'verified',
+    source: 'WhatsApp Assistant',
+  },
+  {
+    id: 'vch_02',
+    voucher_number: 'VCH-107',
+    cash_box_id: 'cb_01',
+    cash_box_name: 'Riverside Commercial Site Float',
+    amount: 1200,
+    category: 'Site Refreshments & Tea',
+    vendor_name: 'Local Tea Stall',
+    description: 'Daily morning labor refreshments & tea',
+    date: '2026-07-24',
+    custodian_name: 'Ramesh Kumar',
+    project_name: 'Riverside Commercial Center',
+    status: 'verified',
+    source: 'Web Manual Entry',
+  },
+  {
+    id: 'vch_03',
+    voucher_number: 'VCH-106',
+    cash_box_id: 'cb_02',
+    cash_box_name: 'Green Valley Housing Petty Cash',
+    amount: 8500,
+    category: 'Hardware & Small Tools',
+    vendor_name: 'City Hardware Mart',
+    description: 'Emergency shuttering clamps & nails',
+    date: '2026-07-23',
+    custodian_name: 'Suresh Patil',
+    project_name: 'Green Valley Housing',
+    status: 'pending',
+    source: 'WhatsApp Assistant',
+  },
+  {
+    id: 'vch_04',
+    voucher_number: 'VCH-105',
+    cash_box_id: 'cb_03',
+    cash_box_name: 'Metro Line Corridor Float',
+    amount: 3200,
+    category: 'Emergency Repairs',
+    vendor_name: 'National Auto Garage',
+    description: 'Site generator belt replacement',
+    date: '2026-07-21',
+    custodian_name: 'Vikram Singh',
+    project_name: 'Metro Line Corridor',
+    status: 'verified',
+    source: 'Web Manual Entry',
+  },
+]
+
+type SortField = 'date' | 'amount' | 'voucher_number'
+type SortOrder = 'asc' | 'desc'
+
+export default function PettyCashPage() {
+  const { scope } = useScope()
+
+  const [cashBoxes, setCashBoxes] = React.useState<SiteCashBoxItem[]>(INITIAL_CASH_BOXES)
+  const [vouchers, setVouchers] = React.useState<PettyCashVoucherItem[]>(INITIAL_VOUCHERS)
+
+  const [search, setSearch] = React.useState('')
+  const [categoryFilter, setCategoryFilter] = React.useState('ALL')
+  const [statusFilter, setStatusFilter] = React.useState('ALL')
+  const [viewMode, setViewMode] = React.useState<'grid' | 'table'>('grid')
+
+  // Selection state for bulk actions
+  const [selectedIds, setSelectedIds] = React.useState<string[]>([])
+
+  // Sort & Pagination
+  const [sortField, setSortField] = React.useState<SortField>('date')
+  const [sortOrder, setSortOrder] = React.useState<SortOrder>('desc')
+  const [currentPage, setCurrentPage] = React.useState(1)
+  const [pageSize, setPageSize] = React.useState(10)
+
+  // Dialog & Sheet states
+  const [recordDialogOpen, setRecordDialogOpen] = React.useState(false)
+  const [replenishDialogOpen, setReplenishDialogOpen] = React.useState(false)
+  const [selectedCashBox, setSelectedCashBox] = React.useState<SiteCashBoxItem | null>(null)
+  const [sheetOpen, setSheetOpen] = React.useState(false)
+
+  // Scope-aware Cash Box filtering
+  const scopedCashBoxes = React.useMemo(() => {
+    return cashBoxes.filter((box) => {
+      if (scope.mode === 'portfolio') return true
+      if (scope.mode === 'project') return box.project_id === scope.projectId
+      if (scope.mode === 'site') return box.project_id === scope.projectId || box.site_id === scope.siteId
+      return true
+    })
+  }, [cashBoxes, scope])
+
+  // Filtered & Sorted Vouchers
+  const filteredVouchers = React.useMemo(() => {
+    return vouchers
+      .filter((vch) => {
+        const matchesSearch =
+          vch.voucher_number.toLowerCase().includes(search.toLowerCase()) ||
+          vch.description.toLowerCase().includes(search.toLowerCase()) ||
+          vch.vendor_name.toLowerCase().includes(search.toLowerCase()) ||
+          vch.custodian_name.toLowerCase().includes(search.toLowerCase())
+
+        if (!matchesSearch) return false
+        if (categoryFilter !== 'ALL' && vch.category !== categoryFilter) return false
+        if (statusFilter !== 'ALL' && vch.status !== statusFilter) return false
+
+        return true
+      })
+      .sort((a, b) => {
+        const modifier = sortOrder === 'asc' ? 1 : -1
+        if (sortField === 'amount') return (a.amount - b.amount) * modifier
+        if (sortField === 'date') return a.date.localeCompare(b.date) * modifier
+        if (sortField === 'voucher_number') return a.voucher_number.localeCompare(b.voucher_number) * modifier
+        return 0
+      })
+  }, [vouchers, search, categoryFilter, statusFilter, sortField, sortOrder])
+
+  // Pagination
+  const totalPages = Math.ceil(filteredVouchers.length / pageSize) || 1
+  const paginatedVouchers = React.useMemo(() => {
+    const start = (currentPage - 1) * pageSize
+    return filteredVouchers.slice(start, start + pageSize)
+  }, [filteredVouchers, currentPage, pageSize])
+
+  // Summary Metrics
+  const metrics = React.useMemo(() => {
+    const activeFloat = scopedCashBoxes.reduce((acc, curr) => acc + curr.current_balance, 0)
+    const monthlyDisbursed = scopedCashBoxes.reduce((acc, curr) => acc + curr.disbursed_month, 0)
+    const lowBalanceCount = scopedCashBoxes.filter((b) => b.current_balance < 50000).length
+    const pendingVouchersCount = vouchers.filter((v) => v.status === 'pending').length
+
+    return {
+      activeFloat,
+      monthlyDisbursed,
+      lowBalanceCount,
+      pendingVouchersCount,
+    }
+  }, [scopedCashBoxes, vouchers])
+
+  const handleVoucherCreated = (newVoucher: PettyCashVoucherItem) => {
+    setVouchers((prev) => [newVoucher, ...prev])
+    // Deduct float from cash box
+    setCashBoxes((prev) =>
+      prev.map((box) => {
+        if (box.id === newVoucher.cash_box_id) {
+          return {
+            ...box,
+            current_balance: Math.max(0, box.current_balance - newVoucher.amount),
+            disbursed_month: box.disbursed_month + newVoucher.amount,
+          }
+        }
+        return box
+      })
+    )
+  }
+
+  const handleReplenishCompleted = (boxId: string, amount: number) => {
+    setCashBoxes((prev) =>
+      prev.map((box) => {
+        if (box.id === boxId) {
+          return {
+            ...box,
+            current_balance: box.current_balance + amount,
+          }
+        }
+        return box
+      })
+    )
+  }
+
+  const toggleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortField(field)
+      setSortOrder('desc')
+    }
+  }
+
+  const isAllSelected = paginatedVouchers.length > 0 && paginatedVouchers.every((e) => selectedIds.includes(e.id))
+
+  const toggleSelectAll = () => {
+    if (isAllSelected) {
+      setSelectedIds([])
+    } else {
+      setSelectedIds(paginatedVouchers.map((e) => e.id))
+    }
+  }
+
+  const toggleSelectRow = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    )
+  }
+
+  const scopeLabel = React.useMemo(() => {
+    if (scope.mode === 'portfolio') return 'Portfolio Scope (All Site Petty Cash Floats)'
+    if (scope.mode === 'project') return `Project Scope: ${scope.projectName}`
+    return `Site Scope: ${scope.projectName} / ${scope.siteName}`
+  }, [scope])
+
+  const formatCurrency = (val: number) => {
+    return new Intl.NumberFormat('en-IN', {
+      style: 'currency',
+      currency: 'INR',
+      maximumFractionDigits: 0,
+    }).format(val)
+  }
+
+  return (
+    <div className="flex flex-col gap-4 w-full max-w-full relative pb-12">
+      {/* Page Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-3.5">
+        <div className="flex items-center gap-3">
+          <div className="size-10 rounded-lg border border-amber-500/30 bg-amber-500/10 flex items-center justify-center text-amber-600 dark:text-amber-400 shrink-0 shadow-2xs">
+            <Wallet className="size-5" />
+          </div>
+          <div>
+            <h1 className="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
+              Site Petty Cash & Field Floats
+              <Badge variant="outline" className="text-[10px] font-mono border-amber-500/30 text-amber-600 dark:text-amber-400">
+                Field Treasury
+              </Badge>
+            </h1>
+            <p className="text-xs text-muted-foreground font-medium">{scopeLabel}</p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1.5 text-xs font-semibold text-emerald-600 border-emerald-500/30 hover:bg-emerald-500/10"
+            onClick={() => setReplenishDialogOpen(true)}
+          >
+            <ArrowLeftRight className="size-3.5" />
+            Replenish Float
+          </Button>
+          <Button
+            size="sm"
+            className="h-8 gap-1.5 text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white shadow-2xs"
+            onClick={() => setRecordDialogOpen(true)}
+          >
+            <Plus className="size-4" />
+            Record Cash Voucher
+          </Button>
+        </div>
+      </div>
+
+      {/* Executive KPI Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <KpiCard
+          title="Active Field Float"
+          value={<span className="text-amber-600 dark:text-amber-400">{formatCurrency(metrics.activeFloat)}</span>}
+          trend="up"
+          trendValue="Live Balance"
+          description="Total active cash in hand"
+          icon={<Wallet className="text-amber-500" />}
+          chartData={[25, 30, 28, 35, 40, 42]}
+        />
+        <KpiCard
+          title="Monthly Cash Disbursed"
+          value={<span className="text-rose-600 dark:text-rose-400">{formatCurrency(metrics.monthlyDisbursed)}</span>}
+          trend="neutral"
+          trendValue="July 2026"
+          description="Vouchers paid this month"
+          icon={<Receipt className="text-rose-500" />}
+          chartData={[10, 18, 22, 35, 45]}
+        />
+        <KpiCard
+          title="Low Float Site Boxes"
+          value={
+            <span className={metrics.lowBalanceCount > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}>
+              {metrics.lowBalanceCount} Sites
+            </span>
+          }
+          trend={metrics.lowBalanceCount > 0 ? 'down' : 'neutral'}
+          trendValue={metrics.lowBalanceCount > 0 ? 'Refill Needed' : 'Healthy'}
+          description="Float threshold alerts (< ₹50k)"
+          icon={<AlertTriangle className={metrics.lowBalanceCount > 0 ? 'text-rose-500' : 'text-muted-foreground'} />}
+        />
+        <KpiCard
+          title="Pending Vouchers Audit"
+          value={<span className="text-purple-600 dark:text-purple-400">{metrics.pendingVouchersCount} Vouchers</span>}
+          trend="neutral"
+          trendValue="Physical Receipt Audit"
+          description="Pending audit verification"
+          icon={<Clock className="text-purple-500" />}
+        />
+      </div>
+
+      {/* Toolbar & View Mode Switcher */}
+      <div className="flex flex-col sm:flex-row gap-2.5 items-center justify-between border border-border/80 p-2.5 rounded-lg bg-card/40">
+        <div className="flex flex-wrap gap-2 w-full sm:w-auto flex-1 items-center">
+          <div className="relative w-full sm:w-64">
+            <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
+            <Input
+              placeholder="Search vouchers, custodians, vendor..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-8 h-9 text-xs"
+            />
+          </div>
+
+          <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+            <SelectTrigger className="h-9 text-xs w-full sm:w-44">
+              <SelectValue placeholder="All Categories" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL">All Categories</SelectItem>
+              <SelectItem value="Fuel & Logistics">Fuel & Logistics</SelectItem>
+              <SelectItem value="Site Refreshments & Tea">Site Refreshments & Tea</SelectItem>
+              <SelectItem value="Hardware & Small Tools">Hardware & Small Tools</SelectItem>
+              <SelectItem value="Emergency Repairs">Emergency Repairs</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="h-9 text-xs w-full sm:w-36">
+              <SelectValue placeholder="All Statuses" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL">All Statuses</SelectItem>
+              <SelectItem value="verified">Verified Only</SelectItem>
+              <SelectItem value="pending">Pending Audit</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* View Switcher */}
+        <div className="flex items-center gap-1 bg-muted p-1 rounded-md">
+          <Button
+            size="sm"
+            variant={viewMode === 'grid' ? 'default' : 'ghost'}
+            className="h-7 px-2.5 text-xs gap-1"
+            onClick={() => setViewMode('grid')}
+          >
+            <Grid className="size-3.5" />
+            Site Boxes
+          </Button>
+          <Button
+            size="sm"
+            variant={viewMode === 'table' ? 'default' : 'ghost'}
+            className="h-7 px-2.5 text-xs gap-1"
+            onClick={() => setViewMode('table')}
+          >
+            <List className="size-3.5" />
+            Voucher Ledger
+          </Button>
+        </div>
+      </div>
+
+      {/* Main Content (Site Cash Box Cards vs Voucher Table) */}
+      {viewMode === 'grid' ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {scopedCashBoxes.length === 0 ? (
+            <div className="col-span-full h-32 flex items-center justify-center border rounded-lg text-xs text-muted-foreground">
+              No site petty cash boxes match your criteria for {scopeLabel}.
+            </div>
+          ) : (
+            scopedCashBoxes.map((box) => {
+              const isLow = box.current_balance < 50000
+              const percentageLeft = Math.round((box.current_balance / box.opening_balance) * 100)
+              return (
+                <Card
+                  key={box.id}
+                  className={`hover:border-amber-500/50 transition-all duration-200 cursor-pointer group relative overflow-hidden bg-gradient-to-br from-card via-card to-amber-500/5 ${isLow ? 'border-rose-500/40 shadow-xs' : ''}`}
+                  onClick={() => {
+                    setSelectedCashBox(box)
+                    setSheetOpen(true)
+                  }}
+                >
+                  <div className="p-4 flex flex-col gap-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <Badge className="bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20 text-[10px]">
+                          Site Cash Float
+                        </Badge>
+                        {isLow && (
+                          <Badge className="bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/20 text-[10px] gap-1">
+                            <AlertTriangle className="size-3" /> Low Balance
+                          </Badge>
+                        )}
+                      </div>
+                      <Badge variant="outline" className="text-[10px] font-mono">
+                        {box.project_name}
+                      </Badge>
+                    </div>
+
+                    <div>
+                      <h3 className="font-bold text-sm text-foreground group-hover:text-amber-600 transition-colors">
+                        {box.name}
+                      </h3>
+                      {box.site_name && (
+                        <span className="text-xs font-medium text-muted-foreground flex items-center gap-1 mt-0.5">
+                          <Building2 className="size-3 text-amber-500" />
+                          {box.site_name}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Progress Bar */}
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-[10px] font-mono text-muted-foreground">
+                        <span>Float Remaining</span>
+                        <span>{percentageLeft}%</span>
+                      </div>
+                      <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full ${isLow ? 'bg-rose-500' : 'bg-amber-500'}`}
+                          style={{ width: `${Math.min(100, percentageLeft)}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t flex items-end justify-between">
+                      <div>
+                        <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold block">
+                          Current Cash Balance
+                        </span>
+                        <span className={`text-xl font-bold font-mono tracking-tight ${isLow ? 'text-rose-600 dark:text-rose-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                          {formatCurrency(box.current_balance)}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1 text-[11px] text-muted-foreground bg-muted/40 px-2 py-1 rounded">
+                        <User className="size-3 text-amber-500" />
+                        <span className="truncate max-w-[100px]">{box.custodian_name}</span>
+                      </div>
+                    </div>
+                  </div>
+                </Card>
+              )
+            })
+          )}
+        </div>
+      ) : (
+        /* Table View: Voucher Ledger */
+        <div className="border rounded-lg overflow-hidden bg-card shadow-2xs">
+          <Table>
+            <TableHeader className="bg-muted/40">
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="w-[40px] px-3">
+                  <input
+                    type="checkbox"
+                    checked={isAllSelected}
+                    onChange={toggleSelectAll}
+                    className="size-4 rounded border-border text-amber-600 focus:ring-amber-500 cursor-pointer accent-amber-600"
+                  />
+                </TableHead>
+                <TableHead
+                  className="text-xs font-semibold h-10 cursor-pointer select-none"
+                  onClick={() => toggleSort('voucher_number')}
+                >
+                  Voucher # {sortField === 'voucher_number' ? (sortOrder === 'asc' ? '↑' : '↓') : ''}
+                </TableHead>
+                <TableHead
+                  className="text-xs font-semibold h-10 cursor-pointer select-none"
+                  onClick={() => toggleSort('date')}
+                >
+                  Date {sortField === 'date' ? (sortOrder === 'asc' ? '↑' : '↓') : ''}
+                </TableHead>
+                <TableHead className="text-xs font-semibold h-10">Category & Description</TableHead>
+                <TableHead className="text-xs font-semibold h-10">Payee / Vendor</TableHead>
+                <TableHead className="text-xs font-semibold h-10">Cash Box Float</TableHead>
+                <TableHead
+                  className="text-xs font-semibold h-10 text-right cursor-pointer select-none"
+                  onClick={() => toggleSort('amount')}
+                >
+                  Amount (₹) {sortField === 'amount' ? (sortOrder === 'asc' ? '↑' : '↓') : ''}
+                </TableHead>
+                <TableHead className="text-xs font-semibold h-10 text-center">Status</TableHead>
+                <TableHead className="text-xs font-semibold h-10 text-right w-[50px]">Action</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {paginatedVouchers.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={9} className="h-32 text-center text-xs text-muted-foreground">
+                    No petty cash vouchers found.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                paginatedVouchers.map((vch) => {
+                  const isSelected = selectedIds.includes(vch.id)
+                  return (
+                    <TableRow
+                      key={vch.id}
+                      className={`hover:bg-muted/40 cursor-pointer transition-colors ${isSelected ? 'bg-amber-500/5' : ''}`}
+                    >
+                      <TableCell className="px-3" onClick={(e) => toggleSelectRow(vch.id, e)}>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => {}}
+                          className="size-4 rounded border-border text-amber-600 focus:ring-amber-500 cursor-pointer accent-amber-600"
+                        />
+                      </TableCell>
+                      <TableCell className="font-mono font-bold text-xs text-foreground">
+                        {vch.voucher_number}
+                      </TableCell>
+                      <TableCell className="text-xs font-mono text-muted-foreground">{vch.date}</TableCell>
+                      <TableCell className="text-xs">
+                        <div className="font-semibold text-foreground">{vch.description}</div>
+                        <span className="text-[10px] text-muted-foreground font-mono">{vch.category}</span>
+                      </TableCell>
+                      <TableCell className="text-xs text-foreground font-medium">{vch.vendor_name}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground truncate max-w-[140px]">
+                        {vch.cash_box_name}
+                      </TableCell>
+                      <TableCell className="text-xs font-mono font-bold text-right tabular-nums text-foreground">
+                        {formatCurrency(vch.amount)}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        {vch.status === 'verified' ? (
+                          <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[10px] font-semibold gap-1">
+                            <CheckCircle2 className="size-3" /> Verified
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-500/30 gap-1">
+                            <Clock className="size-3" /> Pending Audit
+                          </Badge>
+                        )}
+                        {vch.source === 'WhatsApp Assistant' && (
+                          <span className="text-[9px] text-emerald-600 block font-medium flex items-center justify-center gap-0.5 mt-0.5">
+                            <Smartphone className="size-2.5" /> WhatsApp
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="size-7">
+                              <MoreVertical className="size-4 text-muted-foreground" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="text-xs">
+                            <DropdownMenuItem onClick={() => alert(`Viewing voucher ${vch.voucher_number}`)}>
+                              <Eye className="size-3.5 mr-1.5" /> View Voucher
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })
+              )}
+            </TableBody>
+          </Table>
+
+          {/* Pagination */}
+          <div className="flex items-center justify-between px-3 py-2 border-t bg-muted/20 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">Rows per page:</span>
+              <Select value={pageSize.toString()} onValueChange={(val) => setPageSize(Number(val))}>
+                <SelectTrigger className="h-7 text-xs w-16">
+                  <SelectValue placeholder="10" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="5">5</SelectItem>
+                  <SelectItem value="10">10</SelectItem>
+                  <SelectItem value="25">25</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <span className="text-muted-foreground font-mono">
+                Page {currentPage} of {totalPages}
+              </span>
+              <div className="flex gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 size-7 p-0"
+                  disabled={currentPage <= 1}
+                  onClick={() => setCurrentPage((p) => p - 1)}
+                >
+                  <ChevronLeft className="size-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 size-7 p-0"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setCurrentPage((p) => p + 1)}
+                >
+                  <ChevronRight className="size-4" />
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Bulk Action Bar */}
+      <BulkActionBar selectedCount={selectedIds.length} onClear={() => setSelectedIds([])}>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 text-xs gap-1.5 font-semibold text-emerald-600 border-emerald-500/40 hover:bg-emerald-500/10"
+          onClick={() => {
+            setVouchers((prev) =>
+              prev.map((v) => (selectedIds.includes(v.id) ? { ...v, status: 'verified' } : v))
+            )
+            setSelectedIds([])
+          }}
+        >
+          <CheckCircle2 className="size-3.5" />
+          Approve Selected ({selectedIds.length})
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 text-xs gap-1.5 font-semibold"
+          onClick={() => alert(`Exporting ${selectedIds.length} vouchers...`)}
+        >
+          <Download className="size-3.5" />
+          Export Vouchers
+        </Button>
+      </BulkActionBar>
+
+      {/* Modals & Sheet */}
+      <RecordVoucherDialog
+        open={recordDialogOpen}
+        onOpenChange={setRecordDialogOpen}
+        cashBoxes={cashBoxes}
+        onVoucherCreated={handleVoucherCreated}
+      />
+
+      <ReplenishFloatDialog
+        open={replenishDialogOpen}
+        onOpenChange={setReplenishDialogOpen}
+        cashBoxes={cashBoxes}
+        onReplenishCompleted={handleReplenishCompleted}
+      />
+
+      <CashBoxDetailSheet
+        cashBox={selectedCashBox}
+        open={sheetOpen}
+        onOpenChange={setSheetOpen}
+        onReplenishClick={() => setReplenishDialogOpen(true)}
+      />
+    </div>
+  )
+}

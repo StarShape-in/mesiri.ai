@@ -12,6 +12,7 @@ import MaterialsPage from '@/pages/MaterialsPage'
 import ExpensesPage from '@/pages/ExpensesPage'
 import AccountsPage from '@/pages/AccountsPage'
 import WhatsAppFinancePage from '@/pages/WhatsAppFinancePage'
+import PettyCashPage from '@/pages/PettyCashPage'
 import { OperationalPlaceholder } from '@/components/operational-placeholder'
 
 function IndexRedirect() {
@@ -46,7 +47,7 @@ export default function App() {
         <Route path="finance/whatsapp" element={<WhatsAppFinancePage />} />
         <Route path="whatsapp/finance" element={<WhatsAppFinancePage />} />
         <Route path="finance/transactions" element={<OperationalPlaceholder title="Transactions" />} />
-        <Route path="finance/petty-cash" element={<OperationalPlaceholder title="Petty Cash" />} />
+        <Route path="finance/petty-cash" element={<PettyCashPage />} />
         <Route path="finance/vendors" element={<OperationalPlaceholder title="Vendors" />} />
         <Route path="finance/categories" element={<OperationalPlaceholder title="Finance Categories" />} />
         <Route path="finance/reports" element={<OperationalPlaceholder title="Finance Reports" />} />
