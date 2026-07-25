@@ -184,3 +184,25 @@ def test_project_picker_caps_at_ten_rows():
 
 def test_no_projects_reply_is_distinct_from_the_picker():
     assert render_no_projects_reply() != render_project_picker([]).text
+
+
+def test_image_purpose_picker_offers_exactly_expense_and_site_update():
+    reply = render_image_purpose_picker()
+    assert reply.list_rows == IMAGE_PURPOSE_ROWS
+    row_ids = [row.id for row in reply.list_rows]
+    assert row_ids == ["img_expense", "img_site_update"]
+
+
+def test_image_purpose_semantic_hint_covers_every_row():
+    row_ids = {row.id for row in IMAGE_PURPOSE_ROWS}
+    assert set(IMAGE_PURPOSE_SEMANTIC_HINT.keys()) == row_ids
+    assert IMAGE_PURPOSE_SEMANTIC_HINT["img_expense"] == "expense"
+    assert IMAGE_PURPOSE_SEMANTIC_HINT["img_site_update"] == "general_site_update"
+
+
+def test_image_purpose_coming_soon_only_fires_for_site_update():
+    assert render_image_purpose_coming_soon("img_expense") is None
+    reply = render_image_purpose_coming_soon("img_site_update")
+    assert reply is not None
+    assert "coming soon" in reply.lower()
+    assert render_image_purpose_coming_soon("unrelated_id") is None
