@@ -201,6 +201,8 @@ See [STA-151](https://linear.app/starshape-pvt/issue/STA-151)–[STA-154](https:
 
 **Slice 5 (petty cash):** `shared/contracts/src/mesiri_contracts/assistant/{enums,canonical_event,planner_decision,candidates}.py` · `platform/ai/src/mesiri_ai/adapters/{gemini,deepseek}/adapter.py` · `backend/src/mesiri/infrastructure/postgres/repositories/users.py` (new) · `.../application/finance/petty_cash_resolution.py` (new) · `apps/whatsapp-assistant/src/workflows/petty_cash/` (new package) · `.../workflows/registry.py` · `.../canonicalization/mapping.py` · `.../understanding/pipeline.py` · `.../planner/routing.py` · `.../runtime/{petty_cash_query,inbound_journey,dependencies}.py`. No new migration and no changes to `application/finance/transfer_*.py` — reuses the existing transfer backend unchanged.
 
+**Slice 6 (missing-receipt-nudge portion):** `backend/src/mesiri/infrastructure/postgres/repositories/expenses.py` (`list_confirmed`'s `without_attachment`) · `platform/ai/src/mesiri_ai/adapters/{gemini,deepseek}/adapter.py` · `apps/whatsapp-assistant/src/runtime/{expense_query_service,inbound_journey}.py` · `.../workflows/expense_query/nodes.py`. No new migration, no new `SemanticType`/`WorkflowKey`/graph — reuses Slice 2's expense-query workflow unchanged.
+
 ## Verification
 
 Every slice: full non-integration suites in `backend/`, `apps/whatsapp-assistant/`, and `shared/contracts/` (a contract field changed in Slice 1) must pass, plus `ruff check`. Slice-specific test names are listed above per slice.
