@@ -121,7 +121,11 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from backend.postgres.message_logger import PostgresMessageLogger
     from backend.postgres.trace_logger import PostgresTraceLogger
     from backend.postgres.workflow_instance import PostgresWorkflowInstanceRepository
-    from channel.replies import CATEGORY_SEMANTIC_HINT
+    from channel.replies import (
+        CATEGORY_SEMANTIC_HINT,
+        SILENTLY_IGNORED_RAW_TYPES,
+        render_unsupported_media_reply,
+    )
     from channel.whatsapp.outbound import WhatsAppSender
     from context.live_identity import (
         NO_ORG_MESSAGE,
@@ -142,6 +146,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from mesiri.infrastructure.postgres.repositories.material_execution import (
         PostgresMaterialExecutionRepository,
     )
+    from mesiri_contracts.assistant.enums import InputModality
     from planner import Planner
     from runtime.inbound_journey import (
         process_inbound_message,
@@ -380,6 +385,36 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             ctx.organization_id,
             len(ctx.projects),
         )
+
+        # A message type Mesiri can't act on yet (PDF, video, sticker,
+        # location pin, shared contact, music file). Answered here rather
+        # than dropped: normalization used to raise on these, aborting
+        # ingress with no reply at all, so the sender couldn't tell "Mesiri
+        # can't read PDFs" from "Mesiri is down" and had no idea whether
+        # their report had landed.
+        #
+        # Placed after the identity/org gates on purpose -- an unregistered
+        # sender or a suspended org needs to hear *that* first, since it's
+        # the more actionable problem. Placed before the interaction fast
+        # path because an UNKNOWN-modality message can never be a
+        # confirmation reply or a menu tap, and must not be able to resolve
+        # a pending draft.
+        if message.modality is InputModality.UNKNOWN:
+            raw_type = (message.metadata or {}).get("raw_type")
+            if str(raw_type or "") in SILENTLY_IGNORED_RAW_TYPES:
+                # An emoji reaction on one of our own replies, or a Meta
+                # system notice -- logged, but replying would be noise.
+                _log.info("ingress.ignored_raw_type type=%s user=%s", raw_type, ctx.user_id)
+                await message_logger.mark_completed(correlation_id=message.correlation_id)
+                return
+            _log.info("ingress.unsupported_raw_type type=%s user=%s", raw_type, ctx.user_id)
+            unsupported_reply = render_unsupported_media_reply(raw_type)
+            await sender.send_text(wa_id, unsupported_reply)
+            await message_logger.log_reply(
+                correlation_id=message.correlation_id, reply=unsupported_reply
+            )
+            await message_logger.mark_completed(correlation_id=message.correlation_id)
+            return
 
         # M7: if the user has a workflow awaiting confirmation and this message
         # is a confirmation reply, resume it and stop — the AI pipeline (and its

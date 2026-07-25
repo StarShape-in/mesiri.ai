@@ -65,18 +65,27 @@ class MessageNormalizer:
         return normalized
 
     def _resolve_modality(self, message: Mapping[str, Any]) -> InputModality:
+        """Map Meta's `type` onto an InputModality, never raising.
+
+        Anything Mesiri can't act on yet (document/video/sticker/location/
+        contacts, or a music file rather than a voice note) resolves to
+        UNKNOWN instead of raising. Raising used to abort ingress inside
+        WhatsAppReceiver._process_message's catch-all, which logged a trace
+        row and returned -- with no reply ever sent, so the sender got pure
+        silence and no way to tell "Mesiri can't read PDFs" from "Mesiri is
+        down". The message now normalizes successfully and the runtime
+        declines it politely (see channel/replies.py's
+        render_unsupported_media_reply); metadata["raw_type"] carries the
+        original type through so that reply can be specific.
+        """
         raw_type = message.get("type")
         if raw_type == "audio":
             audio_payload = message.get("audio") or {}
             if not audio_payload.get("voice"):
-                raise ValueError("Unsupported non-voice audio message")
+                return InputModality.UNKNOWN
             return InputModality.VOICE
 
-        resolved = _SUPPORTED_TYPES.get(raw_type)
-        if resolved is None:
-            raise ValueError(f"Unsupported WhatsApp message type: {raw_type}")
-
-        return resolved
+        return _SUPPORTED_TYPES.get(raw_type, InputModality.UNKNOWN)
 
     def _resolve_sender(
         self,

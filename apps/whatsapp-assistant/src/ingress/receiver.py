@@ -195,15 +195,20 @@ class WhatsAppReceiver:
         message: Mapping[str, Any],
     ) -> DownloadedMedia | None:
         message_type = message.get("type")
-        if message_type in ("text", "interactive"):
-            return None
 
         if message_type == "image":
             media_id = (message.get("image") or {}).get("id")
-        elif message_type == "audio":
+        elif message_type == "audio" and (message.get("audio") or {}).get("voice"):
             media_id = (message.get("audio") or {}).get("id")
         else:
-            raise ValueError(f"Unsupported WhatsApp message type: {message_type}")
+            # Text, interactive, and everything Mesiri can't act on yet
+            # (document/video/sticker/location/contacts, or a music file
+            # rather than a voice note). Downloading a PDF we have no way to
+            # read would burn a Meta API call and storage for nothing --
+            # and raising here used to abort ingress entirely, leaving the
+            # sender with no reply at all. Normalization now maps these to
+            # InputModality.UNKNOWN and the runtime declines them politely.
+            return None
 
         if not media_id:
             raise ValueError("Media message is missing media id")

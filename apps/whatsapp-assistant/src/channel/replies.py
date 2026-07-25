@@ -236,6 +236,52 @@ def render_material_picker(candidates: list[tuple[str, str]]) -> ReplySpec:
     )
 
 
+# WhatsApp message types Mesiri can't act on yet, mapped to what to call them
+# when declining. Keyed by Meta's raw `type` (kept on NormalizedMessage.
+# metadata["raw_type"]) rather than InputModality, because every one of these
+# normalizes to the same UNKNOWN modality -- the raw type is the only thing
+# left that can make the reply specific.
+_UNSUPPORTED_TYPE_LABELS: dict[str, str] = {
+    "document": "documents or PDFs",
+    "video": "videos",
+    "sticker": "stickers",
+    "location": "location pins",
+    "contacts": "shared contacts",
+    # A voice note normalizes to VOICE and never reaches here; a music/audio
+    # file (audio.voice falsy) does.
+    "audio": "audio files",
+}
+
+# Not user-authored content, so declining would be noise rather than help:
+# a reaction is an emoji tap on one of Mesiri's own replies (answering every
+# 👍 with "I can't handle this" would be maddening), and `system` is Meta's
+# own notice (e.g. the sender changed their number). Both are dropped
+# quietly -- still logged, just not replied to.
+SILENTLY_IGNORED_RAW_TYPES: frozenset[str] = frozenset({"reaction", "system", "order"})
+
+
+def render_unsupported_media_reply(raw_type: str | None) -> str:
+    """Tell the sender their message arrived but can't be acted on yet.
+
+    Silence is the one outcome that must never happen here: a field worker
+    who gets no answer can't tell "Mesiri ignored my PDF" from "Mesiri is
+    down", so they either resend or assume the report landed when it didn't.
+    Always names a concrete way to get the same information in -- a decline
+    that doesn't say what to do instead just moves the dead end.
+
+    Callers must check SILENTLY_IGNORED_RAW_TYPES first; this always returns
+    a reply.
+    """
+    label = _UNSUPPORTED_TYPE_LABELS.get(str(raw_type or ""), "this kind of message")
+    return (
+        f"📎 Got your message — but I can't read {label} yet.\n\n"
+        "Send it one of these ways instead:\n"
+        "  • 📷 A photo (of a bill, delivery note, or the site)\n"
+        "  • 🎤 A voice note\n"
+        "  • ⌨️ Or just type it out"
+    )
+
+
 def render_material_create_offer(name: str) -> ReplySpec:
     """The reported material isn't in the catalog and the sender's role is
     allowed to add one (see the org's whatsapp_material_create_roles setting)
