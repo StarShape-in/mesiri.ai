@@ -144,6 +144,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         resume_pending_report_with_material,
         resume_pending_report_with_project,
         resume_pending_report_with_site,
+        resume_pending_report_with_stock_choice,
         resume_pending_report_with_unit,
     )
     from runtime.reply_dispatch import send_reply_spec
@@ -538,6 +539,33 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             )
             await message_logger.log_reply(
                 correlation_id=message.correlation_id, reply=unit_reply.text
+            )
+            return
+
+        # A tap on one of the three buttons sent by the stock sufficiency
+        # gate (runtime/inbound_journey.py, usage quantity greater than what's
+        # in stock) -- resumes with the report capped/switched-to-arrival/
+        # cancelled per the tap, same principle as the other interactive fast
+        # paths above.
+        stock_reply = await resume_pending_report_with_stock_choice(
+            message,
+            ctx.user_id,
+            pending_report_store=pending_report_store,
+            planner=planner,
+            workflow_runtime=workflow_runtime,
+            inventory_query=inventory_query,
+            message_logger=message_logger,
+        )
+        if stock_reply is not None:
+            await send_reply_spec(
+                stock_reply,
+                wa_id,
+                send_text=sender.send_text,
+                send_list=sender.send_list,
+                send_button=sender.send_button,
+            )
+            await message_logger.log_reply(
+                correlation_id=message.correlation_id, reply=stock_reply.text
             )
             return
 

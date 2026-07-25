@@ -243,6 +243,29 @@ def render_material_not_found_reply(name: str) -> str:
     return f'I couldn\'t find "{name}" in the materials catalog. Ask your admin to add it first.'
 
 
+def render_usage_exceeds_stock_reply(
+    *, material_name: str, unit: str, requested: float, available: float
+) -> ReplySpec:
+    """A usage report's quantity exceeds what's actually in stock -- block it
+    instead of the old cosmetic-only confirmation warning (workflows/material
+    /nodes.py's _low_stock_warning let the user tap Yes anyway and stock went
+    negative, the real-world bug this fixes). Row ids "stock_cap"/
+    "stock_arrival"/"stock_cancel", matched verbatim by
+    resume_pending_report_with_stock_choice."""
+    return ReplySpec(
+        text=(
+            f"⚠️ You reported using {requested:g} {unit} of {material_name}, but "
+            f"only {available:g} {unit} is in stock — that's not possible.\n\n"
+            "What would you like to do?"
+        ),
+        buttons=(
+            ListRow("stock_cap", "Cap at available"),
+            ListRow("stock_arrival", "It's an arrival"),
+            ListRow("stock_cancel", "Cancel"),
+        ),
+    )
+
+
 def render_unit_mismatch_reply(*, material_name: str, unit_id: str, unit_display: str) -> ReplySpec:
     """The reported unit doesn't match `material_name`'s Stock Unit (or wasn't
     recognized at all) -- ask a single yes/no clarification naming the

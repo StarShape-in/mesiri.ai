@@ -30,6 +30,7 @@ from channel.replies import (
     render_understanding_failed_reply,
     render_unit_mismatch_reply,
     render_unsupported_reply,
+    render_usage_exceeds_stock_reply,
 )
 from context.resolver import ContextResolver
 from context.runtime import log_resolved_context
@@ -376,6 +377,51 @@ async def _run_site_gate(
         return None
 
 
+async def _run_stock_gate(
+    canonical_event: CanonicalEventV2,
+    *,
+    pending_report_store: PendingReportStore,
+    actor_user_id: str,
+) -> ReplySpec | None:
+    """Block a usage report whose quantity exceeds what's in stock, instead
+    of the old cosmetic-only warning (workflows/material/nodes.py's
+    _low_stock_warning showed "Only X in stock" on the confirmation prompt
+    but a Yes tap still saved the full over-limit quantity, driving stock
+    negative -- the real-world bug this fixes).
+
+    Must run after _inject_inventory_context has populated available_stock
+    on the event's fields, and after every other gate (material/unit/
+    project/site) has already resolved -- mirrors their "hold + ask" shape,
+    offering three explicit choices (cap at available / this was actually an
+    arrival / cancel) rather than guessing which one the user meant. Returns
+    None when there's nothing to check (not a usage report, not yet
+    actionable, or no stock figure available to compare against) or when the
+    requested quantity is within stock.
+    """
+    if canonical_event.event_type is not CanonicalEventType.MATERIAL_USAGE_REQUESTED:
+        return None
+    if canonical_event.completeness is not _IntentCompleteness.ACTIONABLE:
+        return None
+    available = canonical_event.fields.get("available_stock")
+    if available is None:
+        return None
+    try:
+        requested = float(canonical_event.fields.get("quantity"))
+        available = float(available)
+    except (TypeError, ValueError):
+        return None
+    if requested <= available:
+        return None
+
+    await pending_report_store.set_pending(user_id=actor_user_id, event=canonical_event)
+    return render_usage_exceeds_stock_reply(
+        material_name=str(canonical_event.fields.get("material_name") or "this material"),
+        unit=str(canonical_event.fields.get("unit") or ""),
+        requested=requested,
+        available=available,
+    )
+
+
 async def _inject_inventory_context(
     event: CanonicalEventV2, inventory_query: MaterialInventoryQueryService | None
 ) -> None:
@@ -425,13 +471,27 @@ async def _plan_and_run(
     planner: Planner,
     workflow_runtime: WorkflowRuntime,
     inventory_query: MaterialInventoryQueryService | None = None,
+    pending_report_store: PendingReportStore | None = None,
+    actor_user_id: str | None = None,
 ) -> ReplySpec | None:
     """Run the planner and, if it starts a workflow, the workflow -- shared by
     every resume_pending_report_with_* function, so a resumed report goes
     through the exact same decision path a first-pass ACTIONABLE report
     would (see _inject_inventory_context for why inventory context is
-    injected here rather than at canonicalization time)."""
+    injected here rather than at canonicalization time).
+
+    Also re-runs the stock sufficiency gate (_run_stock_gate) right after
+    inventory context is injected, same as the first-pass journey -- a
+    material-picker or unit-mismatch tap can be the leg that first makes a
+    usage report ACTIONABLE, so the over-stock check can't only live before
+    those gates."""
     await _inject_inventory_context(event, inventory_query)
+    if pending_report_store is not None and actor_user_id is not None:
+        stock_reply = await _run_stock_gate(
+            event, pending_report_store=pending_report_store, actor_user_id=actor_user_id
+        )
+        if stock_reply is not None:
+            return stock_reply
     decision = planner.decide(event)
     workflow_run: WorkflowRunResult | None = None
     if decision.decision_type is PlannerDecisionType.START_WORKFLOW:
@@ -762,6 +822,19 @@ async def process_inbound_message(
         if held_reply is None:
             await _inject_inventory_context(canonical_event, inventory_query)
 
+            # --- Stock sufficiency gate ---
+            # Usage quantity vs available stock can only be checked once
+            # available_stock is injected above -- block instead of letting
+            # an over-limit usage through to the old cosmetic-only warning
+            # (see _run_stock_gate).
+            if pending_report_store is not None:
+                held_reply = await _run_stock_gate(
+                    canonical_event,
+                    pending_report_store=pending_report_store,
+                    actor_user_id=actor_user_id,
+                )
+
+        if held_reply is None:
             # --- Planner stage ---
             t0 = time.perf_counter()
             try:
@@ -960,7 +1033,12 @@ async def resume_pending_report_with_project(
         return held_reply
 
     reply = await _plan_and_run(
-        event, planner=planner, workflow_runtime=workflow_runtime, inventory_query=inventory_query
+        event,
+        planner=planner,
+        workflow_runtime=workflow_runtime,
+        inventory_query=inventory_query,
+        pending_report_store=pending_report_store,
+        actor_user_id=actor_user_id,
     )
     await _complete_resume_leg(message, event, message_logger)
     return reply
@@ -1036,7 +1114,12 @@ async def resume_pending_report_with_material(
         return held_reply
 
     reply = await _plan_and_run(
-        event, planner=planner, workflow_runtime=workflow_runtime, inventory_query=inventory_query
+        event,
+        planner=planner,
+        workflow_runtime=workflow_runtime,
+        inventory_query=inventory_query,
+        pending_report_store=pending_report_store,
+        actor_user_id=actor_user_id,
     )
     await _complete_resume_leg(message, event, message_logger)
     return reply
@@ -1104,7 +1187,12 @@ async def resume_pending_report_with_unit(
         return held_reply
 
     reply = await _plan_and_run(
-        event, planner=planner, workflow_runtime=workflow_runtime, inventory_query=inventory_query
+        event,
+        planner=planner,
+        workflow_runtime=workflow_runtime,
+        inventory_query=inventory_query,
+        pending_report_store=pending_report_store,
+        actor_user_id=actor_user_id,
     )
     await _complete_resume_leg(message, event, message_logger)
     return reply
@@ -1150,7 +1238,80 @@ async def resume_pending_report_with_site(
     event = event.model_copy(update={"site_id": site_id})
 
     reply = await _plan_and_run(
-        event, planner=planner, workflow_runtime=workflow_runtime, inventory_query=inventory_query
+        event,
+        planner=planner,
+        workflow_runtime=workflow_runtime,
+        inventory_query=inventory_query,
+        pending_report_store=pending_report_store,
+        actor_user_id=actor_user_id,
+    )
+    await _complete_resume_leg(message, event, message_logger)
+    return reply
+
+
+_STOCK_CAP_ROW_ID = "stock_cap"
+_STOCK_ARRIVAL_ROW_ID = "stock_arrival"
+_STOCK_CANCEL_ROW_ID = "stock_cancel"
+
+
+async def resume_pending_report_with_stock_choice(
+    message: NormalizedMessage,
+    actor_user_id: str,
+    *,
+    pending_report_store: PendingReportStore,
+    planner: Planner,
+    workflow_runtime: WorkflowRuntime,
+    inventory_query: MaterialInventoryQueryService | None = None,
+    message_logger: MessageLogger | None = None,
+) -> ReplySpec | None:
+    """Resume a usage report held by the stock sufficiency gate
+    (_run_stock_gate), now that the user picked how to resolve an over-stock
+    report.
+
+    "Cap at available" corrects quantity down to the stock figure the gate
+    already computed, then re-runs the same planner/workflow path a normal
+    usage report would -- the gate re-checks on the way back through
+    _plan_and_run, but requested == available by construction so it never
+    re-triggers. "It's an arrival" flips the report to a Material Receipt
+    with the same material/quantity/unit -- covers the common mistake of the
+    message actually being about stock arriving, not being used. "Cancel"
+    discards it, mirroring the wording of a "No" on the normal confirmation
+    prompt. Returns None for anything that isn't one of the three "stock_*"
+    button taps, so the caller falls through to the normal journey exactly
+    like the other fast-path checks.
+    """
+    if message.modality is not InputModality.INTERACTIVE:
+        return None
+    row_id = message.metadata.get("interactive_reply_id")
+    if row_id not in (_STOCK_CAP_ROW_ID, _STOCK_ARRIVAL_ROW_ID, _STOCK_CANCEL_ROW_ID):
+        return None
+
+    event = await pending_report_store.pop_pending(user_id=actor_user_id)
+    if event is None:
+        if message_logger:
+            await _safe(message_logger.mark_completed(correlation_id=message.correlation_id))
+        return ReplySpec(text="That selection expired — please resend your report.")
+
+    if row_id == _STOCK_CANCEL_ROW_ID:
+        await _complete_resume_leg(message, event, message_logger)
+        return ReplySpec(text="❌ Discarded. Nothing was recorded.")
+
+    if row_id == _STOCK_CAP_ROW_ID:
+        event.fields["quantity"] = event.fields.get("available_stock")
+    else:  # _STOCK_ARRIVAL_ROW_ID
+        event = event.model_copy(
+            update={"event_type": CanonicalEventType.MATERIAL_RECEIPT_REQUESTED}
+        )
+        event.fields["direction"] = "received"
+        event.fields.pop("available_stock", None)
+
+    reply = await _plan_and_run(
+        event,
+        planner=planner,
+        workflow_runtime=workflow_runtime,
+        inventory_query=inventory_query,
+        pending_report_store=pending_report_store,
+        actor_user_id=actor_user_id,
     )
     await _complete_resume_leg(message, event, message_logger)
     return reply
