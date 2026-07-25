@@ -50,6 +50,44 @@ class WhatsAppSender:
     def enabled(self) -> bool:
         return bool(self._access_token and self._phone_number_id)
 
+    async def mark_as_read(self, message_id: str, *, typing_indicator: bool = True) -> bool:
+        """Mark an inbound message as read (blue tick) and, optionally, show
+        the "typing..." indicator until a reply is sent or ~25s elapse.
+
+        This is the Cloud API's combined read-receipt/typing-indicator call --
+        there is no separate endpoint for either. Best-effort: callers treat a
+        False return the same as every other send_* failure (log and move on),
+        since a missed read receipt must never block the actual reply.
+        """
+        if not self.enabled:
+            return False
+
+        url = f"{self._graph_base_url}/{self._api_version}/{self._phone_number_id}/messages"
+        payload: dict = {
+            "messaging_product": "whatsapp",
+            "status": "read",
+            "message_id": message_id,
+        }
+        if typing_indicator:
+            payload["typing_indicator"] = {"type": "text"}
+
+        try:
+            resp = await self._client.post(
+                url,
+                json=payload,
+                headers={"Authorization": f"Bearer {self._access_token}"},
+            )
+        except httpx.HTTPError as exc:
+            logger.error("WhatsApp mark_as_read failed for %s: %s", message_id, exc)
+            return False
+
+        if resp.status_code >= 400:
+            logger.error(
+                "WhatsApp mark_as_read rejected (%s): %s", resp.status_code, resp.text[:300]
+            )
+            return False
+        return True
+
     async def send_text(self, to_wa_id: str, body: str) -> bool:
         """Send a plain text message. Returns True on success."""
         return await self._send(

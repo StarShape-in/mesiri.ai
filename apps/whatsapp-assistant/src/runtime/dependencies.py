@@ -318,6 +318,14 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     async def _on_normalized(message, raw_payload, retry_of_id=None) -> None:  # type: ignore[no-untyped-def]
         wa_id = message.sender.wa_id
 
+        # Blue tick + "typing..." as soon as the message is normalized, before
+        # any lookup or AI work starts. Best-effort: a failure here must never
+        # block or delay the actual reply.
+        try:
+            await sender.mark_as_read(message.message_id)
+        except Exception:  # noqa: BLE001
+            _log.exception("whatsapp.mark_as_read_failed message_id=%s", message.message_id)
+
         # M4: resolve the sender before spending on understanding.
         try:
             ctx = await resolve_sender(actor_reader, wa_id)
