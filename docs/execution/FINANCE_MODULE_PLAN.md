@@ -1,6 +1,6 @@
 # Finance Module — Domain Design & LangGraph Workflow Roadmap
 
-**Status:** In progress. Slices 0–6 are all done as of 2026-07-25 (Slice 6 fully — account-admin and receipt-capture portions done out of order, missing-receipt-nudge portion done last — see notes below). Only Slices 7–8 remain (V1); Slices 9–12 + dashboard are V2, explicitly deferred.
+**Status:** In progress. Slices 0–7 are all done as of 2026-07-25 (Slice 6 fully — account-admin and receipt-capture portions done out of order, missing-receipt-nudge portion done last — see notes below). Only Slice 8 remains (V1); Slices 9–12 + dashboard are V2, explicitly deferred.
 
 **Out-of-order note:** Slice 6 as originally ticketed ([STA-148](https://linear.app/starshape-pvt/issue/STA-148)) bundled two unrelated things — account admin, and receipt/attachment capture + missing-receipt nudges. Only account admin was built now, jumping ahead of Slices 2–5, because it was blocking realistic multi-account testing (every org only ever had the one auto-bootstrapped "Site Cash" account otherwise). STA-148 was split: account admin is done; the receipt/attachment portion is tracked as a new follow-up ticket, not yet started.
 **Author:** Written and approved 2026-07-25 (Linear epics [STA-140](https://linear.app/starshape-pvt/issue/STA-140) / [STA-141](https://linear.app/starshape-pvt/issue/STA-141), sub-issues STA-142..154). Re-read before extending — the design below reflects what actually shipped in Slices 0–1; verify against the live code before assuming later slices are still exactly as described.
@@ -173,9 +173,23 @@ Tests: `test_petty_cash_nodes.py` (prefill-and-ask for both directions, unresolv
 
 Tests: `test_finance_query_services.py::test_list_confirmed_filters_by_without_attachment` (real DB — a receipted expense is excluded, the other two aren't), `test_expense_query_workflow.py` (nudge phrasing for found/none-found/falsy-flag), `test_canonicalization.py` (`missing_receipts` carries through onto the event, generic fields passthrough).
 
-## Slices 7–8 (V1, not yet started)
+## Slice 7 — Edit/cancel/reverse a confirmed expense or transfer ([STA-149](https://linear.app/starshape-pvt/issue/STA-149)) — DONE
 
-Edit/cancel/reverse ([STA-149](https://linear.app/starshape-pvt/issue/STA-149)), duplicate detection ([STA-150](https://linear.app/starshape-pvt/issue/STA-150)).
+"Reverse my last expense"/"cancel that transfer" now work. **No slot-filling**: `runtime/inbound_journey.py::_seed_reversal_target` resolves "the most recent expense/transfer of the requested kind" into a concrete `expense_id`/`money_transaction_id` *before* the graph runs (new repository queries: `PostgresExpenseRepository.find_latest_confirmed`, `PostgresMoneyTransactionRepository.find_latest_reversible_transfer` — the latter excludes any transfer that already has a reversal row pointing at it via an outer join). `workflows/reverse/nodes.py::build_draft` then either builds a `DraftActionType.REVERSE_TRANSACTION` draft from the already-resolved id, or — a genuine first for this codebase's finance workflows — **completes with no draft at all** when nothing was found ("You have no confirmed expenses to reverse."). `WorkflowKey.REVERSE` was added to `workflows/runtime.py`'s `_INFORMATIONAL_WORKFLOW_KEYS`, which turned out to be exactly the right exemption for this mixed case: the set is only consulted when `draft_action is None`, so a found target still produces a normal `AWAITING_CONFIRMATION` unaffected by the same key's membership.
+
+**New `SemanticType.REVERSAL`, splitting by `target_kind` ("expense"/"transfer") into two `CanonicalEventType`s** (`canonicalization/mapping.py`, same pattern as `MATERIAL_UPDATE`/`PETTY_CASH`/`FINANCE_QUERY`'s own splits) — both map to one `WorkflowKey.REVERSE`. No amount/date/reference fields are ever extracted for it; the target is always "the most recent one of this kind," never something the user names.
+
+**Expense reversal reuses, rather than duplicates, Slice 0's ledger write**: `infrastructure/postgres/repositories/reverse_execution.py` composes the already-existing `PostgresExpensePaymentRepository.reverse_payment()` (posts the opposite-direction `money_transactions` row + flips the payment to `'reversed'`) for whichever payment is still `confirmed` — an expense may have none at all (unpaid, or paid from own pocket), in which case only the expense itself gets voided (`workflow_status → 'voided'`). **Transfer reversal composes `PostgresMoneyTransactionRepository.reverse()`** directly, exactly as the ticket specified — no new ledger-writing logic either way, only orchestration.
+
+**Permission, a deliberately stricter gate than transfer's**: `ADMIN`/`FINANCE` only — never `PROJECT_MANAGER`, per the plan's permission table (undoing a confirmed record is a narrower privilege than making one). Enforced in `application/finance/reverse_validation.py`, seeded the same way transfer's `created_by_role` is (`_seed_reversal_target`, since reversal isn't routed through `_seed_account_candidates`'s existing role-seeding — it needs its own target resolution entirely).
+
+**Defense-in-depth at confirm time** (`application/finance/reverse_resolution.py`, mirrors `transfer_resolution.py`): re-verifies the expense is still `'confirmed'` (not already voided) or the transfer hasn't already been reversed (`PostgresMoneyTransactionRepository.is_reversed()`, a new method) — time can pass between the draft being built and the user replying YES.
+
+Tests: `test_reverse_nodes.py` (draft-building for both target kinds, "nothing to reverse" for both, confirmation phrasing), `test_reverse_graph.py` (real LangGraph — both the draft and no-draft outcomes), `test_canonicalization.py` (expense/transfer event-type split, missing-target_kind unrecognized), backend `test_reverse_{validation,mapper,handler}.py` (fakes — including the stricter ADMIN/FINANCE-only role check), `test_reverse_execution.py` (real DB — the original ledger row is byte-for-byte untouched, the reversal row swaps direction, balance nets back exactly, the expense is voided, reversing twice is rejected for both expense and transfer).
+
+## Slice 8 (V1, not yet started)
+
+Duplicate detection ([STA-150](https://linear.app/starshape-pvt/issue/STA-150)).
 
 ## Slices 9–12 + dashboard (V2, deferred)
 
@@ -202,6 +216,8 @@ See [STA-151](https://linear.app/starshape-pvt/issue/STA-151)–[STA-154](https:
 **Slice 5 (petty cash):** `shared/contracts/src/mesiri_contracts/assistant/{enums,canonical_event,planner_decision,candidates}.py` · `platform/ai/src/mesiri_ai/adapters/{gemini,deepseek}/adapter.py` · `backend/src/mesiri/infrastructure/postgres/repositories/users.py` (new) · `.../application/finance/petty_cash_resolution.py` (new) · `apps/whatsapp-assistant/src/workflows/petty_cash/` (new package) · `.../workflows/registry.py` · `.../canonicalization/mapping.py` · `.../understanding/pipeline.py` · `.../planner/routing.py` · `.../runtime/{petty_cash_query,inbound_journey,dependencies}.py`. No new migration and no changes to `application/finance/transfer_*.py` — reuses the existing transfer backend unchanged.
 
 **Slice 6 (missing-receipt-nudge portion):** `backend/src/mesiri/infrastructure/postgres/repositories/expenses.py` (`list_confirmed`'s `without_attachment`) · `platform/ai/src/mesiri_ai/adapters/{gemini,deepseek}/adapter.py` · `apps/whatsapp-assistant/src/runtime/{expense_query_service,inbound_journey}.py` · `.../workflows/expense_query/nodes.py`. No new migration, no new `SemanticType`/`WorkflowKey`/graph — reuses Slice 2's expense-query workflow unchanged.
+
+**Slice 7 (edit/cancel/reverse):** `shared/contracts/src/mesiri_contracts/assistant/{enums,canonical_event,planner_decision,draft_action,candidates}.py` · `platform/ai/src/mesiri_ai/adapters/{gemini,deepseek}/adapter.py` · `backend/src/mesiri/application/finance/reverse_*.py` (new files) · `.../infrastructure/postgres/repositories/reverse_execution.py` (new) · `.../infrastructure/postgres/repositories/{finance,expenses}.py` (`is_reversed`/`find_latest_reversible_transfer`/`find_latest_confirmed`) · `apps/whatsapp-assistant/src/workflows/reverse/` (new package) · `.../workflows/{registry,runtime}.py` · `.../canonicalization/mapping.py` · `.../understanding/pipeline.py` · `.../planner/routing.py` · `.../runtime/{reversal_query,inbound_journey,dependencies}.py`. No new migration.
 
 ## Verification
 

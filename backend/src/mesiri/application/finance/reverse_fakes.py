@@ -17,7 +17,7 @@ from mesiri_contracts.application.results.execution_result import (
 
 from .reverse_commands import ReverseTransactionCommand
 from .reverse_repository import ReverseExecutionRepository
-from .reverse_resolution import ReverseTargetResolver, ResolutionResult
+from .reverse_resolution import ResolutionResult, ReverseTargetResolver
 
 
 class FakeDatabase:
