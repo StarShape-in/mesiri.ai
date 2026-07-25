@@ -288,6 +288,36 @@ class PostgresExpenseAttachmentRepository:
     def __init__(self, conn: AsyncConnection):
         self.conn = conn
 
+    async def create(
+        self,
+        *,
+        expense_id: uuid.UUID,
+        media_object_key: str,
+        attachment_type: str,
+        created_by: uuid.UUID,
+    ) -> ExpenseAttachment:
+        """Append-only evidence row -- no organization_id of its own (scoped
+        via expense_id, matching migration 0330's shape) and no
+        updated_at/updated_by, since an attachment is never edited, only
+        added (see AttachmentType for the allowed values)."""
+        new_id = uuid.uuid4()
+        await self.conn.execute(
+            sa.insert(_expense_attachments).values(
+                id=new_id,
+                expense_id=expense_id,
+                media_object_key=media_object_key,
+                attachment_type=attachment_type,
+                created_by=created_by,
+            )
+        )
+        return ExpenseAttachment(
+            id=new_id,
+            expense_id=expense_id,
+            media_object_key=media_object_key,
+            attachment_type=attachment_type,
+            created_by=created_by,
+        )
+
     async def list_for_expense(
         self, organization_id: uuid.UUID, expense_id: uuid.UUID
     ) -> list[ExpenseAttachment]:

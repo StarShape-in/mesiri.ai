@@ -47,6 +47,7 @@ def build_command(confirmed: ConfirmedActionV2) -> RecordExpenseCommand:
         category_text=str(fields.get("category", "")).strip() or None,
         account_id=fields.get("account_id"),
         paid_from_own_pocket=bool(fields.get("paid_from_own_pocket", False)),
+        media_object_key=fields.get("media_object_key"),
         description=fields.get("description"),
         occurred_date=date.today(),
         source="whatsapp",

@@ -13,6 +13,13 @@ already owns the expense_payments + money_transactions write and the
 payment_status recompute (see infrastructure/postgres/repositories/expenses.py),
 and duplicating it would be worse than the minor capability-boundary bend of
 calling out to another repository.
+
+When `cmd.media_object_key` is set (the expense was reported from a
+WhatsApp image tapped as "Expense" -- see canonicalization/builder.py and
+interactions/image_purpose.py), `persist_success` also writes one
+`expense_attachments` row (`attachment_type='receipt'`) via
+`PostgresExpenseAttachmentRepository.create`, same connection, same
+transaction, same reasoning as the payment write above.
 """
 
 from __future__ import annotations
@@ -26,7 +33,10 @@ import sqlalchemy as sa
 from backend.postgres.workflow_instance import get_by_id_on_connection, transition_on_connection
 from mesiri.application.expenses.commands import RecordExpenseCommand
 from mesiri.application.expenses.repository import ExpenseExecutionRepository
-from mesiri.infrastructure.postgres.repositories.expenses import PostgresExpensePaymentRepository
+from mesiri.infrastructure.postgres.repositories.expenses import (
+    PostgresExpenseAttachmentRepository,
+    PostgresExpensePaymentRepository,
+)
 from mesiri_contracts.application.results.execution_result import (
     ExecutionResult,
     ExecutionStatus,
@@ -134,6 +144,15 @@ class PostgresExpenseExecutionRepository(ExpenseExecutionRepository):
                 account_id=uuid.UUID(cmd.account_id),
                 amount=cmd.amount,
                 paid_date=cmd.occurred_date,
+                created_by=uuid.UUID(cmd.created_by),
+            )
+
+        if cmd.media_object_key:
+            attachments = PostgresExpenseAttachmentRepository(conn)
+            await attachments.create(
+                expense_id=expense_id,
+                media_object_key=cmd.media_object_key,
+                attachment_type="receipt",
                 created_by=uuid.UUID(cmd.created_by),
             )
 
