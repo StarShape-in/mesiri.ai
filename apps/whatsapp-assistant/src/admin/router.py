@@ -13,9 +13,11 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from context.projection_hooks import project_entity
 from mesiri.authorization.roles import ALL_PROJECTS_MODE, is_org_wide
+from mesiri.domains.organizations.settings import VALID_ROLES
 from mesiri.domains.shared.auth import require_platform_admin
 from mesiri.domains.timeline.responses import TimelineEntriesListResponse
 from mesiri.infrastructure.postgres.repositories.timeline import PostgresTimelineReadRepository
+from users.access_service import AccessPolicy, apply_access_policy
 
 router = APIRouter(prefix="/admin/organizations", tags=["admin"])
 
@@ -551,6 +553,199 @@ async def update_organization_user_status(
         if not fetched:
             raise HTTPException(status_code=404, detail="User not found after update")
         return fetched[0]
+
+
+class OrgSiteSummary(BaseModel):
+    id: uuid.UUID
+    name: str
+
+
+class OrgProjectSummary(BaseModel):
+    id: uuid.UUID
+    name: str
+    sites: list[OrgSiteSummary] = []
+
+
+@router.get("/{org_id}/projects", response_model=list[OrgProjectSummary])
+async def list_organization_projects(
+    org_id: uuid.UUID,
+    _admin: dict = Depends(require_platform_admin),
+):
+    """Projects (with their sites) in one organization.
+
+    Exists so the control panel's access editor can offer real choices --
+    without it the UI would have no way to know what a user could be
+    assigned to. Read-only; assignment itself goes through
+    PUT /{org_id}/users/{user_id}/access.
+    """
+    engine = get_engine()
+    async with engine.connect() as conn:
+        project_rows = (
+            await conn.execute(
+                sa.select(projects_table.c.id, projects_table.c.name)
+                .where(projects_table.c.organization_id == org_id)
+                .order_by(projects_table.c.name)
+            )
+        ).fetchall()
+
+        site_rows = (
+            await conn.execute(
+                sa.select(sites_table.c.id, sites_table.c.name, sites_table.c.project_id)
+                .where(sites_table.c.organization_id == org_id)
+                .order_by(sites_table.c.name)
+            )
+        ).fetchall()
+
+    sites_by_project: dict[uuid.UUID, list[OrgSiteSummary]] = {}
+    for row in site_rows:
+        sites_by_project.setdefault(row.project_id, []).append(
+            OrgSiteSummary(id=row.id, name=row.name)
+        )
+
+    return [
+        OrgProjectSummary(
+            id=row.id, name=row.name, sites=sites_by_project.get(row.id, [])
+        )
+        for row in project_rows
+    ]
+
+
+class OrgUserProfileUpdate(BaseModel):
+    """Partial update — only provided fields change. Email stays immutable,
+    matching the tenant-side users router."""
+
+    role: str | None = None
+    whatsapp_number: str | None = None
+    full_name: str | None = None
+
+
+@router.put("/{org_id}/users/{user_id}/access", response_model=OrgUserResponse)
+async def update_organization_user_access(
+    org_id: uuid.UUID,
+    user_id: uuid.UUID,
+    policy: AccessPolicy,
+    _admin: dict = Depends(require_platform_admin),
+):
+    """Set which projects and sites a user can reach, as a platform admin.
+
+    The platform-admin counterpart to the dashboard's
+    PUT /users/{id}/access. Both call users/access_service.apply_access_policy
+    so the validation, the membership replace, and the all_projects bypass
+    semantics are provably identical -- duplicating them per surface is how
+    the org-wide role rule ended up with five copies and one of them wrong.
+
+    The org comes from the path rather than a JWT claim because a platform
+    admin has no `org` claim; access_service still validates every project
+    and site against that org, so this cannot grant cross-tenant access.
+    """
+    engine = get_engine()
+    async with engine.begin() as conn:
+        result = await conn.execute(
+            sa.select(users_table.c.id, users_table.c.role).where(
+                users_table.c.id == user_id, users_table.c.organization_id == org_id
+            )
+        )
+        user_row = result.first()
+        if user_row is None:
+            raise HTTPException(status_code=404, detail="User not found in this organization")
+
+        await apply_access_policy(
+            conn,
+            user_id=user_id,
+            org_id=org_id,
+            user_role=user_row.role,
+            policy=policy,
+        )
+
+    # Outside the transaction, same as the tenant-side endpoint: pushes the
+    # change into the context layer so the WhatsApp assistant picks it up
+    # immediately instead of at the next reconcile sweep.
+    await project_entity("membership", user_id)
+
+    async with engine.connect() as conn:
+        fetched = await _fetch_org_users(conn, org_id, user_id)
+    if not fetched:
+        raise HTTPException(status_code=404, detail="User not found after update")
+    return fetched[0]
+
+
+@router.patch("/{org_id}/users/{user_id}", response_model=OrgUserResponse)
+async def update_organization_user_profile(
+    org_id: uuid.UUID,
+    user_id: uuid.UUID,
+    body: OrgUserProfileUpdate,
+    _admin: dict = Depends(require_platform_admin),
+):
+    """Set a user's role, WhatsApp number, or name from the control panel.
+
+    The WhatsApp number is what maps an inbound message to this person at
+    all (external_identities, keyed on the number's digits), and role feeds
+    the org-wide access bypass -- so both are re-projected before returning
+    rather than waiting for the reconcile watchdog.
+    """
+    updates: dict = {}
+    if body.role is not None:
+        role = body.role.strip().upper()
+        if role not in VALID_ROLES:
+            raise HTTPException(
+                status_code=400, detail=f"Invalid role. Must be one of {sorted(VALID_ROLES)}"
+            )
+        updates["role"] = role
+    if body.whatsapp_number is not None:
+        # Empty string clears the mapping; anything else is stored as typed
+        # (the projection normalizes to digits when writing the identity).
+        updates["whatsapp_number"] = body.whatsapp_number.strip() or None
+    if body.full_name is not None:
+        name = body.full_name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="full_name cannot be empty")
+        updates["full_name"] = name
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    engine = get_engine()
+    async with engine.begin() as conn:
+        result = await conn.execute(
+            sa.select(users_table.c.id).where(
+                users_table.c.id == user_id, users_table.c.organization_id == org_id
+            )
+        )
+        if result.first() is None:
+            raise HTTPException(status_code=404, detail="User not found in this organization")
+
+        if "whatsapp_number" in updates and updates["whatsapp_number"]:
+            # The number is the join key for inbound messages; two users
+            # sharing one would make routing ambiguous.
+            clash = await conn.execute(
+                sa.select(users_table.c.id).where(
+                    users_table.c.whatsapp_number == updates["whatsapp_number"],
+                    users_table.c.id != user_id,
+                )
+            )
+            if clash.first() is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="That WhatsApp number is already mapped to another user",
+                )
+
+        await conn.execute(
+            users_table.update()
+            .where(users_table.c.id == user_id, users_table.c.organization_id == org_id)
+            .values(**updates)
+        )
+
+    await project_entity("user", user_id)
+    if "role" in updates:
+        # Role feeds the org-wide bypass, which the membership projection
+        # materializes -- re-run it so the change lands everywhere at once.
+        await project_entity("membership", user_id)
+
+    async with engine.connect() as conn:
+        fetched = await _fetch_org_users(conn, org_id, user_id)
+    if not fetched:
+        raise HTTPException(status_code=404, detail="User not found after update")
+    return fetched[0]
 
 
 @router.delete("/{org_id}/users/{user_id}", status_code=204)

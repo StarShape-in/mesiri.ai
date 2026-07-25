@@ -8,7 +8,8 @@ import pytest
 from fastapi import HTTPException
 
 from projects import router as projects_router
-from users.router import AccessPolicy, _validate_access_policy
+from users.access_service import AccessPolicy
+from users.access_service import validate_access_policy as _validate_access_policy
 
 
 class _Result:

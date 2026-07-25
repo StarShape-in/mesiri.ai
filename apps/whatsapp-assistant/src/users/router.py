@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from context.projection_hooks import project_entity
+from users.access_service import AccessPolicy, apply_access_policy
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -136,89 +137,6 @@ class UserUpdate(BaseModel):
 
 class StatusUpdate(BaseModel):
     status: str
-
-
-class AccessPolicy(BaseModel):
-    mode: str
-    projects: list[dict] | None = None
-
-
-def _as_uuid(value: object, field: str) -> uuid.UUID:
-    try:
-        return uuid.UUID(str(value))
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid {field}") from exc
-
-
-async def _validate_access_policy(conn, org_id: str, policy: AccessPolicy) -> None:
-    if policy.mode not in ("all_projects", "custom_projects"):
-        raise HTTPException(
-            status_code=400, detail="mode must be 'all_projects' or 'custom_projects'"
-        )
-
-    project_grants = policy.projects or []
-    if policy.mode == "all_projects" and not project_grants:
-        return
-
-    project_ids: set[uuid.UUID] = set()
-    site_ids_by_project: dict[uuid.UUID, set[uuid.UUID]] = {}
-
-    for grant in project_grants:
-        if not isinstance(grant, dict):
-            raise HTTPException(status_code=400, detail="Invalid project access entry")
-
-        project_id = _as_uuid(grant.get("projectId"), "projectId")
-        project_ids.add(project_id)
-
-        site_access = grant.get("siteAccess") or {}
-        if not isinstance(site_access, dict):
-            raise HTTPException(status_code=400, detail="Invalid siteAccess")
-
-        site_mode = site_access.get("mode")
-        if site_mode not in ("all_sites", "custom_sites"):
-            raise HTTPException(
-                status_code=400, detail="siteAccess.mode must be 'all_sites' or 'custom_sites'"
-            )
-
-        if site_mode == "custom_sites":
-            site_ids = site_access.get("siteIds") or []
-            if not isinstance(site_ids, list):
-                raise HTTPException(status_code=400, detail="siteIds must be a list")
-            site_ids_by_project[project_id] = {_as_uuid(site_id, "siteId") for site_id in site_ids}
-
-    if not project_ids:
-        return
-
-    project_result = await conn.execute(
-        sa.select(projects_table.c.id).where(
-            projects_table.c.organization_id == org_id,
-            projects_table.c.id.in_(project_ids),
-        )
-    )
-    found_project_ids = {row.id for row in project_result.fetchall()}
-    if found_project_ids != project_ids:
-        raise HTTPException(status_code=400, detail="Project access contains unknown project")
-
-    site_ids = {site_id for ids in site_ids_by_project.values() for site_id in ids}
-    if not site_ids:
-        return
-
-    site_result = await conn.execute(
-        sa.select(sites_table.c.id, sites_table.c.project_id).where(
-            sites_table.c.organization_id == org_id,
-            sites_table.c.id.in_(site_ids),
-        )
-    )
-    found_sites = {row.id: row.project_id for row in site_result.fetchall()}
-    if set(found_sites) != site_ids:
-        raise HTTPException(status_code=400, detail="Site access contains unknown site")
-
-    for project_id, expected_site_ids in site_ids_by_project.items():
-        for site_id in expected_site_ids:
-            if found_sites[site_id] != project_id:
-                raise HTTPException(
-                    status_code=400, detail="Site access contains site outside project"
-                )
 
 
 def _row_to_response(row) -> UserResponse:
@@ -405,6 +323,39 @@ async def update_user(
     return _row_to_response(row)
 
 
+@router.delete("/{user_id}", status_code=204)
+async def delete_user(user_id: uuid.UUID, admin_payload: dict = Depends(get_current_admin)):
+    engine = get_engine()
+    org_id = admin_payload.get("org")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="Admin has no organization")
+
+    if str(admin_payload.get("sub")) == str(user_id):
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
+
+    async with engine.begin() as conn:
+        result = await conn.execute(
+            sa.select(users_table.c.id).where(
+                users_table.c.id == user_id,
+                users_table.c.organization_id == org_id,
+            )
+        )
+        if result.first() is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        try:
+            await conn.execute(users_table.delete().where(users_table.c.id == user_id))
+        except Exception as exc:
+            if "foreign key" in str(exc).lower() or "23503" in str(exc):
+                raise HTTPException(
+                    status_code=409,
+                    detail="User has existing records (projects, reports, or messages) and cannot be deleted. Deactivate the account instead.",
+                ) from exc
+            raise
+
+    await project_entity("user", user_id)
+
+
 @router.patch("/{user_id}/status", response_model=UserResponse)
 async def update_user_status(
     user_id: uuid.UUID,
@@ -517,69 +468,17 @@ async def update_user_access(
         if user_row is None:
             raise HTTPException(status_code=404, detail="User not found")
 
-        await _validate_access_policy(conn, org_id, policy)
-
-        await conn.execute(
-            users_table.update()
-            .where(
-                users_table.c.id == user_id,
-                users_table.c.organization_id == org_id,
-            )
-            .values(access_policy=policy.model_dump())
+        # Shared with the control panel's platform-admin equivalent (see
+        # users/access_service.py) so both surfaces provably apply the same
+        # validation, the same membership replace, and the same all_projects
+        # bypass semantics.
+        await apply_access_policy(
+            conn,
+            user_id=user_id,
+            org_id=org_id,
+            user_role=user_row.role,
+            policy=policy,
         )
-
-        # Full replace: this user's grants are a set, and the set can shrink
-        # (a project removed via this same dialog) as easily as it can grow.
-        existing_project_ids = await conn.execute(
-            sa.select(project_members_table.c.project_id).where(
-                project_members_table.c.user_id == user_id
-            )
-        )
-        project_ids_to_clear = [r.project_id for r in existing_project_ids.fetchall()]
-        if project_ids_to_clear:
-            await conn.execute(
-                site_members_table.delete().where(
-                    site_members_table.c.user_id == user_id,
-                    site_members_table.c.site_id.in_(
-                        sa.select(sites_table.c.id).where(
-                            sites_table.c.project_id.in_(project_ids_to_clear)
-                        )
-                    ),
-                )
-            )
-        await conn.execute(
-            project_members_table.delete().where(project_members_table.c.user_id == user_id)
-        )
-
-        # "all_projects": no project_members rows to write -- the bypass is
-        # read live from access_policy (already saved above) everywhere
-        # authorization is checked. The delete-existing-rows block above is
-        # sufficient: a user moved from custom_projects into all_projects
-        # sheds their old explicit grants, which is correct since the bypass
-        # now supersedes them.
-        if policy.mode == "custom_projects":
-            for grant in policy.projects or []:
-                project_id = _as_uuid(grant["projectId"], "projectId")
-                site_access = grant.get("siteAccess") or {}
-                site_mode = site_access.get("mode", "all_sites")
-                await conn.execute(
-                    project_members_table.insert().values(
-                        id=uuid.uuid4(),
-                        project_id=project_id,
-                        user_id=user_id,
-                        role=user_row.role,
-                        site_access_mode=site_mode,
-                    )
-                )
-                if site_mode == "custom_sites":
-                    for site_id in site_access.get("siteIds") or []:
-                        await conn.execute(
-                            site_members_table.insert().values(
-                                id=uuid.uuid4(),
-                                site_id=_as_uuid(site_id, "siteId"),
-                                user_id=user_id,
-                            )
-                        )
 
     await project_entity("membership", user_id)
     return policy

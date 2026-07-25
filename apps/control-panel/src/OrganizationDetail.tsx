@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import { AlertTriangle, ArrowLeft, Cloud, Server, Trash2, X } from 'lucide-react';
 import { api } from './api';
+import UserAccessEditor, { type OrgProject } from './UserAccessEditor';
 
 interface Organization {
   id: string;
@@ -81,6 +82,8 @@ export default function OrganizationDetail() {
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
   const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [projects, setProjects] = useState<OrgProject[]>([]);
+  const [editingUser, setEditingUser] = useState<OrgUser | null>(null);
   const [orgSettings, setOrgSettings] = useState<OrgSettingsPayload | null>(null);
   const [savingSetting, setSavingSetting] = useState<string | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
@@ -93,12 +96,14 @@ export default function OrganizationDetail() {
       api.get<OrgUser[]>(`/admin/organizations/${id}/users`),
       api.get<{ items: TimelineEntry[]; total: number }>(`/admin/organizations/${id}/timeline`),
       api.get<OrgSettingsPayload>(`/admin/organizations/${id}/settings`),
+      api.get<OrgProject[]>(`/admin/organizations/${id}/projects`),
     ])
-      .then(([orgRes, usersRes, timelineRes, settingsRes]) => {
+      .then(([orgRes, usersRes, timelineRes, settingsRes, projectsRes]) => {
         setOrg(orgRes.data);
         setUsers(usersRes.data);
         setTimeline(timelineRes.data.items);
         setOrgSettings(settingsRes.data);
+        setProjects(projectsRes.data);
       })
       .catch((err) => setError(err.response?.data?.detail || 'Failed to load organization'))
       .finally(() => setLoading(false));
@@ -339,6 +344,20 @@ export default function OrganizationDetail() {
                           style={{
                             background: 'none',
                             border: 'none',
+                            color: 'var(--primary)',
+                            fontWeight: 500,
+                            cursor: 'pointer',
+                            fontSize: '13px',
+                            marginRight: '12px',
+                          }}
+                          onClick={() => setEditingUser(u)}
+                        >
+                          Edit access
+                        </button>
+                        <button
+                          style={{
+                            background: 'none',
+                            border: 'none',
                             color: isInactive ? 'var(--primary)' : 'var(--neutral-600)',
                             fontWeight: 500,
                             cursor: 'pointer',
@@ -469,6 +488,24 @@ export default function OrganizationDetail() {
             })
           )}
         </div>
+      )}
+
+      {editingUser && id && (
+        <UserAccessEditor
+          orgId={id}
+          user={editingUser}
+          projects={projects}
+          onClose={() => setEditingUser(null)}
+          onSaved={() => {
+            // Re-read rather than patching local state: the server applies
+            // the org-wide role bypass, so what it returns can differ from
+            // what was submitted (an admin always comes back "All Projects").
+            api
+              .get<OrgUser[]>(`/admin/organizations/${id}/users`)
+              .then((res) => setUsers(res.data))
+              .catch(() => setError('Saved, but the list could not be refreshed.'));
+          }}
+        />
       )}
 
       {showDeleteModal && (
