@@ -201,7 +201,94 @@ async def delete_organization(org_id: uuid.UUID, _admin: dict = Depends(require_
             raise HTTPException(status_code=404, detail="Organization not found")
 
         org_id_str = str(org_id)
-        # Clear identity bridge context subsystem rows referencing this organization before deleting org row
+
+        # 1. Fetch user IDs belonging to this organization
+        user_rows = await conn.execute(
+            sa.select(users_table.c.id).where(users_table.c.organization_id == org_id)
+        )
+        user_ids = [r[0] for r in user_rows.fetchall()]
+        user_id_strs = [str(uid) for uid in user_ids]
+
+        # 2. Fetch context_user IDs linked to these users
+        if user_ids:
+            ctx_user_rows = await conn.execute(
+                sa.text(
+                    "SELECT id FROM context_users WHERE canonical_user_id IN :uids OR id IN :uid_strs"
+                ).bindparams(
+                    sa.bindparam("uids", expanding=True),
+                    sa.bindparam("uid_strs", expanding=True),
+                ),
+                {"uids": user_ids, "uid_strs": user_id_strs},
+            )
+            ctx_uids = [r[0] for r in ctx_user_rows.fetchall()]
+        else:
+            ctx_uids = []
+
+        # 3. Clean user-level context & identity subsystem rows to prevent FK violation on users table deletion
+        if ctx_uids or user_ids:
+            all_uids_str = list(set(ctx_uids + user_id_strs))
+            await conn.execute(
+                sa.text(
+                    "DELETE FROM user_context_preferences WHERE user_id IN :u_strs"
+                ).bindparams(sa.bindparam("u_strs", expanding=True)),
+                {"u_strs": all_uids_str},
+            )
+            await conn.execute(
+                sa.text(
+                    "DELETE FROM site_memberships WHERE user_id IN :u_strs"
+                ).bindparams(sa.bindparam("u_strs", expanding=True)),
+                {"u_strs": all_uids_str},
+            )
+            await conn.execute(
+                sa.text(
+                    "DELETE FROM project_memberships WHERE user_id IN :u_strs"
+                ).bindparams(sa.bindparam("u_strs", expanding=True)),
+                {"u_strs": all_uids_str},
+            )
+            await conn.execute(
+                sa.text(
+                    "DELETE FROM membership_roles WHERE membership_id IN (SELECT id FROM organization_memberships WHERE user_id IN :u_strs)"
+                ).bindparams(sa.bindparam("u_strs", expanding=True)),
+                {"u_strs": all_uids_str},
+            )
+            await conn.execute(
+                sa.text(
+                    "DELETE FROM organization_memberships WHERE user_id IN :u_strs"
+                ).bindparams(sa.bindparam("u_strs", expanding=True)),
+                {"u_strs": all_uids_str},
+            )
+            await conn.execute(
+                sa.text(
+                    "DELETE FROM external_identities WHERE user_id IN :u_strs"
+                ).bindparams(sa.bindparam("u_strs", expanding=True)),
+                {"u_strs": all_uids_str},
+            )
+            if user_ids:
+                await conn.execute(
+                    sa.text(
+                        "DELETE FROM interactions WHERE user_id IN :uids"
+                    ).bindparams(sa.bindparam("uids", expanding=True)),
+                    {"uids": user_ids},
+                )
+            if user_ids:
+                await conn.execute(
+                    sa.text(
+                        "DELETE FROM context_users WHERE canonical_user_id IN :uids OR id IN :u_strs"
+                    ).bindparams(
+                        sa.bindparam("uids", expanding=True),
+                        sa.bindparam("u_strs", expanding=True),
+                    ),
+                    {"uids": user_ids, "u_strs": all_uids_str},
+                )
+            else:
+                await conn.execute(
+                    sa.text(
+                        "DELETE FROM context_users WHERE id IN :u_strs"
+                    ).bindparams(sa.bindparam("u_strs", expanding=True)),
+                    {"u_strs": all_uids_str},
+                )
+
+        # 4. Clean org-level context subsystem rows referencing this organization
         ctx_org_rows = await conn.execute(
             sa.text(
                 "SELECT id FROM context_organizations WHERE canonical_organization_id = :org_id OR id = :org_id_str"
@@ -279,6 +366,7 @@ async def delete_organization(org_id: uuid.UUID, _admin: dict = Depends(require_
                 {"org_id": org_id, "org_id_str": org_id_str},
             )
 
+        # 5. Delete main organization row (ON DELETE CASCADE sweeps all domain tables)
         try:
             await conn.execute(
                 organizations_table.delete().where(organizations_table.c.id == org_id)
