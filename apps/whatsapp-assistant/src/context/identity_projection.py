@@ -315,7 +315,11 @@ class IdentityProjectionService:
         their org, all sites -- the same bypass AuthorizationService applies
         on the REST side, kept in sync so a project created after this user's
         last sync is still visible without needing a fresh project_members
-        row per admin per project.
+        row per admin per project. access_policy.mode == "all_projects" gets
+        the identical treatment for a non-admin: it's a live bypass, not a
+        project_members snapshot (users/router.py's update_user_access no
+        longer writes one), so it must be re-checked here the same way the
+        role is, not read off project_members like a normal grant.
 
         Full replace (delete then reinsert), not a diff -- membership is a
         set, and the set can shrink (a project/site removed via the
@@ -336,7 +340,7 @@ class IdentityProjectionService:
 
         user_row = (
             conn.execute(
-                text("SELECT organization_id, role FROM users WHERE id = :id"),
+                text("SELECT organization_id, role, access_policy FROM users WHERE id = :id"),
                 {"id": canonical_user_id},
             )
             .mappings()
@@ -345,7 +349,12 @@ class IdentityProjectionService:
         if user_row is None:
             return  # user deleted between the write and this projection; nothing to sync
 
-        if (user_row["role"] or "").upper() in _ORG_WIDE_ROLES:
+        policy = user_row["access_policy"] or {}
+        org_wide = (user_row["role"] or "").upper() in _ORG_WIDE_ROLES or (
+            isinstance(policy, dict) and policy.get("mode") == "all_projects"
+        )
+
+        if org_wide:
             memberships = [
                 {"project_id": row["id"], "site_access_mode": "all_sites"}
                 for row in conn.execute(

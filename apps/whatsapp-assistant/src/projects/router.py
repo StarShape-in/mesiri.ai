@@ -116,6 +116,7 @@ users_table = sa.Table(
     sa.Column("full_name", sa.String),
     sa.Column("status", sa.String),
     sa.Column("role", sa.String),
+    sa.Column("access_policy", sa.JSON),
 )
 
 
@@ -205,8 +206,25 @@ async def get_current_user(authorization: str = Header(None)) -> dict:
     return _decode(authorization)
 
 
-def _is_org_wide(payload: dict) -> bool:
-    return (payload.get("role") or "").upper() in _ORG_WIDE_ROLES
+async def _is_org_wide(conn, payload: dict) -> bool:
+    """True if this request's caller bypasses project_members entirely --
+    an org-wide role, or a non-admin whose access_policy.mode is
+    "all_projects". The latter is a live check against the DB, not read off
+    the JWT: it's a standing bypass (see users/router.py's update_user_access
+    and identity_projection.py's _project_membership, which apply the same
+    rule), not a project_members snapshot, so it can't be baked into the
+    token at login and must be re-checked on every request."""
+    if (payload.get("role") or "").upper() in _ORG_WIDE_ROLES:
+        return True
+    user_id = payload.get("sub")
+    if not user_id:
+        return False
+    result = await conn.execute(
+        sa.select(users_table.c.access_policy).where(users_table.c.id == user_id)
+    )
+    row = result.first()
+    policy = (row.access_policy if row else None) or {}
+    return isinstance(policy, dict) and policy.get("mode") == "all_projects"
 
 
 def _member_project_ids_clause(user_id: uuid.UUID):
@@ -240,7 +258,7 @@ async def list_projects(payload: dict = Depends(get_current_user)):
     engine = get_engine()
     async with engine.connect() as conn:
         query = sa.select(projects_table).where(projects_table.c.organization_id == org_id)
-        if not _is_org_wide(payload):
+        if not await _is_org_wide(conn, payload):
             query = query.where(_member_project_ids_clause(user_id))
         result = await conn.execute(query.order_by(projects_table.c.name))
         rows = result.fetchall()
@@ -260,7 +278,7 @@ async def get_project(project_id: uuid.UUID, payload: dict = Depends(get_current
             projects_table.c.id == project_id,
             projects_table.c.organization_id == org_id,
         )
-        if not _is_org_wide(payload):
+        if not await _is_org_wide(conn, payload):
             query = query.where(_member_project_ids_clause(user_id))
         result = await conn.execute(query)
         row = result.first()
@@ -276,10 +294,10 @@ async def list_project_sites(project_id: uuid.UUID, payload: dict = Depends(get_
     if not org_id:
         raise HTTPException(status_code=400, detail="User has no organization")
     user_id = payload.get("sub")
-    org_wide = _is_org_wide(payload)
 
     engine = get_engine()
     async with engine.connect() as conn:
+        org_wide = await _is_org_wide(conn, payload)
         project_query = sa.select(projects_table.c.id).where(
             projects_table.c.id == project_id,
             projects_table.c.organization_id == org_id,
@@ -363,27 +381,37 @@ async def create_project_site(
         )
 
         # Users whose access to this project already implies "every site" --
-        # an org-wide role, or an explicit all_sites project_members row --
-        # need their membership set re-synced once the new site exists in the
-        # context layer below. Without this, a site created after a member's
-        # last sync stayed invisible to them until the next full reconcile
-        # (see identity_projection.py's _project_membership docstring on why
-        # a project's site set can't be cached at grant time).
-        all_sites_members = await conn.execute(
-            sa.select(users_table.c.id).where(
+        # an org-wide role, an access_policy "all_projects" bypass, or an
+        # explicit all_sites project_members row -- need their membership set
+        # re-synced once the new site exists in the context layer below.
+        # Without this, a site created after a member's last sync stayed
+        # invisible to them until the next full reconcile (see
+        # identity_projection.py's _project_membership docstring on why a
+        # project's site set can't be cached at grant time).
+        #
+        # access_policy is filtered in Python, not SQL -- generic sa.JSON
+        # (dialect-agnostic, unlike postgresql.JSONB) doesn't expose a portable
+        # ->> operator, and this table is small enough per org that it isn't
+        # worth a JSONB-specific column just for this one check.
+        candidate_rows = await conn.execute(
+            sa.select(users_table.c.id, users_table.c.role, users_table.c.access_policy).where(
                 users_table.c.organization_id == org_id,
-                sa.or_(
-                    sa.func.upper(users_table.c.role).in_(_ORG_WIDE_ROLES),
-                    users_table.c.id.in_(
-                        sa.select(project_members_table.c.user_id).where(
-                            project_members_table.c.project_id == project_id,
-                            project_members_table.c.site_access_mode == "all_sites",
-                        )
-                    ),
-                ),
             )
         )
-        member_ids_to_resync = [r.id for r in all_sites_members.fetchall()]
+        all_sites_project_members = await conn.execute(
+            sa.select(project_members_table.c.user_id).where(
+                project_members_table.c.project_id == project_id,
+                project_members_table.c.site_access_mode == "all_sites",
+            )
+        )
+        all_sites_member_ids = {r.user_id for r in all_sites_project_members.fetchall()}
+        member_ids_to_resync = [
+            r.id
+            for r in candidate_rows.fetchall()
+            if (r.role or "").upper() in _ORG_WIDE_ROLES
+            or (isinstance(r.access_policy, dict) and r.access_policy.get("mode") == "all_projects")
+            or r.id in all_sites_member_ids
+        ]
 
     await project_entity("site", site_id)
     for member_id in member_ids_to_resync:
@@ -404,6 +432,7 @@ async def create_project(project_in: ProjectCreate, payload: dict = Depends(get_
     status = project_in.status if project_in.status in _VALID_STATUS else "on_track"
     progress = max(0, min(100, project_in.progress))
     project_id = uuid.uuid4()
+    creator_id = payload.get("sub")
 
     engine = get_engine()
     async with engine.begin() as conn:
@@ -422,7 +451,28 @@ async def create_project(project_in: ProjectCreate, payload: dict = Depends(get_
             )
         )
 
+        # A creator who isn't already org-wide (an ADMIN, or an access_policy
+        # "all_projects" grant) needs an explicit project_members row for
+        # their own project -- without one, list_projects/get_project's
+        # membership scoping (see _member_project_ids_clause above) hides
+        # the project from the person who just created it. PROJECT_MANAGER
+        # is the role this actually bites: it's in _CREATE_ROLES but not
+        # _ORG_WIDE_ROLES.
+        grant_creator = creator_id is not None and not await _is_org_wide(conn, payload)
+        if grant_creator:
+            await conn.execute(
+                project_members_table.insert().values(
+                    id=uuid.uuid4(),
+                    project_id=project_id,
+                    user_id=creator_id,
+                    role=payload.get("role") or "PROJECT_MANAGER",
+                    site_access_mode="all_sites",
+                )
+            )
+
     await project_entity("project", project_id)
+    if grant_creator:
+        await project_entity("membership", creator_id)
 
     ui_status, label = _STATUS_DISPLAY[status]
     return ProjectResponse(

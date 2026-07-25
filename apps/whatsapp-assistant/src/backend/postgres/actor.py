@@ -146,7 +146,7 @@ class PostgresActorReader:
                     await conn.execute(
                         text(
                             "SELECT u.id, u.full_name, u.role, u.organization_id,"
-                            "       o.name AS org_name, o.status AS org_status "
+                            "       u.access_policy, o.name AS org_name, o.status AS org_status "
                             "FROM users u "
                             "LEFT JOIN organizations o ON o.id = u.organization_id "
                             "WHERE u.whatsapp_number IS NOT NULL "
@@ -166,7 +166,14 @@ class PostgresActorReader:
 
             org_id = row["organization_id"]
             user_id = str(row["id"])
-            org_wide = str(row["role"] or "").upper() in _ORG_WIDE_ROLES
+            access_policy = row["access_policy"] or {}
+            # access_policy is a live standing bypass here, same as an
+            # org-wide role -- NOT materialized as project_members rows (see
+            # _ORG_WIDE_ROLES's docstring). A project created after this grant
+            # is made must still be visible without re-saving the grant.
+            org_wide = str(row["role"] or "").upper() in _ORG_WIDE_ROLES or (
+                isinstance(access_policy, dict) and access_policy.get("mode") == "all_projects"
+            )
 
             # ----------------------------------------------------------------
             # 2. Projects THIS USER can reach -- not every project in the org.

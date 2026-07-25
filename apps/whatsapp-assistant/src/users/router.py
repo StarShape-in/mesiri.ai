@@ -489,9 +489,19 @@ async def update_user_access(
     replace of this user's membership set, same approach as
     identity_projection.py's _project_membership -- and re-runs the identity
     projection so the WhatsApp context resolver picks it up without waiting
-    for the next reconcile. access_policy is still written alongside so
-    GET /me (documented as reading it for backward compatibility) keeps
-    working.
+    for the next reconcile.
+
+    "all_projects" writes zero project_members rows on purpose: it's read as
+    a live, standing bypass everywhere access is checked (AuthorizationService
+    ._resolve_project_scope, backend/postgres/actor.py, identity_projection.py
+    ._project_membership, and this app's own projects/router.py._is_org_wide)
+    -- the same treatment the ADMIN role already gets. An earlier version of
+    this endpoint materialized one project_members row per project that
+    existed *at grant time*, which silently excluded every project created
+    afterwards even though the admin's intent was "all projects, always".
+    access_policy is still written for GET /me (documented as reading it for
+    backward compatibility), and is now also the source of truth those live
+    checks read for a non-admin's org-wide bypass.
     """
     engine = get_engine()
     org_id = admin_payload.get("org")
@@ -541,27 +551,13 @@ async def update_user_access(
             project_members_table.delete().where(project_members_table.c.user_id == user_id)
         )
 
-        if policy.mode == "all_projects":
-            # Unlike the ADMIN role's org-wide bypass (_ORG_WIDE_ROLES --
-            # present AND future projects, no rows needed), a non-admin
-            # granted "all_projects" through this dialog gets an explicit
-            # project_members row per project that exists right now. It's a
-            # snapshot, not a standing bypass: a project created afterwards
-            # needs its own grant, same as any other membership-based access.
-            project_rows = await conn.execute(
-                sa.select(projects_table.c.id).where(projects_table.c.organization_id == org_id)
-            )
-            for row in project_rows.fetchall():
-                await conn.execute(
-                    project_members_table.insert().values(
-                        id=uuid.uuid4(),
-                        project_id=row.id,
-                        user_id=user_id,
-                        role=user_row.role,
-                        site_access_mode="all_sites",
-                    )
-                )
-        elif policy.mode == "custom_projects":
+        # "all_projects": no project_members rows to write -- the bypass is
+        # read live from access_policy (already saved above) everywhere
+        # authorization is checked. The delete-existing-rows block above is
+        # sufficient: a user moved from custom_projects into all_projects
+        # sheds their old explicit grants, which is correct since the bypass
+        # now supersedes them.
+        if policy.mode == "custom_projects":
             for grant in policy.projects or []:
                 project_id = _as_uuid(grant["projectId"], "projectId")
                 site_access = grant.get("siteAccess") or {}

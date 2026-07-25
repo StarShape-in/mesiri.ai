@@ -91,15 +91,11 @@ class AuthorizationService:
         if user_status != "active":
             raise HTTPException(status_code=401, detail=f"User account is {user_status}")
 
-        # access_policy is parsed only for GET /me backward compatibility --
-        # it is no longer authoritative for scope resolution (see
-        # project/site membership audit: this JSONB column and project_members
-        # used to be two disconnected sources of truth; project_members +
-        # site_members is now the only one consulted below).
         access_policy = AccessPolicy.from_db_json(row.access_policy)
 
-        # Resolve project access scope from project_members (+ role bypass)
-        project_scope = await self._resolve_project_scope(row.role, user_id, org_id)
+        # Resolve project access scope from project_members (+ role bypass +
+        # access_policy's "all_projects" bypass -- see _resolve_project_scope).
+        project_scope = await self._resolve_project_scope(row.role, access_policy, user_id, org_id)
         site_scopes = await self._resolve_site_scopes(project_scope, user_id, org_id)
 
         return AuthorizationContext(
@@ -115,22 +111,30 @@ class AuthorizationService:
     async def _resolve_project_scope(
         self,
         role: str,
+        access_policy: AccessPolicy,
         user_id: UUID,
         org_id: UUID,
     ) -> ProjectAccessScope:
-        """Resolve project access scope from project_members (+ org-wide role bypass).
+        """Resolve project access scope from project_members (+ org-wide bypass).
 
         Rules:
         - An org-wide role (currently just ADMIN) grants access to every
-          project in the organization, present and future -- the SQL-native
-          equivalent of access_policy's old "all_projects" mode, without
-          needing a project_members row per project per admin.
+          project in the organization, present and future -- no project_members
+          row per project per admin needed.
+        - A non-admin user whose access_policy.mode is "all_projects" gets the
+          same standing bypass. This used to be materialized as one
+          project_members row per project that existed at grant time (see
+          migration 0350 and users/router.py's update_user_access) -- a
+          snapshot that silently excluded every project created afterwards,
+          including ones the granting admin explicitly meant this user to
+          see. Treating it as a live bypass here, exactly like the role
+          check above, makes "all projects" mean all projects, always.
         - Otherwise: access is exactly the set of projects this user has an
           explicit project_members row for, scoped to this organization.
         - No project_members rows: zero projects (deny-by-default, same as
           the old empty custom_projects list).
         """
-        if role.upper() in _ORG_WIDE_ROLES:
+        if role.upper() in _ORG_WIDE_ROLES or access_policy.mode == "all_projects":
             return ProjectAccessScope(mode="all_projects", project_ids=set())
 
         rows = await self._conn.execute(
