@@ -83,7 +83,6 @@ interface JourneyTraceEntry {
 }
 
 const POLL_INTERVAL_MS = 5000;
-const MAX_ROWS = 200;
 // Messages from the same sender within this gap are treated as one
 // conversation session — a heuristic grouping (no schema change) that sits
 // alongside the precise workflow_instance_id bracket below.
@@ -167,6 +166,40 @@ function formatRelativeTime(dateString: string): string {
   if (diffHour < 24) return `${diffHour}h ago`;
   if (diffDay === 1) return 'yesterday';
   return date.toLocaleDateString();
+}
+
+// Timing Format & Speed Badge Helpers
+function formatSeconds(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined) return '—';
+  const sec = ms / 1000;
+  return `${sec.toFixed(2)}s`;
+}
+
+function getLatencyBadgeClass(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined) return 'badge-info';
+  const sec = ms / 1000;
+  if (sec < 1.0) return 'badge-success'; // < 1s: fast
+  if (sec <= 3.0) return 'badge-warning'; // 1-3s: moderate
+  return 'badge-error'; // > 3s: slow bottleneck
+}
+
+const LatencyBadge = ({ ms, prefix = '' }: { ms: number | null | undefined; prefix?: string }) => {
+  if (ms === null || ms === undefined) return <span style={{ fontSize: '11px', color: 'var(--neutral-400)' }}>—</span>;
+  const secStr = formatSeconds(ms);
+  const badgeCls = getLatencyBadgeClass(ms);
+  return (
+    <span className={`badge ${badgeCls}`} style={{ fontSize: '11px', fontFamily: 'monospace', fontWeight: 600 }}>
+      {prefix}{secStr}
+    </span>
+  );
+};
+
+function getMessageDurationMs(m: InboundMessageSummary): number | null {
+  if (!m.processed_at || !m.received_at) return null;
+  const start = new Date(m.received_at).getTime();
+  const end = new Date(m.processed_at).getTime();
+  const diff = end - start;
+  return diff >= 0 ? diff : null;
 }
 
 // Known WhatsApp numbers used for testing the assistant, offered as a quick
@@ -257,9 +290,7 @@ const TracePanel = ({ correlationId }: { correlationId: string }) => {
                 {entry.stage}
               </span>
               {entry.duration_ms !== null && (
-                <span style={{ fontSize: '11px', color: 'var(--neutral-400)', fontFamily: 'monospace' }}>
-                  {entry.duration_ms}ms
-                </span>
+                <LatencyBadge ms={entry.duration_ms} />
               )}
             </div>
             {entry.error_message && (
@@ -795,9 +826,7 @@ const LogDetailPanel = ({
                       {p.succeeded ? 'Success' : p.error_code || 'Fail'}
                     </span>
                     {p.latency_ms !== null && (
-                      <span style={{ fontSize: '11px', fontFamily: 'monospace', color: 'var(--neutral-500)' }}>
-                        {p.latency_ms.toFixed(0)}ms
-                      </span>
+                      <LatencyBadge ms={p.latency_ms} />
                     )}
                   </div>
                 </div>
@@ -812,6 +841,144 @@ const LogDetailPanel = ({
             Pipeline Trace
           </div>
           <TracePanel correlationId={message.correlation_id} />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const SlowestFastestSection = ({
+  messages,
+  onInspectMessage,
+}: {
+  messages: InboundMessageSummary[];
+  onInspectMessage: (correlationId: string) => void;
+}) => {
+  const messagesWithTiming = messages
+    .map((m) => ({
+      message: m,
+      durationMs: getMessageDurationMs(m),
+    }))
+    .filter((x): x is { message: InboundMessageSummary; durationMs: number } => x.durationMs !== null);
+
+  if (messagesWithTiming.length === 0) return null;
+
+  // Sort descending for slowest
+  const slowest = [...messagesWithTiming].sort((a, b) => b.durationMs - a.durationMs).slice(0, 5);
+
+  // Sort ascending for fastest
+  const fastest = [...messagesWithTiming].sort((a, b) => a.durationMs - b.durationMs).slice(0, 5);
+
+  return (
+    <div
+      style={{
+        backgroundColor: '#ffffff',
+        border: '1px solid var(--neutral-200)',
+        borderRadius: 'var(--radius-sm)',
+        padding: 'var(--space-4)',
+        marginBottom: 'var(--space-6)',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-4)' }}>
+        <div>
+          <h2 style={{ fontSize: '15px', fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--neutral-900)' }}>
+            <span style={{ color: 'var(--warning)' }}>⚡</span> Latency Benchmarks — Slowest vs. Fastest Messages
+          </h2>
+          <p style={{ fontSize: '12px', color: 'var(--neutral-500)', margin: '2px 0 0' }}>
+            Identify performance bottlenecks in seconds. Click any message row to jump directly into its execution trace.
+          </p>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 'var(--space-4)' }}>
+        {/* Slowest Messages Leaderboard */}
+        <div style={{ background: 'var(--neutral-50)', border: '1px solid var(--neutral-200)', borderRadius: 'var(--radius-sm)', padding: 'var(--space-3)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-3)' }}>
+            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--error)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span>🐢</span> Top Slowest Messages (Needs Speedup)
+            </span>
+            <span style={{ fontSize: '11px', color: 'var(--neutral-400)' }}>Duration (sec)</span>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {slowest.map(({ message: m, durationMs }) => (
+              <div
+                key={m.id}
+                onClick={() => onInspectMessage(m.correlation_id)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  background: '#ffffff',
+                  border: '1px solid var(--neutral-200)',
+                  borderRadius: '6px',
+                  padding: '8px 10px',
+                  cursor: 'pointer',
+                  fontSize: '12px',
+                }}
+              >
+                <div style={{ flex: 1, minWidth: 0, marginRight: '12px' }}>
+                  <div style={{ color: 'var(--neutral-900)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {m.body_preview || '(no text)'}
+                  </div>
+                  <div style={{ fontSize: '10px', color: 'var(--neutral-500)', display: 'flex', gap: '8px', marginTop: '2px' }}>
+                    <span>WA: {m.sender_wa_id}</span>
+                    <span>• {m.message_type}</span>
+                    {m.workflow_key && <span>• {m.workflow_key}</span>}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                  <LatencyBadge ms={durationMs} />
+                  <ChevronRight size={14} style={{ color: 'var(--neutral-400)' }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Fastest Messages Leaderboard */}
+        <div style={{ background: 'var(--neutral-50)', border: '1px solid var(--neutral-200)', borderRadius: 'var(--radius-sm)', padding: 'var(--space-3)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-3)' }}>
+            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--success)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span>⚡</span> Top Fastest Messages (Optimized)
+            </span>
+            <span style={{ fontSize: '11px', color: 'var(--neutral-400)' }}>Duration (sec)</span>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {fastest.map(({ message: m, durationMs }) => (
+              <div
+                key={m.id}
+                onClick={() => onInspectMessage(m.correlation_id)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  background: '#ffffff',
+                  border: '1px solid var(--neutral-200)',
+                  borderRadius: '6px',
+                  padding: '8px 10px',
+                  cursor: 'pointer',
+                  fontSize: '12px',
+                }}
+              >
+                <div style={{ flex: 1, minWidth: 0, marginRight: '12px' }}>
+                  <div style={{ color: 'var(--neutral-900)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {m.body_preview || '(no text)'}
+                  </div>
+                  <div style={{ fontSize: '10px', color: 'var(--neutral-500)', display: 'flex', gap: '8px', marginTop: '2px' }}>
+                    <span>WA: {m.sender_wa_id}</span>
+                    <span>• {m.message_type}</span>
+                    {m.workflow_key && <span>• {m.workflow_key}</span>}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                  <LatencyBadge ms={durationMs} />
+                  <ChevronRight size={14} style={{ color: 'var(--neutral-400)' }} />
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>
@@ -868,35 +1035,22 @@ export default function Logs() {
     if (!live) return;
 
     const interval = setInterval(() => {
-      const current = messagesRef.current;
-      const newest = current[0];
       api
         .get<InboundMessageList>('/admin/logs/messages', {
           params: {
             wa_id: waIdFilter || undefined,
             status: statusFilter || undefined,
             provider: providerFilter || undefined,
-            since_received_at: newest?.received_at,
-            since_id: newest?.id,
             limit: 50,
           },
         })
         .then((res) => {
-          const items = res.data.items || [];
-          if (items.length === 0) return;
-          setMessages((prev) => {
-            const seen = new Set(prev.map((m) => m.id));
-            const fresh = items.filter((m) => !seen.has(m.id));
-            if (fresh.length === 0) return prev;
-            // API returns live-cursor results oldest-first; prepend newest-first.
-            return [...fresh.reverse(), ...prev].slice(0, MAX_ROWS);
-          });
+          const fresh = res.data.items || [];
+          if (JSON.stringify(fresh) !== JSON.stringify(messagesRef.current)) {
+            setMessages(fresh);
+          }
         })
-        .catch(() => {
-          // A transient poll failure shouldn't stop future polls (or trip
-          // the auth interceptor's redirect more than once) — the interval
-          // will simply try again next tick.
-        });
+        .catch(() => {});
     }, POLL_INTERVAL_MS);
 
     return () => clearInterval(interval);
@@ -1013,8 +1167,9 @@ export default function Logs() {
         </div>
         <div style={{ backgroundColor: '#ffffff', border: '1px solid var(--neutral-200)', borderRadius: 'var(--radius-sm)', padding: 'var(--space-4)' }}>
           <div style={{ fontSize: '12px', fontWeight: 500, color: 'var(--neutral-500)' }}>Avg Response Latency</div>
-          <div style={{ fontSize: '24px', fontWeight: 600, color: 'var(--neutral-900)', marginTop: '4px' }}>
-            {avgLatency === 0 ? '—' : avgLatency < 1000 ? `${avgLatency}ms` : `${(avgLatency / 1000).toFixed(1)}s`}
+          <div style={{ fontSize: '24px', fontWeight: 600, color: 'var(--neutral-900)', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {avgLatency === 0 ? '—' : formatSeconds(avgLatency)}
+            {avgLatency > 0 && <LatencyBadge ms={avgLatency} />}
           </div>
         </div>
         <div style={{ backgroundColor: '#ffffff', border: '1px solid var(--neutral-200)', borderRadius: 'var(--radius-sm)', padding: 'var(--space-4)' }}>
@@ -1022,6 +1177,9 @@ export default function Logs() {
           <div style={{ fontSize: '24px', fontWeight: 600, color: unacknowledgedCount > 0 ? 'var(--error)' : 'var(--neutral-900)', marginTop: '4px' }}>{unacknowledgedCount}</div>
         </div>
       </div>
+
+      {/* Latency Benchmarks: Slowest vs Fastest Messages */}
+      <SlowestFastestSection messages={messages} onInspectMessage={(corrId) => setExpandedId(corrId)} />
 
       <div className="table-container">
         <table>
@@ -1034,18 +1192,19 @@ export default function Logs() {
               <th>Project/Site</th>
               <th>Message</th>
               <th>Status</th>
+              <th>Duration (sec)</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--neutral-500)' }}>Loading…</td></tr>
+              <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--neutral-500)' }}>Loading…</td></tr>
             ) : messages.length === 0 ? (
-              <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--neutral-500)' }}>No messages yet.</td></tr>
+              <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--neutral-500)' }}>No messages yet.</td></tr>
             ) : (
               sessions.map((session) => (
                 <Fragment key={session.key}>
                   <tr>
-                    <td colSpan={7} style={{ padding: '10px 12px', backgroundColor: 'var(--neutral-50)', borderTop: '1px solid var(--neutral-200)', borderBottom: '1px solid var(--neutral-200)' }}>
+                    <td colSpan={8} style={{ padding: '10px 12px', backgroundColor: 'var(--neutral-50)', borderTop: '1px solid var(--neutral-200)', borderBottom: '1px solid var(--neutral-200)' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: '11px', fontWeight: 600, color: 'var(--neutral-500)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                         <span>{session.sender_wa_id}</span>
                         <span style={{ fontWeight: 400, textTransform: 'none', color: 'var(--neutral-400)' }}>
@@ -1057,6 +1216,7 @@ export default function Logs() {
                   {groupByWorkflow(session.messages).map((group) => {
                     if (group.kind === 'single') {
                       const m = group.message;
+                      const durationMs = getMessageDurationMs(m);
                       return (
                         <Fragment key={m.id}>
                           <tr
@@ -1095,10 +1255,13 @@ export default function Logs() {
                             <td>
                               <span className={`badge ${statusBadgeClass(m.processing_status)}`}>{m.processing_status}</span>
                             </td>
+                            <td>
+                              <LatencyBadge ms={durationMs} />
+                            </td>
                           </tr>
                           {expandedId === m.correlation_id && (
                             <tr>
-                              <td colSpan={7} style={{ padding: 0 }}>
+                              <td colSpan={8} style={{ padding: 0 }}>
                                 <LogDetailPanel message={m} onUpdate={loadHistory} />
                               </td>
                             </tr>
@@ -1110,9 +1273,12 @@ export default function Logs() {
                     // A workflow interaction: every turn (voice report, "yes"
                     // confirmation, corrections, ...) rendered as one merged
                     // card instead of separate unrelated-looking rows.
+                    const groupDurations = group.messages.map(getMessageDurationMs).filter((x): x is number => x !== null);
+                    const totalGroupMs = groupDurations.length ? groupDurations.reduce((a, b) => a + b, 0) : null;
+
                     return (
                       <tr key={group.workflowInstanceId}>
-                        <td colSpan={7} style={{ padding: '8px 12px' }}>
+                        <td colSpan={8} style={{ padding: '8px 12px' }}>
                           <div style={{ border: '1px solid var(--info)', borderRadius: 'var(--radius-sm)', overflow: 'hidden' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', padding: '8px 12px', backgroundColor: 'var(--info-soft)', fontSize: '11px', fontWeight: 600, color: 'var(--info)' }}>
                               <Link2 size={13} />
@@ -1122,43 +1288,50 @@ export default function Logs() {
                                   {group.workflowPhase}
                                 </span>
                               )}
-                              <span style={{ marginLeft: 'auto', fontWeight: 400, color: 'var(--neutral-500)', textTransform: 'none' }}>
-                                {group.messages.length} turn{group.messages.length === 1 ? '' : 's'}
-                              </span>
+                              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span style={{ fontWeight: 400, color: 'var(--neutral-500)', textTransform: 'none' }}>
+                                  {group.messages.length} turn{group.messages.length === 1 ? '' : 's'}
+                                </span>
+                                {totalGroupMs !== null && <LatencyBadge ms={totalGroupMs} prefix="Total: " />}
+                              </div>
                             </div>
-                            {group.messages.map((m, i) => (
-                              <Fragment key={m.id}>
-                                <div
-                                  onClick={() => setExpandedId(expandedId === m.correlation_id ? null : m.correlation_id)}
-                                  style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: 'var(--space-3)',
-                                    padding: '8px 12px',
-                                    cursor: 'pointer',
-                                    borderTop: i > 0 ? '1px solid var(--neutral-100)' : 'none',
-                                    backgroundColor: '#ffffff',
-                                  }}
-                                >
-                                  {expandedId === m.correlation_id ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                                  <span style={{ fontSize: '11px', color: 'var(--neutral-400)', fontFamily: 'monospace', width: 60, flexShrink: 0 }}>
-                                    {new Date(m.received_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                  </span>
-                                  <span style={{ fontSize: '11px', color: 'var(--neutral-500)', width: 50, flexShrink: 0 }}>
-                                    {m.message_type}{m.message_type === 'audio' && ' 🗣'}
-                                  </span>
-                                  <span style={{ flex: 1, fontSize: '13px', color: 'var(--neutral-800)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                    {m.body_preview || <em style={{ color: 'var(--neutral-400)' }}>no text</em>}
-                                  </span>
-                                  <span className={`badge ${statusBadgeClass(m.processing_status)}`} style={{ fontSize: '10px' }}>{m.processing_status}</span>
-                                </div>
-                                {expandedId === m.correlation_id && (
-                                  <div style={{ borderTop: '1px solid var(--neutral-100)' }}>
-                                    <LogDetailPanel message={m} onUpdate={loadHistory} />
+                            {group.messages.map((m, i) => {
+                              const turnDurationMs = getMessageDurationMs(m);
+                              return (
+                                <Fragment key={m.id}>
+                                  <div
+                                    onClick={() => setExpandedId(expandedId === m.correlation_id ? null : m.correlation_id)}
+                                    style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: 'var(--space-3)',
+                                      padding: '8px 12px',
+                                      cursor: 'pointer',
+                                      borderTop: i > 0 ? '1px solid var(--neutral-100)' : 'none',
+                                      backgroundColor: '#ffffff',
+                                    }}
+                                  >
+                                    {expandedId === m.correlation_id ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                                    <span style={{ fontSize: '11px', color: 'var(--neutral-400)', fontFamily: 'monospace', width: 60, flexShrink: 0 }}>
+                                      {new Date(m.received_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    </span>
+                                    <span style={{ fontSize: '11px', color: 'var(--neutral-500)', width: 50, flexShrink: 0 }}>
+                                      {m.message_type}{m.message_type === 'audio' && ' 🗣'}
+                                    </span>
+                                    <span style={{ flex: 1, fontSize: '13px', color: 'var(--neutral-800)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                      {m.body_preview || <em style={{ color: 'var(--neutral-400)' }}>no text</em>}
+                                    </span>
+                                    <span className={`badge ${statusBadgeClass(m.processing_status)}`} style={{ fontSize: '10px' }}>{m.processing_status}</span>
+                                    <LatencyBadge ms={turnDurationMs} />
                                   </div>
-                                )}
-                              </Fragment>
-                            ))}
+                                  {expandedId === m.correlation_id && (
+                                    <div style={{ borderTop: '1px solid var(--neutral-100)' }}>
+                                      <LogDetailPanel message={m} onUpdate={loadHistory} />
+                                    </div>
+                                  )}
+                                </Fragment>
+                              );
+                            })}
                           </div>
                         </td>
                       </tr>
