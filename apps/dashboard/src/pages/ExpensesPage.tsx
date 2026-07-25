@@ -11,9 +11,18 @@ import {
   MoreVertical,
   Eye,
   Receipt,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  Trash2,
+  ChevronLeft,
+  ChevronRight,
+  Calendar,
+  Image as ImageIcon,
 } from 'lucide-react'
 import { useScope } from '@/lib/ScopeContext'
 import { KpiCard } from '@/components/ui/kpi-card'
+import { BulkActionBar } from '@/components/ui/bulk-action-bar'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -37,10 +46,17 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { RecordExpenseDialog } from '@/components/expenses/record-expense-dialog'
 import { ExpenseDetailSheet } from '@/components/expenses/expense-detail-sheet'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 
 interface ExpenseItem {
   id: string
@@ -58,6 +74,7 @@ interface ExpenseItem {
   project_name: string
   site_name: string
   payment_method?: string
+  receipt_url?: string
 }
 
 const INITIAL_EXPENSES: ExpenseItem[] = [
@@ -77,6 +94,7 @@ const INITIAL_EXPENSES: ExpenseItem[] = [
     project_name: 'Riverside Commercial Center',
     site_name: 'Tower A Excavation',
     payment_method: 'bank_transfer',
+    receipt_url: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=600&auto=format&fit=crop&q=60',
   },
   {
     id: 'exp_02',
@@ -93,7 +111,7 @@ const INITIAL_EXPENSES: ExpenseItem[] = [
     source: 'web',
     project_name: 'Riverside Commercial Center',
     site_name: 'Basement Slab',
-    payment_method: undefined,
+    receipt_url: 'https://images.unsplash.com/photo-1554224154-26032ffc0d07?w=600&auto=format&fit=crop&q=60',
   },
   {
     id: 'exp_03',
@@ -128,6 +146,7 @@ const INITIAL_EXPENSES: ExpenseItem[] = [
     project_name: 'Riverside Commercial Center',
     site_name: 'Tower A Structural',
     payment_method: 'upi',
+    receipt_url: 'https://images.unsplash.com/photo-1554224155-6726b3ff858f?w=600&auto=format&fit=crop&q=60',
   },
   {
     id: 'exp_05',
@@ -146,7 +165,43 @@ const INITIAL_EXPENSES: ExpenseItem[] = [
     site_name: 'Site Infrastructure',
     payment_method: 'cash',
   },
+  {
+    id: 'exp_06',
+    expense_number: 'EXP-1053',
+    amount: 64000,
+    currency: 'INR',
+    category_name: 'Fuel & Transportation',
+    category_id: 'fuel',
+    description: 'Crushed Stone Transport Trucking Charge',
+    vendor_name: 'Shree Logistics',
+    occurred_date: '2026-07-19',
+    payment_status: 'unpaid',
+    workflow_status: 'confirmed',
+    source: 'web',
+    project_name: 'Riverside Commercial Center',
+    site_name: 'Tower B Ground',
+  },
+  {
+    id: 'exp_07',
+    expense_number: 'EXP-1054',
+    amount: 92000,
+    currency: 'INR',
+    category_name: 'Equipment & Machinery',
+    category_id: 'equipment',
+    description: 'Tower Crane Monthly Operator Fee',
+    vendor_name: 'Mega Heavy Lift',
+    occurred_date: '2026-07-18',
+    payment_status: 'paid',
+    workflow_status: 'confirmed',
+    source: 'whatsapp',
+    project_name: 'Riverside Commercial Center',
+    site_name: 'Tower A Structural',
+    payment_method: 'bank_transfer',
+  },
 ]
+
+type SortField = 'date' | 'amount' | 'number' | 'category'
+type SortOrder = 'asc' | 'desc'
 
 export default function ExpensesPage() {
   const { scope } = useScope()
@@ -156,34 +211,83 @@ export default function ExpensesPage() {
   const [categoryFilter, setCategoryFilter] = React.useState('ALL')
   const [paymentStatusFilter, setPaymentStatusFilter] = React.useState('ALL')
   const [sourceFilter, setSourceFilter] = React.useState('ALL')
+  const [datePreset, setDatePreset] = React.useState('ALL')
+
+  // Selection & Bulk Action state
+  const [selectedIds, setSelectedIds] = React.useState<string[]>([])
+
+  // Sorting state
+  const [sortField, setSortField] = React.useState<SortField>('date')
+  const [sortOrder, setSortOrder] = React.useState<SortOrder>('desc')
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = React.useState(1)
+  const [pageSize, setPageSize] = React.useState(10)
 
   // Dialog & Sheet state
   const [recordDialogOpen, setRecordDialogOpen] = React.useState(false)
   const [selectedExpense, setSelectedExpense] = React.useState<ExpenseItem | null>(null)
   const [sheetOpen, setSheetOpen] = React.useState(false)
+  const [previewReceiptUrl, setPreviewReceiptUrl] = React.useState<string | null>(null)
 
   const handleExpenseCreated = (newExpense: ExpenseItem) => {
     setExpenses((prev) => [newExpense, ...prev])
   }
 
-  // Filtered expenses
+  // Handle Sort Toggle
+  const toggleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortField(field)
+      setSortOrder('desc')
+    }
+  }
+
+  // Filtered & Sorted expenses
   const filteredExpenses = React.useMemo(() => {
-    return expenses.filter((item) => {
-      const matchesSearch =
-        item.expense_number.toLowerCase().includes(search.toLowerCase()) ||
-        item.description.toLowerCase().includes(search.toLowerCase()) ||
-        item.vendor_name.toLowerCase().includes(search.toLowerCase()) ||
-        item.category_name.toLowerCase().includes(search.toLowerCase())
+    const today = new Date().toISOString().split('T')[0]
 
-      if (!matchesSearch) return false
+    return expenses
+      .filter((item) => {
+        const matchesSearch =
+          item.expense_number.toLowerCase().includes(search.toLowerCase()) ||
+          item.description.toLowerCase().includes(search.toLowerCase()) ||
+          item.vendor_name.toLowerCase().includes(search.toLowerCase()) ||
+          item.category_name.toLowerCase().includes(search.toLowerCase())
 
-      if (categoryFilter !== 'ALL' && item.category_id !== categoryFilter) return false
-      if (paymentStatusFilter !== 'ALL' && item.payment_status !== paymentStatusFilter) return false
-      if (sourceFilter !== 'ALL' && item.source !== sourceFilter) return false
+        if (!matchesSearch) return false
 
-      return true
-    })
-  }, [expenses, search, categoryFilter, paymentStatusFilter, sourceFilter])
+        if (categoryFilter !== 'ALL' && item.category_id !== categoryFilter) return false
+        if (paymentStatusFilter !== 'ALL' && item.payment_status !== paymentStatusFilter) return false
+        if (sourceFilter !== 'ALL' && item.source !== sourceFilter) return false
+
+        // Date Preset filter
+        if (datePreset === 'TODAY' && item.occurred_date !== today) return false
+        if (datePreset === 'THIS_MONTH') {
+          const itemMonth = item.occurred_date.substring(0, 7)
+          const currentMonth = today.substring(0, 7)
+          if (itemMonth !== currentMonth) return false
+        }
+
+        return true
+      })
+      .sort((a, b) => {
+        let modifier = sortOrder === 'asc' ? 1 : -1
+        if (sortField === 'date') return a.occurred_date.localeCompare(b.occurred_date) * modifier
+        if (sortField === 'amount') return (a.amount - b.amount) * modifier
+        if (sortField === 'number') return a.expense_number.localeCompare(b.expense_number) * modifier
+        if (sortField === 'category') return a.category_name.localeCompare(b.category_name) * modifier
+        return 0
+      })
+  }, [expenses, search, categoryFilter, paymentStatusFilter, sourceFilter, datePreset, sortField, sortOrder])
+
+  // Pagination calculation
+  const totalPages = Math.ceil(filteredExpenses.length / pageSize) || 1
+  const paginatedExpenses = React.useMemo(() => {
+    const start = (currentPage - 1) * pageSize
+    return filteredExpenses.slice(start, start + pageSize)
+  }, [filteredExpenses, currentPage, pageSize])
 
   // Summary Metrics calculation
   const metrics = React.useMemo(() => {
@@ -207,6 +311,48 @@ export default function ExpensesPage() {
     }
   }, [expenses])
 
+  // Filtered total sum
+  const filteredSum = React.useMemo(() => {
+    return filteredExpenses.reduce((acc, curr) => acc + curr.amount, 0)
+  }, [filteredExpenses])
+
+  // Bulk Selection Handlers
+  const isAllSelected = paginatedExpenses.length > 0 && paginatedExpenses.every((e) => selectedIds.includes(e.id))
+  
+  const toggleSelectAll = () => {
+    if (isAllSelected) {
+      setSelectedIds([])
+    } else {
+      setSelectedIds(paginatedExpenses.map((e) => e.id))
+    }
+  }
+
+  const toggleSelectRow = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    )
+  }
+
+  const handleBulkMarkAsPaid = () => {
+    setExpenses((prev) =>
+      prev.map((item) => (selectedIds.includes(item.id) ? { ...item, payment_status: 'paid' as const } : item))
+    )
+    setSelectedIds([])
+  }
+
+  const handleBulkVoid = () => {
+    if (confirm(`Are you sure you want to void ${selectedIds.length} selected expenses?`)) {
+      setExpenses((prev) => prev.filter((item) => !selectedIds.includes(item.id)))
+      setSelectedIds([])
+    }
+  }
+
+  const handleBulkExport = () => {
+    const selectedRecords = expenses.filter((e) => selectedIds.includes(e.id))
+    alert(`Exporting ${selectedRecords.length} selected expenses to CSV...`)
+  }
+
   const scopeLabel = React.useMemo(() => {
     if (scope.mode === 'portfolio') return 'Portfolio Scope (All Projects)'
     if (scope.mode === 'project') return `Project Scope: ${scope.projectName}`
@@ -221,8 +367,17 @@ export default function ExpensesPage() {
     }).format(val)
   }
 
+  const renderSortIcon = (field: SortField) => {
+    if (sortField !== field) return <ArrowUpDown className="size-3 text-muted-foreground/60 ml-1 inline" />
+    return sortOrder === 'asc' ? (
+      <ArrowUp className="size-3 text-emerald-500 ml-1 inline" />
+    ) : (
+      <ArrowDown className="size-3 text-emerald-500 ml-1 inline" />
+    )
+  }
+
   return (
-    <div className="flex flex-col gap-4 w-full max-w-full">
+    <div className="flex flex-col gap-4 w-full max-w-full relative pb-12">
       {/* Page Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-3.5">
         <div className="flex items-center gap-3">
@@ -261,7 +416,7 @@ export default function ExpensesPage() {
         </div>
       </div>
 
-      {/* KPI Cards Grid using standard Project KpiCard */}
+      {/* KPI Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <KpiCard
           title="Total Expenses"
@@ -302,8 +457,8 @@ export default function ExpensesPage() {
 
       {/* Filter & Toolbar */}
       <div className="flex flex-col sm:flex-row gap-2.5 items-center justify-between border border-border/80 p-2.5 rounded-lg bg-card/40">
-        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto flex-1 items-center">
-          <div className="relative w-full sm:w-72">
+        <div className="flex flex-wrap gap-2 w-full sm:w-auto flex-1 items-center">
+          <div className="relative w-full sm:w-64">
             <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
             <Input
               placeholder="Search expenses, vendors, number..."
@@ -314,7 +469,7 @@ export default function ExpensesPage() {
           </div>
 
           <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-            <SelectTrigger className="h-9 text-xs w-full sm:w-44">
+            <SelectTrigger className="h-9 text-xs w-full sm:w-40">
               <SelectValue placeholder="All Categories" />
             </SelectTrigger>
             <SelectContent>
@@ -327,8 +482,20 @@ export default function ExpensesPage() {
             </SelectContent>
           </Select>
 
-          <Select value={sourceFilter} onValueChange={setSourceFilter}>
+          <Select value={datePreset} onValueChange={setDatePreset}>
             <SelectTrigger className="h-9 text-xs w-full sm:w-36">
+              <Calendar className="size-3.5 mr-1 text-muted-foreground" />
+              <SelectValue placeholder="All Dates" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL">All Dates</SelectItem>
+              <SelectItem value="TODAY">Today</SelectItem>
+              <SelectItem value="THIS_MONTH">This Month</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Select value={sourceFilter} onValueChange={setSourceFilter}>
+            <SelectTrigger className="h-9 text-xs w-full sm:w-32">
               <SelectValue placeholder="All Sources" />
             </SelectTrigger>
             <SelectContent>
@@ -350,125 +517,299 @@ export default function ExpensesPage() {
         </Tabs>
       </div>
 
+      {/* Filter Summary Banner */}
+      <div className="flex items-center justify-between text-xs px-1 text-muted-foreground font-medium">
+        <div>
+          Showing <span className="text-foreground font-semibold">{filteredExpenses.length}</span> of {expenses.length} records
+          {filteredExpenses.length !== expenses.length && (
+            <span> • Filtered Total: <span className="font-mono text-emerald-600 dark:text-emerald-400 font-semibold">{formatCurrency(filteredSum)}</span></span>
+          )}
+        </div>
+        {selectedIds.length > 0 && (
+          <span className="text-emerald-600 font-semibold text-xs">
+            {selectedIds.length} items checked
+          </span>
+        )}
+      </div>
+
       {/* Main Expense Table */}
       <div className="border rounded-lg overflow-hidden bg-card shadow-2xs">
         <Table>
           <TableHeader className="bg-muted/40">
             <TableRow className="hover:bg-transparent">
-              <TableHead className="text-xs font-semibold h-10 w-[110px]">Expense #</TableHead>
-              <TableHead className="text-xs font-semibold h-10">Date</TableHead>
-              <TableHead className="text-xs font-semibold h-10">Category</TableHead>
+              <TableHead className="w-[40px] px-3">
+                <input
+                  type="checkbox"
+                  checked={isAllSelected}
+                  onChange={toggleSelectAll}
+                  className="size-4 rounded border-border text-emerald-600 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
+                  title="Select All"
+                />
+              </TableHead>
+              <TableHead
+                className="text-xs font-semibold h-10 w-[110px] cursor-pointer select-none"
+                onClick={() => toggleSort('number')}
+              >
+                Expense # {renderSortIcon('number')}
+              </TableHead>
+              <TableHead
+                className="text-xs font-semibold h-10 cursor-pointer select-none"
+                onClick={() => toggleSort('date')}
+              >
+                Date {renderSortIcon('date')}
+              </TableHead>
+              <TableHead
+                className="text-xs font-semibold h-10 cursor-pointer select-none"
+                onClick={() => toggleSort('category')}
+              >
+                Category {renderSortIcon('category')}
+              </TableHead>
               <TableHead className="text-xs font-semibold h-10">Description / Payee</TableHead>
               <TableHead className="text-xs font-semibold h-10">Channel</TableHead>
-              <TableHead className="text-xs font-semibold h-10 text-right">Amount (₹)</TableHead>
+              <TableHead
+                className="text-xs font-semibold h-10 text-right cursor-pointer select-none"
+                onClick={() => toggleSort('amount')}
+              >
+                Amount (₹) {renderSortIcon('amount')}
+              </TableHead>
               <TableHead className="text-xs font-semibold h-10 text-center">Status</TableHead>
               <TableHead className="text-xs font-semibold h-10 text-right w-[60px]">Action</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filteredExpenses.length === 0 ? (
+            {paginatedExpenses.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="h-32 text-center text-xs text-muted-foreground">
-                  No expense records match your search query.
+                <TableCell colSpan={9} className="h-32 text-center text-xs text-muted-foreground">
+                  No expense records match your search or filter criteria.
                 </TableCell>
               </TableRow>
             ) : (
-              filteredExpenses.map((row) => (
-                <TableRow
-                  key={row.id}
-                  className="hover:bg-muted/30 cursor-pointer transition-colors"
-                  onClick={() => {
-                    setSelectedExpense(row)
-                    setSheetOpen(true)
-                  }}
-                >
-                  <TableCell className="font-mono text-xs font-semibold text-foreground">
-                    {row.expense_number}
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
-                    {row.occurred_date}
-                  </TableCell>
-                  <TableCell className="text-xs font-medium">
-                    <Badge variant="outline" className="font-normal text-[11px] bg-background">
-                      {row.category_name}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-xs">
-                    <div className="font-medium text-foreground truncate max-w-[220px]">
-                      {row.description}
-                    </div>
-                    <div className="text-[11px] text-muted-foreground truncate">
-                      {row.vendor_name}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-xs">
-                    {row.source === 'whatsapp' ? (
-                      <Badge className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20 text-[10px] gap-1 font-normal">
-                        <MessageSquare className="size-3" />
-                        WhatsApp
+              paginatedExpenses.map((row) => {
+                const isSelected = selectedIds.includes(row.id)
+                return (
+                  <TableRow
+                    key={row.id}
+                    className={`hover:bg-muted/40 cursor-pointer transition-colors ${isSelected ? 'bg-emerald-500/5' : ''}`}
+                    onClick={() => {
+                      setSelectedExpense(row)
+                      setSheetOpen(true)
+                    }}
+                  >
+                    <TableCell className="px-3" onClick={(e) => toggleSelectRow(row.id, e)}>
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => {}}
+                        className="size-4 rounded border-border text-emerald-600 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
+                      />
+                    </TableCell>
+                    <TableCell className="font-mono text-xs font-semibold text-foreground">
+                      {row.expense_number}
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                      {row.occurred_date}
+                    </TableCell>
+                    <TableCell className="text-xs font-medium">
+                      <Badge variant="outline" className="font-normal text-[11px] bg-background">
+                        {row.category_name}
                       </Badge>
-                    ) : (
-                      <Badge className="bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 border-indigo-500/20 text-[10px] gap-1 font-normal">
-                        <Laptop className="size-3" />
-                        Web
-                      </Badge>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-xs font-mono font-bold text-right tabular-nums text-foreground">
-                    {formatCurrency(row.amount)}
-                  </TableCell>
-                  <TableCell className="text-center">
-                    <Badge
-                      className={
-                        row.payment_status === 'paid'
-                          ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[10px] font-semibold'
+                    </TableCell>
+                    <TableCell className="text-xs">
+                      <div className="font-medium text-foreground truncate max-w-[200px] flex items-center gap-1.5">
+                        {row.description}
+                        {row.receipt_url && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setPreviewReceiptUrl(row.receipt_url || null)
+                            }}
+                            className="text-muted-foreground hover:text-emerald-600"
+                            title="View Receipt"
+                          >
+                            <ImageIcon className="size-3.5" />
+                          </button>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground truncate">
+                        {row.vendor_name}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-xs">
+                      {row.source === 'whatsapp' ? (
+                        <Badge className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20 text-[10px] gap-1 font-normal">
+                          <MessageSquare className="size-3" />
+                          WhatsApp
+                        </Badge>
+                      ) : (
+                        <Badge className="bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 border-indigo-500/20 text-[10px] gap-1 font-normal">
+                          <Laptop className="size-3" />
+                          Web
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-xs font-mono font-bold text-right tabular-nums text-foreground">
+                      {formatCurrency(row.amount)}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <Badge
+                        className={
+                          row.payment_status === 'paid'
+                            ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[10px] font-semibold'
+                            : row.payment_status === 'partially_paid'
+                            ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 text-[10px] font-semibold'
+                            : 'bg-rose-500/15 text-rose-700 dark:text-rose-300 text-[10px] font-semibold'
+                        }
+                      >
+                        {row.payment_status === 'paid'
+                          ? 'Paid'
                           : row.payment_status === 'partially_paid'
-                          ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 text-[10px] font-semibold'
-                          : 'bg-rose-500/15 text-rose-700 dark:text-rose-300 text-[10px] font-semibold'
-                      }
-                    >
-                      {row.payment_status === 'paid'
-                        ? 'Paid'
-                        : row.payment_status === 'partially_paid'
-                        ? 'Partial'
-                        : 'Unpaid'}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon" className="size-7">
-                          <MoreVertical className="size-4 text-muted-foreground" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="text-xs">
-                        <DropdownMenuItem
-                          onClick={() => {
-                            setSelectedExpense(row)
-                            setSheetOpen(true)
-                          }}
-                        >
-                          <Eye className="size-3.5 mr-1.5" /> View Details
-                        </DropdownMenuItem>
-                        {row.payment_status !== 'paid' && (
+                          ? 'Partial'
+                          : 'Unpaid'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="size-7">
+                            <MoreVertical className="size-4 text-muted-foreground" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="text-xs">
                           <DropdownMenuItem
                             onClick={() => {
                               setSelectedExpense(row)
                               setSheetOpen(true)
                             }}
                           >
-                            <DollarSign className="size-3.5 mr-1.5 text-emerald-500" /> Record Settlement
+                            <Eye className="size-3.5 mr-1.5" /> View Details
                           </DropdownMenuItem>
-                        )}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                </TableRow>
-              ))
+                          {row.payment_status !== 'paid' && (
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setSelectedExpense(row)
+                                setSheetOpen(true)
+                              }}
+                            >
+                              <DollarSign className="size-3.5 mr-1.5 text-emerald-500" /> Record Settlement
+                            </DropdownMenuItem>
+                          )}
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            className="text-rose-600"
+                            onClick={() => {
+                              if (confirm(`Void expense ${row.expense_number}?`)) {
+                                setExpenses((prev) => prev.filter((e) => e.id !== row.id))
+                              }
+                            }}
+                          >
+                            <Trash2 className="size-3.5 mr-1.5" /> Void Expense
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                )
+              })
             )}
           </TableBody>
         </Table>
+
+        {/* Pagination Bar */}
+        <div className="flex items-center justify-between px-3 py-2 border-t bg-muted/20 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">Rows per page:</span>
+            <Select value={pageSize.toString()} onValueChange={(val) => setPageSize(Number(val))}>
+              <SelectTrigger className="h-7 text-xs w-16">
+                <SelectValue placeholder="10" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="5">5</SelectItem>
+                <SelectItem value="10">10</SelectItem>
+                <SelectItem value="25">25</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <span className="text-muted-foreground font-mono">
+              Page {currentPage} of {totalPages}
+            </span>
+            <div className="flex gap-1">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 size-7 p-0"
+                disabled={currentPage <= 1}
+                onClick={() => setCurrentPage((p) => p - 1)}
+              >
+                <ChevronLeft className="size-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 size-7 p-0"
+                disabled={currentPage >= totalPages}
+                onClick={() => setCurrentPage((p) => p + 1)}
+              >
+                <ChevronRight className="size-4" />
+              </Button>
+            </div>
+          </div>
+        </div>
       </div>
+
+      {/* Floating Bulk Action Bar */}
+      <BulkActionBar selectedCount={selectedIds.length} onClear={() => setSelectedIds([])}>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 text-xs gap-1.5 font-semibold text-emerald-600 border-emerald-500/40 hover:bg-emerald-500/10"
+          onClick={handleBulkMarkAsPaid}
+        >
+          <CheckCircle2 className="size-3.5" />
+          Mark as Paid
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 text-xs gap-1.5 font-semibold"
+          onClick={handleBulkExport}
+        >
+          <Download className="size-3.5" />
+          Export Selected
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 text-xs gap-1.5 font-semibold text-rose-600 border-rose-500/40 hover:bg-rose-500/10"
+          onClick={handleBulkVoid}
+        >
+          <Trash2 className="size-3.5" />
+          Void Selected
+        </Button>
+      </BulkActionBar>
+
+      {/* Receipt Image Lightbox Dialog */}
+      <Dialog open={!!previewReceiptUrl} onOpenChange={() => setPreviewReceiptUrl(null)}>
+        <DialogContent className="sm:max-w-[500px] p-2">
+          <DialogHeader className="px-3 pt-2">
+            <DialogTitle className="text-sm font-semibold flex items-center gap-1.5">
+              <ImageIcon className="size-4 text-emerald-500" />
+              Receipt / Invoice Attachment
+            </DialogTitle>
+          </DialogHeader>
+          {previewReceiptUrl && (
+            <div className="p-2 flex items-center justify-center bg-black/90 rounded-md overflow-hidden">
+              <img
+                src={previewReceiptUrl}
+                alt="Receipt Attachment"
+                className="max-h-[400px] w-auto object-contain rounded"
+              />
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Dialogs & Sheets */}
       <RecordExpenseDialog
