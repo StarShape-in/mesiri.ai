@@ -12,7 +12,10 @@ import {
   Activity,
   ScrollText,
   Cpu,
-  GitBranch
+  GitBranch,
+  Tags,
+  ListChecks,
+  FlaskConical
 } from 'lucide-react';
 import { api } from './api';
 import { RequireAuth } from './AuthContext';
@@ -22,6 +25,9 @@ import SettingsPage from './Settings';
 import PlatformUsers from './PlatformUsers';
 import Providers from './Providers';
 import SystemGraph from './SystemGraph';
+import SemanticTypes from './SemanticTypes';
+import Workflows from './Workflows';
+import TestMessage from './TestMessage';
 import OrganizationDetail from './OrganizationDetail';
 
 const Sidebar = () => (
@@ -53,6 +59,18 @@ const Sidebar = () => (
       <NavLink to="/system-graph" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
         <GitBranch size={16} />
         System Graph
+      </NavLink>
+      <NavLink to="/semantic-types" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+        <Tags size={16} />
+        Semantic Types
+      </NavLink>
+      <NavLink to="/workflows" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+        <ListChecks size={16} />
+        Workflows
+      </NavLink>
+      <NavLink to="/test-message" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+        <FlaskConical size={16} />
+        Test Message
       </NavLink>
       <NavLink to="/users" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
         <Users size={16} />
@@ -304,6 +322,9 @@ function AppLayout() {
             <Route path="/logs" element={<Logs />} />
             <Route path="/providers" element={<Providers />} />
             <Route path="/system-graph" element={<SystemGraph />} />
+            <Route path="/semantic-types" element={<SemanticTypes />} />
+            <Route path="/workflows" element={<Workflows />} />
+            <Route path="/test-message" element={<TestMessage />} />
             <Route path="/users" element={<PlatformUsers />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<Dashboard />} />

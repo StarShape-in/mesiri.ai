@@ -113,6 +113,7 @@ export default function ProjectDetails() {
     mutationFn: () => archiveProject(id!),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['projects-list'] })
+      queryClient.invalidateQueries({ queryKey: ['scope-projects'] })
       navigate('/projects')
     },
     onError: (err: any) => {
