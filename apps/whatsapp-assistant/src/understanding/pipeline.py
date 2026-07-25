@@ -281,7 +281,17 @@ class UnderstandingPipeline:
             result.overall_confidence = ConfidenceLevel.UNUSABLE
             result.warnings.append("image not interpretable")
             return
-        source = vision.description or str(vision.raw_fields)
+        # vision.raw_fields is Gemini's own structured read of the document
+        # (amount, vendor, ...) -- description is a *short* prose summary
+        # that does not reliably restate every field in words (a receipt
+        # description like "Restaurant bill for tea and toast" never
+        # mentions the total), so extraction must see raw_fields directly
+        # rather than only description, or a real numeric field like amount
+        # is silently lost between the vision call and the extraction call.
+        source = vision.description or ""
+        if vision.raw_fields:
+            details = "; ".join(f"{k}: {v}" for k, v in vision.raw_fields.items())
+            source = f"{source} ({details})" if source else details
         extraction = await self._extraction.extract(
             source,
             semantic_hint=semantic_hint,
