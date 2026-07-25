@@ -91,6 +91,16 @@ class IdentityProjectionService:
                 try:
                     self._project_user(conn, row["id"])
                     report.users += 1
+                    # _project_user writes an external_identities row for
+                    # exactly the users whose whatsapp_number has digits (see
+                    # its `if digits:` branch), so counting that condition
+                    # here matches what was actually written without
+                    # threading a return value back through project_one.
+                    # Left uncounted, this field read 0 forever, which is
+                    # actively misleading on the Sync Health page -- it looks
+                    # like no WhatsApp numbers are linked at all.
+                    if _digits(row["whatsapp_number"]):
+                        report.external_identities += 1
                 except Exception as exc:  # noqa: BLE001
                     report.errors.append(f"user {row['id']}: {exc}")
 
