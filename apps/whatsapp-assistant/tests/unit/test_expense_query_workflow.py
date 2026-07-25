@@ -85,3 +85,54 @@ def test_missing_expense_results_defaults_to_zero_count():
     state: WorkflowGraphState = {"collected_fields": {}}
     result = generate_expense_query_reply(state)
     assert "No expenses" in result["pending_prompt"]
+
+
+def test_missing_receipts_nudge_lists_the_unreceipted_expenses():
+    state: WorkflowGraphState = {
+        "collected_fields": {
+            "missing_receipts": True,
+            "expense_results": {
+                "total": "1200.00",
+                "count": 2,
+                "date_range_label": "this month",
+                "items": [
+                    {"amount": "700.00", "description": "diesel refill", "occurred_date": "2026-07-25"},
+                    {"amount": "500.00", "description": "cement bags", "occurred_date": "2026-07-20"},
+                ],
+            },
+        }
+    }
+    result = generate_expense_query_reply(state)
+    prompt = result["pending_prompt"]
+    assert "Missing receipts" in prompt
+    assert "2 expense(s)" in prompt
+    assert "diesel refill" in prompt
+    assert "cement bags" in prompt
+    # Not the total-based phrasing the regular query uses.
+    assert "Total:" not in prompt
+
+
+def test_missing_receipts_nudge_with_none_found_is_a_celebratory_reply():
+    state: WorkflowGraphState = {
+        "collected_fields": {
+            "missing_receipts": True,
+            "expense_results": {"total": "0", "count": 0, "date_range_label": "this month", "items": []},
+        }
+    }
+    result = generate_expense_query_reply(state)
+    prompt = result["pending_prompt"]
+    assert "No missing receipts" in prompt
+    assert "this month" in prompt
+
+
+def test_missing_receipts_flag_false_uses_the_regular_reply():
+    """`missing_receipts` is only ever `true` or absent (see the extraction
+    prompt) -- a falsy value must not accidentally trigger the nudge phrasing."""
+    state: WorkflowGraphState = {
+        "collected_fields": {
+            "missing_receipts": False,
+            "expense_results": {"total": "700.00", "count": 1, "date_range_label": "today", "items": []},
+        }
+    }
+    result = generate_expense_query_reply(state)
+    assert "Total:" in result["pending_prompt"]

@@ -46,11 +46,13 @@ class ExpenseQueryService:
         start_date: datetime.date,
         end_date: datetime.date,
         category_name: str | None = None,
+        missing_receipts_only: bool = False,
     ) -> list[Expense]:
         """Confirmed expenses in [start_date, end_date], scoped to the
         caller's current project/site. `category_name` that doesn't resolve
         to a real active category returns an empty list (a named-but-wrong
-        category means "no expenses match", not "ignore the filter")."""
+        category means "no expenses match", not "ignore the filter").
+        `missing_receipts_only` is Slice 6's missing-receipt nudge."""
         from mesiri.infrastructure.postgres.repositories.expenses import (
             PostgresExpenseCategoryRepository,
             PostgresExpenseRepository,
@@ -74,6 +76,7 @@ class ExpenseQueryService:
                 start_date=start_date,
                 end_date=end_date,
                 category_id=category_id,
+                without_attachment=missing_receipts_only,
             )
 
     @staticmethod

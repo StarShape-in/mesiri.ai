@@ -1,6 +1,6 @@
 # Finance Module — Domain Design & LangGraph Workflow Roadmap
 
-**Status:** In progress. Slice 0 (money wiring), Slice 1 (LangGraph slot-filling spine), Slice 2 (expense & balance queries), Slice 3 (transfers), Slice 4 (vendor/payee), Slice 5 (petty cash), the account-admin portion of Slice 6 (create/rename/deactivate accounts), and the receipt-capture portion of Slice 6 (image-purpose picker + expense attachment write, done out of order — see notes below) are done as of 2026-07-25. Only Slice 6's missing-receipt-nudge portion remains (V1); Slices 9–12 + dashboard are V2, explicitly deferred.
+**Status:** In progress. Slices 0–6 are all done as of 2026-07-25 (Slice 6 fully — account-admin and receipt-capture portions done out of order, missing-receipt-nudge portion done last — see notes below). Only Slices 7–8 remain (V1); Slices 9–12 + dashboard are V2, explicitly deferred.
 
 **Out-of-order note:** Slice 6 as originally ticketed ([STA-148](https://linear.app/starshape-pvt/issue/STA-148)) bundled two unrelated things — account admin, and receipt/attachment capture + missing-receipt nudges. Only account admin was built now, jumping ahead of Slices 2–5, because it was blocking realistic multi-account testing (every org only ever had the one auto-bootstrapped "Site Cash" account otherwise). STA-148 was split: account admin is done; the receipt/attachment portion is tracked as a new follow-up ticket, not yet started.
 **Author:** Written and approved 2026-07-25 (Linear epics [STA-140](https://linear.app/starshape-pvt/issue/STA-140) / [STA-141](https://linear.app/starshape-pvt/issue/STA-141), sub-issues STA-142..154). Re-read before extending — the design below reflects what actually shipped in Slices 0–1; verify against the live code before assuming later slices are still exactly as described.
@@ -161,9 +161,21 @@ Built exactly as a convenience shape over Slice 3's transfer, per the plan and L
 
 Tests: `test_petty_cash_nodes.py` (prefill-and-ask for both directions, unresolved-recipient still lets the other leg resolve, build_draft strips plumbing fields including `direction`), `test_petty_cash_graph.py` (real LangGraph — one-candidate auto-fill and multi-candidate ask/answer/confirm, for both issue and return), `test_canonicalization.py` (issue/return event-type split, missing-amount/missing-recipient clarification, missing-direction unrecognized), `test_petty_cash_recipient_resolver.py` (real DB — auto-creates exactly once, second issuance reuses it, unrecognized name resolves to `None`).
 
-## Slice 6 (missing-receipt-nudge portion) and Slices 7–8 (V1, not yet started)
+## Slice 6 (missing-receipt-nudge portion) ([STA-159](https://linear.app/starshape-pvt/issue/STA-159)) — DONE
 
-Missing-receipt nudge ("you have 3 expenses without receipts", [STA-159](https://linear.app/starshape-pvt/issue/STA-159), narrowed now that receipt capture itself is done — see above), edit/cancel/reverse ([STA-149](https://linear.app/starshape-pvt/issue/STA-149)), duplicate detection ([STA-150](https://linear.app/starshape-pvt/issue/STA-150)).
+"You have 3 expenses without receipts" now works — built as a variant of Slice 2's existing expense-query workflow, not a new one. **No new `SemanticType`/`WorkflowKey`/graph**: `finance_query`'s field schema gained one optional boolean, `missing_receipts` (both extraction prompts), read when `query_kind="expenses"` — the same `EXPENSE_QUERY_ASKED` → `WorkflowKey.EXPENSE_QUERY` path Slice 2 already routes through, since this is still fundamentally "list some expenses," just filtered differently and phrased differently.
+
+**The filter**: `PostgresExpenseRepository.list_confirmed()` gained `without_attachment: bool = False` — a `NOT EXISTS` subquery against `expense_attachments` (any attachment row at all counts as "has a receipt," regardless of `attachment_type`), not a join+`GROUP BY`. `runtime/expense_query_service.py::list_expenses()` threads it through as `missing_receipts_only`; `runtime/inbound_journey.py::_seed_finance_query_context`'s `EXPENSE_QUERY` branch reads the extracted `missing_receipts` flag and passes it along — same seeding point Slice 2 already uses, no new one.
+
+**The phrasing**: `workflows/expense_query/nodes.py::generate_expense_query_reply` branches on `collected_fields['missing_receipts']` (which reaches the node for free — `WorkflowGraphState.collected_fields` is seeded as `dict(event.fields)`, and `missing_receipts` is already one of those fields) into `_generate_missing_receipts_reply`: a nudge listing which expenses need a receipt, not a spend total, plus a "you're all caught up!" reply when the count is zero — matching the ticket's own framing of a nudge, not a report.
+
+**Deliberately unchanged**: the query is still scoped to the resolved date range (defaults to "this month," exactly like every other Slice 2 query) rather than searching all-time — asking specifically about a wider window still works via the existing `date_range` field ("expenses missing receipts this week").
+
+Tests: `test_finance_query_services.py::test_list_confirmed_filters_by_without_attachment` (real DB — a receipted expense is excluded, the other two aren't), `test_expense_query_workflow.py` (nudge phrasing for found/none-found/falsy-flag), `test_canonicalization.py` (`missing_receipts` carries through onto the event, generic fields passthrough).
+
+## Slices 7–8 (V1, not yet started)
+
+Edit/cancel/reverse ([STA-149](https://linear.app/starshape-pvt/issue/STA-149)), duplicate detection ([STA-150](https://linear.app/starshape-pvt/issue/STA-150)).
 
 ## Slices 9–12 + dashboard (V2, deferred)
 

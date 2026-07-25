@@ -81,7 +81,8 @@ _EXTRACTION_PROMPT = (
     'much of a material is currently in stock (e.g. "how much cement is left?", '
     '"current stock of steel") or its movement history '
     '(e.g. "show today\'s cement history"). This is a question, never an update.\n'
-    "- finance_query: query_kind, account_name, category_name, date_range, project_name. "
+    "- finance_query: query_kind, account_name, category_name, date_range, missing_receipts, "
+    "project_name. "
     'query_kind MUST be exactly "balance" or "expenses" -- never any other word. '
     'Use "balance" for questions about how much money/cash is in an account '
     '(e.g. "how much cash do I have?", "balance of Site Cash", "how much money is left?"). '
@@ -92,7 +93,11 @@ _EXTRACTION_PROMPT = (
     '"what did we spend this week?"). category_name is the expense category asked about, '
     'if any (e.g. "diesel", "fuel") -- omit if asking about all expenses. date_range is '
     'exactly one of "today", "this_week", "this_month" if a time period is stated or implied; '
-    "omit if no time period is mentioned. This is always a question, never an update -- "
+    "omit if no time period is mentioned. missing_receipts is `true` when query_kind is "
+    '"expenses" and the question is specifically about which expenses have no receipt/bill '
+    'attached (e.g. "which expenses are missing receipts?", "show expenses without a bill", '
+    '"who hasn\'t uploaded a receipt yet") -- omit entirely otherwise, never set it to false. '
+    "This is always a question, never an update -- "
     "never confuse with expense (which records a NEW expense being reported).\n"
     "- transfer: amount, from_account_name, to_account_name, description, project_name. "
     "Use this type for moving money between two of the organization's own accounts "

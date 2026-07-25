@@ -300,6 +300,19 @@ def test_finance_query_expenses_maps_to_expense_query_asked():
     assert event.fields["date_range"] == "today"
 
 
+def test_finance_query_missing_receipts_flag_is_carried_onto_the_event():
+    """Finance Module Slice 6's missing-receipt nudge: the extraction-side
+    `missing_receipts` boolean flows through untouched, same generic
+    fields-passthrough as any other finance_query field."""
+    understanding = _understanding(
+        semantic_type=SemanticType.FINANCE_QUERY,
+        candidates=[FinanceQueryCandidate(fields={"query_kind": "expenses", "missing_receipts": True})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.EXPENSE_QUERY_ASKED
+    assert event.fields["missing_receipts"] is True
+
+
 def test_finance_query_missing_query_kind_is_unrecognized():
     understanding = _understanding(
         semantic_type=SemanticType.FINANCE_QUERY,

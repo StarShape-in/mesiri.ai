@@ -203,3 +203,27 @@ async def test_list_confirmed_filters_by_project(db: PostgresDatabase, scenario:
         repo = PostgresExpenseRepository(conn)
         results = await repo.list_confirmed(scenario["org_id"], project_id=other_project_id)
     assert results == []
+
+
+async def test_list_confirmed_filters_by_without_attachment(db: PostgresDatabase, scenario: dict):
+    """Finance Module Slice 6's missing-receipt nudge: an expense with any
+    expense_attachments row at all is excluded from the without_attachment
+    filter; the other two (no attachment) are returned."""
+    async with db.transaction() as conn:
+        repo = PostgresExpenseRepository(conn)
+        all_expenses = await repo.list_confirmed(scenario["org_id"])
+        receipted = next(e for e in all_expenses if e.amount == Decimal("700.00"))
+        await conn.execute(
+            sa.text(
+                "INSERT INTO expense_attachments (id, expense_id, media_object_key, "
+                "attachment_type, created_by) VALUES (:id, :expense_id, 'media/x', 'receipt', "
+                ":user_id)"
+            ),
+            {"id": uuid.uuid4(), "expense_id": receipted.id, "user_id": scenario["user_id"]},
+        )
+
+    async with db.transaction() as conn:
+        repo = PostgresExpenseRepository(conn)
+        missing_receipts = await repo.list_confirmed(scenario["org_id"], without_attachment=True)
+    assert len(missing_receipts) == 2
+    assert receipted.id not in {e.id for e in missing_receipts}

@@ -258,10 +258,17 @@ class PostgresExpenseRepository:
         start_date: datetime.date | None = None,
         end_date: datetime.date | None = None,
         category_id: uuid.UUID | None = None,
+        without_attachment: bool = False,
     ) -> list[Expense]:
         """Confirmed (non-voided, non-draft) expenses matching the given
         filters -- read path for Finance Module Slice 2's expense query
-        workflow. All filters are optional and additive (AND'd together)."""
+        workflow. All filters are optional and additive (AND'd together).
+
+        `without_attachment` is Slice 6's missing-receipt nudge: True
+        restricts to expenses with zero `expense_attachments` rows (a NOT
+        EXISTS subquery, not a join+GROUP BY -- an expense with any
+        attachment row at all, of any attachment_type, counts as "has a
+        receipt")."""
         where_clauses = [
             _expenses.c.organization_id == organization_id,
             _expenses.c.workflow_status == "confirmed",
@@ -276,6 +283,12 @@ class PostgresExpenseRepository:
             where_clauses.append(_expenses.c.occurred_date <= end_date)
         if category_id is not None:
             where_clauses.append(_expenses.c.category_id == category_id)
+        if without_attachment:
+            where_clauses.append(
+                ~sa.exists(
+                    sa.select(1).where(_expense_attachments.c.expense_id == _expenses.c.id)
+                )
+            )
 
         stmt = (
             sa.select(_expenses)

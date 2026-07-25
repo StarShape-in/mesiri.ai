@@ -640,6 +640,7 @@ async def _seed_finance_query_context(
         if expense_query_service is None:
             return
         category_name = event.fields.get("category_name")
+        missing_receipts_only = bool(event.fields.get("missing_receipts"))
         start_date, end_date, date_range_label = resolve_date_range(event.fields.get("date_range"))
         expenses = await expense_query_service.list_expenses(
             organization_id=actor.organization_id,
@@ -648,6 +649,7 @@ async def _seed_finance_query_context(
             start_date=start_date,
             end_date=end_date,
             category_name=category_name,
+            missing_receipts_only=missing_receipts_only,
         )
         event.fields["expense_results"] = {
             "total": str(ExpenseQueryService.total(expenses)),
