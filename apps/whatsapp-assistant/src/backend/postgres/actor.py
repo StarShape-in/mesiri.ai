@@ -151,7 +151,14 @@ class PostgresActorReader:
                             "LEFT JOIN organizations o ON o.id = u.organization_id "
                             "WHERE u.whatsapp_number IS NOT NULL "
                             "  AND regexp_replace(u.whatsapp_number, '\\D', '', 'g') = :d "
-                            "  AND u.status = 'active' "
+                            # lower(): the control panel's reactivate wrote
+                            # "Active" (capitalized, the convention
+                            # organizations use) while users are stored
+                            # lowercase, so a case-sensitive match silently
+                            # failed and the sender was told their number
+                            # wasn't recognized. Reactivating someone locked
+                            # them out of WhatsApp entirely.
+                            "  AND lower(u.status) = 'active' "
                             "LIMIT 1"
                         ),
                         {"d": digits},
@@ -224,7 +231,11 @@ class PostgresActorReader:
             role=str(row["role"]),
             organization_id=str(org_id) if org_id is not None else None,
             org_name=row["org_name"],
-            org_active=(row["org_status"] == _ORG_ACTIVE_STATUS)
+            # Case-insensitive for the same reason the user status check
+            # above is: organizations are conventionally "Active" and users
+            # "active", and a writer that picks the wrong convention should
+            # not silently suspend a whole tenant.
+            org_active=(str(row["org_status"]).strip().lower() == _ORG_ACTIVE_STATUS.lower())
             if row["org_status"] is not None
             else False,
             projects=[

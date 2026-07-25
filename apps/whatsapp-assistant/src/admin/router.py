@@ -534,7 +534,13 @@ async def update_organization_user_status(
             detail=f"Invalid status '{body.status}'. Must be one of {sorted(valid_statuses)}",
         )
 
-    normalized_status = body.status.capitalize()
+    # Lowercase, not .capitalize(). Users are stored lowercase ("active");
+    # only organizations use "Active". Writing the capitalized form here
+    # meant the assistant's own lookup (WHERE lower(u.status) = 'active',
+    # previously case-sensitive) missed the row entirely -- so reactivating
+    # someone locked them out of WhatsApp and they were told their number
+    # wasn't recognized.
+    normalized_status = body.status.strip().lower()
     engine = get_engine()
     async with engine.begin() as conn:
         result = await conn.execute(
@@ -550,10 +556,18 @@ async def update_organization_user_status(
             .where(users_table.c.id == user_id, users_table.c.organization_id == org_id)
             .values(status=normalized_status)
         )
+
+    # Outside the transaction: active/inactive is projected into the context
+    # layer, so without this a reactivated user stayed inactive there until
+    # the next reconcile sweep (up to 15 minutes of still being unable to
+    # message).
+    await project_entity("user", user_id)
+
+    async with engine.connect() as conn:
         fetched = await _fetch_org_users(conn, org_id, user_id)
-        if not fetched:
-            raise HTTPException(status_code=404, detail="User not found after update")
-        return fetched[0]
+    if not fetched:
+        raise HTTPException(status_code=404, detail="User not found after update")
+    return fetched[0]
 
 
 # ---------------------------------------------------------------------------

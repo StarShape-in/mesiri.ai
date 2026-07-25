@@ -24,6 +24,17 @@ EntityType = Literal["organization", "user", "project", "site", "membership"]
 WHATSAPP_PROVIDER = "whatsapp"
 
 
+def _status_is(value: object, expected: str) -> bool:
+    """Compare a status column case-insensitively.
+
+    Organizations are conventionally stored "Active" and users "active",
+    and writers have picked the wrong convention before -- the control
+    panel's reactivate wrote "Active" for a user, which a case-sensitive
+    check read as inactive and locked that person out of WhatsApp entirely.
+    """
+    return str(value or "").strip().lower() == expected.lower()
+
+
 def _digits(value: str | None) -> str:
     """Phone numbers as digits only. Mirrors ``_digits`` in backend/postgres/actor.py."""
     return re.sub(r"\D", "", value or "")
@@ -149,7 +160,7 @@ class IdentityProjectionService:
             .one()
         )
         ctx_id = context_organization_id(canonical_id)
-        is_active = row["status"] == "Active"
+        is_active = _status_is(row["status"], "active")
         conn.execute(
             text(
                 """
@@ -183,7 +194,7 @@ class IdentityProjectionService:
             .one()
         )
         ctx_id = context_user_id(canonical_id)
-        is_active = row["status"] == "active"
+        is_active = _status_is(row["status"], "active")
         policy = row["access_policy"] or {}
         # Same standing-bypass rule _project_membership applies, computed here
         # too so a brand-new ADMIN (created with the role already set, before
@@ -259,7 +270,7 @@ class IdentityProjectionService:
         )
         ctx_id = context_project_id(canonical_id)
         org_ctx = context_organization_id(row["organization_id"])
-        is_active = row["status"] == "on_track"
+        is_active = _status_is(row["status"], "on_track")
         conn.execute(
             text(
                 """
@@ -296,7 +307,7 @@ class IdentityProjectionService:
         ctx_id = context_site_id(canonical_id)
         org_ctx = context_organization_id(row["organization_id"])
         proj_ctx = context_project_id(row["project_id"])
-        is_active = row["status"] == "active"
+        is_active = _status_is(row["status"], "active")
         conn.execute(
             text(
                 """

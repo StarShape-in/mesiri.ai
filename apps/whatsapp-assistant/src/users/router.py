@@ -387,7 +387,10 @@ async def update_user_status(
                 users_table.c.id == user_id,
                 users_table.c.organization_id == org_id,
             )
-            .values(status=body.status)
+            # Normalized: user status is stored lowercase, and a caller
+            # sending "Active" would make the assistant's lookup miss the
+            # row and treat that person as an unrecognized number.
+            .values(status=body.status.strip().lower())
         )
 
     async with engine.connect() as conn:
