@@ -13,6 +13,7 @@ from mesiri_contracts.assistant.candidates import (
     InventoryQueryCandidate,
     MaterialUpdateCandidate,
     PettyCashCandidate,
+    ReversalCandidate,
     TransferCandidate,
 )
 from mesiri_contracts.assistant.canonical_event import CanonicalEventType, IntentCompleteness
@@ -409,6 +410,35 @@ def test_petty_cash_missing_direction_is_unrecognized():
     understanding = _understanding(
         semantic_type=SemanticType.PETTY_CASH,
         candidates=[PettyCashCandidate(fields={"amount": 20000, "recipient_name": "Alan"})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.UNRECOGNIZED
+
+
+def test_reversal_expense_maps_to_expense_reversal_requested():
+    understanding = _understanding(
+        semantic_type=SemanticType.REVERSAL,
+        candidates=[ReversalCandidate(fields={"target_kind": "expense"})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.EXPENSE_REVERSAL_REQUESTED
+    assert event.completeness is IntentCompleteness.ACTIONABLE
+
+
+def test_reversal_transfer_maps_to_transfer_reversal_requested():
+    understanding = _understanding(
+        semantic_type=SemanticType.REVERSAL,
+        candidates=[ReversalCandidate(fields={"target_kind": "transfer"})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.TRANSFER_REVERSAL_REQUESTED
+    assert event.completeness is IntentCompleteness.ACTIONABLE
+
+
+def test_reversal_missing_target_kind_is_unrecognized():
+    understanding = _understanding(
+        semantic_type=SemanticType.REVERSAL,
+        candidates=[ReversalCandidate(fields={})],
     )
     event = build_canonical_event(understanding, _context())
     assert event.event_type is CanonicalEventType.UNRECOGNIZED
