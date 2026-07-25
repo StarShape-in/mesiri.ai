@@ -47,3 +47,18 @@ def test_missing_category_id_and_text_has_no_reasons():
     falls back to a default category rather than rejecting (see
     resolution.py's PostgresExpenseCategoryResolver.get_or_create_default)."""
     assert validate(_command(category_id=None, category_text=None)) == []
+
+
+def test_account_id_alone_has_no_reasons():
+    assert validate(_command(account_id="55555555-5555-4555-8555-555555555555")) == []
+
+
+def test_own_pocket_alone_has_no_reasons():
+    assert validate(_command(paid_from_own_pocket=True)) == []
+
+
+def test_account_id_and_own_pocket_together_is_rejected():
+    reasons = validate(
+        _command(account_id="55555555-5555-4555-8555-555555555555", paid_from_own_pocket=True)
+    )
+    assert "cannot select an account and 'paid from own pocket' at the same time" in reasons

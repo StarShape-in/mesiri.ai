@@ -22,4 +22,6 @@ def validate(cmd: RecordExpenseCommand) -> list[str]:
         reasons.append("currency is required")
     if not cmd.project_id.strip():
         reasons.append("project_id is required")
+    if cmd.account_id is not None and cmd.paid_from_own_pocket:
+        reasons.append("cannot select an account and 'paid from own pocket' at the same time")
     return reasons

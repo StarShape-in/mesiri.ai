@@ -5,6 +5,14 @@ boundary convention, mirrors material_execution.py). Every method takes an
 externally-supplied connection — see application/expenses/repository.py's
 docstring for how the REST and WhatsApp/CQRS entry points differ in who
 supplies it and who owns the workflow_instances transition.
+
+When `cmd.account_id` is set, `persist_success` also records the payment by
+composing `PostgresExpensePaymentRepository.record_payment` (same connection,
+same transaction) rather than inlining new ledger SQL here — that repository
+already owns the expense_payments + money_transactions write and the
+payment_status recompute (see infrastructure/postgres/repositories/expenses.py),
+and duplicating it would be worse than the minor capability-boundary bend of
+calling out to another repository.
 """
 
 from __future__ import annotations
@@ -18,6 +26,7 @@ import sqlalchemy as sa
 from backend.postgres.workflow_instance import get_by_id_on_connection, transition_on_connection
 from mesiri.application.expenses.commands import RecordExpenseCommand
 from mesiri.application.expenses.repository import ExpenseExecutionRepository
+from mesiri.infrastructure.postgres.repositories.expenses import PostgresExpensePaymentRepository
 from mesiri_contracts.application.results.execution_result import (
     ExecutionResult,
     ExecutionStatus,
@@ -83,6 +92,11 @@ class PostgresExpenseExecutionRepository(ExpenseExecutionRepository):
             )
 
         expense_id = uuid.uuid4()
+        # 'reimbursable' means the payer covered it personally -- no ledger
+        # entry yet (see commands.py docstring). Naming an account starts as
+        # 'unpaid' too; record_payment below recomputes it to 'paid' once the
+        # payment row lands, same as the REST/manual-payment path already does.
+        initial_payment_status = "reimbursable" if cmd.paid_from_own_pocket else "unpaid"
         await conn.execute(
             sa.text(
                 "INSERT INTO expenses "
@@ -90,8 +104,8 @@ class PostgresExpenseExecutionRepository(ExpenseExecutionRepository):
                 "description, occurred_date, occurred_time, workflow_status, payment_status, "
                 "source, source_message_id, correlation_id, created_by) "
                 "VALUES (:id, :organization_id, :project_id, :site_id, :category_id, :amount, "
-                ":currency, :description, :occurred_date, :occurred_time, 'confirmed', 'unpaid', "
-                ":source, :source_message_id, :correlation_id, :created_by)"
+                ":currency, :description, :occurred_date, :occurred_time, 'confirmed', "
+                ":payment_status, :source, :source_message_id, :correlation_id, :created_by)"
             ),
             {
                 "id": expense_id,
@@ -104,12 +118,24 @@ class PostgresExpenseExecutionRepository(ExpenseExecutionRepository):
                 "description": cmd.description,
                 "occurred_date": cmd.occurred_date,
                 "occurred_time": cmd.occurred_time,
+                "payment_status": initial_payment_status,
                 "source": cmd.source,
                 "source_message_id": cmd.source_message_id,
                 "correlation_id": cmd.correlation_id,
                 "created_by": uuid.UUID(cmd.created_by),
             },
         )
+
+        if cmd.account_id is not None:
+            payments = PostgresExpensePaymentRepository(conn)
+            await payments.record_payment(
+                organization_id=uuid.UUID(cmd.organization_id),
+                expense_id=expense_id,
+                account_id=uuid.UUID(cmd.account_id),
+                amount=cmd.amount,
+                paid_date=cmd.occurred_date,
+                created_by=uuid.UUID(cmd.created_by),
+            )
 
         result = ExecutionResult(
             status=ExecutionStatus.SUCCEEDED,
