@@ -63,3 +63,25 @@ def test_non_numeric_amount_defaults_to_zero_for_validation_to_catch():
     confirmed = _confirmed({"amount": "not a number", "category": "fuel"})
     cmd = build_command(confirmed)
     assert cmd.amount == Decimal("0")
+
+
+def test_missing_account_fields_default_to_unpaid_shape():
+    """Nothing populates account_id/paid_from_own_pocket yet (Finance Module
+    Slice 1 wires the slot-fill that sets them) -- today's drafts must map to
+    the same unpaid-by-default shape as before this field existed."""
+    confirmed = _confirmed({"amount": 100})
+    cmd = build_command(confirmed)
+    assert cmd.account_id is None
+    assert cmd.paid_from_own_pocket is False
+
+
+def test_account_id_is_mapped_when_present():
+    confirmed = _confirmed({"amount": 100, "account_id": "55555555-5555-4555-8555-555555555555"})
+    cmd = build_command(confirmed)
+    assert cmd.account_id == "55555555-5555-4555-8555-555555555555"
+
+
+def test_paid_from_own_pocket_is_mapped_when_present():
+    confirmed = _confirmed({"amount": 100, "paid_from_own_pocket": True})
+    cmd = build_command(confirmed)
+    assert cmd.paid_from_own_pocket is True

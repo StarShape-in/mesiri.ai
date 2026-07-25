@@ -30,6 +30,11 @@ def build_command(confirmed: ConfirmedActionV2) -> RecordExpenseCommand:
     `category_id` is left unset — the draft only ever carries free-text
     `category` collected in conversation, resolved server-side by
     application/expenses/resolution.py before persistence.
+
+    `account_id`/`paid_from_own_pocket` come from the draft's collected
+    fields the same way — nothing populates them yet (Finance Module Slice 1
+    wires the "which account?" slot-fill that sets them), so today they are
+    always absent and the command defaults to payment_status='unpaid'.
     """
     draft = confirmed.draft_action
     fields = draft.fields
@@ -40,6 +45,8 @@ def build_command(confirmed: ConfirmedActionV2) -> RecordExpenseCommand:
         site_id=draft.site_id,
         amount=_decimal(fields.get("amount")),
         category_text=str(fields.get("category", "")).strip() or None,
+        account_id=fields.get("account_id"),
+        paid_from_own_pocket=bool(fields.get("paid_from_own_pocket", False)),
         description=fields.get("description"),
         occurred_date=date.today(),
         source="whatsapp",

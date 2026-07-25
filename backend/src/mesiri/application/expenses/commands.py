@@ -11,6 +11,13 @@ category input at draft time, so it sends `category_text` instead and leaves
 `category_id` unset; application/expenses/resolution.py resolves it before
 persistence, mirroring how Materials resolves material_name/unit into
 material_id/unit_id (see application/materials/resolution.py).
+
+`account_id`/`paid_from_own_pocket` are the paid-from choice (Finance Module
+Slice 0): naming an account records a payment against it; `paid_from_own_pocket`
+means the payer covered it personally (payment_status='reimbursable', no
+ledger entry yet — see infrastructure/postgres/repositories/expense_execution.py);
+leaving both unset means payment_status stays 'unpaid'. Mutually exclusive —
+enforced in validation.py.
 """
 
 from __future__ import annotations
@@ -32,6 +39,8 @@ class RecordExpenseCommand(BaseModel):
 
     category_id: str | None = None
     category_text: str | None = None
+    account_id: str | None = None
+    paid_from_own_pocket: bool = False
     site_id: str | None = None
     currency: str = "INR"
     description: str | None = None
