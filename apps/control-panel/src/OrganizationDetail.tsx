@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
-import { AlertTriangle, ArrowLeft, Cloud, Server, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Cloud, Plus, Server, Trash2, X } from 'lucide-react';
 import { api } from './api';
 import UserAccessEditor, { type OrgProject } from './UserAccessEditor';
+import AddUserDialog from './AddUserDialog';
 
 interface Organization {
   id: string;
@@ -84,6 +85,7 @@ export default function OrganizationDetail() {
   const [error, setError] = useState<string | null>(null);
   const [projects, setProjects] = useState<OrgProject[]>([]);
   const [editingUser, setEditingUser] = useState<OrgUser | null>(null);
+  const [addingUser, setAddingUser] = useState(false);
   const [orgSettings, setOrgSettings] = useState<OrgSettingsPayload | null>(null);
   const [savingSetting, setSavingSetting] = useState<string | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
@@ -312,6 +314,12 @@ export default function OrganizationDetail() {
       </nav>
 
       {tab === 'users' && (
+        <>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 'var(--space-3)' }}>
+          <button className="btn-secondary" onClick={() => setAddingUser(true)}>
+            <Plus size={16} /> Add user
+          </button>
+        </div>
         <div className="table-container">
           <table>
             <thead>
@@ -403,6 +411,7 @@ export default function OrganizationDetail() {
             </tbody>
           </table>
         </div>
+        </>
       )}
 
       {tab === 'activity' && (
@@ -507,6 +516,20 @@ export default function OrganizationDetail() {
             })
           )}
         </div>
+      )}
+
+      {addingUser && id && org && (
+        <AddUserDialog
+          orgId={id}
+          orgName={org.name}
+          onClose={() => setAddingUser(false)}
+          onCreated={() => {
+            api
+              .get<OrgUser[]>(`/admin/organizations/${id}/users`)
+              .then((res) => setUsers(res.data))
+              .catch(() => setError('User added, but the list could not be refreshed.'));
+          }}
+        />
       )}
 
       {editingUser && id && (

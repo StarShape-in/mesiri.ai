@@ -238,6 +238,16 @@ async def test_grants_are_replaced_not_appended():
     assert any("site_members" in s for s in deletes)
 
 
+async def test_a_new_user_starts_with_no_project_access():
+    """DEFAULT_ACCESS_POLICY is what every newly created user gets. It must
+    stay deny-by-default: a person added from the control panel should reach
+    nothing until access is granted (an ADMIN excepted, by role)."""
+    from users.access_service import DEFAULT_ACCESS_POLICY
+
+    assert DEFAULT_ACCESS_POLICY["mode"] == CUSTOM_PROJECTS
+    assert DEFAULT_ACCESS_POLICY["projects"] == []
+
+
 async def test_membership_rows_carry_the_users_role():
     """project_members.role is read when resolving what someone may do
     within a project, so it has to match the user's actual role."""

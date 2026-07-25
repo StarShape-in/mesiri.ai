@@ -18,7 +18,7 @@ from mesiri.domains.organizations.settings import VALID_ROLES
 from mesiri.domains.shared.auth import require_platform_admin
 from mesiri.domains.timeline.responses import TimelineEntriesListResponse
 from mesiri.infrastructure.postgres.repositories.timeline import PostgresTimelineReadRepository
-from users.access_service import AccessPolicy, apply_access_policy
+from users.access_service import DEFAULT_ACCESS_POLICY, AccessPolicy, apply_access_policy
 
 router = APIRouter(prefix="/admin/organizations", tags=["admin"])
 
@@ -693,6 +693,109 @@ async def list_organization_projects(
         )
         for row in project_rows
     ]
+
+
+class OrgUserCreate(BaseModel):
+    full_name: str
+    email: str
+    password: str
+    role: str
+    whatsapp_number: str | None = None
+
+
+@router.post("/{org_id}/users", response_model=OrgUserResponse, status_code=201)
+async def create_organization_user(
+    org_id: uuid.UUID,
+    body: OrgUserCreate,
+    _admin: dict = Depends(require_platform_admin),
+):
+    """Add a person to an existing organization, as a platform admin.
+
+    Previously the only creation path was POST /provision, which makes a
+    whole new organization plus its first admin -- there was no way to add a
+    second person to an org that already existed except by logging into that
+    tenant's own dashboard.
+
+    The new user starts with the same default access policy every user gets
+    ({"mode": "custom_projects", "projects": []}), i.e. no projects until
+    someone grants them -- except an ADMIN, who reaches everything by role
+    (mesiri/authorization/roles.py). Access is then editable via
+    PUT /{org_id}/users/{user_id}/access.
+
+    Projecting into the context layer is what links the WhatsApp number to
+    this person, so an inbound message resolves to them immediately rather
+    than at the next reconcile sweep.
+    """
+    email = body.email.strip().lower()
+    if not email:
+        raise HTTPException(status_code=400, detail="email is required")
+    full_name = body.full_name.strip()
+    if not full_name:
+        raise HTTPException(status_code=400, detail="full_name is required")
+    if not body.password:
+        raise HTTPException(status_code=400, detail="password is required")
+
+    role = body.role.strip().upper()
+    if role not in VALID_ROLES:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid role. Must be one of {sorted(VALID_ROLES)}"
+        )
+
+    whatsapp = (body.whatsapp_number or "").strip() or None
+
+    engine = get_engine()
+    user_id = uuid.uuid4()
+    async with engine.begin() as conn:
+        org_exists = await conn.execute(
+            sa.select(organizations_table.c.id).where(organizations_table.c.id == org_id)
+        )
+        if org_exists.first() is None:
+            raise HTTPException(status_code=404, detail="Organization not found")
+
+        # Email is the login identity and is unique across the whole
+        # platform, not per organization.
+        clash = await conn.execute(
+            sa.select(users_table.c.id).where(users_table.c.email == email)
+        )
+        if clash.first() is not None:
+            raise HTTPException(status_code=409, detail="Email already registered")
+
+        if whatsapp:
+            # The number is the join key for inbound WhatsApp messages; two
+            # users sharing one would make routing ambiguous.
+            wa_clash = await conn.execute(
+                sa.select(users_table.c.id).where(users_table.c.whatsapp_number == whatsapp)
+            )
+            if wa_clash.first() is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="That WhatsApp number is already mapped to another user",
+                )
+
+        await conn.execute(
+            users_table.insert().values(
+                id=user_id,
+                organization_id=org_id,
+                email=email,
+                hashed_password=_hash_password(body.password),
+                full_name=full_name,
+                role=role,
+                whatsapp_number=whatsapp,
+                status="active",
+                access_policy=DEFAULT_ACCESS_POLICY,
+            )
+        )
+
+    # Outside the transaction: writes the external_identities row that maps
+    # the WhatsApp number to this user, plus their membership set.
+    await project_entity("user", user_id)
+    await project_entity("membership", user_id)
+
+    async with engine.connect() as conn:
+        fetched = await _fetch_org_users(conn, org_id, user_id)
+    if not fetched:
+        raise HTTPException(status_code=404, detail="User not found after creation")
+    return fetched[0]
 
 
 class OrgUserProfileUpdate(BaseModel):
