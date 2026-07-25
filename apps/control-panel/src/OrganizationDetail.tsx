@@ -38,7 +38,31 @@ interface TimelineEntry {
   occurred_at: string;
 }
 
-type Tab = 'users' | 'activity';
+interface SettingSpec {
+  key: string;
+  description: string;
+  default: unknown;
+}
+
+interface OrgSettingsPayload {
+  settings: Record<string, unknown>;
+  specs: SettingSpec[];
+  valid_roles: string[];
+}
+
+// Keys the settings tab renders as a role checkbox group. Anything else the
+// backend reports in `specs` is shown read-only rather than guessed at, so a
+// new setting shipped server-side can't silently render as the wrong control.
+const ROLE_LIST_SETTINGS = new Set(['whatsapp_material_create_roles']);
+
+const ROLE_LABELS: Record<string, string> = {
+  ADMIN: 'Admin',
+  PROJECT_MANAGER: 'Project manager',
+  SITE_ENGINEER: 'Site engineer',
+  FINANCE: 'Finance',
+};
+
+type Tab = 'users' | 'activity' | 'settings';
 
 const statusBadgeClass = (status: string) =>
   status === 'active' || status === 'Active' ? 'badge-success' : 'badge-warning';
@@ -57,6 +81,9 @@ export default function OrganizationDetail() {
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
   const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [orgSettings, setOrgSettings] = useState<OrgSettingsPayload | null>(null);
+  const [savingSetting, setSavingSetting] = useState<string | null>(null);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -65,11 +92,13 @@ export default function OrganizationDetail() {
       api.get<Organization>(`/admin/organizations/${id}`),
       api.get<OrgUser[]>(`/admin/organizations/${id}/users`),
       api.get<{ items: TimelineEntry[]; total: number }>(`/admin/organizations/${id}/timeline`),
+      api.get<OrgSettingsPayload>(`/admin/organizations/${id}/settings`),
     ])
-      .then(([orgRes, usersRes, timelineRes]) => {
+      .then(([orgRes, usersRes, timelineRes, settingsRes]) => {
         setOrg(orgRes.data);
         setUsers(usersRes.data);
         setTimeline(timelineRes.data.items);
+        setOrgSettings(settingsRes.data);
       })
       .catch((err) => setError(err.response?.data?.detail || 'Failed to load organization'))
       .finally(() => setLoading(false));
@@ -87,6 +116,30 @@ export default function OrganizationDetail() {
         setDeleting(false);
         setShowDeleteModal(false);
       });
+  };
+
+  const handleToggleSettingRole = (key: string, role: string, checked: boolean) => {
+    if (!id || !orgSettings) return;
+    const current = Array.isArray(orgSettings.settings[key])
+      ? (orgSettings.settings[key] as string[])
+      : [];
+    const next = checked ? [...current, role] : current.filter((r) => r !== role);
+
+    // Optimistic: the checkbox reflects the click immediately, and the catch
+    // below puts the old value back if the save is rejected -- a permission
+    // toggle that appears to have saved but hasn't is worse than a slow one.
+    setOrgSettings({ ...orgSettings, settings: { ...orgSettings.settings, [key]: next } });
+    setSavingSetting(key);
+    setSettingsError(null);
+    api
+      .put(`/admin/organizations/${id}/settings`, { key, value: next })
+      .catch((err) => {
+        setSettingsError(err.response?.data?.detail || 'Failed to save setting');
+        setOrgSettings((prev) =>
+          prev ? { ...prev, settings: { ...prev.settings, [key]: current } } : prev
+        );
+      })
+      .finally(() => setSavingSetting(null));
   };
 
   const handleUpdateUserStatus = (user: OrgUser, newStatus: string) => {
@@ -214,7 +267,7 @@ export default function OrganizationDetail() {
       </div>
 
       <nav style={{ display: 'flex', gap: 'var(--space-2)', marginBottom: 'var(--space-4)', borderBottom: '1px solid var(--border-strong)' }}>
-        {(['users', 'activity'] as Tab[]).map((t) => (
+        {(['users', 'activity', 'settings'] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -229,7 +282,7 @@ export default function OrganizationDetail() {
               cursor: 'pointer',
             }}
           >
-            {t === 'users' ? 'Users & Roles' : 'Activity'}
+            {t === 'users' ? 'Users & Roles' : t === 'activity' ? 'Activity' : 'Settings'}
           </button>
         ))}
       </nav>
@@ -340,6 +393,81 @@ export default function OrganizationDetail() {
               )}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {tab === 'settings' && (
+        <div>
+          {settingsError && (
+            <div className="badge badge-warning" style={{ display: 'block', marginBottom: 'var(--space-3)' }}>
+              {settingsError}
+            </div>
+          )}
+          {!orgSettings || orgSettings.specs.length === 0 ? (
+            <p style={{ color: 'var(--neutral-500)', fontSize: '14px' }}>
+              No configurable settings for this organization.
+            </p>
+          ) : (
+            orgSettings.specs.map((spec) => {
+              const value = orgSettings.settings[spec.key];
+              const selected = Array.isArray(value) ? (value as string[]) : [];
+              return (
+                <div
+                  key={spec.key}
+                  style={{
+                    border: '1px solid var(--border-strong)',
+                    borderRadius: 'var(--radius)',
+                    padding: 'var(--space-4)',
+                    marginBottom: 'var(--space-3)',
+                  }}
+                >
+                  <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '4px' }}>
+                    {spec.key === 'whatsapp_material_create_roles'
+                      ? 'Add materials from WhatsApp'
+                      : spec.key}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: '13px',
+                      color: 'var(--neutral-500)',
+                      marginBottom: 'var(--space-3)',
+                    }}
+                  >
+                    {spec.description}
+                  </div>
+
+                  {ROLE_LIST_SETTINGS.has(spec.key) ? (
+                    <div style={{ display: 'flex', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
+                      {orgSettings.valid_roles.map((role) => (
+                        <label
+                          key={role}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            fontSize: '13px',
+                            cursor: savingSetting === spec.key ? 'wait' : 'pointer',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selected.includes(role)}
+                            disabled={savingSetting === spec.key}
+                            onChange={(e) =>
+                              handleToggleSettingRole(spec.key, role, e.target.checked)
+                            }
+                          />
+                          {ROLE_LABELS[role] || role}
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <code style={{ fontSize: '12px' }}>{JSON.stringify(value)}</code>
+                  )}
+                </div>
+              );
+            })
+          )}
         </div>
       )}
 

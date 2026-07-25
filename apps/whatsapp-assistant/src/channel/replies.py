@@ -236,6 +236,55 @@ def render_material_picker(candidates: list[tuple[str, str]]) -> ReplySpec:
     )
 
 
+def render_material_create_offer(name: str) -> ReplySpec:
+    """The reported material isn't in the catalog and the sender's role is
+    allowed to add one (see the org's whatsapp_material_create_roles setting)
+    -- offer to add it inline instead of dead-ending the report the way
+    render_material_not_found_reply does. Row ids "matnew_yes"/"matnew_no",
+    matched verbatim by resume_pending_report_with_material_create."""
+    return ReplySpec(
+        text=(
+            f'"{name}" isn\'t in your materials catalog yet.\n\n'
+            "Add it and continue with this report?"
+        ),
+        buttons=(ListRow("matnew_yes", "Yes, add it"), ListRow("matnew_no", "No")),
+    )
+
+
+def render_material_create_unit_picker(name: str, units: list[tuple[str, str]]) -> ReplySpec:
+    """Adding `name` to the catalog needs a Stock Unit and the report's own
+    text didn't carry a recognizable one. Row ids "matunit_{unit_id}",
+    matched verbatim by resume_pending_report_with_material_unit_choice.
+
+    A material's Stock Unit is fixed for its lifetime in V1 (no unit
+    conversion), so this is asked once, up front, rather than inferred and
+    silently locked in."""
+    rows = tuple(ListRow(f"matunit_{unit_id}", display) for unit_id, display in units[:10])
+    return ReplySpec(
+        text=f"What unit is {name} measured in?",
+        list_button_label="Choose unit",
+        list_rows=rows,
+    )
+
+
+def render_material_create_declined_reply(name: str) -> str:
+    """The sender declined to add the material. Nudge toward a spelling
+    mistake rather than just closing: a near-miss name ("Fevikol" vs
+    "Fevicol") is the most likely reason a real material didn't match, and
+    adding it under the wrong spelling would fragment the catalog."""
+    return (
+        f'Ok — "{name}" wasn\'t added.\n\n'
+        "If it was a spelling mistake, resend the report with the correct name."
+    )
+
+
+def render_material_created_reply(name: str, unit_display: str) -> str:
+    """Confirms the catalog entry before the held report resumes, so the
+    unit the material is now permanently tracked in is stated explicitly
+    rather than only showing up later in the confirmation's field list."""
+    return f"✅ Added {name} to your catalog, tracked in {unit_display}."
+
+
 def render_material_not_found_reply(name: str) -> str:
     """No catalog material matched at all and the org's catalog is empty --
     distinct from the picker case for the same reason render_no_projects_reply

@@ -84,3 +84,65 @@ class MaterialCatalogQueryService:
         async with self._db.transaction() as conn:
             repo = UnitsOfMeasureRepository(conn)
             return await repo.get_by_id(uuid.UUID(unit_id))
+
+    async def list_units(self) -> list[dict[str, Any]]:
+        """The fixed global units list -- what the unit picker is built from
+        when a brand-new material's Stock Unit can't be inferred from the
+        reported text (see runtime/inbound_journey.py's material-create gate)."""
+        from mesiri.infrastructure.postgres.repositories.materials import (
+            UnitsOfMeasureRepository,
+        )
+
+        async with self._db.transaction() as conn:
+            repo = UnitsOfMeasureRepository(conn)
+            return await repo.list_active()
+
+    async def create_material(
+        self,
+        *,
+        organization_id: str,
+        name: str,
+        unit_id: str,
+        created_by: str,
+    ) -> dict[str, Any] | None:
+        """Add a catalog entry from a WhatsApp report (STA-139).
+
+        The one write on this otherwise read-only service, deliberately kept
+        here rather than in a new module so the material gate has a single
+        catalog collaborator. Mirrors the REST create_material endpoint's
+        rules: the unit must be a real active unit, and an existing entry
+        with the same name wins instead of creating a duplicate (two people
+        reporting the same new material at once must not produce two rows --
+        the name is org-unique in the schema, so this also keeps the insert
+        from raising).
+
+        Returns None when the unit turns out not to be valid; the caller
+        decides what to tell the user.
+        """
+        from mesiri.infrastructure.postgres.repositories.materials import (
+            PostgresMaterialCatalogRepository,
+            UnitsOfMeasureRepository,
+        )
+
+        org = uuid.UUID(organization_id)
+        clean_name = name.strip()
+        async with self._db.transaction() as conn:
+            units_repo = UnitsOfMeasureRepository(conn)
+            unit = await units_repo.get_by_id(uuid.UUID(unit_id))
+            if unit is None or not unit["is_active"]:
+                return None
+
+            repo = PostgresMaterialCatalogRepository(conn)
+            existing = await repo.get_by_name(org, clean_name)
+            if existing is not None:
+                return existing
+
+            return await repo.create(
+                organization_id=org,
+                name=clean_name,
+                default_unit=unit["code"],
+                default_unit_id=unit["id"],
+                category=None,
+                sku=None,
+                created_by=uuid.UUID(created_by),
+            )

@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import delete, insert, select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from mesiri.domains.organizations import settings as org_settings
 from mesiri.domains.shared.auth import require_platform_admin
 from mesiri.domains.timeline.responses import TimelineEntriesListResponse
 from mesiri.infrastructure.postgres.dependency import get_db_conn
@@ -17,6 +18,9 @@ from mesiri.infrastructure.postgres.models.organization import (
     OrganizationStatus,
 )
 from mesiri.infrastructure.postgres.models.user import UserModel
+from mesiri.infrastructure.postgres.repositories.organization_settings import (
+    PostgresOrganizationSettingsRepository,
+)
 from mesiri.infrastructure.postgres.repositories.timeline import PostgresTimelineReadRepository
 
 router = APIRouter(prefix="/admin/organizations", tags=["admin"])
@@ -116,6 +120,73 @@ async def delete_organization(
 
     await conn.execute(delete(UserModel).where(UserModel.organization_id == org_id))
     await conn.execute(delete(OrganizationModel).where(OrganizationModel.id == org_id))
+
+
+# ---------------------------------------------------------------------------
+# Per-organization settings (migration 0364)
+# ---------------------------------------------------------------------------
+# The platform-admin counterpart to /company/settings: the control panel
+# operates on organizations by id and its operator has no `org` claim to read
+# the tenant from, so the org is explicit in the path here. Same repository
+# and same validation module behind both -- only the authorization and how
+# the org is identified differ.
+@router.get("/{org_id}/settings")
+async def get_organization_settings(
+    org_id: uuid.UUID,
+    conn: AsyncConnection = Depends(get_db_conn),
+    _admin: dict = Depends(require_platform_admin),
+):
+    """Every known setting for `org_id`, defaults filled in for anything
+    never configured, plus the spec catalog the control panel renders its
+    form from (so the UI never hardcodes a copy of the setting list)."""
+    result = await conn.execute(select(OrganizationModel.id).where(OrganizationModel.id == org_id))
+    if result.first() is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    repo = PostgresOrganizationSettingsRepository(conn)
+    return {
+        "settings": await repo.get_all(org_id),
+        "specs": [
+            {"key": spec.key, "description": spec.description, "default": spec.default}
+            for spec in org_settings.all_specs()
+        ],
+        "valid_roles": sorted(org_settings.VALID_ROLES),
+    }
+
+
+class OrganizationSettingUpdate(BaseModel):
+    key: str
+    value: object
+
+
+@router.put("/{org_id}/settings")
+async def update_organization_setting(
+    org_id: uuid.UUID,
+    body: OrganizationSettingUpdate,
+    conn: AsyncConnection = Depends(get_db_conn),
+    admin: dict = Depends(require_platform_admin),
+):
+    """Set one setting for `org_id`. Validation lives in
+    domains/organizations/settings.py -- an unknown key or malformed value is
+    rejected here rather than persisted as a row nothing will ever read."""
+    result = await conn.execute(select(OrganizationModel.id).where(OrganizationModel.id == org_id))
+    if result.first() is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    try:
+        canonical = org_settings.validate(body.key, body.value)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    repo = PostgresOrganizationSettingsRepository(conn)
+    user_id = admin.get("sub")
+    await repo.set(
+        org_id,
+        body.key,
+        canonical,
+        updated_by=uuid.UUID(user_id) if user_id else None,
+    )
+    return {"key": body.key, "value": canonical}
 
 
 class OrganizationUserResponse(BaseModel):

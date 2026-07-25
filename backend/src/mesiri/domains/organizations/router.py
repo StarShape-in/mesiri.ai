@@ -6,11 +6,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from mesiri.domains.organizations import settings as org_settings
 from mesiri.domains.shared.auth import require_admin
 from mesiri.infrastructure.postgres.dependency import get_db_conn
 from mesiri.infrastructure.postgres.models.organization import (
     DeploymentType,
     OrganizationStatus,
+)
+from mesiri.infrastructure.postgres.repositories.organization_settings import (
+    PostgresOrganizationSettingsRepository,
 )
 
 router = APIRouter(prefix="/company", tags=["company"])
@@ -208,6 +212,75 @@ async def update_company(
     )
     await conn.execute(query, params)
     return await get_company(admin, conn)
+
+
+# ---------------------------------------------------------------------------
+# Settings — per-tenant tunable rules (migration 0364)
+# ---------------------------------------------------------------------------
+@router.get("/settings")
+async def get_company_settings(
+    admin: dict = Depends(require_admin),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Every known setting for the caller's org, with defaults filled in for
+    anything never configured — so the control panel renders a complete form
+    on first load without special-casing a brand-new tenant.
+
+    `specs` carries the catalog (key + description + default) alongside the
+    live values so the UI doesn't have to hardcode a copy of the setting
+    list that could drift from the backend's.
+    """
+    org_id = admin.get("org")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="Token missing org claim")
+
+    repo = PostgresOrganizationSettingsRepository(conn)
+    values = await repo.get_all(uuid.UUID(org_id))
+    return {
+        "settings": values,
+        "specs": [
+            {"key": spec.key, "description": spec.description, "default": spec.default}
+            for spec in org_settings.all_specs()
+        ],
+        "valid_roles": sorted(org_settings.VALID_ROLES),
+    }
+
+
+class OrganizationSettingUpdate(BaseModel):
+    key: str
+    value: object
+
+
+@router.put("/settings")
+async def update_company_setting(
+    body: OrganizationSettingUpdate,
+    admin: dict = Depends(require_admin),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Set one setting for the caller's own org.
+
+    Validation lives in domains/organizations/settings.py, not here — an
+    unknown key or a malformed value is rejected at this boundary rather
+    than persisted as a row nothing will ever read.
+    """
+    org_id = admin.get("org")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="Token missing org claim")
+
+    try:
+        canonical = org_settings.validate(body.key, body.value)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    repo = PostgresOrganizationSettingsRepository(conn)
+    user_id = admin.get("sub")
+    await repo.set(
+        uuid.UUID(org_id),
+        body.key,
+        canonical,
+        updated_by=uuid.UUID(user_id) if user_id else None,
+    )
+    return {"key": body.key, "value": canonical}
 
 
 @router.get("/summary", response_model=CompanySummaryResponse)

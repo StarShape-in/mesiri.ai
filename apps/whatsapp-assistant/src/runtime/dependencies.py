@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from runtime.expense_category_query import ExpenseCategoryQueryService
     from runtime.inventory_query import MaterialInventoryQueryService
     from runtime.material_catalog_query import MaterialCatalogQueryService
+    from runtime.org_settings_query import OrganizationSettingsQueryService
     from understanding.pipeline import UnderstandingPipeline
     from workflows import WorkflowRuntime
 
@@ -80,6 +81,9 @@ class AppContainer:
     # Read-only catalog/units-of-measure lookups for the material/unit
     # resolution gate. Exposed for the same reason as inventory_query above.
     catalog_query: MaterialCatalogQueryService
+    # Per-org tunable rules (e.g. which roles may add a material to the
+    # catalog from WhatsApp). Exposed for the same reason as catalog_query.
+    org_settings_query: OrganizationSettingsQueryService
     # Read-only expense category names for the extraction call's AI-side
     # category selection. Exposed for the same reason as catalog_query above.
     expense_category_query: ExpenseCategoryQueryService
@@ -142,6 +146,8 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from runtime.inbound_journey import (
         process_inbound_message,
         resume_pending_report_with_material,
+        resume_pending_report_with_material_create,
+        resume_pending_report_with_material_unit_choice,
         resume_pending_report_with_project,
         resume_pending_report_with_site,
         resume_pending_report_with_stock_choice,
@@ -239,6 +245,12 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from runtime.material_catalog_query import MaterialCatalogQueryService
 
     catalog_query = MaterialCatalogQueryService(material_db)
+    # Per-org settings (which roles may add a material from WhatsApp, etc) --
+    # same reasoning and same material_db as catalog_query above. See
+    # runtime/org_settings_query.py.
+    from runtime.org_settings_query import OrganizationSettingsQueryService
+
+    org_settings_query = OrganizationSettingsQueryService(material_db)
     # Read-only expense category names, fed into the extraction call so the
     # AI can pick from the org's real categories -- same reasoning and same
     # material_db as catalog_query above. See runtime/expense_category_query.py.
@@ -515,6 +527,62 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             )
             return
 
+        # A Yes/No tap on the "add this material to the catalog?" offer sent
+        # when a reported name matched nothing and the sender's role is
+        # allowed to create one (STA-139). Checked before the Stock Unit
+        # mismatch resume below -- distinct row-id prefixes, but these two
+        # answer different questions and must stay separately dispatched.
+        material_create_reply = await resume_pending_report_with_material_create(
+            message,
+            ctx.user_id,
+            pending_report_store=pending_report_store,
+            catalog_query=catalog_query,
+            planner=planner,
+            workflow_runtime=workflow_runtime,
+            actor=ctx,
+            inventory_query=inventory_query,
+            message_logger=message_logger,
+        )
+        if material_create_reply is not None:
+            await send_reply_spec(
+                material_create_reply,
+                wa_id,
+                send_text=sender.send_text,
+                send_list=sender.send_list,
+                send_button=sender.send_button,
+            )
+            await message_logger.log_reply(
+                correlation_id=message.correlation_id, reply=material_create_reply.text
+            )
+            return
+
+        # A tap on the unit picker shown when a brand-new material's Stock
+        # Unit couldn't be inferred from the report's own words -- creates
+        # the catalog entry and continues the held report.
+        material_unit_reply = await resume_pending_report_with_material_unit_choice(
+            message,
+            ctx.user_id,
+            pending_report_store=pending_report_store,
+            catalog_query=catalog_query,
+            planner=planner,
+            workflow_runtime=workflow_runtime,
+            actor=ctx,
+            inventory_query=inventory_query,
+            message_logger=message_logger,
+        )
+        if material_unit_reply is not None:
+            await send_reply_spec(
+                material_unit_reply,
+                wa_id,
+                send_text=sender.send_text,
+                send_list=sender.send_list,
+                send_button=sender.send_button,
+            )
+            await message_logger.log_reply(
+                correlation_id=message.correlation_id, reply=material_unit_reply.text
+            )
+            return
+
         # A Yes/No tap on the Stock Unit mismatch clarification -- resumes
         # with unit_id filled in (or tells the sender to resend on "No") and
         # re-runs the project gate before planner/workflow.
@@ -648,6 +716,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             trace_logger=trace_logger,
             inventory_query=inventory_query,
             catalog_query=catalog_query,
+            org_settings_query=org_settings_query,
             expense_category_query=expense_category_query,
             pending_report_store=pending_report_store,
         )
@@ -672,6 +741,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         actor_reader=actor_reader,
         inventory_query=inventory_query,
         catalog_query=catalog_query,
+        org_settings_query=org_settings_query,
         expense_category_query=expense_category_query,
         receipt_renderer=receipt_renderer,
         workflow_runtime=workflow_runtime,

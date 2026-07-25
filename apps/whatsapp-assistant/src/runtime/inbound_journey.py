@@ -22,6 +22,10 @@ from channel.replies import (
     ReplySpec,
     render_clarify_reply,
     render_direct_reply,
+    render_material_create_declined_reply,
+    render_material_create_offer,
+    render_material_create_unit_picker,
+    render_material_created_reply,
     render_material_not_found_reply,
     render_material_picker,
     render_no_projects_reply,
@@ -53,6 +57,7 @@ from runtime.inventory_query import MaterialInventoryQueryService
 from runtime.logging_ports import MessageLogger, TraceLogger
 from runtime.material_catalog_query import MaterialCatalogQueryService
 from runtime.noop_loggers import NoopMessageLogger, NoopTraceLogger
+from runtime.org_settings_query import OrganizationSettingsQueryService
 from runtime.reply_dispatch import send_reply_spec
 from understanding.pipeline import UnderstandingPipeline
 from workflows import (
@@ -178,6 +183,37 @@ _MATERIAL_EVENT_TYPES = frozenset(
     }
 )
 
+# Mirrors domains/organizations/settings.py's constant of the same name --
+# duplicated as a literal rather than imported at module scope so this
+# module keeps its "backend imports stay inside function bodies" shape (see
+# runtime/material_catalog_query.py's deferred imports).
+_WHATSAPP_MATERIAL_CREATE_ROLES = "whatsapp_material_create_roles"
+
+
+async def _may_create_material(
+    canonical_event: CanonicalEventV2,
+    *,
+    actor_role: str | None,
+    org_settings_query: OrganizationSettingsQueryService | None,
+) -> bool:
+    """Whether this sender's role may add a catalog entry from WhatsApp, per
+    the org's own whatsapp_material_create_roles setting (STA-139).
+
+    Denies when there's no settings service wired or no role resolved rather
+    than falling back to the spec default -- an unknown actor must not get a
+    capability the org may not have granted. The service itself already
+    degrades to the default on a lookup failure.
+    """
+    if org_settings_query is None or not actor_role:
+        return False
+    allowed = await org_settings_query.get(
+        organization_id=canonical_event.organization_id,
+        key=_WHATSAPP_MATERIAL_CREATE_ROLES,
+    )
+    from mesiri.domains.organizations.settings import role_allowed
+
+    return role_allowed(actor_role, allowed)
+
 
 async def _run_material_unit_gates(
     canonical_event: CanonicalEventV2,
@@ -185,6 +221,8 @@ async def _run_material_unit_gates(
     catalog_query: MaterialCatalogQueryService,
     pending_report_store: PendingReportStore,
     actor_user_id: str,
+    actor_role: str | None = None,
+    org_settings_query: OrganizationSettingsQueryService | None = None,
 ) -> ReplySpec | None:
     """Resolve material_id/unit_id against materials_catalog/units_of_measure
     before the report can proceed to the project gate or planner.
@@ -209,25 +247,51 @@ async def _run_material_unit_gates(
         if not name:
             return None
         try:
-            candidates = await catalog_query.find_materials(
+            matches = await catalog_query.find_materials(
                 organization_id=canonical_event.organization_id, name=name
             )
-            if not candidates:
-                candidates = await catalog_query.list_active_materials(
-                    organization_id=canonical_event.organization_id
-                )
         except Exception:
             _log.exception(
                 "material_gate.lookup_failed correlation_id=%s", canonical_event.correlation_id
             )
             return None
 
-        if len(candidates) == 1:
-            material = candidates[0]
+        if len(matches) == 1:
+            material = matches[0]
             canonical_event.fields["material_id"] = str(material["id"])
+        elif len(matches) > 1:
+            await pending_report_store.set_pending(user_id=actor_user_id, event=canonical_event)
+            return render_material_picker([(str(c["id"]), c["name"]) for c in matches])
         else:
+            # The reported name matched nothing. Offering to add it is
+            # checked BEFORE the whole-catalog fallback picker below: once
+            # the sender is allowed to create, "add Fevicol" is a far better
+            # answer than a list of 20 unrelated materials to pick the wrong
+            # one from.
+            if await _may_create_material(
+                canonical_event, actor_role=actor_role, org_settings_query=org_settings_query
+            ):
+                await pending_report_store.set_pending(
+                    user_id=actor_user_id, event=canonical_event
+                )
+                return render_material_create_offer(str(name))
+
+            # Not allowed to create -- keep the pre-STA-139 behaviour: offer
+            # the org's active catalog so there's still something to pick
+            # (the reported name may just be phrased differently), and only
+            # dead-end when the catalog is genuinely empty.
+            try:
+                candidates = await catalog_query.list_active_materials(
+                    organization_id=canonical_event.organization_id
+                )
+            except Exception:
+                _log.exception(
+                    "material_gate.lookup_failed correlation_id=%s",
+                    canonical_event.correlation_id,
+                )
+                return None
             if not candidates:
-                return ReplySpec(text=render_material_not_found_reply(name))
+                return ReplySpec(text=render_material_not_found_reply(str(name)))
             await pending_report_store.set_pending(user_id=actor_user_id, event=canonical_event)
             return render_material_picker([(str(c["id"]), c["name"]) for c in candidates])
     else:
@@ -518,6 +582,7 @@ async def process_inbound_message(
     actor: ActorIdentity | None = None,
     inventory_query: MaterialInventoryQueryService | None = None,
     catalog_query: MaterialCatalogQueryService | None = None,
+    org_settings_query: OrganizationSettingsQueryService | None = None,
     expense_category_query: ExpenseCategoryQueryService | None = None,
     semantic_hint: str | None = None,
     direction_hint: str | None = None,
@@ -783,6 +848,8 @@ async def process_inbound_message(
                 catalog_query=catalog_query,
                 pending_report_store=pending_report_store,
                 actor_user_id=actor_user_id,
+                actor_role=actor.role if actor is not None else None,
+                org_settings_query=org_settings_query,
             )
 
         # --- Project-selection gate ---
@@ -1271,6 +1338,245 @@ async def resume_pending_report_with_site(
     )
     await _complete_resume_leg(message, event, message_logger)
     return reply
+
+
+_MATERIAL_CREATE_YES_ROW_ID = "matnew_yes"
+_MATERIAL_CREATE_NO_ROW_ID = "matnew_no"
+_MATERIAL_CREATE_UNIT_PREFIX = "matunit_"
+
+
+async def _create_material_and_resume(
+    event: CanonicalEventV2,
+    *,
+    unit_id: str,
+    unit_display: str,
+    message: NormalizedMessage,
+    actor_user_id: str,
+    catalog_query: MaterialCatalogQueryService,
+    pending_report_store: PendingReportStore,
+    planner: Planner,
+    workflow_runtime: WorkflowRuntime,
+    actor: ActorIdentity | None,
+    inventory_query: MaterialInventoryQueryService | None,
+    message_logger: MessageLogger | None,
+) -> ReplySpec:
+    """Create the catalog entry, then run the held report through the rest of
+    the gate chain -- shared by both routes into creation (the Yes tap when
+    the unit was already known, and the unit-picker tap when it wasn't).
+
+    The created material_id/unit_id are written onto the event before the
+    gates re-run, so _run_material_unit_gates takes its already-resolved
+    path rather than looking the brand-new name up again.
+    """
+    name = str(event.fields.get("material_name") or "")
+    try:
+        created = await catalog_query.create_material(
+            organization_id=event.organization_id,
+            name=name,
+            unit_id=unit_id,
+            created_by=actor_user_id,
+        )
+    except Exception:
+        _log.exception("material_create.failed correlation_id=%s", event.correlation_id)
+        created = None
+
+    if created is None:
+        await _complete_resume_leg(message, event, message_logger)
+        return ReplySpec(
+            text="Sorry, I couldn't add that material — please try again, or ask your admin."
+        )
+
+    event.fields["material_id"] = str(created["id"])
+    event.fields["unit_id"] = str(created["default_unit_id"] or unit_id)
+    # The reported unit text may have been a synonym of the chosen unit (or
+    # absent entirely). Replace it with the canonical display name so the
+    # confirmation prompt shows what the material is actually tracked in.
+    event.fields["unit"] = unit_display
+
+    confirmation = render_material_created_reply(created["name"], unit_display)
+
+    held_reply = await _run_project_gate(
+        event, actor=actor, actor_user_id=actor_user_id, pending_report_store=pending_report_store
+    )
+    if held_reply is None:
+        held_reply = await _run_site_gate(
+            event,
+            actor=actor,
+            actor_user_id=actor_user_id,
+            pending_report_store=pending_report_store,
+            allow_combined=event.event_type is CanonicalEventType.INVENTORY_QUERY_ASKED,
+        )
+
+    if held_reply is not None:
+        await _complete_resume_leg(message, event, message_logger)
+        # Prepend the creation confirmation so the user sees the catalog
+        # entry landed even though the report is now paused on a different
+        # question (which project/site).
+        return ReplySpec(
+            text=f"{confirmation}\n\n{held_reply.text}",
+            list_button_label=held_reply.list_button_label,
+            list_rows=held_reply.list_rows,
+            buttons=held_reply.buttons,
+        )
+
+    reply = await _plan_and_run(
+        event,
+        planner=planner,
+        workflow_runtime=workflow_runtime,
+        inventory_query=inventory_query,
+        pending_report_store=pending_report_store,
+        actor_user_id=actor_user_id,
+    )
+    await _complete_resume_leg(message, event, message_logger)
+    if reply is None:
+        return ReplySpec(text=confirmation)
+    return ReplySpec(
+        text=f"{confirmation}\n\n{reply.text}",
+        list_button_label=reply.list_button_label,
+        list_rows=reply.list_rows,
+        buttons=reply.buttons,
+    )
+
+
+async def resume_pending_report_with_material_create(
+    message: NormalizedMessage,
+    actor_user_id: str,
+    *,
+    pending_report_store: PendingReportStore,
+    catalog_query: MaterialCatalogQueryService,
+    planner: Planner,
+    workflow_runtime: WorkflowRuntime,
+    actor: ActorIdentity | None = None,
+    inventory_query: MaterialInventoryQueryService | None = None,
+    message_logger: MessageLogger | None = None,
+) -> ReplySpec | None:
+    """Resume a report held by the material-create offer, now that the user
+    said whether to add the unknown material to the catalog (STA-139).
+
+    On Yes, the Stock Unit is taken from the report's own words when they
+    resolved to a real unit ("50 bags of Fevicol" -> bags) so the common case
+    costs no extra turn; otherwise a unit picker is sent and creation happens
+    on that tap instead (resume_pending_report_with_material_unit_choice).
+
+    On No the report is dropped with a nudge toward a spelling mistake --
+    the likeliest reason a real material didn't match -- rather than
+    silently closing.
+    """
+    if message.modality is not InputModality.INTERACTIVE:
+        return None
+    row_id = message.metadata.get("interactive_reply_id")
+    if row_id not in (_MATERIAL_CREATE_YES_ROW_ID, _MATERIAL_CREATE_NO_ROW_ID):
+        return None
+
+    event = await pending_report_store.pop_pending(user_id=actor_user_id)
+    if event is None:
+        if message_logger:
+            await _safe(message_logger.mark_completed(correlation_id=message.correlation_id))
+        return ReplySpec(text="That selection expired — please resend your report.")
+
+    name = str(event.fields.get("material_name") or "")
+
+    if row_id == _MATERIAL_CREATE_NO_ROW_ID:
+        await _complete_resume_leg(message, event, message_logger)
+        return ReplySpec(text=render_material_create_declined_reply(name))
+
+    # Yes -- try to settle the Stock Unit from what the report already said.
+    unit_text = event.fields.get("unit")
+    resolved_unit: dict | None = None
+    if unit_text:
+        try:
+            resolved_unit = await catalog_query.resolve_unit(str(unit_text))
+        except Exception:
+            _log.exception("material_create.unit_lookup_failed correlation_id=%s", event.correlation_id)
+
+    if resolved_unit is not None:
+        return await _create_material_and_resume(
+            event,
+            unit_id=str(resolved_unit["id"]),
+            unit_display=resolved_unit.get("display_name") or str(unit_text),
+            message=message,
+            actor_user_id=actor_user_id,
+            catalog_query=catalog_query,
+            pending_report_store=pending_report_store,
+            planner=planner,
+            workflow_runtime=workflow_runtime,
+            actor=actor,
+            inventory_query=inventory_query,
+            message_logger=message_logger,
+        )
+
+    # No usable unit in the report -- ask, and create on that tap instead.
+    try:
+        units = await catalog_query.list_units()
+    except Exception:
+        _log.exception("material_create.unit_list_failed correlation_id=%s", event.correlation_id)
+        units = []
+    if not units:
+        await _complete_resume_leg(message, event, message_logger)
+        return ReplySpec(
+            text="Sorry, I couldn't load the units list — please try again, or ask your admin."
+        )
+
+    await pending_report_store.set_pending(user_id=actor_user_id, event=event)
+    await _complete_resume_leg(message, event, message_logger)
+    return render_material_create_unit_picker(
+        name, [(str(u["id"]), u["display_name"]) for u in units]
+    )
+
+
+async def resume_pending_report_with_material_unit_choice(
+    message: NormalizedMessage,
+    actor_user_id: str,
+    *,
+    pending_report_store: PendingReportStore,
+    catalog_query: MaterialCatalogQueryService,
+    planner: Planner,
+    workflow_runtime: WorkflowRuntime,
+    actor: ActorIdentity | None = None,
+    inventory_query: MaterialInventoryQueryService | None = None,
+    message_logger: MessageLogger | None = None,
+) -> ReplySpec | None:
+    """Resume a report held by the new-material unit picker, now that the
+    user chose which unit the material is tracked in. Creates the catalog
+    entry and continues the report (STA-139).
+
+    Kept distinct from resume_pending_report_with_unit ("unit_yes_*", the
+    Stock Unit *mismatch* clarification for an existing material) -- these
+    two answer different questions and must not share a row-id prefix.
+    """
+    if message.modality is not InputModality.INTERACTIVE:
+        return None
+    row_id = message.metadata.get("interactive_reply_id")
+    if not row_id or not row_id.startswith(_MATERIAL_CREATE_UNIT_PREFIX):
+        return None
+
+    event = await pending_report_store.pop_pending(user_id=actor_user_id)
+    if event is None:
+        if message_logger:
+            await _safe(message_logger.mark_completed(correlation_id=message.correlation_id))
+        return ReplySpec(text="That selection expired — please resend your report.")
+
+    unit_id = row_id.removeprefix(_MATERIAL_CREATE_UNIT_PREFIX)
+    try:
+        unit = await catalog_query.get_unit(unit_id)
+    except Exception:
+        _log.exception("material_create.unit_lookup_failed correlation_id=%s", event.correlation_id)
+        unit = None
+
+    return await _create_material_and_resume(
+        event,
+        unit_id=unit_id,
+        unit_display=(unit or {}).get("display_name") or "",
+        message=message,
+        actor_user_id=actor_user_id,
+        catalog_query=catalog_query,
+        pending_report_store=pending_report_store,
+        planner=planner,
+        workflow_runtime=workflow_runtime,
+        actor=actor,
+        inventory_query=inventory_query,
+        message_logger=message_logger,
+    )
 
 
 _STOCK_CAP_ROW_ID = "stock_cap"
