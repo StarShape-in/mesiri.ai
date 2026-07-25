@@ -16,15 +16,15 @@ import os
 import re
 
 from backend.ports import ActorIdentity, ProjectSummary, SiteSummary
+from mesiri.authorization.roles import is_org_wide
 
 _ORG_ACTIVE_STATUS = "Active"
 
-# Org-level roles that bypass explicit project_members rows entirely. Must stay
-# in sync with authorization/service.py's _ORG_WIDE_ROLES and
-# context/identity_projection.py's _ORG_WIDE_ROLES -- three readers of the same
-# rule. An admin sees every project in their org, present and future, without
-# needing a project_members row per project.
-_ORG_WIDE_ROLES = {"ADMIN"}
+# Who reaches every project in their org (an org-wide role, or an
+# all_projects access policy) is defined once in
+# mesiri/authorization/roles.py. It used to be copied into each of the five
+# surfaces that ask the question; one copy silently omitted the role half,
+# so the control panel reported admins as having no project access at all.
 
 # A user reaches a project via a direct project_members row, or via a
 # site_members row on one of its sites (site access implies its project --
@@ -169,11 +169,9 @@ class PostgresActorReader:
             access_policy = row["access_policy"] or {}
             # access_policy is a live standing bypass here, same as an
             # org-wide role -- NOT materialized as project_members rows (see
-            # _ORG_WIDE_ROLES's docstring). A project created after this grant
+            # mesiri/authorization/roles.py). A project created after this grant
             # is made must still be visible without re-saving the grant.
-            org_wide = str(row["role"] or "").upper() in _ORG_WIDE_ROLES or (
-                isinstance(access_policy, dict) and access_policy.get("mode") == "all_projects"
-            )
+            org_wide = is_org_wide(row["role"], access_policy)
 
             # ----------------------------------------------------------------
             # 2. Projects THIS USER can reach -- not every project in the org.

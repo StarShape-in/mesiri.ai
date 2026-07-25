@@ -19,13 +19,12 @@ from .context import (
     SiteAccessScope,
     resolve_site_scope,
 )
+from .roles import is_org_wide
 
-# Org-level roles that bypass explicit project_members rows entirely --
-# the SQL-native equivalent of access_policy's "all_projects" mode. Mirrors
-# the existing role.upper() == "ADMIN" bypass already used for action-level
-# checks elsewhere (e.g. domains/projects/router.py's require_admin-style
-# inline checks), now also applied at scope-resolution time.
-_ORG_WIDE_ROLES = {"ADMIN"}
+# Who bypasses explicit project_members rows is defined once in
+# authorization/roles.py, so the WhatsApp assistant, the dashboard, and the
+# control panel can't drift apart on it (they did: the control panel omitted
+# the role half and reported admins as having no project access).
 
 
 class AuthorizationService:
@@ -134,7 +133,7 @@ class AuthorizationService:
         - No project_members rows: zero projects (deny-by-default, same as
           the old empty custom_projects list).
         """
-        if role.upper() in _ORG_WIDE_ROLES or access_policy.mode == "all_projects":
+        if is_org_wide(role, access_policy):
             return ProjectAccessScope(mode="all_projects", project_ids=set())
 
         rows = await self._conn.execute(

@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from context.projection_hooks import project_entity
+from mesiri.authorization.roles import ALL_PROJECTS_MODE, is_org_wide
 from mesiri.domains.shared.auth import require_platform_admin
 from mesiri.domains.timeline.responses import TimelineEntriesListResponse
 from mesiri.infrastructure.postgres.repositories.timeline import PostgresTimelineReadRepository
@@ -444,7 +445,20 @@ async def _fetch_org_users(
     users = []
     for row in rows:
         policy = row.access_policy or {}
-        mode = policy.get("mode") or "custom_projects"
+        # An org-wide ROLE is a live bypass that is never written into
+        # access_policy or project_members, so reading the stored policy
+        # alone under-reported it: an ADMIN carrying the default policy
+        # ({"mode": "custom_projects", "projects": []}, set for every user at
+        # creation) rendered as "No projects assigned" here while both the
+        # WhatsApp assistant and the dashboard gave that same person every
+        # project in the org. Under-reporting privilege is the dangerous
+        # direction -- an operator auditing access sees "none" and moves on.
+        # is_org_wide() is the shared rule every other surface already used.
+        mode = (
+            ALL_PROJECTS_MODE
+            if is_org_wide(row.role, policy)
+            else (policy.get("mode") or "custom_projects")
+        )
         grants: list[ProjectAccessGrant] = []
         for grant in policy.get("projects") or []:
             if not isinstance(grant, dict):

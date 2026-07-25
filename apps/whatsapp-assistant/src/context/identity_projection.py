@@ -11,14 +11,14 @@ from uuid import UUID
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
+from mesiri.authorization.roles import is_org_wide
+
 from .identity_bridge import (
     context_organization_id,
     context_project_id,
     context_site_id,
     context_user_id,
 )
-
-_ORG_WIDE_ROLES = {"ADMIN"}
 
 EntityType = Literal["organization", "user", "project", "site", "membership"]
 WHATSAPP_PROVIDER = "whatsapp"
@@ -190,9 +190,7 @@ class IdentityProjectionService:
         # any "membership" projection ever fires) sees every project on their
         # very first message rather than waiting for an unrelated membership
         # event to happen to sync it.
-        is_org_wide = (row["role"] or "").upper() in _ORG_WIDE_ROLES or (
-            isinstance(policy, dict) and policy.get("mode") == "all_projects"
-        )
+        org_wide = is_org_wide(row["role"], policy)
         conn.execute(
             text(
                 """
@@ -209,7 +207,7 @@ class IdentityProjectionService:
                 "id": ctx_id,
                 "name": row["full_name"],
                 "is_active": is_active,
-                "is_org_wide": is_org_wide,
+                "is_org_wide": org_wide,
                 "canonical_id": canonical_id,
             },
         )
@@ -333,7 +331,7 @@ class IdentityProjectionService:
         the latter (queried by the WhatsApp assistant) stays permanently
         empty, so every report resolves to no authorized project at all.
 
-        A user's org-wide role (see _ORG_WIDE_ROLES) grants every project in
+        A user's org-wide role (see mesiri/authorization/roles.py) grants every project in
         their org, all sites -- the same bypass AuthorizationService applies
         on the REST side, kept in sync so a project created after this user's
         last sync is still visible without needing a fresh project_members
@@ -372,9 +370,7 @@ class IdentityProjectionService:
             return  # user deleted between the write and this projection; nothing to sync
 
         policy = user_row["access_policy"] or {}
-        org_wide = (user_row["role"] or "").upper() in _ORG_WIDE_ROLES or (
-            isinstance(policy, dict) and policy.get("mode") == "all_projects"
-        )
+        org_wide = is_org_wide(user_row["role"], policy)
 
         # Keep context_users.is_org_wide -- the live bypass
         # PostgresProjectRepository's _AUTHORIZED_PROJECT_IDS checks directly

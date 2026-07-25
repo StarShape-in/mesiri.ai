@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from context.projection_hooks import project_entity
+from mesiri.authorization.roles import is_org_wide, policy_is_org_wide, role_is_org_wide
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -33,6 +34,7 @@ _STATUS_DISPLAY = {
     "on_track": ("success", "On Track"),
     "at_risk": ("warning", "At Risk"),
     "critical": ("critical", "Critical"),
+    "archived": ("neutral", "Archived"),
 }
 
 
@@ -99,10 +101,8 @@ site_members_table = sa.Table(
     sa.Column("user_id", sa.UUID),
 )
 
-# Org-level roles that bypass explicit project_members rows entirely. Must
-# stay in sync with authorization/service.py, identity_projection.py, and
-# backend/postgres/actor.py's copies of the same rule.
-_ORG_WIDE_ROLES = {"ADMIN"}
+# Who bypasses explicit project_members rows is defined once in
+# mesiri/authorization/roles.py -- see role_is_org_wide / is_org_wide.
 
 # Minimal shim -- only the columns this router needs (email/full_name/status
 # for rendering a member row, organization_id to scope user lookups). See
@@ -117,6 +117,18 @@ users_table = sa.Table(
     sa.Column("status", sa.String),
     sa.Column("role", sa.String),
     sa.Column("access_policy", sa.JSON),
+)
+
+timeline_entries_table = sa.Table(
+    "timeline_entries",
+    sa.MetaData(),
+    sa.Column("id", sa.UUID, primary_key=True),
+    sa.Column("organization_id", sa.UUID),
+    sa.Column("project_id", sa.UUID),
+    sa.Column("site_id", sa.UUID),
+    sa.Column("event_type", sa.String),
+    sa.Column("summary", sa.String),
+    sa.Column("occurred_at", sa.DateTime(timezone=True)),
 )
 
 
@@ -147,6 +159,15 @@ class ProjectCreate(BaseModel):
     progress: int = 0
 
 
+class ProjectUpdate(BaseModel):
+    name: str | None = None
+    location: str | None = None
+    code: str | None = None
+    client: str | None = None
+    description: str | None = None
+    status: str | None = None
+
+
 class SiteResponse(BaseModel):
     id: uuid.UUID
     project_id: uuid.UUID
@@ -157,6 +178,45 @@ class SiteResponse(BaseModel):
 class SiteCreate(BaseModel):
     name: str
     status: str = "active"
+
+
+class SiteOverviewFieldActivityItem(BaseModel):
+    eventType: str
+    count: int
+
+
+class SiteOverviewTimelineEntry(BaseModel):
+    id: uuid.UUID
+    eventType: str
+    summary: str
+    occurredAt: object
+
+
+class SiteOverviewSiteRef(BaseModel):
+    id: uuid.UUID
+    name: str
+    status: str
+
+
+class SiteOverviewProjectRef(BaseModel):
+    id: uuid.UUID
+    name: str
+    location: str | None = None
+    requiredReportTypes: list[str] | None = None
+
+
+class SiteOverviewData(BaseModel):
+    site: SiteOverviewSiteRef
+    project: SiteOverviewProjectRef
+    reportingToday: bool
+    lastActivityAt: object | None = None
+    fieldActivityToday: list[SiteOverviewFieldActivityItem]
+    recentActivity: list[SiteOverviewTimelineEntry]
+
+
+class SiteUpdate(BaseModel):
+    name: str | None = None
+    status: str | None = None
 
 
 class ProjectMemberResponse(BaseModel):
@@ -173,7 +233,7 @@ class ProjectMemberAdd(BaseModel):
 
 
 def _to_response(row) -> ProjectResponse:
-    status = row.status if row.status in _VALID_STATUS else "on_track"
+    status = row.status if row.status in _STATUS_DISPLAY else "on_track"
     ui_status, label = _STATUS_DISPLAY[status]
     return ProjectResponse(
         id=row.id,
@@ -214,7 +274,7 @@ async def _is_org_wide(conn, payload: dict) -> bool:
     and identity_projection.py's _project_membership, which apply the same
     rule), not a project_members snapshot, so it can't be baked into the
     token at login and must be re-checked on every request."""
-    if (payload.get("role") or "").upper() in _ORG_WIDE_ROLES:
+    if role_is_org_wide(payload.get("role")):
         return True
     user_id = payload.get("sub")
     if not user_id:
@@ -223,8 +283,7 @@ async def _is_org_wide(conn, payload: dict) -> bool:
         sa.select(users_table.c.access_policy).where(users_table.c.id == user_id)
     )
     row = result.first()
-    policy = (row.access_policy if row else None) or {}
-    return isinstance(policy, dict) and policy.get("mode") == "all_projects"
+    return policy_is_org_wide(row.access_policy if row else None)
 
 
 def _member_project_ids_clause(user_id: uuid.UUID):
@@ -286,6 +345,86 @@ async def get_project(project_id: uuid.UUID, payload: dict = Depends(get_current
     if row is None:
         raise HTTPException(status_code=404, detail="Project not found")
     return _to_response(row)
+
+
+@router.put("/{project_id}", response_model=ProjectResponse)
+async def update_project(
+    project_id: uuid.UUID,
+    project_in: ProjectUpdate,
+    payload: dict = Depends(get_current_user),
+):
+    org_id = payload.get("org")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="User has no organization")
+    if (payload.get("role") or "").upper() != "ADMIN":
+        raise HTTPException(status_code=403, detail="Admin access required to edit project")
+
+    engine = get_engine()
+    async with engine.begin() as conn:
+        result = await conn.execute(
+            sa.select(projects_table).where(
+                projects_table.c.id == project_id,
+                projects_table.c.organization_id == org_id,
+            )
+        )
+        row = result.first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        values: dict = {}
+        if project_in.name is not None:
+            values["name"] = project_in.name
+        if project_in.location is not None:
+            values["location"] = project_in.location
+        if project_in.code is not None:
+            values["code"] = project_in.code
+        if project_in.client is not None:
+            values["client"] = project_in.client
+        if project_in.description is not None:
+            values["description"] = project_in.description
+        if project_in.status is not None:
+            if project_in.status not in _VALID_STATUS:
+                raise HTTPException(status_code=400, detail="Invalid status")
+            values["status"] = project_in.status
+
+        if values:
+            await conn.execute(
+                projects_table.update().where(projects_table.c.id == project_id).values(**values)
+            )
+
+        refetch = await conn.execute(
+            sa.select(projects_table).where(projects_table.c.id == project_id)
+        )
+        row = refetch.first()
+
+    await project_entity("project", project_id)
+    return _to_response(row)
+
+
+@router.delete("/{project_id}", status_code=204)
+async def archive_project(project_id: uuid.UUID, payload: dict = Depends(get_current_user)):
+    org_id = payload.get("org")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="User has no organization")
+    if (payload.get("role") or "").upper() != "ADMIN":
+        raise HTTPException(status_code=403, detail="Admin access required to archive project")
+
+    engine = get_engine()
+    async with engine.begin() as conn:
+        result = await conn.execute(
+            sa.select(projects_table.c.id).where(
+                projects_table.c.id == project_id,
+                projects_table.c.organization_id == org_id,
+            )
+        )
+        if result.first() is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        await conn.execute(
+            projects_table.update().where(projects_table.c.id == project_id).values(status="archived")
+        )
+
+    await project_entity("project", project_id)
 
 
 @router.get("/{project_id}/sites", response_model=list[SiteResponse])
@@ -408,15 +547,181 @@ async def create_project_site(
         member_ids_to_resync = [
             r.id
             for r in candidate_rows.fetchall()
-            if (r.role or "").upper() in _ORG_WIDE_ROLES
-            or (isinstance(r.access_policy, dict) and r.access_policy.get("mode") == "all_projects")
-            or r.id in all_sites_member_ids
+            if is_org_wide(r.role, r.access_policy) or r.id in all_sites_member_ids
         ]
 
     await project_entity("site", site_id)
     for member_id in member_ids_to_resync:
         await project_entity("membership", member_id)
     return SiteResponse(id=site_id, project_id=project_id, name=name, status=status)
+
+
+@router.put("/{project_id}/sites/{site_id}", response_model=SiteResponse)
+async def update_project_site(
+    project_id: uuid.UUID,
+    site_id: uuid.UUID,
+    site_in: SiteUpdate,
+    payload: dict = Depends(get_current_user),
+):
+    org_id = payload.get("org")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="User has no organization")
+    if (payload.get("role") or "").upper() != "ADMIN":
+        raise HTTPException(status_code=403, detail="Admin access required to edit site")
+
+    engine = get_engine()
+    async with engine.begin() as conn:
+        result = await conn.execute(
+            sa.select(sites_table).where(
+                sites_table.c.id == site_id,
+                sites_table.c.project_id == project_id,
+                sites_table.c.organization_id == org_id,
+            )
+        )
+        row = result.first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Site not found")
+
+        values: dict = {}
+        if site_in.name is not None:
+            values["name"] = site_in.name
+        if site_in.status is not None:
+            values["status"] = site_in.status
+
+        if values:
+            await conn.execute(sites_table.update().where(sites_table.c.id == site_id).values(**values))
+
+        refetch = await conn.execute(sa.select(sites_table).where(sites_table.c.id == site_id))
+        row = refetch.first()
+
+    await project_entity("site", site_id)
+    return SiteResponse(
+        id=row.id,
+        project_id=row.project_id,
+        name=row.name,
+        status=row.status or "active",
+    )
+
+
+@router.delete("/{project_id}/sites/{site_id}", status_code=204)
+async def archive_project_site(
+    project_id: uuid.UUID,
+    site_id: uuid.UUID,
+    payload: dict = Depends(get_current_user),
+):
+    org_id = payload.get("org")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="User has no organization")
+    if (payload.get("role") or "").upper() != "ADMIN":
+        raise HTTPException(status_code=403, detail="Admin access required to archive site")
+
+    engine = get_engine()
+    async with engine.begin() as conn:
+        result = await conn.execute(
+            sa.select(sites_table.c.id).where(
+                sites_table.c.id == site_id,
+                sites_table.c.project_id == project_id,
+                sites_table.c.organization_id == org_id,
+            )
+        )
+        if result.first() is None:
+            raise HTTPException(status_code=404, detail="Site not found")
+
+        await conn.execute(
+            sites_table.update().where(sites_table.c.id == site_id).values(status="archived")
+        )
+
+    await project_entity("site", site_id)
+
+
+@router.get("/{project_id}/sites/{site_id}/overview", response_model=SiteOverviewData)
+async def get_site_overview(
+    project_id: uuid.UUID,
+    site_id: uuid.UUID,
+    payload: dict = Depends(get_current_user),
+):
+    org_id = payload.get("org")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="User has no organization")
+
+    engine = get_engine()
+    async with engine.connect() as conn:
+        project_row = (
+            await conn.execute(
+                sa.text(
+                    "SELECT id, name, location, required_report_types FROM projects "
+                    "WHERE id = :project_id AND organization_id = :org_id"
+                ),
+                {"project_id": project_id, "org_id": org_id},
+            )
+        ).mappings().first()
+        if project_row is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        site_row = await conn.execute(
+            sa.select(sites_table).where(
+                sites_table.c.id == site_id,
+                sites_table.c.project_id == project_id,
+                sites_table.c.organization_id == org_id,
+            )
+        )
+        site = site_row.first()
+        if site is None:
+            raise HTTPException(status_code=404, detail="Site not found")
+
+        today_counts = (
+            await conn.execute(
+                sa.text(
+                    "SELECT event_type, COUNT(*) AS cnt FROM timeline_entries "
+                    "WHERE site_id = :site_id AND occurred_at >= CURRENT_DATE "
+                    "GROUP BY event_type"
+                ),
+                {"site_id": site_id},
+            )
+        ).mappings().all()
+
+        last_activity = (
+            await conn.execute(
+                sa.text("SELECT MAX(occurred_at) AS last FROM timeline_entries WHERE site_id = :site_id"),
+                {"site_id": site_id},
+            )
+        ).mappings().first()
+
+        recent_rows = (
+            await conn.execute(
+                sa.text(
+                    "SELECT id, event_type, summary, occurred_at FROM timeline_entries "
+                    "WHERE site_id = :site_id ORDER BY occurred_at DESC LIMIT 20"
+                ),
+                {"site_id": site_id},
+            )
+        ).mappings().all()
+
+    field_activity = [
+        SiteOverviewFieldActivityItem(eventType=r["event_type"], count=r["cnt"]) for r in today_counts
+    ]
+    reporting_today = any(
+        r["event_type"] in ("MaterialReceived", "MaterialUsed") for r in today_counts
+    )
+
+    return SiteOverviewData(
+        site=SiteOverviewSiteRef(id=site.id, name=site.name, status=site.status or "active"),
+        project=SiteOverviewProjectRef(
+            id=project_row["id"],
+            name=project_row["name"],
+            location=project_row["location"],
+            requiredReportTypes=project_row["required_report_types"],
+        ),
+        reportingToday=reporting_today,
+        lastActivityAt=last_activity["last"] if last_activity else None,
+        fieldActivityToday=field_activity,
+        recentActivity=[
+            SiteOverviewTimelineEntry(
+                id=r["id"], eventType=r["event_type"], summary=r["summary"], occurredAt=r["occurred_at"]
+            )
+            for r in recent_rows
+        ],
+    )
 
 
 @router.post("", response_model=ProjectResponse)
@@ -457,7 +762,7 @@ async def create_project(project_in: ProjectCreate, payload: dict = Depends(get_
         # membership scoping (see _member_project_ids_clause above) hides
         # the project from the person who just created it. PROJECT_MANAGER
         # is the role this actually bites: it's in _CREATE_ROLES but not
-        # _ORG_WIDE_ROLES.
+        # an org-wide role.
         grant_creator = creator_id is not None and not await _is_org_wide(conn, payload)
         if grant_creator:
             await conn.execute(
