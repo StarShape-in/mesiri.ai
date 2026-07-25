@@ -15,6 +15,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from ingress.deduplication import InMemoryDeduplicationStore
 from ingress.media_ingestion import MetaMediaDownloader
 from ingress.receiver import InMemoryNormalizedMessageStore, WhatsAppReceiver
+from interactions.image_purpose import try_hold_new_image_for_purpose_picker
 from runtime.account_admin_journey import try_handle_account_admin_command
 from runtime.logging_ports import MessageLogger, TraceLogger
 
@@ -188,6 +189,12 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     # and runtime/inbound_journey.py's project-selection gate) -- same
     # redis_client, same never-authoritative principle.
     pending_report_store = PendingReportStore(redis_client)
+    # Holds a genuinely new image awaiting "what is this photo for?" (see
+    # interactions/pending_media.py and interactions/image_purpose.py) --
+    # same redis_client, same never-authoritative principle.
+    from interactions.pending_media import PendingMediaStore
+
+    pending_media_store = PendingMediaStore(redis_client)
 
     # M8: the one transaction Material command execution runs in. connect()/
     # disconnect() happen in the lifespan handler (runtime/lifecycle.py), same
@@ -610,6 +617,67 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             await message_logger.mark_completed(correlation_id=message.correlation_id)
             return
 
+        # A tap on the "what is this photo for?" list (see
+        # interactions/image_purpose.py and channel/replies.IMAGE_PURPOSE_ROWS)
+        # -- resumes the HELD image (not this tap message) with the chosen
+        # purpose as a semantic_hint, or replies that Site Update photos
+        # aren't processed yet. Deterministic tap detection, same principle
+        # as the two fast paths above.
+        image_purpose_row_id = interaction_handler.handle_image_purpose_tap(message)
+        if image_purpose_row_id is not None:
+            from channel.replies import (
+                IMAGE_PURPOSE_SEMANTIC_HINT,
+                render_image_purpose_coming_soon,
+            )
+
+            held_message = await pending_media_store.pop_pending(user_id=ctx.user_id)
+            if held_message is None:
+                expired_reply = "That photo has expired — please resend it."
+                await sender.send_text(wa_id, expired_reply)
+                await message_logger.log_reply(
+                    correlation_id=message.correlation_id, reply=expired_reply
+                )
+                await message_logger.mark_completed(correlation_id=message.correlation_id)
+                return
+
+            coming_soon_reply = render_image_purpose_coming_soon(image_purpose_row_id)
+            if coming_soon_reply is not None:
+                await sender.send_text(wa_id, coming_soon_reply)
+                await message_logger.log_reply(
+                    correlation_id=message.correlation_id, reply=coming_soon_reply
+                )
+                await message_logger.mark_completed(correlation_id=message.correlation_id)
+                return
+
+            await process_inbound_message(
+                held_message,
+                actor_user_id=ctx.user_id,
+                actor=ctx,
+                semantic_hint=IMAGE_PURPOSE_SEMANTIC_HINT[image_purpose_row_id],
+                category_hint_store=category_hint_store,
+                pipeline=pipeline,
+                context_resolver=context_resolver,
+                planner=planner,
+                workflow_runtime=workflow_runtime,
+                interaction_handler=interaction_handler,
+                send_text=sender.send_text,
+                send_list=sender.send_list,
+                send_button=sender.send_button,
+                send_image=sender.send_image,
+                context_debug=settings.context_debug,
+                message_logger=message_logger,
+                trace_logger=trace_logger,
+                inventory_query=inventory_query,
+                catalog_query=catalog_query,
+                org_settings_query=org_settings_query,
+                expense_category_query=expense_category_query,
+                money_account_query=money_account_query,
+                expense_query_service=expense_query_service,
+                pending_report_store=pending_report_store,
+            )
+            await message_logger.mark_completed(correlation_id=message.correlation_id)
+            return
+
         # Bare "hi"/"menu"/"help"/etc (see greeting_phrases.json): the AI
         # pipeline is never touched, same principle as the two fast paths
         # above. Text only -- voice can't be checked until Sarvam
@@ -839,6 +907,28 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             await message_logger.log_reply(
                 correlation_id=message.correlation_id, reply=site_reply.text
             )
+            return
+
+        # A genuinely new image (not a tap answering the picker above) is
+        # held while we ask "what is this photo for?" instead of running
+        # understanding/vision straight away -- a bare photo often arrives
+        # with no caption saying what it's for. See
+        # interactions/image_purpose.py.
+        image_purpose_reply = await try_hold_new_image_for_purpose_picker(
+            message, user_id=ctx.user_id, pending_media_store=pending_media_store
+        )
+        if image_purpose_reply is not None:
+            await send_reply_spec(
+                image_purpose_reply,
+                wa_id,
+                send_text=sender.send_text,
+                send_list=sender.send_list,
+                send_button=sender.send_button,
+            )
+            await message_logger.log_reply(
+                correlation_id=message.correlation_id, reply=image_purpose_reply.text
+            )
+            await message_logger.mark_completed(correlation_id=message.correlation_id)
             return
 
         category_hint = await category_hint_store.pop_hint(user_id=ctx.user_id)

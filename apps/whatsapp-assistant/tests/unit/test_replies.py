@@ -9,9 +9,13 @@ from __future__ import annotations
 
 from channel.replies import (
     CATEGORY_ROWS,
+    IMAGE_PURPOSE_ROWS,
+    IMAGE_PURPOSE_SEMANTIC_HINT,
     render_category_prompt,
     render_clarify_reply,
     render_direct_reply,
+    render_image_purpose_coming_soon,
+    render_image_purpose_picker,
     render_no_projects_reply,
     render_project_picker,
     render_understanding_failed_reply,
