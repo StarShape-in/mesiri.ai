@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from context.projection_hooks import project_entity
 from mesiri.authorization.roles import ALL_PROJECTS_MODE, is_org_wide
+from mesiri.domains.organizations import settings as org_settings
 from mesiri.domains.organizations.settings import VALID_ROLES
 from mesiri.domains.shared.auth import require_platform_admin
 from mesiri.domains.timeline.responses import TimelineEntriesListResponse
@@ -553,6 +554,90 @@ async def update_organization_user_status(
         if not fetched:
             raise HTTPException(status_code=404, detail="User not found after update")
         return fetched[0]
+
+
+# ---------------------------------------------------------------------------
+# Per-organization settings (migration 0365)
+# ---------------------------------------------------------------------------
+# These live here, not in backend/domains/admin/router.py, because that
+# module is never registered by runtime/lifecycle.py -- only this one is.
+# Defining them there made GET /admin/organizations/{id}/settings a 404,
+# which took the whole control-panel organization page down: the page loads
+# its data with Promise.all, so a single failing call rejected the lot and
+# rendered "Not Found" instead of the organization.
+@router.get("/{org_id}/settings")
+async def get_organization_settings(
+    org_id: uuid.UUID,
+    _admin: dict = Depends(require_platform_admin),
+):
+    """Every known setting for `org_id`, with defaults filled in for anything
+    never configured, plus the spec catalog the control panel renders its
+    form from (so the UI never hardcodes its own copy of the setting list)."""
+    from mesiri.infrastructure.postgres.repositories.organization_settings import (
+        PostgresOrganizationSettingsRepository,
+    )
+
+    engine = get_engine()
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            sa.select(organizations_table.c.id).where(organizations_table.c.id == org_id)
+        )
+        if result.first() is None:
+            raise HTTPException(status_code=404, detail="Organization not found")
+
+        repo = PostgresOrganizationSettingsRepository(conn)
+        values = await repo.get_all(org_id)
+
+    return {
+        "settings": values,
+        "specs": [
+            {"key": spec.key, "description": spec.description, "default": spec.default}
+            for spec in org_settings.all_specs()
+        ],
+        "valid_roles": sorted(VALID_ROLES),
+    }
+
+
+class OrganizationSettingUpdate(BaseModel):
+    key: str
+    value: object
+
+
+@router.put("/{org_id}/settings")
+async def update_organization_setting(
+    org_id: uuid.UUID,
+    body: OrganizationSettingUpdate,
+    admin: dict = Depends(require_platform_admin),
+):
+    """Set one setting for `org_id`. Validation lives in
+    domains/organizations/settings.py, so an unknown key or malformed value
+    is rejected here rather than persisted as a row nothing ever reads."""
+    from mesiri.infrastructure.postgres.repositories.organization_settings import (
+        PostgresOrganizationSettingsRepository,
+    )
+
+    try:
+        canonical = org_settings.validate(body.key, body.value)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    engine = get_engine()
+    async with engine.begin() as conn:
+        result = await conn.execute(
+            sa.select(organizations_table.c.id).where(organizations_table.c.id == org_id)
+        )
+        if result.first() is None:
+            raise HTTPException(status_code=404, detail="Organization not found")
+
+        repo = PostgresOrganizationSettingsRepository(conn)
+        user_id = admin.get("sub")
+        await repo.set(
+            org_id,
+            body.key,
+            canonical,
+            updated_by=uuid.UUID(user_id) if user_id else None,
+        )
+    return {"key": body.key, "value": canonical}
 
 
 class OrgSiteSummary(BaseModel):

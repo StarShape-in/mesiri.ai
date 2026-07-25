@@ -91,19 +91,38 @@ export default function OrganizationDetail() {
   useEffect(() => {
     if (!id) return;
     setLoading(true);
+    // Only the organization itself is load-bearing: without it there is no
+    // page. Everything else is a tab's worth of content, so each is fetched
+    // independently and degrades to empty on failure.
+    //
+    // This used to be one Promise.all over all five calls, which meant a
+    // single 404 (a settings endpoint that had been added to a router the
+    // app never registers) rejected the whole chain and rendered
+    // "Not Found" in place of the entire organization.
+    const optional = <T,>(p: Promise<{ data: T }>, fallback: T): Promise<T> =>
+      p.then((r) => r.data).catch(() => fallback);
+
     Promise.all([
       api.get<Organization>(`/admin/organizations/${id}`),
-      api.get<OrgUser[]>(`/admin/organizations/${id}/users`),
-      api.get<{ items: TimelineEntry[]; total: number }>(`/admin/organizations/${id}/timeline`),
-      api.get<OrgSettingsPayload>(`/admin/organizations/${id}/settings`),
-      api.get<OrgProject[]>(`/admin/organizations/${id}/projects`),
+      optional(api.get<OrgUser[]>(`/admin/organizations/${id}/users`), []),
+      optional(
+        api.get<{ items: TimelineEntry[]; total: number }>(
+          `/admin/organizations/${id}/timeline`
+        ),
+        { items: [], total: 0 }
+      ),
+      optional<OrgSettingsPayload | null>(
+        api.get<OrgSettingsPayload>(`/admin/organizations/${id}/settings`),
+        null
+      ),
+      optional(api.get<OrgProject[]>(`/admin/organizations/${id}/projects`), []),
     ])
-      .then(([orgRes, usersRes, timelineRes, settingsRes, projectsRes]) => {
+      .then(([orgRes, usersData, timelineData, settingsData, projectsData]) => {
         setOrg(orgRes.data);
-        setUsers(usersRes.data);
-        setTimeline(timelineRes.data.items);
-        setOrgSettings(settingsRes.data);
-        setProjects(projectsRes.data);
+        setUsers(usersData);
+        setTimeline(timelineData.items);
+        setOrgSettings(settingsData);
+        setProjects(projectsData);
       })
       .catch((err) => setError(err.response?.data?.detail || 'Failed to load organization'))
       .finally(() => setLoading(false));
