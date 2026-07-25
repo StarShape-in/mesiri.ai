@@ -750,7 +750,30 @@ export default function PettyCashPage() {
           size="sm"
           variant="outline"
           className="h-7 text-xs gap-1.5 font-semibold"
-          onClick={() => alert(`Exporting ${selectedIds.length} vouchers...`)}
+          onClick={() => {
+            const targetVouchers = vouchers.filter((v) => selectedIds.includes(v.id))
+            const headers = ['Voucher ID', 'Voucher Number', 'Cash Box', 'Project', 'Custodian', 'Category', 'Amount (INR)', 'Date', 'Status', 'Description', 'Source']
+            const rows = targetVouchers.map((v) => [
+              v.id,
+              `"${v.voucher_number}"`,
+              `"${v.cash_box_name}"`,
+              `"${v.project_name}"`,
+              `"${v.custodian_name}"`,
+              `"${v.category}"`,
+              v.amount,
+              v.date,
+              v.status,
+              `"${v.description}"`,
+              v.source,
+            ])
+            const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n')
+            const link = document.createElement('a')
+            link.setAttribute('href', encodeURI(csvContent))
+            link.setAttribute('download', `petty_cash_vouchers_${new Date().toISOString().slice(0, 10)}.csv`)
+            document.body.appendChild(link)
+            link.click()
+            document.body.removeChild(link)
+          }}
         >
           <Download className="size-3.5" />
           Export Vouchers

@@ -224,18 +224,28 @@ export function CashBoxDetailSheet({
                   Custodian & Site Manager Info
                 </h4>
                 <div className="flex flex-col gap-1.5 text-muted-foreground bg-muted/20 p-2.5 rounded border text-[11px]">
-                  <div className="flex justify-between">
+                  <div className="flex justify-between items-center">
                     <span>Cash Box Custodian:</span>
                     <span className="font-semibold text-foreground flex items-center gap-1">
                       <User className="size-3 text-muted-foreground" />
                       {cashBox.custodian_name}
                     </span>
                   </div>
-                  <div className="flex justify-between">
+                  <div className="flex justify-between items-center">
                     <span>WhatsApp Notifications:</span>
                     <span className="font-semibold text-emerald-600">Active</span>
                   </div>
                 </div>
+
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full h-8 text-xs gap-1.5 border-emerald-500/40 text-emerald-600 hover:bg-emerald-500/10 font-semibold"
+                  onClick={() => alert(`WhatsApp nudge sent to ${cashBox.custodian_name} for site float ${cashBox.name}!`)}
+                >
+                  <ShieldCheck className="size-3.5 text-emerald-500" />
+                  Send WhatsApp Float Nudge
+                </Button>
               </div>
             </TabsContent>
           </Tabs>
