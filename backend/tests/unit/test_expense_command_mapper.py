@@ -97,3 +97,15 @@ def test_media_object_key_is_none_when_absent():
     confirmed = _confirmed({"amount": 100})
     cmd = build_command(confirmed)
     assert cmd.media_object_key is None
+
+
+def test_vendor_text_is_mapped_when_present():
+    confirmed = _confirmed({"amount": 100, "vendor": "ABC Hardware"})
+    cmd = build_command(confirmed)
+    assert cmd.vendor_text == "ABC Hardware"
+
+
+def test_vendor_text_is_none_when_absent():
+    confirmed = _confirmed({"amount": 100})
+    cmd = build_command(confirmed)
+    assert cmd.vendor_text is None

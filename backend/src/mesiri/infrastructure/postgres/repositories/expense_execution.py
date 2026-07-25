@@ -110,11 +110,11 @@ class PostgresExpenseExecutionRepository(ExpenseExecutionRepository):
         await conn.execute(
             sa.text(
                 "INSERT INTO expenses "
-                "(id, organization_id, project_id, site_id, category_id, amount, currency, "
-                "description, occurred_date, occurred_time, workflow_status, payment_status, "
-                "source, source_message_id, correlation_id, created_by) "
-                "VALUES (:id, :organization_id, :project_id, :site_id, :category_id, :amount, "
-                ":currency, :description, :occurred_date, :occurred_time, 'confirmed', "
+                "(id, organization_id, project_id, site_id, category_id, vendor_id, amount, "
+                "currency, description, occurred_date, occurred_time, workflow_status, "
+                "payment_status, source, source_message_id, correlation_id, created_by) "
+                "VALUES (:id, :organization_id, :project_id, :site_id, :category_id, :vendor_id, "
+                ":amount, :currency, :description, :occurred_date, :occurred_time, 'confirmed', "
                 ":payment_status, :source, :source_message_id, :correlation_id, :created_by)"
             ),
             {
@@ -123,6 +123,7 @@ class PostgresExpenseExecutionRepository(ExpenseExecutionRepository):
                 "project_id": uuid.UUID(cmd.project_id),
                 "site_id": _optional_uuid(cmd.site_id),
                 "category_id": uuid.UUID(cmd.category_id),
+                "vendor_id": _optional_uuid(cmd.vendor_id),
                 "amount": cmd.amount,
                 "currency": cmd.currency,
                 "description": cmd.description,

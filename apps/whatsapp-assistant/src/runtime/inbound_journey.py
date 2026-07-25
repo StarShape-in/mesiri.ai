@@ -60,6 +60,7 @@ from runtime.material_catalog_query import MaterialCatalogQueryService
 from runtime.money_account_query import MoneyAccountQueryService
 from runtime.noop_loggers import NoopMessageLogger, NoopTraceLogger
 from runtime.org_settings_query import OrganizationSettingsQueryService
+from runtime.petty_cash_query import PettyCashRecipientQueryService
 from runtime.reply_dispatch import send_reply_spec
 from understanding.pipeline import UnderstandingPipeline
 from workflows import (
@@ -554,7 +555,11 @@ async def _seed_account_candidates(
     """
     if money_account_query is None or actor is None or not actor.organization_id:
         return
-    if decision.workflow_key not in (WorkflowKey.EXPENSE_SUBMIT, WorkflowKey.TRANSFER):
+    if decision.workflow_key not in (
+        WorkflowKey.EXPENSE_SUBMIT,
+        WorkflowKey.TRANSFER,
+        WorkflowKey.PETTY_CASH,
+    ):
         return
     accounts = await money_account_query.list_accounts(
         organization_id=actor.organization_id, created_by=actor.user_id
@@ -562,8 +567,40 @@ async def _seed_account_candidates(
     event.fields["account_candidates"] = [
         {"id": str(account.id), "name": account.name} for account in accounts
     ]
-    if decision.workflow_key is WorkflowKey.TRANSFER:
+    if decision.workflow_key in (WorkflowKey.TRANSFER, WorkflowKey.PETTY_CASH):
         event.fields["created_by_role"] = actor.role
+
+
+async def _seed_petty_cash_recipient(
+    event: CanonicalEventV2,
+    decision: PlannerDecisionV2,
+    petty_cash_query: PettyCashRecipientQueryService | None,
+    actor: ActorIdentity | None,
+) -> None:
+    """Resolve `recipient_name` (e.g. "Alan") into their employee-advance
+    money account, auto-created on first issuance -- Finance Module Slice 5.
+    A node must never query a repository itself, so this is the seeding
+    point, same principle as _seed_account_candidates above. Only ever runs
+    for PETTY_CASH; an unresolved recipient (no matching active user) simply
+    leaves `recipient_account_id` unset -- workflows/petty_cash/nodes.py's
+    build_draft then produces a draft missing that leg of the transfer,
+    which the existing transfer_validation.py rejects rather than this
+    seeding step guessing who was meant."""
+    if petty_cash_query is None or actor is None or not actor.organization_id:
+        return
+    if decision.workflow_key is not WorkflowKey.PETTY_CASH:
+        return
+    recipient_name = event.fields.get("recipient_name")
+    if not recipient_name:
+        return
+    account = await petty_cash_query.resolve_or_create_advance_account(
+        organization_id=actor.organization_id,
+        recipient_name=str(recipient_name),
+        created_by=actor.user_id,
+    )
+    if account is not None:
+        event.fields["recipient_account_id"] = str(account.id)
+        event.fields["recipient_account_name"] = account.name
 
 
 async def _seed_finance_query_context(
@@ -683,6 +720,7 @@ async def process_inbound_message(
     org_settings_query: OrganizationSettingsQueryService | None = None,
     expense_category_query: ExpenseCategoryQueryService | None = None,
     money_account_query: MoneyAccountQueryService | None = None,
+    petty_cash_query: PettyCashRecipientQueryService | None = None,
     expense_query_service: ExpenseQueryService | None = None,
     semantic_hint: str | None = None,
     direction_hint: str | None = None,
@@ -1040,6 +1078,9 @@ async def process_inbound_message(
                 try:
                     await _seed_account_candidates(
                         canonical_event, planner_decision, money_account_query, actor
+                    )
+                    await _seed_petty_cash_recipient(
+                        canonical_event, planner_decision, petty_cash_query, actor
                     )
                     await _seed_finance_query_context(
                         canonical_event,

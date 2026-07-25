@@ -12,6 +12,7 @@ from mesiri_contracts.assistant.candidates import (
     GeneralQuestionCandidate,
     InventoryQueryCandidate,
     MaterialUpdateCandidate,
+    PettyCashCandidate,
     TransferCandidate,
 )
 from mesiri_contracts.assistant.canonical_event import CanonicalEventType, IntentCompleteness
@@ -344,6 +345,60 @@ def test_transfer_without_account_names_is_still_actionable():
     event = build_canonical_event(understanding, _context())
     assert event.event_type is CanonicalEventType.TRANSFER_REQUESTED
     assert event.completeness is IntentCompleteness.ACTIONABLE
+
+
+def test_petty_cash_issue_maps_to_petty_cash_issue_requested():
+    understanding = _understanding(
+        semantic_type=SemanticType.PETTY_CASH,
+        candidates=[
+            PettyCashCandidate(fields={"amount": 20000, "recipient_name": "Alan", "direction": "issue"})
+        ],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.PETTY_CASH_ISSUE_REQUESTED
+    assert event.completeness is IntentCompleteness.ACTIONABLE
+    assert event.fields["recipient_name"] == "Alan"
+
+
+def test_petty_cash_return_maps_to_petty_cash_return_requested():
+    understanding = _understanding(
+        semantic_type=SemanticType.PETTY_CASH,
+        candidates=[
+            PettyCashCandidate(fields={"amount": 3000, "recipient_name": "Alan", "direction": "return"})
+        ],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.PETTY_CASH_RETURN_REQUESTED
+    assert event.completeness is IntentCompleteness.ACTIONABLE
+
+
+def test_petty_cash_missing_amount_needs_clarification():
+    understanding = _understanding(
+        semantic_type=SemanticType.PETTY_CASH,
+        candidates=[PettyCashCandidate(fields={"recipient_name": "Alan", "direction": "issue"})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.completeness is IntentCompleteness.NEEDS_CLARIFICATION
+    assert "amount" in event.missing_fields
+
+
+def test_petty_cash_missing_recipient_name_needs_clarification():
+    understanding = _understanding(
+        semantic_type=SemanticType.PETTY_CASH,
+        candidates=[PettyCashCandidate(fields={"amount": 20000, "direction": "issue"})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.completeness is IntentCompleteness.NEEDS_CLARIFICATION
+    assert "recipient_name" in event.missing_fields
+
+
+def test_petty_cash_missing_direction_is_unrecognized():
+    understanding = _understanding(
+        semantic_type=SemanticType.PETTY_CASH,
+        candidates=[PettyCashCandidate(fields={"amount": 20000, "recipient_name": "Alan"})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.UNRECOGNIZED
 
 
 def test_media_object_key_is_carried_onto_the_event_fields_when_present():

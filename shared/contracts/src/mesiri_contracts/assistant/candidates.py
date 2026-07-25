@@ -95,6 +95,15 @@ class TransferCandidate(Candidate):
     # when a name doesn't resolve (see workflows/slots.py).
 
 
+class PettyCashCandidate(Candidate):
+    semantic_type: SemanticType = SemanticType.PETTY_CASH
+    # Conventional keys: amount, recipient_name, direction (issue/return),
+    # description. recipient_name is a best-effort hint -- resolved against
+    # the org's real users by runtime/petty_cash_query.py, which auto-
+    # creates the recipient's employee-advance account on first issuance
+    # (see workflows/petty_cash/nodes.py).
+
+
 # Registry so callers can build the right candidate from a semantic type.
 CANDIDATE_TYPES: dict[SemanticType, type[Candidate]] = {
     SemanticType.EXPENSE: ExpenseCandidate,
@@ -106,4 +115,5 @@ CANDIDATE_TYPES: dict[SemanticType, type[Candidate]] = {
     SemanticType.INVENTORY_QUERY: InventoryQueryCandidate,
     SemanticType.FINANCE_QUERY: FinanceQueryCandidate,
     SemanticType.TRANSFER: TransferCandidate,
+    SemanticType.PETTY_CASH: PettyCashCandidate,
 }

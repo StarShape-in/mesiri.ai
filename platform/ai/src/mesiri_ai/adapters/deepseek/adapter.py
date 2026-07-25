@@ -51,7 +51,7 @@ _EXTRACTION_PROMPT = (
     "Return STRICT JSON only, with keys: "
     '"semantic_type" (one of: expense, equipment_usage, material_update, '
     "labour_update, general_site_update, general_question, inventory_query, "
-    "finance_query, transfer, unknown), "
+    "finance_query, transfer, petty_cash, unknown), "
     '"fields" (object of extracted values), '
     '"missing_fields" (array of expected-but-absent keys), '
     '"field_confidences" (object mapping each field to 0..1). '
@@ -102,7 +102,20 @@ _EXTRACTION_PROMPT = (
     "names, they will be matched against the organization's actual accounts "
     "afterwards. Omit either name if not stated (the user will be asked to clarify). "
     "Never confuse with expense (paying someone/something outside the organization) "
-    "or finance_query (a question, not a movement of money)."
+    "or finance_query (a question, not a movement of money).\n"
+    "- petty_cash: amount, recipient_name, direction, description, project_name. "
+    "Use this type when money is given to or returned by a specific PERSON "
+    '(not one of the organization\'s own accounts) as petty cash/advance '
+    '(e.g. "give ₹20,000 petty cash to Alan", "issue 5000 cash advance to '
+    'Priya", "Alan returns ₹3,000 petty cash", "Priya returned the remaining '
+    '2000"). recipient_name is the person\'s name as stated -- extract it '
+    "even if you're not sure it's a real user, it will be matched against "
+    'the organization\'s users afterwards. direction MUST be exactly "issue" '
+    '(money going out to the person) or "return" (money coming back from '
+    'the person) -- never any other word. Never confuse with transfer '
+    "(which moves money between the organization's own accounts, not to/from "
+    "a person) or expense (paying an outside vendor/bill, not handing cash "
+    "to a colleague)."
 )
 
 

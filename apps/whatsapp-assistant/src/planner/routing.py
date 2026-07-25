@@ -24,4 +24,6 @@ WORKFLOW_KEY_BY_EVENT: dict[CanonicalEventType, WorkflowKey] = {
     CanonicalEventType.ACCOUNT_BALANCE_QUERY_ASKED: WorkflowKey.ACCOUNT_BALANCE_QUERY,
     CanonicalEventType.EXPENSE_QUERY_ASKED: WorkflowKey.EXPENSE_QUERY,
     CanonicalEventType.TRANSFER_REQUESTED: WorkflowKey.TRANSFER,
+    CanonicalEventType.PETTY_CASH_ISSUE_REQUESTED: WorkflowKey.PETTY_CASH,
+    CanonicalEventType.PETTY_CASH_RETURN_REQUESTED: WorkflowKey.PETTY_CASH,
 }

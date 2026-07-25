@@ -57,4 +57,13 @@ class SemanticType(str, Enum):
     # ₹50,000 from Company Account to Site Cash") -- a business-affecting
     # write, unlike FINANCE_QUERY, so it still goes through draft/confirm.
     TRANSFER = "transfer"
+    # Petty cash issued to or returned by a person (e.g. "give ₹20,000
+    # petty cash to Alan", "Alan returns ₹3,000") -- built as a convenience
+    # shape over TRANSFER (Finance Module Slice 5, see
+    # workflows/petty_cash/nodes.py): the recipient's employee-advance
+    # account is one leg of the transfer, auto-created on first issuance.
+    # Splits into two CanonicalEventTypes by the extracted `direction` field
+    # ("issue" or "return"), the same way MATERIAL_UPDATE splits by
+    # `direction` (see canonicalization/mapping.py).
+    PETTY_CASH = "petty_cash"
     UNKNOWN = "unknown"

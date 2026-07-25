@@ -37,6 +37,14 @@ _FINANCE_QUERY_KIND_EVENT_TYPE: dict[str, CanonicalEventType] = {
     "expenses": CanonicalEventType.EXPENSE_QUERY_ASKED,
 }
 
+# PETTY_CASH is the third semantic type that splits by a candidate field --
+# `direction` ("issue" -> petty cash paid out to someone, "return" -> petty
+# cash paid back in), same pattern as MATERIAL_UPDATE/direction above.
+_PETTY_CASH_DIRECTION_EVENT_TYPE: dict[str, CanonicalEventType] = {
+    "issue": CanonicalEventType.PETTY_CASH_ISSUE_REQUESTED,
+    "return": CanonicalEventType.PETTY_CASH_RETURN_REQUESTED,
+}
+
 # Business fields required for an event of this type to be ACTIONABLE.
 # Question/Unrecognized events require nothing — they carry no business record.
 REQUIRED_FIELDS: dict[CanonicalEventType, tuple[str, ...]] = {
@@ -52,6 +60,8 @@ REQUIRED_FIELDS: dict[CanonicalEventType, tuple[str, ...]] = {
     CanonicalEventType.ACCOUNT_BALANCE_QUERY_ASKED: (),
     CanonicalEventType.EXPENSE_QUERY_ASKED: (),
     CanonicalEventType.TRANSFER_REQUESTED: ("amount",),
+    CanonicalEventType.PETTY_CASH_ISSUE_REQUESTED: ("amount", "recipient_name"),
+    CanonicalEventType.PETTY_CASH_RETURN_REQUESTED: ("amount", "recipient_name"),
     CanonicalEventType.CLARIFICATION_REQUIRED: (),
     CanonicalEventType.UNRECOGNIZED: (),
 }
@@ -70,4 +80,7 @@ def resolve_event_type(semantic_type: SemanticType, fields: dict) -> CanonicalEv
     if semantic_type is SemanticType.FINANCE_QUERY:
         query_kind = str(fields.get("query_kind", "")).strip().lower()
         return _FINANCE_QUERY_KIND_EVENT_TYPE.get(query_kind, CanonicalEventType.UNRECOGNIZED)
+    if semantic_type is SemanticType.PETTY_CASH:
+        direction = str(fields.get("direction", "")).strip().lower()
+        return _PETTY_CASH_DIRECTION_EVENT_TYPE.get(direction, CanonicalEventType.UNRECOGNIZED)
     return _SIMPLE_EVENT_TYPE.get(semantic_type, CanonicalEventType.UNRECOGNIZED)

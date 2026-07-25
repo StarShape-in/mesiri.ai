@@ -224,6 +224,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from mesiri.application.expenses.dispatcher import ExpenseExecutionDispatcher
     from mesiri.application.expenses.handlers import RecordExpenseHandler
     from mesiri.application.expenses.resolution import PostgresExpenseCategoryResolver
+    from mesiri.application.vendors.resolution import PostgresVendorResolver
     from mesiri.infrastructure.postgres.repositories.expense_execution import (
         PostgresExpenseExecutionRepository,
     )
@@ -232,6 +233,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         PostgresExpenseExecutionRepository(),
         db=material_db,
         resolver=PostgresExpenseCategoryResolver(),
+        vendor_resolver=PostgresVendorResolver(),
     )
     expense_dispatcher = ExpenseExecutionDispatcher(expense_execution_handler)
     # Account admin (Finance Module Slice 6, account-admin scope): same
@@ -314,6 +316,14 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from runtime.money_account_query import MoneyAccountQueryService
 
     money_account_query = MoneyAccountQueryService(material_db)
+    # Resolves a petty cash recipient's name into their employee-advance
+    # account (auto-created on first issuance), fed into the petty-cash
+    # workflow's "other account" slot (Finance Module Slice 5) -- same
+    # reasoning and same material_db as catalog_query above. See
+    # runtime/petty_cash_query.py.
+    from runtime.petty_cash_query import PettyCashRecipientQueryService
+
+    petty_cash_query = PettyCashRecipientQueryService(material_db)
     # Read-only expense list/sum lookups for the expense-query workflow
     # (Finance Module Slice 2) -- same reasoning and same material_db as
     # money_account_query above. See runtime/expense_query_service.py.
@@ -672,6 +682,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
                 org_settings_query=org_settings_query,
                 expense_category_query=expense_category_query,
                 money_account_query=money_account_query,
+                petty_cash_query=petty_cash_query,
                 expense_query_service=expense_query_service,
                 pending_report_store=pending_report_store,
             )
@@ -956,6 +967,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             org_settings_query=org_settings_query,
             expense_category_query=expense_category_query,
             money_account_query=money_account_query,
+            petty_cash_query=petty_cash_query,
             expense_query_service=expense_query_service,
             pending_report_store=pending_report_store,
         )

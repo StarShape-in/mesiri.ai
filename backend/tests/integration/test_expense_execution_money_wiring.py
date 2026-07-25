@@ -297,3 +297,63 @@ async def test_expense_without_media_object_key_creates_no_attachment(
             )
         ).scalar_one()
     assert count == 0
+
+
+async def test_expense_with_vendor_id_writes_it_to_the_expense_row(
+    engine: AsyncEngine, scenario: dict
+):
+    """Finance Module Slice 4: a vendor_id resolved before persist_success
+    (see application/vendors/resolution.py) must actually land on the
+    expenses row -- the column previously had no migration and was never
+    written at all."""
+    org_id = scenario["org_id"]
+    user_id = scenario["user_id"]
+    vendor_id = uuid.uuid4()
+    async with engine.begin() as conn:
+        await conn.execute(
+            sa.text(
+                "INSERT INTO vendors (id, organization_id, name, status, created_by) "
+                "VALUES (:id, :org_id, 'ABC Hardware', 'active', :user_id)"
+            ),
+            {"id": vendor_id, "org_id": org_id, "user_id": user_id},
+        )
+
+    handler = RecordExpenseHandler(PostgresExpenseExecutionRepository())
+    cmd = _command(scenario, vendor_id=str(vendor_id))
+
+    async with engine.begin() as conn:
+        result = await handler.handle(conn, cmd)
+
+    expense_id = uuid.UUID(result.material_row_id)
+    async with engine.connect() as conn:
+        stored_vendor_id = (
+            await conn.execute(
+                sa.text("SELECT vendor_id FROM expenses WHERE id = :id"), {"id": expense_id}
+            )
+        ).scalar_one()
+    assert stored_vendor_id == vendor_id
+    # No manual vendor cleanup needed: vendors.organization_id cascades from
+    # organizations (migration 0370), and the fixture teardown below deletes
+    # this scenario's organization row in the same DELETE statement as its
+    # expenses row -- both children vanish together, so the
+    # expenses.vendor_id -> vendors FK (no cascade of its own) never sees a
+    # dangling reference to violate (see 0361's docstring for why this is
+    # safe: a single DELETE statement is checked for FK violations once, at
+    # the end, not row-by-row).
+
+
+async def test_expense_without_vendor_id_leaves_it_null(engine: AsyncEngine, scenario: dict):
+    handler = RecordExpenseHandler(PostgresExpenseExecutionRepository())
+    cmd = _command(scenario)
+
+    async with engine.begin() as conn:
+        result = await handler.handle(conn, cmd)
+
+    expense_id = uuid.UUID(result.material_row_id)
+    async with engine.connect() as conn:
+        stored_vendor_id = (
+            await conn.execute(
+                sa.text("SELECT vendor_id FROM expenses WHERE id = :id"), {"id": expense_id}
+            )
+        ).scalar_one()
+    assert stored_vendor_id is None
