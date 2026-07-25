@@ -1,6 +1,6 @@
 # Finance Module — Domain Design & LangGraph Workflow Roadmap
 
-**Status:** In progress. Slice 0 (money wiring), Slice 1 (LangGraph slot-filling spine), Slice 2 (expense & balance queries), and the account-admin portion of Slice 6 (create/rename/deactivate accounts, done out of order — see note below) are done as of 2026-07-25. Slices 3–5 and the receipt/missing-receipt portion of Slice 6 remain (V1); Slices 9–12 + dashboard are V2, explicitly deferred.
+**Status:** In progress. Slice 0 (money wiring), Slice 1 (LangGraph slot-filling spine), Slice 2 (expense & balance queries), Slice 3 (transfers), and the account-admin portion of Slice 6 (create/rename/deactivate accounts, done out of order — see note below) are done as of 2026-07-25. Slices 4–5 and the receipt/missing-receipt portion of Slice 6 remain (V1); Slices 9–12 + dashboard are V2, explicitly deferred.
 
 **Out-of-order note:** Slice 6 as originally ticketed ([STA-148](https://linear.app/starshape-pvt/issue/STA-148)) bundled two unrelated things — account admin, and receipt/attachment capture + missing-receipt nudges. Only account admin was built now, jumping ahead of Slices 2–5, because it was blocking realistic multi-account testing (every org only ever had the one auto-bootstrapped "Site Cash" account otherwise). STA-148 was split: account admin is done; the receipt/attachment portion is tracked as a new follow-up ticket, not yet started.
 **Author:** Written and approved 2026-07-25 (Linear epics [STA-140](https://linear.app/starshape-pvt/issue/STA-140) / [STA-141](https://linear.app/starshape-pvt/issue/STA-141), sub-issues STA-142..154). Re-read before extending — the design below reflects what actually shipped in Slices 0–1; verify against the live code before assuming later slices are still exactly as described.
@@ -115,13 +115,29 @@ Backend: `PostgresExpenseRepository` gained `list_confirmed()` (project/site/dat
 
 Tests: `test_expense_query_service.py` (date-range buckets, total — pure), `test_account_balance_query_workflow.py` / `test_expense_query_workflow.py` (node formatting), `test_canonicalization.py` (FINANCE_QUERY → the two event types, plus the existing all-semantic-types parametrized test), `test_finance_query_graphs.py` (real LangGraph, no DB), backend `test_finance_query_services.py` (real DB — account matching, balances, `list_confirmed` filters).
 
-## Slices 3–5 (V1, not yet started)
+## Slice 3 — Transfers between accounts ([STA-145](https://linear.app/starshape-pvt/issue/STA-145)) — DONE
 
-See Linear [STA-145](https://linear.app/starshape-pvt/issue/STA-145)–[STA-147](https://linear.app/starshape-pvt/issue/STA-147) for full detail: transfers, vendor/payee (fixes a real schema drift — `expenses.vendor_id` has no backing migration), petty cash (a transfer convenience shape, no new transaction type).
+"Transfer ₹50,000 from Company Account to Site Cash" now posts **one** `money_transactions` row (`transaction_type='transfer'`, both `from_account_id`/`to_account_id` set) via the existing `PostgresMoneyTransactionRepository.record()` (Slice 0) — `get_balance()`'s derived-balance formula needed no changes to reflect both legs correctly.
+
+**Two-slot fill, reusing Slice 1's `workflows/slots.py` twice** — `resolve_from_account` then `resolve_to_account`, each trying the AI-extracted account name first (`match_slot_answer` against the org's real accounts) and asking only if it doesn't resolve. `resolve_to_account` excludes whichever account `resolve_from_account` already picked from its own candidate list, so the two slots can never resolve to the same account through the ask-a-question path.
+
+**Real bug found and fixed building this**: the graph's per-slot conditional edges initially checked `state.get("awaiting_slot")` truthily (any slot) rather than checking for *that specific slot*. A stale `awaiting_slot="to_account_id"` left over from the previous round (the from-slot already resolved, now answering the to-slot) made the edge *after* `resolve_from_account` misfire and end the graph early, since any truthy value looked like "still asking." Fixed to check the exact slot name per edge (`_route_after_from`/`_route_after_to`) — caught by the real-LangGraph three-round integration test, not the unit tests (which never round-trip through two full re-invocations).
+
+**One new `SemanticType.TRANSFER`** (not split, unlike `FINANCE_QUERY` — transfer is a single, single-purpose intent), both extraction prompts updated with the field schema (`amount`, `from_account_name`, `to_account_name`, `description`).
+
+**Role enforcement, a deliberate placement choice**: `ADMIN`/`FINANCE`/`PROJECT_MANAGER` only, never `SITE_ENGINEER` — enforced in `application/finance/transfer_validation.py` at **confirm time**, not before slot-filling starts. There is no existing precedent in this codebase for a WhatsApp-CQRS-path role gate before a draft is built (account admin's early gate only works because it bypasses the AI pipeline entirely, see Slice 6a) — building one here would mean threading `ActorIdentity` through the `ExecutionDispatcher` protocol for every domain. Instead `created_by_role` travels through the draft the same way `amount`/`from_account_id`/`to_account_id` already do (seeded in `_seed_account_candidates`, now extended to also fire for `WorkflowKey.TRANSFER`). Trade-off, stated plainly: a disallowed role can complete both slot-fills before being told no, rather than being stopped immediately.
+
+Backend: new `application/finance/transfer_{commands,validation,resolution,mapper,handler,dispatcher,repository,fakes}.py` + `infrastructure/postgres/repositories/transfer_execution.py`, mirroring the account-admin (Slice 6a) file shape exactly. `PostgresTransferAccountResolver` re-verifies both accounts are still active at confirm time (defense-in-depth — an account could have been deactivated, Slice 6a, in the gap between draft and confirmation). No new migration.
+
+Tests: `test_transfer_nodes.py` (both-names-resolve, ask-and-answer, excludes-already-picked-account), `test_canonicalization.py` (TRANSFER → TRANSFER_REQUESTED), `test_transfer_graph.py` (real LangGraph — the full two-round ask/answer/ask/answer/confirm path, this is what caught the routing bug above), backend `test_transfer_{validation,mapper,handler}.py` (fakes), `test_transfer_execution.py` (real DB — one ledger row, both balances move, inactive-account rejection, idempotent replay).
+
+## Slices 4–5 (V1, not yet started)
+
+See Linear [STA-146](https://linear.app/starshape-pvt/issue/STA-146)–[STA-147](https://linear.app/starshape-pvt/issue/STA-147) for full detail: vendor/payee (fixes a real schema drift — `expenses.vendor_id` has no backing migration), petty cash (a transfer convenience shape reusing Slice 3, no new transaction type).
 
 ## Slice 6 (receipt/attachment portion) and Slices 7–8 (V1, not yet started)
 
-Receipt/attachment capture + missing-receipt nudge (split out of the original STA-148, new follow-up ticket not yet created in Linear), edit/cancel/reverse ([STA-149](https://linear.app/starshape-pvt/issue/STA-149)), duplicate detection ([STA-150](https://linear.app/starshape-pvt/issue/STA-150)).
+Receipt/attachment capture + missing-receipt nudge ([STA-159](https://linear.app/starshape-pvt/issue/STA-159), split out of the original STA-148), edit/cancel/reverse ([STA-149](https://linear.app/starshape-pvt/issue/STA-149)), duplicate detection ([STA-150](https://linear.app/starshape-pvt/issue/STA-150)).
 
 ## Slices 9–12 + dashboard (V2, deferred)
 
@@ -138,6 +154,8 @@ See [STA-151](https://linear.app/starshape-pvt/issue/STA-151)–[STA-154](https:
 **Slice 6 (account-admin portion):** `shared/contracts/src/mesiri_contracts/assistant/{draft_action,planner_decision,canonical_event}.py` · `backend/src/mesiri/application/finance/` (new package) · `.../infrastructure/postgres/repositories/{finance,account_admin_execution}.py` · `apps/whatsapp-assistant/src/workflows/account_admin/` (new package) · `.../workflows/registry.py` · `.../planner/routing.py` · `.../runtime/{account_admin_parser,account_admin_journey,dependencies}.py`.
 
 **Slice 2:** `shared/contracts/src/mesiri_contracts/assistant/{enums,canonical_event,planner_decision,candidates}.py` · `platform/ai/src/mesiri_ai/adapters/{gemini,deepseek}/adapter.py` (extraction prompts) · `backend/src/mesiri/infrastructure/postgres/repositories/expenses.py` (`list_confirmed`) · `apps/whatsapp-assistant/src/canonicalization/mapping.py` · `.../understanding/pipeline.py` · `.../workflows/{runtime,registry}.py` · `.../workflows/{account_balance_query,expense_query}/` (new packages) · `.../planner/routing.py` · `.../runtime/{money_account_query,expense_query_service,inbound_journey,dependencies}.py`.
+
+**Slice 3:** `shared/contracts/src/mesiri_contracts/assistant/{enums,canonical_event,planner_decision,draft_action,candidates}.py` · `platform/ai/src/mesiri_ai/adapters/{gemini,deepseek}/adapter.py` · `backend/src/mesiri/application/finance/transfer_*.py` (new files) · `.../infrastructure/postgres/repositories/transfer_execution.py` (new) · `apps/whatsapp-assistant/src/workflows/transfer/` (new package) · `.../workflows/registry.py` · `.../canonicalization/mapping.py` · `.../understanding/pipeline.py` · `.../planner/routing.py` · `.../runtime/{inbound_journey,dependencies}.py`.
 
 ## Verification
 
