@@ -47,3 +47,41 @@ def test_built_vs_unbuilt_matches_the_registry() -> None:
     for name in ("equipment_usage", "labour_update", "general_site_update"):
         assert infos[name].implemented is False
         assert infos[name].workflow_keys  # still mapped to a (future) workflow
+
+
+def test_simulate_models_support_interactive_payloads() -> None:
+    import uuid
+
+    from admin.system_graph_router import (
+        ReplyOptionInfo,
+        SimulateRequest,
+        SimulateResponse,
+        StructuredReplyInfo,
+    )
+
+    req = SimulateRequest(
+        organization_id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        text="Confirm",
+        modality="interactive",
+        interactive_reply_id="confirm",
+    )
+    assert req.modality == "interactive"
+    assert req.interactive_reply_id == "confirm"
+
+    resp = SimulateResponse(
+        dry_run=True,
+        ran_as_wa_id="12345",
+        routed_via="confirmation_fast_path",
+        replies=["Confirmed"],
+        structured_replies=[
+            StructuredReplyInfo(
+                type="buttons",
+                text="Confirm?",
+                buttons=[ReplyOptionInfo(id="confirm", title="Yes")],
+            )
+        ],
+    )
+    assert resp.structured_replies[0].type == "buttons"
+    assert resp.structured_replies[0].buttons[0].id == "confirm"
+

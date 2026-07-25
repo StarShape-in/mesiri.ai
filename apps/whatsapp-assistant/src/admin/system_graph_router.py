@@ -134,11 +134,31 @@ class SystemGraphResponse(BaseModel):
     workflows: list[WorkflowGraphInfo]
 
 
+class ReplyOptionInfo(BaseModel):
+    id: str
+    title: str
+    description: str | None = None
+
+
+class StructuredReplyInfo(BaseModel):
+    type: str  # "text" | "buttons" | "list"
+    text: str
+    buttons: list[ReplyOptionInfo] = []
+    list_rows: list[ReplyOptionInfo] = []
+    button_label: str | None = None
+
+
 class SimulateRequest(BaseModel):
     organization_id: uuid.UUID
     user_id: uuid.UUID
-    text: str
+    text: str = ""
     modality: str = "text"
+    interactive_reply_id: str | None = None
+
+
+class ResetSimulateRequest(BaseModel):
+    organization_id: uuid.UUID
+    user_id: uuid.UUID
 
 
 class SimulateResponse(BaseModel):
@@ -150,11 +170,13 @@ class SimulateResponse(BaseModel):
     # Everything before ai_pipeline is deterministic and never touches a model.
     routed_via: str
     replies: list[str]
+    structured_replies: list[StructuredReplyInfo] = []
     understanding: dict | None = None
     resolved_context: dict | None = None
     canonical_event: dict | None = None
     planner_decision: dict | None = None
     workflow_run: dict | None = None
+
 
 
 # ---------------------------------------------------------------------------
@@ -996,6 +1018,33 @@ async def _lookup_user_wa_id(org_id: uuid.UUID, user_id: uuid.UUID) -> str:
     return str(row.whatsapp_number)
 
 
+@router.post("/simulate/reset")
+async def reset_simulation_session(
+    body: ResetSimulateRequest,
+    request: Request,
+    _admin: dict = Depends(require_platform_admin),
+):
+    """Clear any pending workflow confirmation or held gate report for the given user."""
+    from runtime.dependencies import get_container
+    from workflows.ports import ResumeAction
+
+    wa_id = await _lookup_user_wa_id(body.organization_id, body.user_id)
+    container = get_container(request)
+    user_id = str(body.user_id)
+
+    loaded = await container.workflow_runtime.get_awaiting_confirmation(user_id)
+    if loaded is not None:
+        await container.workflow_runtime.resume(loaded, ResumeAction.CANCEL)
+
+    if hasattr(container, "pending_report_store") and container.pending_report_store:
+        await container.pending_report_store.pop_pending(user_id=user_id)
+
+    if hasattr(container, "category_hint_store") and container.category_hint_store:
+        await container.category_hint_store.pop_hint(user_id=user_id)
+
+    return {"status": "ok", "user_id": user_id, "wa_id": wa_id}
+
+
 @router.post("/simulate", response_model=SimulateResponse)
 async def simulate_message(
     body: SimulateRequest,
@@ -1006,10 +1055,9 @@ async def simulate_message(
     capturing replies instead of sending them. Replicates
     runtime/dependencies.py's _on_normalized order — the identity gate, then
     each deterministic fast path (confirmation resume, category tap, greeting,
-    whoami), and only then the AI pipeline — so testing "who am i" or "hi"
-    here shows the same deterministic reply a real user would get, not an
-    AI-pipeline detour. Side-effect-free: no confirmation is auto-sent, so
-    nothing is persisted, and no message/trace logging happens (dry run)."""
+    whoami, material/unit/stock/project/site gate resumptions), and only then
+    the AI pipeline — so testing interactive buttons or text shows full
+    multi-turn workflow execution."""
     from context.live_identity import (
         NO_ORG_MESSAGE,
         ORG_SUSPENDED_MESSAGE,
@@ -1020,7 +1068,15 @@ async def simulate_message(
     from mesiri_contracts.assistant.normalized_message import NormalizedMessage, SenderInfo
     from mesiri_contracts.common.ids import new_id
     from runtime.dependencies import get_container
-    from runtime.inbound_journey import process_inbound_message
+    from runtime.inbound_journey import (
+        process_inbound_message,
+        resume_pending_report_with_material,
+        resume_pending_report_with_project,
+        resume_pending_report_with_site,
+        resume_pending_report_with_stock_choice,
+        resume_pending_report_with_unit,
+    )
+    from runtime.reply_dispatch import send_reply_spec
 
     try:
         modality = InputModality(body.modality)
@@ -1031,77 +1087,223 @@ async def simulate_message(
     if modality not in (InputModality.TEXT, InputModality.INTERACTIVE):
         raise HTTPException(
             status_code=400,
-            detail="Only text simulation is supported for now (voice/image need media upload).",
+            detail="Only text and interactive simulation are supported for now.",
         )
 
     wa_id = await _lookup_user_wa_id(body.organization_id, body.user_id)
     container = get_container(request)
 
-    def _reply(routed_via: str, text: str) -> SimulateResponse:
+    captured_texts: list[str] = []
+    captured_structured: list[StructuredReplyInfo] = []
+
+    async def _capture_text(_to: str, text: str) -> None:
+        captured_texts.append(text)
+        captured_structured.append(StructuredReplyInfo(type="text", text=text))
+
+    async def _capture_list(_to: str, body_text: str, button_label: str, rows) -> None:
+        options = "\n".join(f"  • {getattr(r, 'title', r)}" for r in rows)
+        captured_texts.append(f"{body_text}\n{options}")
+        list_rows = [
+            ReplyOptionInfo(
+                id=getattr(r, "id", str(r)),
+                title=getattr(r, "title", str(r)),
+                description=getattr(r, "description", None),
+            )
+            for r in rows
+        ]
+        captured_structured.append(
+            StructuredReplyInfo(
+                type="list",
+                text=body_text,
+                button_label=button_label,
+                list_rows=list_rows,
+            )
+        )
+
+    async def _capture_button(_to: str, *, body: str, buttons) -> None:
+        options = " / ".join(getattr(r, "title", r) for r in buttons)
+        captured_texts.append(f"{body}\n\nReply {options}")
+        button_opts = [
+            ReplyOptionInfo(
+                id=getattr(r, "id", str(r)),
+                title=getattr(r, "title", str(r)),
+                description=getattr(r, "description", None),
+            )
+            for r in buttons
+        ]
+        captured_structured.append(
+            StructuredReplyInfo(
+                type="buttons",
+                text=body,
+                buttons=button_opts,
+            )
+        )
+
+    async def _dispatch_reply(spec_or_text: object) -> None:
+        if hasattr(spec_or_text, "text"):
+            await send_reply_spec(
+                spec_or_text,  # type: ignore[arg-type]
+                wa_id,
+                send_text=_capture_text,
+                send_list=_capture_list,
+                send_button=_capture_button,
+            )
+        elif isinstance(spec_or_text, str):
+            await _capture_text(wa_id, spec_or_text)
+
+    def _build_response(routed_via: str, result_obj: object | None = None) -> SimulateResponse:
+        def _dump(obj) -> dict | None:
+            return obj.model_dump(mode="json") if obj is not None else None
+
+        und = _dump(getattr(result_obj, "understanding", None))
+        ctx_dump = _dump(getattr(result_obj, "resolved_context", None))
+        canon = _dump(getattr(result_obj, "canonical_event", None))
+        planner_dec = _dump(getattr(result_obj, "planner_decision", None))
+        wf_run = None
+        run_obj = getattr(result_obj, "workflow_run", None)
+        if run_obj is not None:
+            wf_run = {
+                "status": run_obj.status.value,
+                "workflow_key": run_obj.workflow_key.value,
+                "workflow_instance_id": run_obj.workflow_instance_id,
+            }
+
         return SimulateResponse(
-            dry_run=True, ran_as_wa_id=wa_id, routed_via=routed_via, replies=[text]
+            dry_run=True,
+            ran_as_wa_id=wa_id,
+            routed_via=routed_via,
+            replies=captured_texts,
+            structured_replies=captured_structured,
+            understanding=und,
+            resolved_context=ctx_dump,
+            canonical_event=canon,
+            planner_decision=planner_dec,
+            workflow_run=wf_run,
         )
 
     # --- Identity gate (M4) — same check the real webhook path runs first. ---
     ctx = await resolve_sender(container.actor_reader, wa_id)
     if ctx is None:
-        return _reply("identity_gate", UNREGISTERED_MESSAGE)
+        await _capture_text(wa_id, UNREGISTERED_MESSAGE)
+        return _build_response("identity_gate")
     if ctx.organization_id is None:
-        return _reply("identity_gate", NO_ORG_MESSAGE.format(name=ctx.full_name))
+        await _capture_text(wa_id, NO_ORG_MESSAGE.format(name=ctx.full_name))
+        return _build_response("identity_gate")
     if not ctx.org_active:
-        return _reply("identity_gate", ORG_SUSPENDED_MESSAGE)
+        await _capture_text(wa_id, ORG_SUSPENDED_MESSAGE)
+        return _build_response("identity_gate")
+
+    metadata: dict[str, object] = {"simulated": True}
+    if body.interactive_reply_id:
+        metadata["interactive_reply_id"] = body.interactive_reply_id
 
     message = NormalizedMessage(
         message_id=new_id("sim"),
         sender=SenderInfo(wa_id=wa_id, phone_number=wa_id),
         timestamp=datetime.now(UTC),
         modality=modality,
-        text=body.text,
-        metadata={"simulated": True},
+        text=body.text or body.interactive_reply_id or "",
+        metadata=metadata,
     )
 
     # --- Deterministic fast paths, in the exact order _on_normalized runs them. ---
-    handled = await container.interaction_handler.handle_fast_path(ctx.user_id, message)
+    handled = await container.interaction_handler.handle_fast_path(ctx.user_id, message, actor=ctx)
     if handled is not None:
-        return _reply("confirmation_fast_path", handled.reply_text)
+        await _capture_text(wa_id, handled.reply_text)
+        return _build_response("confirmation_fast_path")
 
     category_prompt = container.interaction_handler.handle_category_tap(message)
     if category_prompt is not None:
-        text = category_prompt.text
-        if category_prompt.buttons:
-            options = " / ".join(b.title for b in category_prompt.buttons)
-            text = f"{text}\n\nReply {options}"
-        return _reply("category_tap", text)
+        await _dispatch_reply(category_prompt)
+        return _build_response("category_tap")
 
     material_direction_prompt = container.interaction_handler.handle_material_direction_tap(message)
     if material_direction_prompt is not None:
-        return _reply("material_direction_tap", material_direction_prompt)
+        await _capture_text(wa_id, material_direction_prompt)
+        return _build_response("material_direction_tap")
 
     greeting_reply = container.interaction_handler.handle_greeting_trigger(message)
     if greeting_reply is not None:
-        text = greeting_reply.text
-        if greeting_reply.list_rows:
-            options = "\n".join(f"  • {r.title}" for r in greeting_reply.list_rows)
-            text = f"{text}\n{options}"
-        return _reply("greeting_trigger", text)
+        await _dispatch_reply(greeting_reply)
+        return _build_response("greeting_trigger")
 
     whoami_text = container.interaction_handler.handle_whoami_trigger(message, ctx)
     if whoami_text is not None:
-        return _reply("whoami_trigger", whoami_text)
+        await _capture_text(wa_id, whoami_text)
+        return _build_response("whoami_trigger")
 
-    # --- Nothing deterministic matched: the real AI pipeline. ---
-    captured: list[str] = []
+    # --- Gate resumptions (material, unit, stock, project, site) ---
+    pending_store = getattr(container, "pending_report_store", None)
+    if pending_store is not None:
+        mat_reply = await resume_pending_report_with_material(
+            message,
+            ctx.user_id,
+            pending_report_store=pending_store,
+            catalog_query=container.catalog_query,
+            planner=container.planner,
+            workflow_runtime=container.workflow_runtime,
+            actor=ctx,
+            inventory_query=container.inventory_query,
+        )
+        if mat_reply is not None:
+            await _dispatch_reply(mat_reply)
+            return _build_response("material_gate_resume")
 
-    async def _capture_text(_to: str, text: str) -> None:
-        captured.append(text)
+        unit_reply = await resume_pending_report_with_unit(
+            message,
+            ctx.user_id,
+            pending_report_store=pending_store,
+            catalog_query=container.catalog_query,
+            planner=container.planner,
+            workflow_runtime=container.workflow_runtime,
+            actor=ctx,
+            inventory_query=container.inventory_query,
+        )
+        if unit_reply is not None:
+            await _dispatch_reply(unit_reply)
+            return _build_response("unit_gate_resume")
 
-    async def _capture_list(_to: str, body: str, button_label: str, rows) -> None:  # noqa: ARG001
-        options = "\n".join(f"  • {getattr(r, 'title', r)}" for r in rows)
-        captured.append(f"{body}\n{options}")
+        stock_reply = await resume_pending_report_with_stock_choice(
+            message,
+            ctx.user_id,
+            pending_report_store=pending_store,
+            planner=container.planner,
+            workflow_runtime=container.workflow_runtime,
+            inventory_query=container.inventory_query,
+        )
+        if stock_reply is not None:
+            await _dispatch_reply(stock_reply)
+            return _build_response("stock_gate_resume")
 
-    async def _capture_button(_to: str, *, body: str, buttons) -> None:
-        options = " / ".join(getattr(r, "title", r) for r in buttons)
-        captured.append(f"{body}\n\nReply {options}")
+        proj_reply = await resume_pending_report_with_project(
+            message,
+            ctx.user_id,
+            pending_report_store=pending_store,
+            planner=container.planner,
+            workflow_runtime=container.workflow_runtime,
+            actor=ctx,
+            inventory_query=container.inventory_query,
+        )
+        if proj_reply is not None:
+            await _dispatch_reply(proj_reply)
+            return _build_response("project_gate_resume")
+
+        site_reply = await resume_pending_report_with_site(
+            message,
+            ctx.user_id,
+            pending_report_store=pending_store,
+            planner=container.planner,
+            workflow_runtime=container.workflow_runtime,
+            actor=ctx,
+            inventory_query=container.inventory_query,
+        )
+        if site_reply is not None:
+            await _dispatch_reply(site_reply)
+            return _build_response("site_gate_resume")
+
+    # --- Category hint pop & real AI pipeline ---
+    category_hint_store = getattr(container, "category_hint_store", None)
+    category_hint = await category_hint_store.pop_hint(user_id=ctx.user_id) if category_hint_store else None
 
     result = await process_inbound_message(
         message,
@@ -1115,43 +1317,15 @@ async def simulate_message(
         send_list=_capture_list,
         send_button=_capture_button,
         context_debug=False,
-        # actor=ctx mirrors runtime/dependencies.py's real call: without it, a
-        # non-English whoami question that only Understanding's post-
-        # translation check catches (see understanding/pipeline.py) would
-        # reach here with semantic_type=WHOAMI_QUESTION but never get
-        # answered, since process_inbound_message only builds that reply when
-        # actor is not None. Same reasoning for IDENTITY_LOOKUP_REQUESTED's
-        # actor_profile injection at canonicalization time.
         actor=ctx,
-        # Real stock levels for the material.inventory_query workflow — without
-        # this it would always report "no recorded stock" regardless of reality.
         inventory_query=container.inventory_query,
-        # Real catalog/units lookups so the material/unit resolution gate
-        # actually runs in this dry run too, not just in production.
         catalog_query=container.catalog_query,
-        # Real expense category names so AI-side category selection is
-        # exercised in this dry run too, not just in production.
         expense_category_query=container.expense_category_query,
-        # No loggers: this is a dry run, not a real inbound message.
+        semantic_hint=category_hint.semantic_hint if category_hint else None,
+        direction_hint=category_hint.direction if category_hint else None,
+        pending_report_store=pending_store,
+        category_hint_store=category_hint_store,
     )
 
-    def _dump(obj) -> dict | None:
-        return obj.model_dump(mode="json") if obj is not None else None
+    return _build_response("ai_pipeline", result)
 
-    return SimulateResponse(
-        dry_run=True,
-        ran_as_wa_id=wa_id,
-        routed_via="ai_pipeline",
-        replies=captured,
-        understanding=_dump(result.understanding),
-        resolved_context=_dump(result.resolved_context),
-        canonical_event=_dump(result.canonical_event),
-        planner_decision=_dump(result.planner_decision),
-        workflow_run={
-            "status": result.workflow_run.status.value,
-            "workflow_key": result.workflow_run.workflow_key.value,
-            "workflow_instance_id": result.workflow_run.workflow_instance_id,
-        }
-        if result.workflow_run is not None
-        else None,
-    )

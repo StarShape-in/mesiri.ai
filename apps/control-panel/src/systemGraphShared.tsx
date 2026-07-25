@@ -79,11 +79,34 @@ export interface ProviderExecution {
   succeeded: boolean;
   error_code: string | null;
 }
+export interface ReplyOption {
+  id: string;
+  title: string;
+  description?: string | null;
+}
+
+export interface StructuredReply {
+  type: 'text' | 'buttons' | 'list';
+  text: string;
+  buttons?: ReplyOption[];
+  list_rows?: ReplyOption[];
+  button_label?: string | null;
+}
+
+export interface SimulateRequest {
+  organization_id: string;
+  user_id: string;
+  text?: string;
+  modality?: 'text' | 'interactive';
+  interactive_reply_id?: string;
+}
+
 export interface SimulateResponse {
   dry_run: boolean;
   ran_as_wa_id: string;
   routed_via: string;
   replies: string[];
+  structured_replies?: StructuredReply[];
   understanding: {
     semantic_type?: string;
     transcript?: string;
@@ -142,6 +165,11 @@ export const ROUTED_VIA_LABELS: Record<string, string> = {
   category_tap: 'Category menu tap — no AI',
   greeting_trigger: 'Greeting trigger — no AI',
   whoami_trigger: 'Who-am-I trigger — no AI',
+  material_gate_resume: 'Material gate resolution — no AI',
+  unit_gate_resume: 'Unit mismatch resolution — no AI',
+  stock_gate_resume: 'Stock choice resolution — no AI',
+  project_gate_resume: 'Project picker resolution — no AI',
+  site_gate_resume: 'Site picker resolution — no AI',
   ai_pipeline: 'AI pipeline',
 };
 

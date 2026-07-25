@@ -243,7 +243,7 @@ export function ManageCatalogueDialog({ open, onOpenChange }: ManageCatalogueDia
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[640px] max-h-[85vh] overflow-y-auto relative">
+      <DialogContent className="sm:max-w-[640px] max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             Manage Materials Catalog
