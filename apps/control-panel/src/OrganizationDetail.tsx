@@ -4,6 +4,7 @@ import { AlertTriangle, ArrowLeft, CheckCircle, Cloud, Plus, Server, Sparkles, T
 import { api } from './api';
 import UserAccessEditor, { type OrgProject } from './UserAccessEditor';
 import AddUserDialog from './AddUserDialog';
+import { useToast, getErrorMessage } from './Toast';
 
 interface Organization {
   id: string;
@@ -72,6 +73,7 @@ const statusBadgeClass = (status: string) =>
 export default function OrganizationDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { showToast } = useToast();
 
   const [org, setOrg] = useState<Organization | null>(null);
   const [users, setUsers] = useState<OrgUser[]>([]);
@@ -113,13 +115,14 @@ export default function OrganizationDetail() {
         include_demo_transactions: includeDemoTx,
       });
 
-      setSeedResult(
-        `Finance data seeded successfully! Created ${res.data.accounts_created} accounts, ${res.data.categories_created} categories, ${res.data.vendors_created} vendors, ${res.data.settings_created} settings, ${res.data.expenses_created} expenses, and ${res.data.transactions_created} transactions.`
-      );
+      const successMsg = `Finance data seeded successfully! Created ${res.data.accounts_created} accounts, ${res.data.categories_created} categories, ${res.data.vendors_created} vendors, ${res.data.settings_created} settings, ${res.data.expenses_created} expenses, and ${res.data.transactions_created} transactions.`;
+      setSeedResult(successMsg);
+      showToast(successMsg, 'success');
       setShowSeedModal(false);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to seed finance data';
+      const msg = getErrorMessage(err, 'Failed to seed finance data');
       setError(msg);
+      showToast(msg, 'error');
     } finally {
       setSeeding(false);
     }

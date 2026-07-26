@@ -124,28 +124,29 @@ async def _complete_resume_leg(
         await _safe(message_logger.mark_completed(correlation_id=message.correlation_id))
 
 
-def _render_reply(
-    workflow_run: WorkflowRunResult | None,
-    workflow_resume: WorkflowResumeResult | None,
-    decision: PlannerDecisionV2 | None,
-    resolved: ResolvedContextV2 | None,
-) -> ReplySpec | None:
-    """The single place that decides what the user hears back.
+def render_workflow_run_reply_spec(workflow_run: WorkflowRunResult) -> ReplySpec:
+    """Turn a WorkflowRunResult into the ReplySpec it should be sent as --
+    the one place that decides plain-text vs Yes/No buttons vs a tappable
+    list, so every caller that can receive a WorkflowRunResult (starting a
+    new workflow, or *resuming* one already in progress -- see
+    runtime/dependencies.py's handle_slot_answer fast path) renders it the
+    same way. Extracted out of `_render_reply` below (2026-07-26): the fast
+    path for resuming a pending slot answer used to skip this entirely and
+    always send plain text via send_text, so a resumed workflow that landed
+    on STARTED (needs Yes/No) or AWAITING_INPUT (needs another list) never
+    got its buttons/list -- exactly the "Reply YES to confirm or NO to
+    cancel" plain-text bug a user hit right after answering the account
+    slot.
 
-    Returns None only when the interaction leg has already replied. Every other
-    path must produce something: a message that reaches the assistant and gets
-    no answer is indistinguishable from Mesiri being down.
-
-    render_direct_reply's UNRECOGNIZED case and AWAITING_INPUT (when the node
-    supplied slot_options -- see workflows/slots.py's `slot_options`) both
-    set list_rows on the returned ReplySpec. STARTED and
-    BLOCKED_PENDING_CONFIRMATION are the two statuses actually asking the
-    user to confirm a draft -- those get Yes/No buttons. COMPLETED
-    (who_am_i, inventory_query) is informational, nothing to confirm, so it
-    stays plain text. Every other branch is plain text too, wrapped here so
-    callers only ever handle one return shape.
-    """
-    if workflow_run is not None and workflow_run.status in (
+    STARTED and BLOCKED_PENDING_CONFIRMATION are the two statuses actually
+    asking the user to confirm a draft -- those get Yes/No buttons.
+    AWAITING_INPUT (when the node supplied slot_options -- see
+    workflows/slots.py's `slot_options`) gets a tappable list, when every
+    label fits WhatsApp's limits. COMPLETED (who_am_i, inventory_query) is
+    informational, nothing to confirm, so it stays plain text. NO_GRAPH
+    means understood but no compiled graph exists yet. Every other status
+    (FAILED, IGNORED, ...) falls back to plain rendered text."""
+    if workflow_run.status in (
         WorkflowRunStatus.STARTED,
         WorkflowRunStatus.BLOCKED_PENDING_CONFIRMATION,
     ):
@@ -156,7 +157,7 @@ def _render_reply(
             buttons=CONFIRM_BUTTONS,
         )
 
-    if workflow_run is not None and workflow_run.status is WorkflowRunStatus.AWAITING_INPUT:
+    if workflow_run.status is WorkflowRunStatus.AWAITING_INPUT:
         text = render_workflow_run_reply(workflow_run, pending_prompt=workflow_run.pending_prompt)
         # A tapped row normalizes to NormalizedMessage.text = its title
         # (ingress/normalization.py's _resolve_interactive_reply), matched
@@ -174,17 +175,41 @@ def _render_reply(
             )
         return ReplySpec(text=text)
 
-    if workflow_run is not None and workflow_run.status is WorkflowRunStatus.COMPLETED:
+    if workflow_run.status is WorkflowRunStatus.COMPLETED:
         return ReplySpec(
             text=render_workflow_run_reply(workflow_run, pending_prompt=workflow_run.pending_prompt)
         )
 
-    if workflow_resume is not None:
-        return None  # interactions/handler.py already sent its own reply
-
-    if workflow_run is not None and workflow_run.status is WorkflowRunStatus.NO_GRAPH:
+    if workflow_run.status is WorkflowRunStatus.NO_GRAPH:
         # Understood, but expense/labour/equipment graphs don't exist yet.
         return ReplySpec(text=render_unsupported_reply())
+
+    return ReplySpec(
+        text=render_workflow_run_reply(workflow_run, pending_prompt=workflow_run.pending_prompt)
+    )
+
+
+def _render_reply(
+    workflow_run: WorkflowRunResult | None,
+    workflow_resume: WorkflowResumeResult | None,
+    decision: PlannerDecisionV2 | None,
+    resolved: ResolvedContextV2 | None,
+) -> ReplySpec | None:
+    """The single place that decides what the user hears back.
+
+    Returns None only when the interaction leg has already replied. Every other
+    path must produce something: a message that reaches the assistant and gets
+    no answer is indistinguishable from Mesiri being down.
+
+    Every workflow_run status is delegated to render_workflow_run_reply_spec
+    above; everything else (a fresh decision with no workflow at all) is
+    handled here.
+    """
+    if workflow_run is not None and workflow_run.status is not WorkflowRunStatus.FAILED:
+        return render_workflow_run_reply_spec(workflow_run)
+
+    if workflow_resume is not None:
+        return None  # interactions/handler.py already sent its own reply
 
     if decision is not None:
         if decision.decision_type is PlannerDecisionType.CLARIFY:
