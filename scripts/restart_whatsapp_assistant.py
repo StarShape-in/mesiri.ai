@@ -1,15 +1,14 @@
 """Restart whatsapp assistant with correct PYTHONPATH after M6.5 deploy."""
-
 from __future__ import annotations
 
+import os
 import time
 
 import paramiko
 
-HOST = "187.127.180.98"
-USER = "root"
-PASS = "Mercondatabase1234@"
-
+HOST = os.environ["MESIRI_VPS_HOST"]
+USER = os.environ["MESIRI_VPS_USER"]
+PASS = os.environ["MESIRI_VPS_PASSWORD"]
 PYTHONPATH = (
     "/opt/mesiri/shared/contracts/src:"
     "/opt/mesiri/platform/ai/src:"

@@ -1,13 +1,17 @@
 """Verify M6.5 smoke test workflow_instances row on prod."""
-
 import json
+import os
 import sys
 
 import paramiko
 
 c = paramiko.SSHClient()
 c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-c.connect("187.127.180.98", username="root", password="Mercondatabase1234@")
+c.connect(
+    os.environ["MESIRI_VPS_HOST"],
+    username=os.environ["MESIRI_VPS_USER"],
+    password=os.environ["MESIRI_VPS_PASSWORD"],
+)
 
 sql = (
     "SELECT id::text, organization_id::text, user_id::text, workflow_key, phase, "

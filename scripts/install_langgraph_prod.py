@@ -1,12 +1,16 @@
 """Install langgraph on prod venv via ensurepip."""
-
+import os
 import time
 
 import paramiko
 
 c = paramiko.SSHClient()
 c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-c.connect("187.127.180.98", username="root", password="Mercondatabase1234@")
+c.connect(
+    os.environ["MESIRI_VPS_HOST"],
+    username=os.environ["MESIRI_VPS_USER"],
+    password=os.environ["MESIRI_VPS_PASSWORD"],
+)
 
 cmds = [
     "/opt/mesiri/.venv/bin/python -m ensurepip --upgrade",

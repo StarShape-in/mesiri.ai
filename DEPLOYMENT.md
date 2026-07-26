@@ -137,6 +137,19 @@ Certbot rewrites the nginx config in place to add the `listen 443 ssl` block and
 ssh -i ~/.ssh/<key> root@187.127.180.98 "cat /etc/nginx/sites-available/<subdomain>.mercon.tech.conf" > mercon_web.conf
 ```
 
+### One-off `scripts/*.py` debugging helpers (paramiko, password auth)
+
+`scripts/` has a number of ad hoc scripts (`deploy_*.py`, `check_*.py`, `fix_*.py`, `verify_*.py`, ...) written during past incidents that SSH into the VPS directly via `paramiko` using password auth, bypassing the key-based access above. They used to have the root password hardcoded in the file — that has been removed. They now read three required environment variables instead of embedding a credential in source:
+
+```bash
+export MESIRI_VPS_HOST=187.127.180.98
+export MESIRI_VPS_USER=root
+export MESIRI_VPS_PASSWORD=<current root password>
+python scripts/<script_name>.py
+```
+
+Never hardcode the password back into one of these files. If you need a new one-off script, read the same three env vars rather than inlining a credential — anyone with read access to the repo (and its full git history) gets root on the box otherwise.
+
 ---
 
 ## Checking deploy / CI status from the terminal

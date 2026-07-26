@@ -10,9 +10,18 @@ not here.
 candidates are seeded into `collected_fields['account_candidates']` by the
 caller (a node must never query a repository itself -- see
 runtime/money_account_query.py and workflows/runtime.py's docstring), and
-"my own pocket (reimburse me later)" is always appended as an extra choice
-so paying personally is a first-class answer, not merely an omitted account.
-See docs/execution/FINANCE_MODULE_PLAN.md's Slice 1.
+"my own pocket" is always appended as an extra choice so paying personally
+is a first-class answer, not merely an omitted account. See
+docs/execution/FINANCE_MODULE_PLAN.md's Slice 1.
+
+Every `SlotCandidate.label` in this module must stay <=24 chars: it doubles
+as a WhatsApp interactive list-row title, and
+runtime/inbound_journey.py::_render_reply degrades the whole question to
+plain numbered text (no tappable list at all) the moment any one label in
+the set is too long, rather than truncate it and risk a tapped row no
+longer matching its own candidate. A too-long own-pocket/vendor-confirm
+label silently broke this for every user until 2026-07-26 -- see git
+history around that date.
 
 `check_duplicate` is Finance Module Slice 8's "looks like a duplicate,
 record anyway?" gate: whether a likely-duplicate confirmed expense already
@@ -51,7 +60,7 @@ from ..state import WorkflowGraphState
 OWN_POCKET_SENTINEL = "own_pocket"
 _ACCOUNT_SLOT_NAME = "account_id"
 _ACCOUNT_PROMPT_TITLE = "Which account did you pay from?"
-_OWN_POCKET_LABEL = "My own pocket (reimburse me later)"
+_OWN_POCKET_LABEL = "My own pocket"
 
 
 def _account_candidates(raw_candidates: list[dict[str, Any]]) -> list[SlotCandidate]:
@@ -183,8 +192,8 @@ def check_duplicate(state: WorkflowGraphState) -> dict:
 
 _VENDOR_SLOT_NAME = "vendor_confirm"
 _VENDOR_CANDIDATES = [
-    SlotCandidate(value="yes", label="Yes, add it as a new vendor"),
-    SlotCandidate(value="no", label="No, record without a vendor"),
+    SlotCandidate(value="yes", label="Yes, add new vendor"),
+    SlotCandidate(value="no", label="No, skip vendor"),
 ]
 
 

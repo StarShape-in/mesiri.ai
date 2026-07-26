@@ -21,9 +21,9 @@ import time
 
 import paramiko
 
-HOST = "187.127.180.98"
-USER = "root"
-PASS = "Mercondatabase1234@"
+HOST = os.environ["MESIRI_VPS_HOST"]
+USER = os.environ["MESIRI_VPS_USER"]
+PASS = os.environ["MESIRI_VPS_PASSWORD"]
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REMOTE_ROOT = "/opt/mesiri"
 VENV = f"{REMOTE_ROOT}/.venv/bin"

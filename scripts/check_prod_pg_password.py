@@ -1,13 +1,13 @@
 """Fetch the prod postgres password from the .env file on the VPS."""
-
 from __future__ import annotations
+
+import os
 
 import paramiko
 
-HOST = "187.127.180.98"
-USER = "root"
-PASS = "Mercondatabase1234@"
-
+HOST = os.environ["MESIRI_VPS_HOST"]
+USER = os.environ["MESIRI_VPS_USER"]
+PASS = os.environ["MESIRI_VPS_PASSWORD"]
 client = paramiko.SSHClient()
 client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 client.connect(HOST, username=USER, password=PASS)

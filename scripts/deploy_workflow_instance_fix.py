@@ -6,11 +6,9 @@ import time
 import paramiko
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-HOST = "187.127.180.98"
-USER = "root"
-PASS = "Mercondatabase1234@"
-
-
+HOST = os.environ["MESIRI_VPS_HOST"]
+USER = os.environ["MESIRI_VPS_USER"]
+PASS = os.environ["MESIRI_VPS_PASSWORD"]
 def main() -> None:
     local = os.path.join(
         REPO, "apps", "whatsapp-assistant", "src", "backend", "postgres", "workflow_instance.py"

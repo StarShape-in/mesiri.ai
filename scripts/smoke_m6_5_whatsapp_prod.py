@@ -9,14 +9,15 @@ Usage:
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 
 import paramiko
 
-HOST = "187.127.180.98"
-USER = "root"
-PASS = "Mercondatabase1234@"
+HOST = os.environ["MESIRI_VPS_HOST"]
+USER = os.environ["MESIRI_VPS_USER"]
+PASS = os.environ["MESIRI_VPS_PASSWORD"]
 ROOT = "/opt/mesiri"
 MESSAGE = "50 bags of UltraTech cement arrived at site today from ABC Suppliers."
 

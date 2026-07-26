@@ -5,6 +5,9 @@ from __future__ import annotations
 from mesiri_contracts.assistant.draft_action import DraftActionType
 from mesiri_contracts.assistant.planner_decision import WorkflowKey
 from workflows.expense_capture.nodes import (
+    _DUPLICATE_CANDIDATES,
+    _OWN_POCKET_LABEL,
+    _VENDOR_CANDIDATES,
     OWN_POCKET_SENTINEL,
     build_draft,
     check_duplicate,
@@ -100,7 +103,7 @@ def test_resolve_account_with_candidates_asks_since_own_pocket_is_always_an_opti
     # workflows/slots.py's slot_options.
     assert update["awaiting_slot_options"] == [
         {"value": "a1", "label": "Site Cash"},
-        {"value": "own_pocket", "label": "My own pocket (reimburse me later)"},
+        {"value": "own_pocket", "label": "My own pocket"},
     ]
 
 
@@ -252,8 +255,8 @@ def test_resolve_vendor_flagged_asks_yes_no():
     assert update["awaiting_slot"] == "vendor_confirm"
     assert "New Fuel Co" in update["pending_prompt"]
     assert update["awaiting_slot_options"] == [
-        {"value": "yes", "label": "Yes, add it as a new vendor"},
-        {"value": "no", "label": "No, record without a vendor"},
+        {"value": "yes", "label": "Yes, add new vendor"},
+        {"value": "no", "label": "No, skip vendor"},
     ]
 
 
@@ -329,3 +332,20 @@ def test_build_draft_excludes_vendor_plumbing_fields():
     assert "vendor_needs_confirmation" not in draft.fields
     assert "vendor_confirmed" not in draft.fields
     assert draft.fields["vendor"] == "New Fuel Co"
+
+
+def test_slot_labels_fit_whatsapp_list_row_title_limit():
+    """runtime/inbound_journey.py::_render_reply silently degrades an entire
+    slot question to plain numbered text (no tappable list/buttons at all)
+    the moment any one candidate label exceeds WhatsApp's 24-char row-title
+    cap -- this exact bug shipped once already (own-pocket and the vendor-
+    confirm labels), reported by a real user seeing a numbered-text prompt
+    where they expected buttons. This guards every label in this module
+    against silently regressing the same way."""
+    all_labels = [
+        _OWN_POCKET_LABEL,
+        *(c.label for c in _DUPLICATE_CANDIDATES),
+        *(c.label for c in _VENDOR_CANDIDATES),
+    ]
+    for label in all_labels:
+        assert len(label) <= 24, f"{label!r} is {len(label)} chars, exceeds WhatsApp's 24-char cap"

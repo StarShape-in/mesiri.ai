@@ -1,16 +1,14 @@
 """Fix the set_updated_at trigger function + verify all triggers on prod."""
-
 from __future__ import annotations
 
+import os
 import sys
 
 import paramiko
 
-HOST = "187.127.180.98"
-USER = "root"
-PASS = "Mercondatabase1234@"
-
-
+HOST = os.environ["MESIRI_VPS_HOST"]
+USER = os.environ["MESIRI_VPS_USER"]
+PASS = os.environ["MESIRI_VPS_PASSWORD"]
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
     client = paramiko.SSHClient()
