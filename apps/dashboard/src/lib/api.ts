@@ -297,6 +297,42 @@ export async function fetchConversationMessages(conversationId: string): Promise
   return res.data
 }
 
+export interface ConversationMember {
+  id: string
+  email: string
+  full_name: string
+  role: string
+  status: string
+  whatsapp_number?: string | null
+}
+
+export interface Conversation {
+  sender_wa_id: string
+  member?: ConversationMember | null
+  last_message_preview: string
+  last_direction: 'inbound' | 'outbound'
+  last_activity: string
+  message_count: number
+  processing_status?: string | null
+  error_code?: string | null
+}
+
+export interface ConversationList {
+  items: Conversation[]
+  total: number
+}
+
+export interface FetchConversationsParams {
+  search?: string
+  limit?: number
+  offset?: number
+}
+
+export async function fetchConversations(params?: FetchConversationsParams): Promise<ConversationList> {
+  const res = await api.get<ConversationList>('/company/whatsapp/conversations', { params })
+  return res.data
+}
+
 
 export interface MessageOutcome {
   record_type: string
@@ -839,5 +875,50 @@ export async function simulateLabourWhatsAppSandboxApi(
   message: string
 ): Promise<LabourSandboxSimulationResult> {
   const res = await api.post('/labour/whatsapp/sandbox/simulate', { message })
+  return res.data
+}
+
+export interface WorkforceWorkerItem {
+  id: string
+  organization_id: string
+  name: string
+  trade: string | null
+  worker_type: 'permanent' | 'temporary' | 'contractor'
+  default_daily_wage: number | null
+  contractor: string | null
+  status: 'active' | 'inactive'
+}
+
+export interface CreateWorkerPayload {
+  name: string
+  trade?: string
+  worker_type?: 'permanent' | 'temporary' | 'contractor'
+  default_daily_wage?: number
+  contractor?: string
+  status?: 'active' | 'inactive'
+}
+
+export async function fetchWorkersApi(params?: {
+  status?: string
+  search?: string
+  limit?: number
+  offset?: number
+}): Promise<{ items: WorkforceWorkerItem[]; total: number }> {
+  const res = await api.get('/labour/workers', { params })
+  return res.data
+}
+
+export async function createWorkerApi(
+  payload: CreateWorkerPayload
+): Promise<WorkforceWorkerItem> {
+  const res = await api.post('/labour/workers', payload)
+  return res.data
+}
+
+export async function updateWorkerApi(
+  workerId: string,
+  payload: Partial<CreateWorkerPayload>
+): Promise<WorkforceWorkerItem> {
+  const res = await api.patch(`/labour/workers/${workerId}`, payload)
   return res.data
 }

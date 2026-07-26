@@ -100,6 +100,22 @@ class MessageListResponse(BaseModel):
     total: int
 
 
+class ConversationSummary(BaseModel):
+    sender_wa_id: str
+    member: UserMinResponse | None = None
+    last_message_preview: str
+    last_direction: str  # "inbound" | "outbound"
+    last_activity: datetime
+    message_count: int
+    processing_status: str | None = None
+    error_code: str | None = None
+
+
+class ConversationListResponse(BaseModel):
+    items: list[ConversationSummary]
+    total: int
+
+
 class JourneyTrace(BaseModel):
     stage: str
     succeeded: bool
@@ -664,6 +680,92 @@ async def get_message_detail(
         timeline_entries=[TimelineEntryMin(**te) for te in timeline_rows],
         interactions=[InteractionMin(**i) for i in interactions_rows],
     )
+
+
+@router.get("/whatsapp/conversations", response_model=ConversationListResponse)
+async def list_conversations(
+    search: str | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    admin: dict = Depends(require_admin),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    org_id = uuid.UUID(admin.get("org"))
+
+    where = ["im.organization_id = :org_id"]
+    params: dict = {"org_id": org_id, "limit": limit, "offset": offset}
+
+    if search:
+        search_like = f"%{search}%"
+        where.append("(im.sender_wa_id ILIKE :search_like OR u.full_name ILIKE :search_like)")
+        params["search_like"] = search_like
+
+    query_str = f"""
+        SELECT sender_wa_id, body_text, assistant_reply, message_type, processing_status,
+               error_code, last_activity, message_count,
+               user_id, user_email, user_name, user_role, user_status
+        FROM (
+            SELECT
+                im.sender_wa_id, im.body_text, im.assistant_reply, im.message_type,
+                im.processing_status, im.error_code,
+                GREATEST(im.received_at, COALESCE(im.processed_at, im.received_at)) AS last_activity,
+                COUNT(*) OVER (PARTITION BY im.sender_wa_id) AS message_count,
+                ROW_NUMBER() OVER (PARTITION BY im.sender_wa_id ORDER BY im.received_at DESC) AS rn,
+                u.id AS user_id, u.email AS user_email, u.full_name AS user_name,
+                u.role AS user_role, u.status AS user_status
+            FROM inbound_messages im
+            LEFT JOIN users u ON u.whatsapp_number = im.sender_wa_id
+            WHERE {" AND ".join(where)}
+        ) sub
+        WHERE rn = 1
+        ORDER BY last_activity DESC
+        LIMIT :limit OFFSET :offset
+    """
+
+    count_str = f"""
+        SELECT COUNT(DISTINCT im.sender_wa_id)
+        FROM inbound_messages im
+        LEFT JOIN users u ON u.whatsapp_number = im.sender_wa_id
+        WHERE {" AND ".join(where)}
+    """
+
+    rows = (await conn.execute(sa.text(query_str), params)).mappings().all()
+    total = (
+        await conn.execute(
+            sa.text(count_str), {k: v for k, v in params.items() if k not in ("limit", "offset")}
+        )
+    ).scalar_one()
+
+    items = []
+    for r in rows:
+        member = None
+        if r.user_id:
+            member = UserMinResponse(
+                id=r.user_id,
+                email=r.user_email,
+                full_name=r.user_name,
+                role=r.user_role,
+                status=r.user_status,
+                whatsapp_number=r.sender_wa_id,
+            )
+
+        last_direction = "outbound" if r.assistant_reply else "inbound"
+        preview = r.assistant_reply if r.assistant_reply else (r.body_text or "")
+
+        items.append(
+            ConversationSummary(
+                sender_wa_id=r.sender_wa_id,
+                member=member,
+                last_message_preview=preview,
+                last_direction=last_direction,
+                last_activity=r.last_activity,
+                message_count=r.message_count,
+                processing_status=r.processing_status,
+                error_code=r.error_code,
+            )
+        )
+
+    return ConversationListResponse(items=items, total=total)
 
 
 @router.get(
