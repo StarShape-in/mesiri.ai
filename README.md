@@ -19,7 +19,7 @@ The assistant runtime spans four Python import roots — `shared/contracts`
 `apps/whatsapp-assistant`.
 
 ```bash
-uv venv --python 3.10
+uv venv --python 3.11
 uv pip install -e ".[dev]"      # + [infra] for docker/live, [providers] for AI SDKs
 cp .env.example .env
 
