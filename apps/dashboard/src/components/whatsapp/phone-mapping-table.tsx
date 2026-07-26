@@ -70,9 +70,44 @@ const MOCK_CUSTODIANS: WhatsAppCustodianItem[] = [
   },
 ]
 
+import { fetchUsers } from '@/lib/api'
+
 export function PhoneMappingTable() {
   const [search, setSearch] = React.useState('')
-  const [custodians] = React.useState<WhatsAppCustodianItem[]>(MOCK_CUSTODIANS)
+  const [custodians, setCustodians] = React.useState<WhatsAppCustodianItem[]>(MOCK_CUSTODIANS)
+
+  React.useEffect(() => {
+    let active = true
+    async function loadCustodians() {
+      try {
+        const users = await fetchUsers()
+        if (active && Array.isArray(users)) {
+          // Filter users who have a whatsapp_number assigned or convert all users to table items
+          const mapped: WhatsAppCustodianItem[] = users
+            .filter((u: any) => u.whatsapp_number || u.phone_number)
+            .map((u: any) => ({
+              id: u.id,
+              name: u.full_name || u.email || 'User',
+              whatsapp_number: u.whatsapp_number || u.phone_number || 'Not Set',
+              role: (u.role || 'Member').replace('_', ' ').toUpperCase(),
+              project_name: u.project_name || 'Org Wide',
+              site_name: u.site_name,
+              status: u.status === 'active' ? 'verified' : 'pending',
+              last_active: u.last_login_at || 'Recently',
+            }))
+          if (mapped.length > 0) {
+            setCustodians(mapped)
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to load real WhatsApp custodians:', err)
+      }
+    }
+    loadCustodians()
+    return () => {
+      active = false
+    }
+  }, [])
 
   const filtered = React.useMemo(() => {
     return custodians.filter(

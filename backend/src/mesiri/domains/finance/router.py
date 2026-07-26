@@ -19,13 +19,16 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from mesiri.authorization.context import AuthorizationContext
 from mesiri.domains.projects.router import get_auth_context
 from mesiri.infrastructure.postgres.dependency import get_db_conn
-from mesiri.infrastructure.postgres.repositories.finance import PostgresMoneyAccountRepository
+from mesiri.infrastructure.postgres.repositories.finance import (
+    PostgresMoneyAccountRepository,
+    PostgresMoneyTransactionRepository,
+)
 
 router = APIRouter(prefix="/finance", tags=["finance"])
 
 
 # ---------------------------------------------------------------------------
-# Response schema
+# Response schemas
 # ---------------------------------------------------------------------------
 
 class MoneyAccountResponse(BaseModel):
@@ -41,6 +44,22 @@ class MoneyAccountResponse(BaseModel):
     site_id: uuid.UUID | None = None
     owner_user_id: uuid.UUID | None = None
     opening_balance_date: datetime.date | None = None
+
+
+class MoneyTransactionResponse(BaseModel):
+    id: uuid.UUID
+    organization_id: uuid.UUID
+    transaction_type: str
+    amount: Decimal
+    occurred_date: datetime.date
+    created_by: uuid.UUID
+    from_account_id: uuid.UUID | None = None
+    to_account_id: uuid.UUID | None = None
+    source_type: str | None = None
+    source_id: uuid.UUID | None = None
+    description: str | None = None
+    correlation_id: str | None = None
+
 
 
 # ---------------------------------------------------------------------------
@@ -164,3 +183,62 @@ async def create_account(
         owner_user_id=acc.owner_user_id,
         opening_balance_date=acc.opening_balance_date,
     )
+
+
+@router.get("/accounts/{account_id}/transactions", response_model=list[MoneyTransactionResponse])
+async def list_account_transactions(
+    account_id: uuid.UUID,
+    limit: int = 50,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """List transactions (inbound & outbound ledger) for a given account."""
+    tx_repo = PostgresMoneyTransactionRepository(conn)
+    txs = await tx_repo.list_by_account(auth_context.organization_id, account_id, limit=limit)
+    return [
+        MoneyTransactionResponse(
+            id=t.id,
+            organization_id=t.organization_id,
+            transaction_type=t.transaction_type,
+            amount=t.amount,
+            occurred_date=t.occurred_date,
+            created_by=t.created_by,
+            from_account_id=t.from_account_id,
+            to_account_id=t.to_account_id,
+            source_type=t.source_type,
+            source_id=t.source_id,
+            description=t.description,
+            correlation_id=t.correlation_id,
+        )
+        for t in txs
+    ]
+
+
+@router.get("/petty-cash/vouchers", response_model=list[MoneyTransactionResponse])
+async def list_petty_cash_vouchers(
+    cash_box_id: uuid.UUID | None = None,
+    limit: int = 50,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """List petty cash voucher transactions."""
+    tx_repo = PostgresMoneyTransactionRepository(conn)
+    txs = await tx_repo.list_vouchers(auth_context.organization_id, cash_box_id=cash_box_id, limit=limit)
+    return [
+        MoneyTransactionResponse(
+            id=t.id,
+            organization_id=t.organization_id,
+            transaction_type=t.transaction_type,
+            amount=t.amount,
+            occurred_date=t.occurred_date,
+            created_by=t.created_by,
+            from_account_id=t.from_account_id,
+            to_account_id=t.to_account_id,
+            source_type=t.source_type,
+            source_id=t.source_id,
+            description=t.description,
+            correlation_id=t.correlation_id,
+        )
+        for t in txs
+    ]
+

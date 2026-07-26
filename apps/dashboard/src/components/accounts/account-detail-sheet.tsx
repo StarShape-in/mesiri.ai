@@ -26,32 +26,10 @@ interface AccountDetailSheetProps {
   onDepositClick?: (account: any) => void
 }
 
-const MOCK_TRANSACTIONS = [
-  {
-    id: 'tx_01',
-    type: 'transfer_in',
-    amount: 100000,
-    date: '2026-07-24',
-    description: 'Petty Cash Replenishment from HDFC Main',
-    source: 'HDFC Main Account',
-  },
-  {
-    id: 'tx_02',
-    type: 'expense_payment',
-    amount: 45000,
-    date: '2026-07-23',
-    description: 'Expense EXP-1048 Diesel Excavator JCB',
-    source: 'Indian Oil Bunk #4',
-  },
-  {
-    id: 'tx_03',
-    type: 'expense_payment',
-    amount: 18500,
-    date: '2026-07-20',
-    description: 'Expense EXP-1052 Site Power Distribution',
-    source: 'City Electric Works',
-  },
-]
+
+
+import * as React from 'react'
+import { fetchAccountTransactionsApi } from '@/lib/api'
 
 export function AccountDetailSheet({
   account,
@@ -59,6 +37,32 @@ export function AccountDetailSheet({
   onOpenChange,
   onDepositClick,
 }: AccountDetailSheetProps) {
+  const [transactions, setTransactions] = React.useState<any[]>([])
+  const [loading, setLoading] = React.useState(false)
+
+  React.useEffect(() => {
+    if (!open || !account?.id) return
+    let active = true
+    async function loadTx() {
+      setLoading(true)
+      try {
+        const data = await fetchAccountTransactionsApi(account.id)
+        if (active && Array.isArray(data)) {
+          setTransactions(data)
+        }
+      } catch (err) {
+        console.warn('Failed to load live account transactions:', err)
+        if (active) setTransactions([])
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+    loadTx()
+    return () => {
+      active = false
+    }
+  }, [open, account?.id])
+
   if (!account) return null
 
   const isLowBalance = account.current_balance < 50000
@@ -177,36 +181,51 @@ export function AccountDetailSheet({
               </div>
 
               <div className="flex flex-col gap-2">
-                {MOCK_TRANSACTIONS.map((tx) => (
-                  <div key={tx.id} className="flex items-center justify-between p-2.5 rounded-lg border bg-card/60">
-                    <div className="flex items-center gap-2.5">
-                      <div
-                        className={`size-7 rounded-full flex items-center justify-center shrink-0 ${
-                          tx.type === 'transfer_in'
-                            ? 'bg-emerald-500/10 text-emerald-600'
-                            : 'bg-rose-500/10 text-rose-600'
-                        }`}
-                      >
-                        {tx.type === 'transfer_in' ? (
-                          <ArrowDownLeft className="size-3.5" />
-                        ) : (
-                          <ArrowUpRight className="size-3.5" />
-                        )}
-                      </div>
-                      <div className="flex flex-col min-w-0">
-                        <span className="font-semibold text-foreground truncate">{tx.description}</span>
-                        <span className="text-[10px] text-muted-foreground">{tx.date} • {tx.source}</span>
-                      </div>
-                    </div>
-                    <div
-                      className={`font-mono font-bold text-xs shrink-0 ${
-                        tx.type === 'transfer_in' ? 'text-emerald-600' : 'text-foreground'
-                      }`}
-                    >
-                      {tx.type === 'transfer_in' ? '+' : '-'}{formatCurrency(tx.amount)}
-                    </div>
+                {loading ? (
+                  <div className="text-center py-6 text-muted-foreground text-xs">Loading ledger activity...</div>
+                ) : transactions.length === 0 ? (
+                  <div className="text-center py-6 border rounded-lg bg-card/40 text-muted-foreground text-xs">
+                    No transactions recorded for this account yet.
                   </div>
-                ))}
+                ) : (
+                  transactions.map((tx) => {
+                    const isInbound = tx.to_account_id === account.id || tx.transaction_type === 'fund_received'
+                    return (
+                      <div key={tx.id} className="flex items-center justify-between p-2.5 rounded-lg border bg-card/60">
+                        <div className="flex items-center gap-2.5">
+                          <div
+                            className={`size-7 rounded-full flex items-center justify-center shrink-0 ${
+                              isInbound
+                                ? 'bg-emerald-500/10 text-emerald-600'
+                                : 'bg-rose-500/10 text-rose-600'
+                            }`}
+                          >
+                            {isInbound ? (
+                              <ArrowDownLeft className="size-3.5" />
+                            ) : (
+                              <ArrowUpRight className="size-3.5" />
+                            )}
+                          </div>
+                          <div className="flex flex-col min-w-0">
+                            <span className="font-semibold text-foreground truncate">
+                              {tx.description || `${tx.transaction_type.replace('_', ' ').toUpperCase()}`}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground">
+                              {tx.occurred_date} • {tx.source_type || tx.transaction_type}
+                            </span>
+                          </div>
+                        </div>
+                        <div
+                          className={`font-mono font-bold text-xs shrink-0 ${
+                            isInbound ? 'text-emerald-600' : 'text-foreground'
+                          }`}
+                        >
+                          {isInbound ? '+' : '-'}{formatCurrency(parseFloat(tx.amount))}
+                        </div>
+                      </div>
+                    )
+                  })
+                )}
               </div>
             </TabsContent>
 

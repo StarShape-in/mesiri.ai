@@ -20,8 +20,27 @@ import { PhoneMappingTable } from '@/components/whatsapp/phone-mapping-table'
 import { WhatsAppTraceLogs } from '@/components/whatsapp/whatsapp-trace-logs'
 import { WhatsAppSandboxDialog } from '@/components/whatsapp/whatsapp-sandbox-dialog'
 
+import { fetchCompanySummary, type CompanySummary } from '@/lib/api'
+
 export default function WhatsAppFinancePage() {
   const { scope } = useScope()
+  const [summary, setSummary] = React.useState<CompanySummary | null>(null)
+
+  React.useEffect(() => {
+    let active = true
+    async function loadSummary() {
+      try {
+        const data = await fetchCompanySummary()
+        if (active) setSummary(data)
+      } catch (err) {
+        console.warn('Failed to load company summary for WhatsApp KPI cards:', err)
+      }
+    }
+    loadSummary()
+    return () => {
+      active = false
+    }
+  }, [])
 
   // Automation Rule States
   const [activeRuleTab, setActiveRuleTab] = React.useState('low_balance')
@@ -74,35 +93,47 @@ export default function WhatsAppFinancePage() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <KpiCard
           title="Active Automations"
-          value={<span className="text-emerald-600 dark:text-emerald-400">5 Live Rules</span>}
+          value={<span className="text-emerald-600 dark:text-emerald-400">4 Active Workflows</span>}
           trend="up"
           trendValue="VPS Active"
-          description="Automated trigger rules"
+          description="Expense, Petty Cash, Receipts"
           icon={<Zap className="text-emerald-500" />}
           chartData={[10, 15, 25, 30, 45, 50]}
         />
         <KpiCard
-          title="Registered Custodians"
-          value={<span className="text-blue-600 dark:text-blue-400">18 Numbers</span>}
+          title="Registered Personnel"
+          value={
+            <span className="text-blue-600 dark:text-blue-400">
+              {summary ? `${summary.total_users} Members` : 'Live DB'}
+            </span>
+          }
           trend="neutral"
           trendValue="Site Personnel"
-          description="Verified WhatsApp accounts"
+          description="Organization team members"
           icon={<Smartphone className="text-blue-500" />}
         />
         <KpiCard
-          title="PNG Cards Rendered"
-          value={<span className="text-purple-600 dark:text-purple-400">342 Receipts</span>}
+          title="Active Projects"
+          value={
+            <span className="text-purple-600 dark:text-purple-400">
+              {summary ? `${summary.total_projects} Projects` : 'Live DB'}
+            </span>
+          }
           trend="up"
-          trendValue="Playwright Engine"
-          description="Visual receipt generation"
+          trendValue="Live Tracking"
+          description="Managed project scopes"
           icon={<CreditCard className="text-purple-500" />}
         />
         <KpiCard
-          title="Float Alerts Triggered"
-          value={<span className="text-amber-600 dark:text-amber-400">12 Sent</span>}
+          title="Active Sites"
+          value={
+            <span className="text-amber-600 dark:text-amber-400">
+              {summary ? `${summary.total_sites} Sites` : 'Live DB'}
+            </span>
+          }
           trend="neutral"
-          trendValue="Low Balance Warnings"
-          description="Petty cash refill notifications"
+          trendValue="Site Locations"
+          description="Active construction sites"
           icon={<BellRing className="text-amber-500" />}
         />
       </div>

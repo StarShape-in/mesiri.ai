@@ -24,32 +24,10 @@ interface CashBoxDetailSheetProps {
   onReplenishClick?: (box: any) => void
 }
 
-const MOCK_BOX_TRANSACTIONS = [
-  {
-    id: 'tx_pc_01',
-    type: 'cash_in',
-    amount: 100000,
-    date: '2026-07-24',
-    description: 'Float Replenishment from HDFC Main Account',
-    source: 'Corporate Bank Transfer',
-  },
-  {
-    id: 'tx_pc_02',
-    type: 'cash_out',
-    amount: 4500,
-    date: '2026-07-25',
-    description: 'VCH-108 Fuel JCB Excavator #2',
-    source: 'Local Bunk (WhatsApp Entry)',
-  },
-  {
-    id: 'tx_pc_03',
-    type: 'cash_out',
-    amount: 1200,
-    date: '2026-07-24',
-    description: 'VCH-107 Daily Site Labor Refreshments & Tea',
-    source: 'Site Supervisor (Manual)',
-  },
-]
+
+
+import * as React from 'react'
+import { fetchVouchersApi } from '@/lib/api'
 
 export function CashBoxDetailSheet({
   cashBox,
@@ -57,6 +35,32 @@ export function CashBoxDetailSheet({
   onOpenChange,
   onReplenishClick,
 }: CashBoxDetailSheetProps) {
+  const [vouchers, setVouchers] = React.useState<any[]>([])
+  const [loading, setLoading] = React.useState(false)
+
+  React.useEffect(() => {
+    if (!open || !cashBox?.id) return
+    let active = true
+    async function loadVouchers() {
+      setLoading(true)
+      try {
+        const data = await fetchVouchersApi(cashBox.id)
+        if (active && Array.isArray(data)) {
+          setVouchers(data)
+        }
+      } catch (err) {
+        console.warn('Failed to load live cash box vouchers:', err)
+        if (active) setVouchers([])
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+    loadVouchers()
+    return () => {
+      active = false
+    }
+  }, [open, cashBox?.id])
+
   if (!cashBox) return null
 
   const isLow = cashBox.current_balance < 50000
@@ -148,36 +152,51 @@ export function CashBoxDetailSheet({
               </div>
 
               <div className="flex flex-col gap-2">
-                {MOCK_BOX_TRANSACTIONS.map((tx) => (
-                  <div key={tx.id} className="flex items-center justify-between p-2.5 rounded-lg border bg-card/60">
-                    <div className="flex items-center gap-2.5">
-                      <div
-                        className={`size-7 rounded-full flex items-center justify-center shrink-0 ${
-                          tx.type === 'cash_in'
-                            ? 'bg-emerald-500/10 text-emerald-600'
-                            : 'bg-rose-500/10 text-rose-600'
-                        }`}
-                      >
-                        {tx.type === 'cash_in' ? (
-                          <ArrowDownLeft className="size-3.5" />
-                        ) : (
-                          <ArrowUpRight className="size-3.5" />
-                        )}
-                      </div>
-                      <div className="flex flex-col min-w-0">
-                        <span className="font-semibold text-foreground truncate">{tx.description}</span>
-                        <span className="text-[10px] text-muted-foreground">{tx.date} • {tx.source}</span>
-                      </div>
-                    </div>
-                    <div
-                      className={`font-mono font-bold text-xs shrink-0 ${
-                        tx.type === 'cash_in' ? 'text-emerald-600' : 'text-foreground'
-                      }`}
-                    >
-                      {tx.type === 'cash_in' ? '+' : '-'}{formatCurrency(tx.amount)}
-                    </div>
+                {loading ? (
+                  <div className="text-center py-6 text-muted-foreground text-xs">Loading float activity...</div>
+                ) : vouchers.length === 0 ? (
+                  <div className="text-center py-6 border rounded-lg bg-card/40 text-muted-foreground text-xs">
+                    No vouchers recorded for this cash box yet.
                   </div>
-                ))}
+                ) : (
+                  vouchers.map((tx) => {
+                    const isInflow = tx.to_account_id === cashBox.id || tx.transaction_type === 'fund_received'
+                    return (
+                      <div key={tx.id} className="flex items-center justify-between p-2.5 rounded-lg border bg-card/60">
+                        <div className="flex items-center gap-2.5">
+                          <div
+                            className={`size-7 rounded-full flex items-center justify-center shrink-0 ${
+                              isInflow
+                                ? 'bg-emerald-500/10 text-emerald-600'
+                                : 'bg-rose-500/10 text-rose-600'
+                            }`}
+                          >
+                            {isInflow ? (
+                              <ArrowDownLeft className="size-3.5" />
+                            ) : (
+                              <ArrowUpRight className="size-3.5" />
+                            )}
+                          </div>
+                          <div className="flex flex-col min-w-0">
+                            <span className="font-semibold text-foreground truncate">
+                              {tx.description || tx.transaction_type.replace('_', ' ').toUpperCase()}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground">
+                              {tx.occurred_date} • {tx.source_type || 'Voucher'}
+                            </span>
+                          </div>
+                        </div>
+                        <div
+                          className={`font-mono font-bold text-xs shrink-0 ${
+                            isInflow ? 'text-emerald-600' : 'text-foreground'
+                          }`}
+                        >
+                          {isInflow ? '+' : '-'}{formatCurrency(parseFloat(tx.amount))}
+                        </div>
+                      </div>
+                    )
+                  })
+                )}
               </div>
             </TabsContent>
 

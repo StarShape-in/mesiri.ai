@@ -338,3 +338,44 @@ class PostgresMoneyTransactionRepository:
         )
         row = (await self.conn.execute(stmt)).mappings().first()
         return _row_to_transaction(row) if row else None
+
+    async def list_by_account(
+        self, organization_id: uuid.UUID, account_id: uuid.UUID, limit: int = 50
+    ) -> list[MoneyTransaction]:
+        """List transactions involving a specific money account (inbound or outbound)."""
+        stmt = (
+            sa.select(_money_transactions)
+            .where(
+                _money_transactions.c.organization_id == organization_id,
+                sa.or_(
+                    _money_transactions.c.from_account_id == account_id,
+                    _money_transactions.c.to_account_id == account_id,
+                ),
+            )
+            .order_by(_money_transactions.c.occurred_date.desc(), _money_transactions.c.created_at.desc())
+            .limit(limit)
+        )
+        res = await self.conn.execute(stmt)
+        return [_row_to_transaction(r) for r in res.mappings().all()]
+
+    async def list_vouchers(
+        self, organization_id: uuid.UUID, cash_box_id: uuid.UUID | None = None, limit: int = 50
+    ) -> list[MoneyTransaction]:
+        """List petty cash voucher transactions for the org or a specific cash box."""
+        where_clauses = [_money_transactions.c.organization_id == organization_id]
+        if cash_box_id is not None:
+            where_clauses.append(
+                sa.or_(
+                    _money_transactions.c.from_account_id == cash_box_id,
+                    _money_transactions.c.to_account_id == cash_box_id,
+                )
+            )
+        stmt = (
+            sa.select(_money_transactions)
+            .where(*where_clauses)
+            .order_by(_money_transactions.c.occurred_date.desc(), _money_transactions.c.created_at.desc())
+            .limit(limit)
+        )
+        res = await self.conn.execute(stmt)
+        return [_row_to_transaction(r) for r in res.mappings().all()]
+

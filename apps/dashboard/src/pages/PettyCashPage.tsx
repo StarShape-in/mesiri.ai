@@ -190,7 +190,7 @@ const INITIAL_VOUCHERS: PettyCashVoucherItem[] = [
 type SortField = 'date' | 'amount' | 'voucher_number'
 type SortOrder = 'asc' | 'desc'
 
-import { fetchAccountsApi } from '@/lib/api'
+import { fetchAccountsApi, fetchVouchersApi } from '@/lib/api'
 
 export default function PettyCashPage() {
   const { scope } = useScope()
@@ -203,11 +203,12 @@ export default function PettyCashPage() {
     let backendResponded = false
     async function loadBackendPettyCash() {
       try {
-        const data = await fetchAccountsApi()
+        const [data, voucherData] = await Promise.all([
+          fetchAccountsApi(),
+          fetchVouchersApi().catch(() => []),
+        ])
         backendResponded = true
         if (active && Array.isArray(data)) {
-          // Filter to petty_cash type accounts from the backend
-          // Backend uses 'cash' as the type value
           const pettyBoxes = data.filter((a: any) => a.account_type === 'petty_cash' || a.account_type === 'cash')
           if (pettyBoxes.length > 0) {
             const mappedBoxes: SiteCashBoxItem[] = pettyBoxes.map((b: any, idx: number) => ({
@@ -225,14 +226,38 @@ export default function PettyCashPage() {
             }))
             setCashBoxes(mappedBoxes)
           } else {
-            // Backend responded but no petty cash accounts — show empty
             setCashBoxes([])
+          }
+        }
+        if (active && Array.isArray(voucherData)) {
+          if (voucherData.length > 0) {
+            const mappedVouchers: PettyCashVoucherItem[] = voucherData.map((v: any) => ({
+              id: String(v.id),
+              voucher_number: `VCH-${String(v.id).slice(0, 4).toUpperCase()}`,
+              cash_box_id: String(v.from_account_id || ''),
+              cash_box_name: 'Site Cash Box',
+              amount: parseFloat(v.amount) || 0,
+              category: v.description || 'General Expense',
+              category_name: v.description || 'General Expense',
+              vendor_name: v.source_type || 'Direct Payee',
+              description: v.description || 'Petty Cash Voucher',
+              date: v.occurred_date || new Date().toISOString().split('T')[0],
+              custodian_name: 'Site Supervisor',
+              project_name: 'Project Site',
+              status: 'verified',
+              source: 'WhatsApp Assistant',
+              receipt_url: undefined,
+            }))
+            setVouchers(mappedVouchers)
+          } else if (backendResponded) {
+            setVouchers([])
           }
         }
       } catch (err) {
         if (!backendResponded) {
           console.warn('Live backend petty cash fetch unavailable, showing sample data:', err)
           setCashBoxes(INITIAL_CASH_BOXES)
+          setVouchers(INITIAL_VOUCHERS)
         }
       }
     }

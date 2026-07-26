@@ -509,4 +509,17 @@ export async function replenishFloatApi(payload: ReplenishFloatApiPayload) {
   return res.data
 }
 
+export async function fetchAccountTransactionsApi(accountId: string) {
+  const res = await api.get(`/finance/accounts/${accountId}/transactions`)
+  return res.data
+}
+
+export async function fetchVouchersApi(cashBoxId?: string) {
+  const res = await api.get('/finance/petty-cash/vouchers', {
+    params: cashBoxId ? { cash_box_id: cashBoxId } : undefined,
+  })
+  return res.data
+}
+
+
 
