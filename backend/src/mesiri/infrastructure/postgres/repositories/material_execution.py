@@ -17,9 +17,12 @@ import json
 import uuid
 from typing import TYPE_CHECKING
 
-from backend.postgres.workflow_instance import get_by_id_on_connection, transition_on_connection
 from mesiri.application.materials.repository import MaterialCommand, MaterialExecutionRepository
 from mesiri.domains.materials.posting import post_material_movement
+from mesiri.infrastructure.postgres.workflow_instance import (
+    get_by_id_on_connection,
+    transition_on_connection,
+)
 from mesiri_contracts.application.commands.material import (
     RecordMaterialReceiptCommand,
 )

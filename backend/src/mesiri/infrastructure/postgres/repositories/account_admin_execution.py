@@ -19,10 +19,13 @@ from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
 
-from backend.postgres.workflow_instance import get_by_id_on_connection, transition_on_connection
 from mesiri.application.finance.commands import ManageMoneyAccountCommand
 from mesiri.application.finance.repository import AccountAdminExecutionRepository
 from mesiri.infrastructure.postgres.repositories.finance import PostgresMoneyAccountRepository
+from mesiri.infrastructure.postgres.workflow_instance import (
+    get_by_id_on_connection,
+    transition_on_connection,
+)
 from mesiri_contracts.application.results.execution_result import (
     ExecutionResult,
     ExecutionStatus,
