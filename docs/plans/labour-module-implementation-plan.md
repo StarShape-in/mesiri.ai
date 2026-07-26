@@ -148,17 +148,28 @@ Rationale: attendance is immutable historical fact; the workforce register is
 current mutable reference data. Letting one write the other makes history
 depend on the present, and pollutes the register with one-off names.
 
-### P2 — Universal interaction pattern
+### P2 — Universal operational pattern
 
-Every operational workflow in Mesiri follows:
+Every operational module in Mesiri gives the user the same experience,
+end to end:
+
+```
+Module → Action → Project → Site → Capture → AI Understanding
+       → Preview → Confirmation → Save
+```
+
+of which the last four are the non-negotiable core:
 
 ```
 AI Extraction → Structured Preview → User Confirmation → Persistence
 ```
 
 The Labour workflow **must never bypass this**. Nothing is persisted before an
-explicit confirmation. This is the same rhythm a user already knows from
-Material and Expense, and consistency across modules is the point.
+explicit confirmation.
+
+This is why Labour must behave like Material and Expense rather than inventing
+its own shape: a supervisor who has learned one module has already learned
+this one. Consistency across modules *is* the feature.
 
 ### P3 — Temporary workers are first-class
 
@@ -191,12 +202,105 @@ Images reuse the existing object-storage + attachments pattern exactly as
 receipts do. No special-case image pipeline. Where Material/Expense already
 share a shape, extract it rather than writing a third copy (see §7).
 
-### P7 — Extensible without over-building
+### P7 — Activity is the connective tissue
 
 Attendance optionally links to **activity / work item / construction stage**
-even though V1's UI does not expose all of it — because
-`Materials → Activity → Labour → Expenses` becomes highly valuable later.
-Model the relationship now; do not build the features on top of it now.
+even though V1's UI does not expose all of it.
+
+This is more important than it looks. Activity is what eventually joins every
+operational module together:
+
+```
+                Activity
+                   │
+      ┌────────────┼────────────┐
+   Materials    Labour      Expenses
+```
+
+Once all three reference the same activity, questions like *"what did slab
+casting actually cost us?"* become answerable across material, labour and
+spend at once. That is the foundation of construction analytics, and it is
+only possible if the link is captured at the moment of recording — it cannot
+be reconstructed afterwards.
+
+**Model the relationship now; do not build the features on top of it now.**
+Capturing an activity must stay optional and must never slow down recording
+(see P9).
+
+### P8 — Future integration readiness
+
+Labour **does not implement** Timeline, Analytics, Image Gallery, Dashboard,
+Reports or AI Search in V1.
+
+However, all attendance data must be stored such that those modules can
+consume it later **without requiring changes to the Labour module**.
+
+Practically, this means: store the facts, with their scope (organization,
+project, site, date, activity) and provenance (who recorded it, from which
+message, with which attachments) — because that is what every future consumer
+will need, and retrofitting provenance onto historical records is impossible.
+
+**Expected future consumers** — documented so their needs are anticipated, not
+so they are built:
+
+| Consumer | What it will want from Labour |
+|---|---|
+| Timeline | attendance events, scoped to project/site, with a human summary |
+| Analytics | headcount and cost, grouped by trade / activity / period |
+| Image Gallery | attendance sheet photos via the shared attachment shape |
+| Reports | cost roll-ups, exportable |
+| AI Search | attendance answerable in natural language, like inventory is today |
+| Payroll | days worked per worker — **explicitly not V1**, but the shape must not preclude it |
+
+### P9 — Optimize for speed of recording, not completeness of information
+
+The person using this is standing in the sun, on a site, and is busy.
+
+**If recording attendance takes five minutes, it will not be used. If it takes
+thirty seconds, it will be used every day.**
+
+Every design decision should be weighed against this. Prefer a fast capture
+with a few unknowns over a thorough capture that nobody completes. Optional
+fields stay genuinely optional. Never ask a question the system can answer
+itself.
+
+**Known tension with P4.** "Never guess, always ask" and "be fast" pull against
+each other: asking about every uncertain worker would make a 10-worker
+attendance unusable. The resolution is that **P4 governs correctness, P9
+governs how often it triggers** — invest in matching being confident enough
+that asking is rare, rather than in making the asking pleasant. If a
+supervisor is answering questions on most reports, matching is too weak; fix
+the matching, do not relax the rule.
+
+---
+
+## 3A. Definition of Done — when is Labour V1 finished?
+
+The finish line. Everything else in this document describes *how*; this
+section defines *when we stop*.
+
+**Labour V1 is complete when all of the following are true:**
+
+| # | Criterion | Verified by |
+|---|---|---|
+| 1 | A site engineer can record attendance entirely via WhatsApp | Real message on production, end to end |
+| 2 | Project and site selection works, reusing the existing gate chain | Same gates Material uses; no Labour-specific selection UI |
+| 3 | AI extracts labour details from **text, voice, and images** | One test per input path producing the same structured result |
+| 4 | Workers are matched correctly, never by name alone | Confidence model (P4); `Ravi (Mason)` ≠ `Ravi (Painter)` |
+| 5 | Temporary workers are fully supported as first-class | Recorded without entering the register; promotion is a separate explicit act |
+| 6 | The user receives a structured preview before anything is saved | P2 |
+| 7 | The user confirms before saving; nothing persists without it | P2 |
+| 8 | Attendance is stored, append-only | P5 — a second report for the same site and day is a second record |
+| 9 | Attendance images are attached to the record | Via the shared attachment shape (ADR-L3) |
+| 10 | Stored data is **future-ready** for Timeline, Analytics, Image Gallery and AI Search | P8 |
+
+**Note criterion 10 carefully: future-*ready*, not implemented.** Timeline,
+Analytics, Gallery, Dashboard and AI Search are explicitly *not* built in V1.
+The test is whether they could later be built against the stored data
+*without changing the Labour module*.
+
+**Not part of Done:** dashboard UI, CSV/Excel import, payroll, cost reports,
+any of §Deferred. Those are follow-on work and do not gate V1.
 
 ---
 
@@ -414,9 +518,16 @@ Update as work proceeds. `[x]` = done and pushed.
 - [ ] Analytics data exposure
 
 ### Deferred (documented, not built)
-- [ ] Web Dashboard — see `labour-dashboard-plan.md`
+
+**Dashboard implementation is intentionally postponed.** During Labour
+implementation, the only obligation is that the backend exposes sufficient
+data for a future dashboard — so that building the UI later requires
+**minimal backend change**. No frontend work of any kind is in scope.
+
+- [ ] Web Dashboard — fully specified in `labour-dashboard-plan.md`
 - [ ] Control Panel UI, Mobile UI, Analytics UI, Timeline UI, Gallery UI
 - [ ] CSV / Excel import
+- [ ] Payroll, cost reports, productivity — separate modules, not extensions
 
 ---
 
@@ -428,6 +539,7 @@ Update as work proceeds. `[x]` = done and pushed.
 | Q2 | Is `contractor` free text or a proper entity? Free text ships faster; an entity is needed if contractor-level cost reporting is wanted later. | Open |
 | Q3 | Should duplicate-image detection be exact-hash only (cheap, reliable) or perceptual/near-duplicate (catches re-photographs, more false positives)? Spec says "nearly identical", implying perceptual. | Open |
 | Q4 | Is a daily wage recorded per attendance line, or always inherited from the register? Recording it per line preserves history correctly (P5) but allows drift. **Recommend: inherit as default, store the value used.** | Open |
+| Q5 | Should V1 support **headcount-only attendance** when individual names aren't available — e.g. "10 helpers, 4 masons, 2 painters"? Many sites genuinely work this way, especially with contractor-supplied labour. This is also the fastest possible capture (P9), and notably it is exactly what the *existing* 0120 table and the current AI extraction prompt already assume. Supporting both named and headcount-only reports in one model is a real data-model decision, not a UI one — a line item would need to represent either a person or a count. **Worth resolving before Phase 1 finalises the domain model.** | Open — **decide early** |
 
 ---
 
@@ -449,3 +561,4 @@ Update as work proceeds. `[x]` = done and pushed.
 |---|---|
 | 2026-07-25 | Document created. Phase 0 complete: reconnaissance, ADR-L1 to L3, principles P1–P7, shared-abstraction proposal (§7) pending approval. |
 | 2026-07-25 | Merged 34 incoming Finance commits. Added §2.4: attendance already has a reserved slot in the image-purpose picker, duplicate-detection precedent is field-based (image hashing still to build), attachment/gallery paths now test-covered. 1046 tests passing. |
+| 2026-07-26 | Product-clarity pass following design review. Added §3A **Definition of Done** (the finish line, 10 criteria), **P8 Future integration readiness** with expected-consumer table, **P9 Optimize for speed of recording** including its acknowledged tension with P4, strengthened **P7** to name Activity as the connective tissue between all operational modules, expanded **P2** to the full Module→Action→Project→Site→Capture→AI→Preview→Confirm→Save pattern, added **Q5** (headcount-only attendance — flagged decide-early as it affects the domain model), and made the dashboard deferral explicit. No architectural changes; scope unchanged. |
