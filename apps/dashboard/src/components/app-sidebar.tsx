@@ -262,10 +262,11 @@ export function AppSidebar() {
 
     const x = event.clientX
     const y = event.clientY
-    const endRadius = Math.hypot(
-      Math.max(x, window.innerWidth - x),
-      Math.max(y, window.innerHeight - y)
-    )
+    const endRadius =
+      Math.hypot(
+        Math.max(x, window.innerWidth - x),
+        Math.max(y, window.innerHeight - y)
+      ) + 20
 
     const transition = (document as Document & { startViewTransition?: (callback: () => void) => { ready: Promise<void> } }).startViewTransition!(() => {
       flushSync(() => {
@@ -292,8 +293,8 @@ export function AppSidebar() {
           ],
         },
         {
-          duration: 500,
-          easing: 'ease-in-out',
+          duration: 450,
+          easing: 'cubic-bezier(0.25, 1, 0.5, 1)',
           pseudoElement: '::view-transition-new(root)',
         }
       )
