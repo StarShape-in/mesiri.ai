@@ -102,7 +102,7 @@ export default function PettyCashPage() {
           fetchVouchersApi().catch(() => []),
         ])
         if (active && Array.isArray(data)) {
-          const pettyBoxes = data.filter((a: any) => a.account_type === 'petty_cash' || a.account_type === 'cash')
+          const pettyBoxes = data.filter((a: any) => a.account_type === 'employee_advance' || a.account_type === 'cash' || a.account_type === 'petty_cash')
           const mappedBoxes: SiteCashBoxItem[] = pettyBoxes.map((b: any, idx: number) => ({
             id: String(b.id) || `cb_real_${idx}`,
             name: b.name || 'Site Float',

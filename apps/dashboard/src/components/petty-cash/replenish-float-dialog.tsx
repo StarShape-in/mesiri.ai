@@ -89,15 +89,17 @@ export function ReplenishFloatDialog({
         amount: val,
         notes: description || undefined,
       })
-    } catch (err) {
-      console.warn('Backend endpoint unavailable, falling back to instant UI state update:', err)
-    } finally {
       onReplenishCompleted?.(targetBoxId, val)
-      setSubmitting(false)
       onOpenChange(false)
       setTargetBoxId('')
       setAmount('')
       setDescription('')
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail
+      const msg = Array.isArray(detail) ? detail.join(', ') : detail || err.message || 'Replenishment failed'
+      alert(`Float replenishment failed: ${msg}`)
+    } finally {
+      setSubmitting(false)
     }
   }
 

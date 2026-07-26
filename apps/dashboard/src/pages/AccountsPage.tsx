@@ -51,7 +51,7 @@ import { AccountDetailSheet } from '@/components/accounts/account-detail-sheet'
 export interface MoneyAccountItem {
   id: string
   name: string
-  account_type: 'bank_account' | 'petty_cash' | 'corporate_card' | 'digital_wallet'
+  account_type: 'bank' | 'cash' | 'employee_advance' | 'other'
   currency: string
   opening_balance: number
   current_balance: number
@@ -84,22 +84,25 @@ export default function AccountsPage() {
     let active = true
     async function loadBackendAccounts() {
       try {
-        const data = await fetchAccountsApi()
+        const data = await fetchAccountsApi({
+          project_id: scope.mode !== 'portfolio' ? scope.projectId : undefined,
+          site_id: scope.mode === 'site' ? scope.siteId : undefined,
+        })
         if (active && Array.isArray(data)) {
-          const typeMap: Record<string, MoneyAccountItem['account_type']> = {
-            bank: 'bank_account',
-            cash: 'petty_cash',
-            employee_advance: 'petty_cash',
-            other: 'bank_account',
-            bank_account: 'bank_account',
-            petty_cash: 'petty_cash',
-            corporate_card: 'corporate_card',
-            digital_wallet: 'digital_wallet',
+          const typeMap: Record<string, 'bank' | 'cash' | 'employee_advance' | 'other'> = {
+            bank: 'bank',
+            cash: 'cash',
+            employee_advance: 'employee_advance',
+            other: 'other',
+            bank_account: 'bank',
+            petty_cash: 'cash',
+            corporate_card: 'other',
+            digital_wallet: 'other',
           }
           const mapped: MoneyAccountItem[] = data.map((a: any) => ({
             id: String(a.id),
             name: a.name,
-            account_type: typeMap[a.account_type] ?? 'bank_account',
+            account_type: typeMap[a.account_type] ?? 'bank',
             currency: a.currency || 'INR',
             opening_balance: parseFloat(a.opening_balance) || 0,
             current_balance: parseFloat(a.current_balance) || parseFloat(a.opening_balance) || 0,
@@ -194,10 +197,10 @@ export default function AccountsPage() {
   const metrics = React.useMemo(() => {
     const netTreasury = scopedAccounts.reduce((acc, curr) => acc + curr.current_balance, 0)
     const bankTotal = scopedAccounts
-      .filter((a) => a.account_type === 'bank_account')
+      .filter((a) => a.account_type === 'bank')
       .reduce((acc, curr) => acc + curr.current_balance, 0)
     const pettyCashTotal = scopedAccounts
-      .filter((a) => a.account_type === 'petty_cash')
+      .filter((a) => a.account_type === 'cash' || a.account_type === 'employee_advance')
       .reduce((acc, curr) => acc + curr.current_balance, 0)
     const lowBalanceCount = scopedAccounts.filter((a) => a.current_balance < 50000).length
 
@@ -270,14 +273,16 @@ export default function AccountsPage() {
 
   const getAccountBadge = (type: string) => {
     switch (type) {
+      case 'bank':
       case 'bank_account':
         return <Badge className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20 text-[10px]">Bank Account</Badge>
+      case 'cash':
+        return <Badge className="bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20 text-[10px]">Operating Cash</Badge>
+      case 'employee_advance':
       case 'petty_cash':
-        return <Badge className="bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20 text-[10px]">Petty Cash</Badge>
-      case 'corporate_card':
-        return <Badge className="bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 border-indigo-500/20 text-[10px]">Corporate Card</Badge>
+        return <Badge className="bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-500/20 text-[10px]">Petty Cash Float</Badge>
       default:
-        return <Badge variant="outline" className="text-[10px]">Digital Wallet</Badge>
+        return <Badge variant="outline" className="text-[10px]">Other / Wallet</Badge>
     }
   }
 

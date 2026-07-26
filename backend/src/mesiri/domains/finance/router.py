@@ -12,10 +12,13 @@ import datetime
 import uuid
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from mesiri.application.finance.transfer_commands import TransferMoneyCommand
+from mesiri.application.finance.transfer_handler import TransferMoneyHandler
+from mesiri.application.finance.transfer_resolution import PostgresTransferAccountResolver
 from mesiri.authorization.context import AuthorizationContext
 from mesiri.domains.projects.router import get_auth_context
 from mesiri.infrastructure.postgres.dependency import get_db_conn
@@ -23,6 +26,10 @@ from mesiri.infrastructure.postgres.repositories.finance import (
     PostgresMoneyAccountRepository,
     PostgresMoneyTransactionRepository,
 )
+from mesiri.infrastructure.postgres.repositories.transfer_execution import (
+    PostgresTransferExecutionRepository,
+)
+from mesiri_contracts.application.results.execution_result import ExecutionStatus
 
 router = APIRouter(prefix="/finance", tags=["finance"])
 
@@ -75,6 +82,15 @@ class CreateAccountRequest(BaseModel):
     project_id: uuid.UUID | None = None
     site_id: uuid.UUID | None = None
     owner_user_id: uuid.UUID | None = None
+
+
+class TransferMoneyRequest(BaseModel):
+    from_account_id: uuid.UUID
+    to_account_id: uuid.UUID
+    amount: Decimal
+    description: str | None = None
+    occurred_date: datetime.date | None = None
+    correlation_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -241,4 +257,38 @@ async def list_petty_cash_vouchers(
         )
         for t in txs
     ]
+
+
+@router.post("/transfers", status_code=201)
+async def transfer_money(
+    body: TransferMoneyRequest,
+    idempotency_key: str = Header(..., alias="Idempotency-Key"),
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Transfer money between two money accounts in the organization."""
+    cmd = TransferMoneyCommand(
+        idempotency_key=idempotency_key,
+        organization_id=str(auth_context.organization_id),
+        created_by=str(auth_context.user_id),
+        created_by_role=auth_context.role,
+        from_account_id=str(body.from_account_id),
+        to_account_id=str(body.to_account_id),
+        amount=body.amount,
+        occurred_date=body.occurred_date or datetime.date.today(),
+        description=body.description,
+        correlation_id=body.correlation_id,
+    )
+
+    handler = TransferMoneyHandler(
+        repo=PostgresTransferExecutionRepository(),
+        resolver=PostgresTransferAccountResolver(),
+    )
+    result = await handler.handle(conn, cmd)
+
+    if result.status == ExecutionStatus.REJECTED:
+        raise HTTPException(status_code=422, detail=result.rejection_reasons)
+
+    return {"id": result.material_row_id, "status": "succeeded"}
+
 

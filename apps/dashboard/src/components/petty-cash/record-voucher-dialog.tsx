@@ -83,9 +83,6 @@ export function RecordVoucherDialog({
         description: description || 'Petty cash expenditure',
         date: voucherDate,
       })
-    } catch (err) {
-      console.warn('Backend endpoint unavailable, falling back to instant UI state update:', err)
-    } finally {
       onVoucherCreated?.({
         id: `vch_${Date.now()}`,
         voucher_number: `VCH-${Math.floor(100 + Math.random() * 900)}`,
@@ -101,12 +98,16 @@ export function RecordVoucherDialog({
         status: 'pending',
         source: 'Web Direct',
       })
-
-      setSubmitting(false)
       onOpenChange(false)
       setCashBoxId('')
       setAmount('')
       setVendorName('')
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail
+      const msg = Array.isArray(detail) ? detail.join(', ') : detail || err.message || 'Record voucher failed'
+      alert(`Record voucher failed: ${msg}`)
+    } finally {
+      setSubmitting(false)
     }
   }
 

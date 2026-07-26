@@ -36,7 +36,7 @@ export function CreateAccountDialog({
   onAccountCreated,
 }: CreateAccountDialogProps) {
   const [name, setName] = React.useState('')
-  const [accountType, setAccountType] = React.useState<'bank_account' | 'petty_cash' | 'corporate_card' | 'digital_wallet'>('bank_account')
+  const [accountType, setAccountType] = React.useState<'bank' | 'cash' | 'employee_advance' | 'other'>('bank')
   const [openingBalance, setOpeningBalance] = React.useState('')
   const [custodian, setCustodian] = React.useState('')
   const [accountNumber, setAccountNumber] = React.useState('')
@@ -142,10 +142,10 @@ export function CreateAccountDialog({
                     <SelectValue placeholder="Select Type" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="bank_account" className="text-xs">Corporate Bank Account</SelectItem>
-                    <SelectItem value="petty_cash" className="text-xs">Site Petty Cash Box</SelectItem>
-                    <SelectItem value="corporate_card" className="text-xs">Corporate Credit Card</SelectItem>
-                    <SelectItem value="digital_wallet" className="text-xs">Digital / UPI Wallet</SelectItem>
+                    <SelectItem value="bank" className="text-xs">Corporate Bank Account</SelectItem>
+                    <SelectItem value="cash" className="text-xs">Operating Cash</SelectItem>
+                    <SelectItem value="employee_advance" className="text-xs">Petty Cash Float / Advance</SelectItem>
+                    <SelectItem value="other" className="text-xs">Other / Digital Wallet</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

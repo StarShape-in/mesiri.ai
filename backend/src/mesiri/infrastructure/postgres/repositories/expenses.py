@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import uuid
+from dataclasses import dataclass
 from decimal import Decimal
 
 import sqlalchemy as sa
@@ -363,6 +364,26 @@ class PostgresExpenseRepository:
         return [_row_to_expense(r) for r in res.mappings().all()]
 
 
+@dataclass(frozen=True, slots=True)
+class ExpenseAttachmentWithContext:
+    """An attachment plus enough of its parent expense to render a gallery
+    thumbnail's caption -- a read-projection, not a domain entity (nothing
+    else needs this shape), so it lives next to the query that builds it
+    rather than in domains/expenses/entities.py."""
+
+    id: uuid.UUID
+    expense_id: uuid.UUID
+    media_object_key: str
+    attachment_type: str
+    created_at: datetime.datetime | None
+    amount: Decimal
+    description: str | None
+    occurred_date: datetime.date
+    project_id: uuid.UUID
+    category_id: uuid.UUID | None
+    vendor_id: uuid.UUID | None
+
+
 class PostgresExpenseAttachmentRepository:
     def __init__(self, conn: AsyncConnection):
         self.conn = conn
@@ -416,6 +437,72 @@ class PostgresExpenseAttachmentRepository:
                 media_object_key=r.media_object_key,
                 attachment_type=r.attachment_type,
                 created_by=r.created_by,
+            )
+            for r in res.mappings().all()
+        ]
+
+    async def list_for_organization(
+        self,
+        organization_id: uuid.UUID,
+        *,
+        project_id: uuid.UUID | None = None,
+        site_id: uuid.UUID | None = None,
+        start_date: datetime.date | None = None,
+        end_date: datetime.date | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[ExpenseAttachmentWithContext]:
+        """All attachments across the org, newest first -- the "see every
+        receipt together" gallery view. Joined through expenses (an
+        attachment carries no organization_id of its own) both for tenant
+        scoping and to bring back enough of the parent expense to caption
+        each thumbnail without a second round trip per row."""
+        where_clauses = [_expenses.c.organization_id == organization_id]
+        if project_id is not None:
+            where_clauses.append(_expenses.c.project_id == project_id)
+        if site_id is not None:
+            where_clauses.append(_expenses.c.site_id == site_id)
+        if start_date is not None:
+            where_clauses.append(_expenses.c.occurred_date >= start_date)
+        if end_date is not None:
+            where_clauses.append(_expenses.c.occurred_date <= end_date)
+
+        stmt = (
+            sa.select(
+                _expense_attachments.c.id,
+                _expense_attachments.c.expense_id,
+                _expense_attachments.c.media_object_key,
+                _expense_attachments.c.attachment_type,
+                _expense_attachments.c.created_at,
+                _expenses.c.amount,
+                _expenses.c.description,
+                _expenses.c.occurred_date,
+                _expenses.c.project_id,
+                _expenses.c.category_id,
+                _expenses.c.vendor_id,
+            )
+            .select_from(
+                _expense_attachments.join(_expenses, _expenses.c.id == _expense_attachments.c.expense_id)
+            )
+            .where(*where_clauses)
+            .order_by(_expense_attachments.c.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        res = await self.conn.execute(stmt)
+        return [
+            ExpenseAttachmentWithContext(
+                id=r.id,
+                expense_id=r.expense_id,
+                media_object_key=r.media_object_key,
+                attachment_type=r.attachment_type,
+                created_at=r.created_at,
+                amount=r.amount,
+                description=r.description,
+                occurred_date=r.occurred_date,
+                project_id=r.project_id,
+                category_id=r.category_id,
+                vendor_id=r.vendor_id,
             )
             for r in res.mappings().all()
         ]

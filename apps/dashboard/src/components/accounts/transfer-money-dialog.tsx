@@ -84,16 +84,18 @@ export function TransferMoneyDialog({
         },
         idempotencyKey
       )
-    } catch (err) {
-      console.warn('Backend endpoint unavailable, falling back to instant UI state update:', err)
-    } finally {
       onTransferCompleted?.(fromAccountId, toAccountId, transferVal)
-      setSubmitting(false)
       onOpenChange(false)
       setFromAccountId('')
       setToAccountId('')
       setAmount('')
       setDescription('')
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail
+      const msg = Array.isArray(detail) ? detail.join(', ') : detail || err.message || 'Transfer failed'
+      alert(`Transfer failed: ${msg}`)
+    } finally {
+      setSubmitting(false)
     }
   }
 

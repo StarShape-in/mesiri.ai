@@ -74,13 +74,12 @@ interface ExpenseItem {
   project_name: string
   site_name: string
   payment_method?: string
-  receipt_url?: string
 }
 
 type SortField = 'date' | 'amount' | 'number' | 'category'
 type SortOrder = 'asc' | 'desc'
 
-import { fetchExpensesApi } from '@/lib/api'
+import { fetchExpensesApi, reverseExpenseApi, fetchAllExpenseAttachmentsApi } from '@/lib/api'
 
 export default function ExpensesPage() {
   const { scope } = useScope()
@@ -91,6 +90,10 @@ export default function ExpensesPage() {
   const [paymentStatusFilter, setPaymentStatusFilter] = React.useState('ALL')
   const [sourceFilter, setSourceFilter] = React.useState('ALL')
   const [datePreset, setDatePreset] = React.useState('ALL')
+  // expense_id -> first receipt's presigned URL. Fetched once alongside the
+  // expenses list (one batched call, not one per row) -- see
+  // GET /expenses/attachments in backend/src/mesiri/domains/expenses/router.py.
+  const [receiptUrlByExpenseId, setReceiptUrlByExpenseId] = React.useState<Record<string, string>>({})
 
   React.useEffect(() => {
     let active = true
@@ -124,7 +127,28 @@ export default function ExpensesPage() {
         if (active) setExpenses([])
       }
     }
+    async function loadReceiptUrls() {
+      try {
+        const attachments = await fetchAllExpenseAttachmentsApi({
+          project_id: scope.mode !== 'portfolio' ? scope.projectId : undefined,
+          site_id: scope.mode === 'site' ? scope.siteId : undefined,
+          limit: 200,
+        })
+        if (!active) return
+        const byExpenseId: Record<string, string> = {}
+        for (const a of attachments) {
+          // First attachment wins when an expense has more than one -- the
+          // lightbox only shows one image today.
+          if (!byExpenseId[a.expense_id]) byExpenseId[a.expense_id] = a.url
+        }
+        setReceiptUrlByExpenseId(byExpenseId)
+      } catch (err) {
+        console.warn('Live backend receipt attachments fetch error:', err)
+        if (active) setReceiptUrlByExpenseId({})
+      }
+    }
     loadBackendExpenses()
+    loadReceiptUrls()
     return () => {
       active = false
     }
@@ -258,10 +282,33 @@ export default function ExpensesPage() {
     setSelectedIds([])
   }
 
-  const handleBulkVoid = () => {
-    if (confirm(`Are you sure you want to void ${selectedIds.length} selected expenses?`)) {
-      setExpenses((prev) => prev.filter((item) => !selectedIds.includes(item.id)))
-      setSelectedIds([])
+  const handleVoidExpense = async (id: string, expenseNumber: string) => {
+    if (!confirm(`Void expense ${expenseNumber}? This will reverse any associated payment entries in the ledger.`)) return
+    try {
+      await reverseExpenseApi(id)
+      setExpenses((prev) =>
+        prev.map((e) => (e.id === id ? { ...e, workflow_status: 'reversed' as const } : e))
+      )
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail
+      const msg = Array.isArray(detail) ? detail.join(', ') : detail || err.message || 'Server error'
+      alert(`Failed to void expense: ${msg}`)
+    }
+  }
+
+  const handleBulkVoid = async () => {
+    if (!confirm(`Are you sure you want to void ${selectedIds.length} selected expenses?`)) return
+    const idsToVoid = [...selectedIds]
+    setSelectedIds([])
+    for (const id of idsToVoid) {
+      try {
+        await reverseExpenseApi(id)
+        setExpenses((prev) =>
+          prev.map((e) => (e.id === id ? { ...e, workflow_status: 'reversed' as const } : e))
+        )
+      } catch (err: any) {
+        console.warn(`Failed to void expense ${id}:`, err)
+      }
     }
   }
 
@@ -534,12 +581,12 @@ export default function ExpensesPage() {
                     <TableCell className="text-xs">
                       <div className="font-medium text-foreground truncate max-w-[200px] flex items-center gap-1.5">
                         {row.description}
-                        {row.receipt_url && (
+                        {receiptUrlByExpenseId[row.id] && (
                           <button
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation()
-                              setPreviewReceiptUrl(row.receipt_url || null)
+                              setPreviewReceiptUrl(receiptUrlByExpenseId[row.id])
                             }}
                             className="text-muted-foreground hover:text-emerald-600"
                             title="View Receipt"
@@ -614,11 +661,7 @@ export default function ExpensesPage() {
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
                             className="text-rose-600"
-                            onClick={() => {
-                              if (confirm(`Void expense ${row.expense_number}?`)) {
-                                setExpenses((prev) => prev.filter((e) => e.id !== row.id))
-                              }
-                            }}
+                            onClick={() => handleVoidExpense(row.id, row.expense_number)}
                           >
                             <Trash2 className="size-3.5 mr-1.5" /> Void Expense
                           </DropdownMenuItem>

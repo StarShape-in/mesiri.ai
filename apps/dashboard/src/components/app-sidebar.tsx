@@ -82,6 +82,7 @@ const FINANCE_CATEGORY: NavCategory = {
   items: [
     { title: 'Overview', url: '/finance/overview', icon: PieChart },
     { title: 'Expenses', url: '/finance/expenses', icon: DollarSign },
+    { title: 'Receipts', url: '/finance/receipts', icon: ImageIcon },
     { title: 'Accounts', url: '/finance/accounts', icon: Landmark },
     { title: 'WhatsApp Automations', url: '/finance/whatsapp', icon: Bot },
     { title: 'Transactions', url: '/finance/transactions', icon: ArrowLeftRight },

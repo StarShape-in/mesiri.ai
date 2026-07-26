@@ -77,10 +77,14 @@ export function AccountDetailSheet({
 
   const getAccountTypeIcon = (type: string) => {
     switch (type) {
+      case 'bank':
       case 'bank_account':
         return <Landmark className="size-4 text-emerald-500" />
-      case 'petty_cash':
+      case 'cash':
         return <Wallet className="size-4 text-amber-500" />
+      case 'employee_advance':
+      case 'petty_cash':
+        return <Wallet className="size-4 text-purple-500" />
       case 'corporate_card':
         return <CreditCard className="size-4 text-indigo-500" />
       default:
