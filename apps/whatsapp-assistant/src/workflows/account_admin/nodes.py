@@ -1,11 +1,15 @@
 """Account admin workflow nodes — pure functions, no LangGraph, no I/O, no SQL, no domain rules.
 
 Mirrors workflows/expense_capture/nodes.py's build_draft/request_confirmation
-shape. No slot-filling here -- the deterministic command parser
-(runtime/account_admin_parser.py) already extracted every field
-(action/name/target_name/new_name) before this graph ever runs; duplicate-
-name / account-not-found checks belong to the Application/Domain layer (see
-backend's application/finance/resolution.py), not here.
+shape. No slot-filling here -- two producers feed this graph's
+collected_fields: the deterministic command parser
+(runtime/account_admin_parser.py), which always has every field it needs by
+construction, and (since 2026-07-26) AI extraction via
+SemanticType.ACCOUNT_ADMIN for everything else (other phrasing, voice,
+non-English) -- which may resolve `action` but not the action-specific
+fields. build_draft's completeness check below handles that gap; duplicate-
+name / account-not-found checks still belong to the Application/Domain layer
+(see backend's application/finance/resolution.py), not here.
 """
 
 from __future__ import annotations
@@ -16,10 +20,41 @@ from mesiri_contracts.common.ids import new_id
 
 from ..state import WorkflowGraphState
 
+_MISSING_FIELDS_PROMPT = {
+    "create": "What should the new account be called?",
+    "rename": "Which account should be renamed, and what should its new name be?",
+    "deactivate": "Which account should be deactivated?",
+}
+
+
+def _is_complete(action: str, fields: dict) -> bool:
+    if action == "create":
+        return bool(str(fields.get("name") or "").strip())
+    if action == "rename":
+        return bool(str(fields.get("target_name") or "").strip()) and bool(
+            str(fields.get("new_name") or "").strip()
+        )
+    if action == "deactivate":
+        return bool(str(fields.get("target_name") or "").strip())
+    return False
+
 
 def build_draft(state: WorkflowGraphState) -> dict:
-    """Map collected fields into a DraftAction. Shape-mapping only — no validation."""
+    """Map collected fields into a DraftAction, or -- if the action-specific
+    fields AI extraction was supposed to fill in are missing or the action
+    itself wasn't recognized -- complete with a clarifying reply and no
+    draft at all, mirroring reverse/nodes.py's own "nothing to reverse"
+    completeness check (see workflows/runtime.py's
+    _NO_DRAFT_ALLOWED_WORKFLOW_KEYS, which permits WorkflowKey.ACCOUNT_ADMIN
+    to complete without a draft for exactly this case)."""
     fields = dict(state.get("collected_fields") or {})
+    action = str(fields.get("action") or "").strip().lower()
+    if not _is_complete(action, fields):
+        return {
+            "pending_prompt": _MISSING_FIELDS_PROMPT.get(
+                action, "I didn't catch what you'd like to do with which account."
+            )
+        }
     draft = DraftActionV2(
         draft_id=new_id("draft"),
         correlation_id=state["correlation_id"],

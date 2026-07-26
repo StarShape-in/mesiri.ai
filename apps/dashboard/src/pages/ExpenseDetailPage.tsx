@@ -40,7 +40,11 @@ import {
   reverseExpenseApi,
   fetchUsers,
   fetchMe,
+  fetchAccountsApi,
+  fetchCategoriesApi,
+  fetchVendorsApi,
 } from '@/lib/api'
+import { fetchProjects } from '@/lib/projects'
 import { AccountDetailSheet } from '@/components/accounts/account-detail-sheet'
 import { VendorDetailSheet } from '@/components/vendors/vendor-detail-sheet'
 import { CategoryDetailSheet } from '@/components/categories/category-detail-sheet'
@@ -111,12 +115,28 @@ export default function ExpenseDetailPage() {
 
     let userList: any[] = []
     let meUser: any = null
+    let projectList: any[] = []
+    let accountList: any[] = []
+    let categoryList: any[] = []
+    let vendorList: any[] = []
+
     try {
-      const [u, m] = await Promise.all([fetchUsers(), fetchMe()])
+      const [u, m, p, a, c, v] = await Promise.all([
+        fetchUsers().catch(() => []),
+        fetchMe().catch(() => null),
+        fetchProjects().catch(() => []),
+        fetchAccountsApi().catch(() => []),
+        fetchCategoriesApi().catch(() => []),
+        fetchVendorsApi().catch(() => []),
+      ])
       userList = Array.isArray(u) ? u : []
       meUser = m
+      projectList = Array.isArray(p) ? p : []
+      accountList = Array.isArray(a) ? a : []
+      categoryList = Array.isArray(c) ? c : []
+      vendorList = Array.isArray(v) ? v : []
     } catch (err) {
-      console.warn('Failed to load users for creator resolution:', err)
+      console.warn('Failed to load auxiliary entities:', err)
     }
 
     try {
@@ -124,6 +144,10 @@ export default function ExpenseDetailPage() {
       if (data) {
         const amt = Number(data.amount) || 0
         const foundUser = userList.find((usr) => usr.id === data.created_by) || (meUser ? { full_name: meUser.full_name || meUser.email, role: meUser.role, email: meUser.email } : null)
+        const foundProject = projectList.find((p) => p.id === data.project_id)
+        const foundCategory = categoryList.find((c) => c.id === data.category_id)
+        const foundVendor = vendorList.find((v) => v.id === data.vendor_id)
+        const foundAccount = accountList.find((acc) => acc.id === data.account_id)
 
         setExpense({
           ...data,
@@ -132,31 +156,36 @@ export default function ExpenseDetailPage() {
           created_by_role: data.created_by_role || foundUser?.role || (userList.length > 0 ? userList[0].role : 'ADMIN'),
           created_by_email: data.created_by_email || foundUser?.email || (userList.length > 0 ? userList[0].email : 'admin@mesiri.ai'),
           created_at: data.created_at || `${data.occurred_date} 14:32 IST`,
-          project_name: data.project_name || 'Hyperion Commercial Towers',
-          project_code: data.project_code || 'PROJ-01',
+          project_name: data.project_name || foundProject?.name || (projectList.length > 0 ? projectList[0].name : 'Hyperion Commercial Towers'),
+          project_code: data.project_code || foundProject?.code || (projectList.length > 0 ? projectList[0].code : 'PROJ-01'),
           site_name: data.site_name || 'Tower 2 North Wing Site',
-          category_name: data.category_name || 'General Operations',
-          vendor_name: data.vendor_name || 'Direct Payee',
-          account_name: data.account_name || 'Main Bank Account',
-          custodian_name: data.custodian_name || (userList.length > 0 ? userList[0].full_name : 'Finance Custodian'),
-          tax_rate: 18,
-          net_amount: Math.round((amt / 1.18) * 100) / 100,
-          tax_amount: Math.round((amt - amt / 1.18) * 100) / 100,
+          category_name: data.category_name || foundCategory?.name || (categoryList.length > 0 ? categoryList[0].name : 'General Operations'),
+          vendor_name: data.vendor_name || foundVendor?.name || (vendorList.length > 0 ? vendorList[0].name : 'Direct Payee'),
+          account_name: data.account_name || foundAccount?.name || (accountList.length > 0 ? accountList[0].name : 'Main Bank Account'),
+          custodian_name: data.custodian_name || foundAccount?.custodian_name || (userList.length > 0 ? userList[0].full_name : 'Finance Custodian'),
+          tax_rate: data.tax_rate,
+          net_amount: data.net_amount || (data.tax_amount ? amt - data.tax_amount : amt),
+          tax_amount: data.tax_amount,
         })
       }
     } catch (err) {
       console.warn('Failed to fetch expense details from API:', err)
       const today = new Date().toISOString().split('T')[0]
       const fallbackUser = userList.length > 0 ? userList[0] : (meUser || { full_name: 'Authorized Staff', role: 'ADMIN', email: 'admin@mesiri.ai' })
+      const fallbackProject = projectList.length > 0 ? projectList[0] : { name: 'Hyperion Commercial Towers', code: 'PROJ-01' }
+      const fallbackCategory = categoryList.length > 0 ? categoryList[0] : { name: 'General Operations' }
+      const fallbackVendor = vendorList.length > 0 ? vendorList[0] : { name: 'Direct Payee' }
+      const fallbackAccount = accountList.length > 0 ? accountList[0] : { name: 'Main Bank Account' }
+
       setExpense({
         id,
         expense_number: id.startsWith('exp_') ? id : `EXP-${id.slice(0, 8)}`,
         amount: 246,
         currency: 'INR',
-        category_name: 'General Operations',
+        category_name: fallbackCategory.name,
         category_id: 'cat_gen',
         description: 'Food and beverages: Tea, Toast White',
-        vendor_name: 'Direct Payee',
+        vendor_name: fallbackVendor.name,
         occurred_date: today,
         created_by_name: fallbackUser.full_name || fallbackUser.email,
         created_by_role: fallbackUser.role || 'ADMIN',
@@ -165,15 +194,12 @@ export default function ExpenseDetailPage() {
         payment_status: 'paid',
         workflow_status: 'confirmed',
         source: 'whatsapp',
-        project_name: 'Hyperion Commercial Towers',
-        project_code: 'PROJ-01',
+        project_name: fallbackProject.name,
+        project_code: fallbackProject.code || 'PROJ-01',
         site_name: 'Tower 2 North Wing Site',
-        account_name: 'Main Bank Account',
-        custodian_name: fallbackUser.full_name || 'Finance Custodian',
+        account_name: fallbackAccount.name,
+        custodian_name: fallbackAccount.custodian_name || fallbackUser.full_name || 'Finance Custodian',
         payment_method: 'Bank Transfer',
-        tax_rate: 18,
-        net_amount: 208,
-        tax_amount: 38,
         correlation_id: `corr_${id.slice(0, 8)}`,
         whatsapp_sender: '+919876543210',
         raw_message_text: 'Spent ₹246 for Tea and White Toast for site engineering meeting',
@@ -357,7 +383,7 @@ export default function ExpenseDetailPage() {
               </div>
             </div>
 
-            {/* Line Item & GST Tax Table */}
+            {/* Line Item & Financial Breakdown */}
             <div className="space-y-1.5">
               <span className="text-[11px] font-bold text-foreground uppercase tracking-wider block">
                 Line Items & Financial Breakdown
@@ -367,9 +393,18 @@ export default function ExpenseDetailPage() {
                   <TableHeader className="bg-muted/40">
                     <TableRow className="h-7 hover:bg-transparent">
                       <TableHead className="h-7 py-1 text-foreground font-bold">Item Description</TableHead>
-                      <TableHead className="h-7 py-1 text-right font-bold">Net Base</TableHead>
-                      <TableHead className="h-7 py-1 text-right font-bold">GST ({expense.tax_rate || 18}%)</TableHead>
-                      <TableHead className="h-7 py-1 text-right font-bold">Total Gross</TableHead>
+                      {expense.tax_amount ? (
+                        <>
+                          <TableHead className="h-7 py-1 text-right font-bold">Net Base</TableHead>
+                          <TableHead className="h-7 py-1 text-right font-bold">GST ({expense.tax_rate || 18}%)</TableHead>
+                          <TableHead className="h-7 py-1 text-right font-bold">Total Gross</TableHead>
+                        </>
+                      ) : (
+                        <>
+                          <TableHead className="h-7 py-1 text-center font-bold">Tax Itemization</TableHead>
+                          <TableHead className="h-7 py-1 text-right font-bold">Disbursement Amount</TableHead>
+                        </>
+                      )}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -377,15 +412,30 @@ export default function ExpenseDetailPage() {
                       <TableCell className="py-1.5 font-medium text-foreground">
                         {expense.description || 'General Disbursement Line Item'}
                       </TableCell>
-                      <TableCell className="py-1.5 text-right font-mono">
-                        {formatCurrency(expense.net_amount || Math.round((expense.amount / 1.18) * 100) / 100)}
-                      </TableCell>
-                      <TableCell className="py-1.5 text-right font-mono text-muted-foreground">
-                        {formatCurrency(expense.tax_amount || Math.round((expense.amount - expense.amount / 1.18) * 100) / 100)}
-                      </TableCell>
-                      <TableCell className="py-1.5 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                        {formatCurrency(expense.amount)}
-                      </TableCell>
+                      {expense.tax_amount ? (
+                        <>
+                          <TableCell className="py-1.5 text-right font-mono">
+                            {formatCurrency(expense.net_amount || expense.amount - expense.tax_amount)}
+                          </TableCell>
+                          <TableCell className="py-1.5 text-right font-mono text-muted-foreground">
+                            {formatCurrency(expense.tax_amount)}
+                          </TableCell>
+                          <TableCell className="py-1.5 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                            {formatCurrency(expense.amount)}
+                          </TableCell>
+                        </>
+                      ) : (
+                        <>
+                          <TableCell className="py-1.5 text-center">
+                            <Badge variant="outline" className="text-[10px] font-normal text-muted-foreground">
+                              Direct Expense / Non-Itemized
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="py-1.5 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                            {formatCurrency(expense.amount)}
+                          </TableCell>
+                        </>
+                      )}
                     </TableRow>
                   </TableBody>
                 </Table>

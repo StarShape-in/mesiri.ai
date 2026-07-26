@@ -77,6 +77,17 @@ from workflows import (
 
 _log = logging.getLogger("mesiri.inbound_journey")
 
+# Matches runtime/account_admin_journey.py's _ACCOUNT_ADMIN_ROLES exactly --
+# that module gates the deterministic-parser fast path; this gates the
+# AI-understood path (SemanticType.ACCOUNT_ADMIN) so a disallowed role is
+# refused the same way regardless of which path a message takes. Kept as a
+# second literal (not imported) since the two modules are independent entry
+# points by design (see account_admin_journey.py's docstring) -- if this
+# ever drifts from that one, tests/unit/test_inbound_journey_account_admin_role.py
+# and tests/unit/test_account_admin_journey.py both cover the same role set.
+_ACCOUNT_ADMIN_ROLES = frozenset({"ADMIN", "FINANCE"})
+_ACCOUNT_ADMIN_DENIED_REPLY = "⛔ Only an admin or finance user can manage accounts."
+
 
 @dataclass(slots=True)
 class JourneyResult:
@@ -691,6 +702,20 @@ async def _seed_reversal_target(
         event.fields["reversal_occurred_date"] = expense["occurred_date"]
 
 
+def _seed_account_admin_role(event: CanonicalEventV2, decision: PlannerDecisionV2, actor: ActorIdentity | None) -> None:
+    """Feed the sender's role into the draft the same way
+    _seed_account_candidates does for TRANSFER/PETTY_CASH -- defense-in-depth
+    for application/finance/validation.py's role check. Not the primary
+    gate: _account_admin_role_denied_reply (called before workflow_runtime.
+    start(), see process_inbound_message) already refuses a disallowed role
+    before a draft is ever built, so this only matters if that earlier gate
+    is ever bypassed. Only ever runs for ACCOUNT_ADMIN. No I/O -- actor.role
+    is already resolved, same as _seed_account_candidates's created_by_role."""
+    if actor is None or decision.workflow_key is not WorkflowKey.ACCOUNT_ADMIN:
+        return
+    event.fields["created_by_role"] = actor.role
+
+
 async def _seed_worker_candidates(
     event: CanonicalEventV2,
     decision: PlannerDecisionV2,
@@ -1300,6 +1325,38 @@ async def process_inbound_message(
                         expense_query_service,
                         actor,
                     )
+                    _seed_account_admin_role(canonical_event, planner_decision, actor)
+
+                    # Account-admin role gate: refused before the workflow
+                    # even starts (no draft, no confirmation prompt) --
+                    # "should not even be an option" for a disallowed role,
+                    # not merely rejected after they complete a confirm
+                    # flow (unlike TRANSFER, which only gates at confirm
+                    # time -- see transfer_validation.py's docstring for why
+                    # that's an accepted tradeoff there but not here).
+                    # application/finance/validation.py's role check (fed by
+                    # _seed_account_admin_role above) is the defense-in-depth
+                    # backstop if this is ever bypassed.
+                    if (
+                        planner_decision.workflow_key is WorkflowKey.ACCOUNT_ADMIN
+                        and str(getattr(actor, "role", None) or "").strip().upper()
+                        not in _ACCOUNT_ADMIN_ROLES
+                    ):
+                        await send_text(message.sender.wa_id, _ACCOUNT_ADMIN_DENIED_REPLY)
+                        await _safe(
+                            mlog.log_reply(
+                                correlation_id=correlation_id, reply=_ACCOUNT_ADMIN_DENIED_REPLY
+                            )
+                        )
+                        await _safe(mlog.mark_completed(correlation_id=correlation_id))
+                        return JourneyResult(
+                            understanding=understanding,
+                            resolved_context=resolved,
+                            canonical_event=canonical_event,
+                            planner_decision=planner_decision,
+                            workflow_run=None,
+                        )
+
                     workflow_run = await workflow_runtime.start(planner_decision, canonical_event)
                     if context_debug:
                         log_workflow_run(workflow_run)

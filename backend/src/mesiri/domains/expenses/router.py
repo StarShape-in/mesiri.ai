@@ -397,16 +397,57 @@ async def get_expense(
         if v:
             vendor_name = v.name
 
-    proj_name = None
+    proj_name, proj_code = None, None
     if expense.project_id:
         from sqlalchemy import text
         res = await conn.execute(
-            text("SELECT name FROM projects WHERE id = :pid AND organization_id = :org_id"),
+            text("SELECT name, code FROM projects WHERE id = :pid AND organization_id = :org_id"),
             {"pid": str(expense.project_id), "org_id": str(auth_context.organization_id)},
         )
         prow = res.mappings().first()
         if prow:
             proj_name = prow["name"]
+            proj_code = prow.get("code")
+
+    site_name = None
+    if expense.site_id:
+        from sqlalchemy import text
+        sres = await conn.execute(
+            text("SELECT name FROM sites WHERE id = :sid AND organization_id = :org_id"),
+            {"sid": str(expense.site_id), "org_id": str(auth_context.organization_id)},
+        )
+        srow = sres.mappings().first()
+        if srow:
+            site_name = srow["name"]
+
+    account_id, account_name, custodian_name = None, None, None
+    try:
+        from sqlalchemy import text
+        tx_res = await conn.execute(
+            text("SELECT from_account_id FROM money_transactions WHERE source_id = :eid LIMIT 1"),
+            {"eid": str(expense.id)},
+        )
+        tx_row = tx_res.mappings().first()
+        if tx_row and tx_row["from_account_id"]:
+            acc_id = tx_row["from_account_id"]
+            acc_res = await conn.execute(
+                text("SELECT id, name, owner_user_id FROM money_accounts WHERE id = :aid"),
+                {"aid": str(acc_id)},
+            )
+            acc_row = acc_res.mappings().first()
+            if acc_row:
+                account_id = str(acc_row["id"])
+                account_name = acc_row["name"]
+                if acc_row["owner_user_id"]:
+                    c_res = await conn.execute(
+                        text("SELECT full_name FROM users WHERE id = :uid"),
+                        {"uid": str(acc_row["owner_user_id"])},
+                    )
+                    c_row = c_res.mappings().first()
+                    if c_row:
+                        custodian_name = c_row["full_name"]
+    except Exception as ex:
+        print(f"Failed resolving money account details for expense: {ex}")
 
     user_name, user_email, user_role = None, None, None
     if expense.created_by:
@@ -426,11 +467,16 @@ async def get_expense(
         organization_id=expense.organization_id,
         project_id=expense.project_id,
         project_name=proj_name,
+        project_code=proj_code,
         site_id=expense.site_id,
+        site_name=site_name,
         category_id=expense.category_id,
         category_name=cat_name,
         vendor_id=getattr(expense, "vendor_id", None),
         vendor_name=vendor_name,
+        account_id=account_id,
+        account_name=account_name,
+        custodian_name=custodian_name,
         amount=expense.amount,
         currency=expense.currency,
         description=expense.description,
