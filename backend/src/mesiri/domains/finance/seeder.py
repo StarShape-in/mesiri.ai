@@ -50,6 +50,7 @@ _expenses = sa.Table(
     sa.MetaData(),
     sa.Column("id", sa.UUID(as_uuid=True)),
     sa.Column("organization_id", sa.UUID(as_uuid=True)),
+    sa.Column("project_id", sa.UUID(as_uuid=True)),
     sa.Column("category_id", sa.UUID(as_uuid=True)),
     sa.Column("vendor_id", sa.UUID(as_uuid=True)),
     sa.Column("expense_number", sa.String),
@@ -104,6 +105,14 @@ _users = sa.Table(
     sa.Column("role", sa.String),
     sa.Column("created_at", sa.DateTime(timezone=True)),
     sa.Column("updated_at", sa.DateTime(timezone=True)),
+)
+
+_projects = sa.Table(
+    "projects",
+    sa.MetaData(),
+    sa.Column("id", sa.UUID(as_uuid=True)),
+    sa.Column("organization_id", sa.UUID(as_uuid=True)),
+    sa.Column("name", sa.String),
 )
 
 DEFAULT_CATEGORIES = [
@@ -209,9 +218,12 @@ class AdminFinanceSeedingService:
                 categories_created += 1
 
         # 2. Seed Money Accounts
+        # account_type is constrained (ck_money_accounts_account_type) to
+        # 'cash' | 'bank' | 'employee_advance' | 'other' -- there is no
+        # separate 'petty_cash' type; petty cash is just a cash account.
         accounts_def = [
             ("Main HDFC Bank Account", "bank", Decimal("500000.00")),
-            ("Site Petty Cash Float", "petty_cash", Decimal("50000.00")),
+            ("Site Petty Cash Float", "cash", Decimal("50000.00")),
             ("Operational Cash Account", "cash", Decimal("100000.00")),
         ]
         account_ids: dict[str, uuid.UUID] = {}
@@ -303,6 +315,27 @@ class AdminFinanceSeedingService:
             bank_id = account_ids.get("Main HDFC Bank Account")
             petty_id = account_ids.get("Site Petty Cash Float")
 
+            # expenses.project_id is NOT NULL (FK to projects) -- reuse an
+            # existing project for this org if there is one, otherwise create
+            # a placeholder so the demo expenses have somewhere to attach.
+            proj_res = await self.conn.execute(
+                sa.select(_projects.c.id)
+                .where(_projects.c.organization_id == organization_id)
+                .limit(1)
+            )
+            proj_row = proj_res.first()
+            if proj_row:
+                demo_project_id = proj_row.id
+            else:
+                demo_project_id = uuid.uuid4()
+                await self.conn.execute(
+                    sa.insert(_projects).values(
+                        id=demo_project_id,
+                        organization_id=organization_id,
+                        name="Demo Project",
+                    )
+                )
+
             # Check if demo transactions were already seeded
             res_tx = await self.conn.execute(
                 sa.select(sa.func.count(_money_transactions.c.id)).where(
@@ -312,13 +345,15 @@ class AdminFinanceSeedingService:
             existing_tx_count = res_tx.scalar() or 0
 
             if existing_tx_count == 0:
-                # Opening balance ledger record
+                # Opening balance ledger record. ck_money_transactions_type has
+                # no 'opening_balance' member -- money coming into an account
+                # with no offsetting account is 'fund_received'.
                 if bank_id:
                     await self.conn.execute(
                         sa.insert(_money_transactions).values(
                             id=uuid.uuid4(),
                             organization_id=organization_id,
-                            transaction_type="opening_balance",
+                            transaction_type="fund_received",
                             to_account_id=bank_id,
                             amount=Decimal("500000.00"),
                             occurred_date=today - dt.timedelta(days=30),
@@ -356,6 +391,7 @@ class AdminFinanceSeedingService:
                         sa.insert(_expenses).values(
                             id=exp1_id,
                             organization_id=organization_id,
+                            project_id=demo_project_id,
                             category_id=mat_cat_id,
                             vendor_id=ultratech_v_id,
                             expense_number="EXP-DEMO-001",
@@ -363,7 +399,7 @@ class AdminFinanceSeedingService:
                             currency="INR",
                             description="Bulk Portland cement supply for foundation pouring",
                             occurred_date=today - dt.timedelta(days=20),
-                            workflow_status="approved",
+                            workflow_status="confirmed",
                             payment_status="paid",
                             source="control_plane_seeder",
                             created_at=now,
@@ -398,6 +434,7 @@ class AdminFinanceSeedingService:
                         sa.insert(_expenses).values(
                             id=exp2_id,
                             organization_id=organization_id,
+                            project_id=demo_project_id,
                             category_id=eqp_cat_id,
                             vendor_id=apex_v_id,
                             expense_number="EXP-DEMO-002",
@@ -405,7 +442,7 @@ class AdminFinanceSeedingService:
                             currency="INR",
                             description="Weekly excavator rental for site excavation",
                             occurred_date=today - dt.timedelta(days=14),
-                            workflow_status="approved",
+                            workflow_status="confirmed",
                             payment_status="paid",
                             source="control_plane_seeder",
                             created_at=now,
@@ -440,6 +477,7 @@ class AdminFinanceSeedingService:
                         sa.insert(_expenses).values(
                             id=exp3_id,
                             organization_id=organization_id,
+                            project_id=demo_project_id,
                             category_id=fuel_cat_id,
                             vendor_id=metro_v_id,
                             expense_number="EXP-DEMO-003",
@@ -447,7 +485,7 @@ class AdminFinanceSeedingService:
                             currency="INR",
                             description="Diesel fuel for generator & site truck",
                             occurred_date=today - dt.timedelta(days=7),
-                            workflow_status="approved",
+                            workflow_status="confirmed",
                             payment_status="paid",
                             source="control_plane_seeder",
                             created_at=now,
@@ -482,6 +520,7 @@ class AdminFinanceSeedingService:
                         sa.insert(_expenses).values(
                             id=exp4_id,
                             organization_id=organization_id,
+                            project_id=demo_project_id,
                             category_id=adm_cat_id,
                             vendor_id=buildpro_v_id,
                             expense_number="EXP-DEMO-004",
@@ -489,7 +528,7 @@ class AdminFinanceSeedingService:
                             currency="INR",
                             description="Safety helmets, gloves & site safety gear",
                             occurred_date=today - dt.timedelta(days=2),
-                            workflow_status="pending_approval",
+                            workflow_status="pending_confirmation",
                             payment_status="unpaid",
                             source="control_plane_seeder",
                             created_at=now,
