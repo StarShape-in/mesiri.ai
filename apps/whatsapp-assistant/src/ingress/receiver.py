@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Iterator, Mapping
 from dataclasses import dataclass
@@ -146,15 +147,23 @@ class WhatsAppReceiver:
         self, context: MessageIngressContext, *, retry_of_id: str | None = None
     ) -> NormalizedMessage | None:
         message_id = str(context.message["id"])
+        ingress_t0 = time.perf_counter()
+        download_ms: float | None = None
+        upload_ms: float | None = None
         try:
+            download_t0 = time.perf_counter()
             downloaded_media = await self._download_media_if_required(context.message)
+            if downloaded_media is not None:
+                download_ms = round((time.perf_counter() - download_t0) * 1000, 2)
             media = None
             if downloaded_media is not None:
+                upload_t0 = time.perf_counter()
                 media = await upload_downloaded_media(
                     message_id=message_id,
                     downloaded=downloaded_media,
                     object_storage=self._object_storage,
                 )
+                upload_ms = round((time.perf_counter() - upload_t0) * 1000, 2)
             normalized = self._normalizer.normalize(
                 context.message,
                 contacts=context.contacts,
@@ -166,6 +175,25 @@ class WhatsAppReceiver:
             await self._message_store.save(normalized)
             if self._on_normalized is not None:
                 await self._on_normalized(normalized, self._envelope(context), retry_of_id)
+
+            if downloaded_media is not None:
+                # This success path used to write nothing at all -- traced
+                # report found ~10-16s of untraced time on image messages,
+                # bigger than every logged LLM call combined, with no way to
+                # tell whether it was the Meta CDN download or the R2
+                # upload. download_ms/upload_ms split settles that.
+                await self._trace_logger.log_stage(
+                    correlation_id=normalized.correlation_id,
+                    stage="ingress",
+                    stage_payload={
+                        "download_ms": download_ms,
+                        "upload_ms": upload_ms,
+                        "file_size_bytes": downloaded_media.file_size,
+                        "mime_type": downloaded_media.mime_type,
+                    },
+                    duration_ms=int((time.perf_counter() - ingress_t0) * 1000),
+                    succeeded=True,
+                )
             return normalized
         except Exception as exc:
             logger.exception("Failed to process WhatsApp message %s", message_id)

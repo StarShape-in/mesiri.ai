@@ -200,7 +200,7 @@ export default function WhatsAppInboxPage() {
   }, [messages, selectedWaId])
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="flex flex-col h-[calc(100vh-57px)] min-h-0 -m-4">
       <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 shrink-0">
         <h1 className="text-lg font-semibold text-slate-900 dark:text-white">WhatsApp Inbox</h1>
         <p className="text-sm text-slate-500 dark:text-slate-400">

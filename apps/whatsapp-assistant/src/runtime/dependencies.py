@@ -415,8 +415,17 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from interactions.llm_classifier import AdapterInteractionClassifier
     from mesiri_ai.resolver import DynamicAIProviderResolver
 
+    # Built here (rather than at its previous spot, after this classifier)
+    # so llm_classifier's generate_json calls stop being the one path with
+    # zero journey_traces rows -- traced report showed interactive-tap
+    # messages hitting 32s wall-clock with nothing logged anywhere; this was
+    # a hidden 1-2 sequential-LLM-call chain (segmenter, then an extractor
+    # per CORRECTION segment), not DB/API latency as first suspected.
+    trace_logger: TraceLogger = PostgresTraceLogger()
+
     interaction_classifier = AdapterInteractionClassifier(
-        DynamicAIProviderResolver(material_db, redis_client, _backend_settings)
+        DynamicAIProviderResolver(material_db, redis_client, _backend_settings),
+        trace_logger=trace_logger,
     )
     # Post-confirmation receipt image (see AGENTS.md's Module Placement Log
     # and channel/receipt/). One long-lived headless-Chromium instance for
@@ -452,7 +461,6 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     # and made container construction fail wherever asyncpg couldn't import.
     actor_reader = PostgresActorReader()
     message_logger: MessageLogger = PostgresMessageLogger()
-    trace_logger: TraceLogger = PostgresTraceLogger()
 
     # _send_understanding_reply (the old reply_sender=... callback) is gone:
     # inbound_journey._render_reply() now covers every outcome, so the

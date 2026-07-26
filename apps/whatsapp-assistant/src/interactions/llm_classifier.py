@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 from typing import Any
 
 from mesiri_contracts.assistant.v2.interaction_spec import (
@@ -10,6 +11,8 @@ from mesiri_contracts.assistant.v2.interaction_spec import (
     InteractionSegment,
     InteractionSpecV2,
 )
+from runtime.logging_ports import TraceLogger
+from runtime.noop_loggers import NoopTraceLogger
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +55,20 @@ from mesiri_ai.ports.generation import JsonGenerationProvider
 class AdapterInteractionClassifier:
     """Uses a two-call pipeline to segment intents and extract corrections via an AI adapter."""
 
-    def __init__(self, json_generation: JsonGenerationProvider) -> None:
+    def __init__(
+        self,
+        json_generation: JsonGenerationProvider,
+        *,
+        trace_logger: TraceLogger | None = None,
+    ) -> None:
         self._json = json_generation
+        # Best-effort: this call sequence was previously invisible in
+        # journey_traces entirely (traced report showed interactive-tap
+        # messages hitting 32s wall-clock with zero stage rows to explain
+        # it) -- every generate_json call here gets its own row so a slow
+        # classification shows up the same way understanding's provider
+        # calls already do.
+        self._trace_logger: TraceLogger = trace_logger or NoopTraceLogger()
 
     async def classify(
         self,
@@ -66,8 +81,28 @@ class AdapterInteractionClassifier:
         sys_prompt = _SEGMENTER_PROMPT
         user_msg = f"Draft Fields: {json.dumps(draft_fields)}\n\nOriginal: {original_text}\nTranslated: {translated_text or 'N/A'}"
 
-        segmenter_reply = await self._json.generate_json(
-            system_prompt=sys_prompt, user_prompt=user_msg, correlation_id=correlation_id
+        t0 = time.perf_counter()
+        try:
+            segmenter_reply = await self._json.generate_json(
+                system_prompt=sys_prompt, user_prompt=user_msg, correlation_id=correlation_id
+            )
+        except Exception as exc:
+            await self._trace_logger.log_stage(
+                correlation_id=correlation_id,
+                stage="interactive_classify",
+                stage_payload={"call": "segmenter"},
+                duration_ms=int((time.perf_counter() - t0) * 1000),
+                succeeded=False,
+                error_code=type(exc).__name__,
+                error_message=str(exc),
+            )
+            raise
+        await self._trace_logger.log_stage(
+            correlation_id=correlation_id,
+            stage="interactive_classify",
+            stage_payload={"call": "segmenter"},
+            duration_ms=int((time.perf_counter() - t0) * 1000),
+            succeeded=True,
         )
 
         try:
@@ -87,8 +122,28 @@ class AdapterInteractionClassifier:
                 ext_sys = _EXTRACTOR_PROMPT.replace("{draft_fields}", json.dumps(draft_fields))
                 ext_user = f"Segment to correct: {segment_text}"
 
-                extractor_reply = await self._json.generate_json(
-                    system_prompt=ext_sys, user_prompt=ext_user, correlation_id=correlation_id
+                t1 = time.perf_counter()
+                try:
+                    extractor_reply = await self._json.generate_json(
+                        system_prompt=ext_sys, user_prompt=ext_user, correlation_id=correlation_id
+                    )
+                except Exception as exc:
+                    await self._trace_logger.log_stage(
+                        correlation_id=correlation_id,
+                        stage="interactive_classify",
+                        stage_payload={"call": "extractor"},
+                        duration_ms=int((time.perf_counter() - t1) * 1000),
+                        succeeded=False,
+                        error_code=type(exc).__name__,
+                        error_message=str(exc),
+                    )
+                    raise
+                await self._trace_logger.log_stage(
+                    correlation_id=correlation_id,
+                    stage="interactive_classify",
+                    stage_payload={"call": "extractor"},
+                    duration_ms=int((time.perf_counter() - t1) * 1000),
+                    succeeded=True,
                 )
                 try:
                     corr_data = json.loads(extractor_reply)

@@ -8,12 +8,19 @@ import {
   Bot,
   Globe,
   Eye,
+  Download,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react'
 import { useScope } from '@/lib/ScopeContext'
 import { KpiCard } from '@/components/ui/kpi-card'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { BulkActionBar } from '@/components/ui/bulk-action-bar'
 import {
   Table,
   TableBody,
@@ -23,16 +30,40 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
   fetchAttendanceReportsApi,
   type LabourAttendanceSummaryItem,
 } from '@/lib/api'
 import { AttendanceDetailSheet } from '@/components/workforce/attendance-detail-sheet'
 
+type SortField = 'date' | 'via' | 'lines' | 'headcount' | 'cost'
+type SortOrder = 'asc' | 'desc'
+
 export default function AttendancePage() {
   const { scope } = useScope()
   const [reports, setReports] = React.useState<LabourAttendanceSummaryItem[]>([])
   const [loading, setLoading] = React.useState(true)
-  const [dateFilter, setDateFilter] = React.useState<string>('all')
+
+  // Filters state
+  const [dateFilter, setDateFilter] = React.useState<string>('ALL')
+  const [sourceFilter, setSourceFilter] = React.useState<string>('ALL')
+
+  // Selection & Bulk Action state
+  const [selectedIds, setSelectedIds] = React.useState<string[]>([])
+
+  // Sorting state
+  const [sortField, setSortField] = React.useState<SortField>('date')
+  const [sortOrder, setSortOrder] = React.useState<SortOrder>('desc')
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = React.useState(1)
+  const [pageSize, setPageSize] = React.useState(10)
 
   // Selected Report for Detail Sheet
   const [selectedReportId, setSelectedReportId] = React.useState<string | null>(null)
@@ -44,12 +75,12 @@ export default function AttendancePage() {
       let date_from: string | undefined
       const now = new Date()
 
-      if (dateFilter === 'today') {
+      if (dateFilter === 'TODAY') {
         date_from = now.toISOString().split('T')[0]
-      } else if (dateFilter === 'week') {
+      } else if (dateFilter === 'THIS_WEEK') {
         const lastWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
         date_from = lastWeek.toISOString().split('T')[0]
-      } else if (dateFilter === 'month') {
+      } else if (dateFilter === 'THIS_MONTH') {
         const firstDay = new Date(now.getFullYear(), now.getMonth(), 1)
         date_from = firstDay.toISOString().split('T')[0]
       }
@@ -70,6 +101,82 @@ export default function AttendancePage() {
   React.useEffect(() => {
     loadReports()
   }, [loadReports])
+
+  // Handle Sort Toggle
+  const toggleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortField(field)
+      setSortOrder('desc')
+    }
+  }
+
+  // Filtered & Sorted reports
+  const filteredReports = React.useMemo(() => {
+    return reports
+      .filter((r) => {
+        if (sourceFilter === 'WHATSAPP' && !r.recorded_via?.includes('whatsapp')) return false
+        if (sourceFilter === 'WEB' && r.recorded_via?.includes('whatsapp')) return false
+        return true
+      })
+      .sort((a, b) => {
+        const modifier = sortOrder === 'asc' ? 1 : -1
+        if (sortField === 'date') return a.occurred_date.localeCompare(b.occurred_date) * modifier
+        if (sortField === 'via') return a.recorded_via.localeCompare(b.recorded_via) * modifier
+        if (sortField === 'lines') return ((a.line_count || 0) - (b.line_count || 0)) * modifier
+        if (sortField === 'headcount') return ((a.total_headcount || 0) - (b.total_headcount || 0)) * modifier
+        if (sortField === 'cost') return ((a.total_cost || 0) - (b.total_cost || 0)) * modifier
+        return 0
+      })
+  }, [reports, sourceFilter, sortField, sortOrder])
+
+  // Pagination calculation
+  const totalPages = Math.ceil(filteredReports.length / pageSize) || 1
+  const paginatedReports = React.useMemo(() => {
+    const start = (currentPage - 1) * pageSize
+    return filteredReports.slice(start, start + pageSize)
+  }, [filteredReports, currentPage, pageSize])
+
+  // Bulk Selection Handlers
+  const isAllSelected = paginatedReports.length > 0 && paginatedReports.every((r) => selectedIds.includes(r.id))
+
+  const toggleSelectAll = () => {
+    if (isAllSelected) {
+      setSelectedIds([])
+    } else {
+      setSelectedIds(paginatedReports.map((r) => r.id))
+    }
+  }
+
+  const toggleSelectRow = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    )
+  }
+
+  // Export CSV
+  const exportCsv = () => {
+    const headers = ['ID', 'Occurred Date', 'Recorded Via', 'Line Items Count', 'Total Headcount', 'Total Daily Cost (INR)', 'Notes']
+    const rows = filteredReports.map((r) => [
+      r.id,
+      r.occurred_date,
+      r.recorded_via,
+      r.line_count || 0,
+      r.total_headcount || 0,
+      r.total_cost || 0,
+      `"${(r.notes || '').replace(/"/g, '""')}"`,
+    ])
+    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n')
+    const encodedUri = encodeURI(csvContent)
+    const link = document.createElement('a')
+    link.setAttribute('href', encodedUri)
+    link.setAttribute('download', `Labour_Attendance_Reports_${new Date().toISOString().split('T')[0]}.csv`)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
 
   // Derived KPI Metrics
   const totalHeadcount = reports.reduce((acc, r) => acc + (r.total_headcount || 0), 0)
@@ -100,6 +207,16 @@ export default function AttendancePage() {
             <p className="text-xs text-muted-foreground font-medium">{scopeLabel}</p>
           </div>
         </div>
+
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={exportCsv}
+          className="text-xs font-semibold gap-1.5 self-start sm:self-auto"
+        >
+          <Download className="size-3.5" />
+          Export Statement CSV
+        </Button>
       </div>
 
       {/* KPI Summary Cards */}
@@ -143,54 +260,38 @@ export default function AttendancePage() {
         />
       </div>
 
-      {/* Toolbar & Filters */}
+      {/* Controls Toolbar with Shadcn Select */}
       <Card className="p-3 border shadow-2xs flex flex-col sm:flex-row gap-3 items-center justify-between bg-card">
-        <div className="flex items-center gap-2">
-          <Calendar className="size-4 text-amber-500 shrink-0" />
-          <span className="text-xs font-bold text-foreground">Date Range Filter:</span>
-        </div>
+        <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto items-center">
+          <div className="flex items-center gap-2">
+            <Calendar className="size-4 text-amber-500 shrink-0" />
+            <span className="text-xs font-bold text-foreground">Filters:</span>
+          </div>
 
-        <div className="flex items-center gap-1.5 bg-muted/60 p-1 rounded-lg border w-full sm:w-auto justify-center">
-          <button
-            onClick={() => setDateFilter('today')}
-            className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
-              dateFilter === 'today'
-                ? 'bg-background text-foreground shadow-2xs'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Today
-          </button>
-          <button
-            onClick={() => setDateFilter('week')}
-            className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
-              dateFilter === 'week'
-                ? 'bg-background text-foreground shadow-2xs'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Last 7 Days
-          </button>
-          <button
-            onClick={() => setDateFilter('month')}
-            className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
-              dateFilter === 'month'
-                ? 'bg-background text-foreground shadow-2xs'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            This Month
-          </button>
-          <button
-            onClick={() => setDateFilter('all')}
-            className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
-              dateFilter === 'all'
-                ? 'bg-background text-foreground shadow-2xs'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            All Time
-          </button>
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <Select value={dateFilter} onValueChange={setDateFilter}>
+              <SelectTrigger className="h-9 w-full sm:w-40 text-xs">
+                <SelectValue placeholder="Date Range" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL" className="text-xs">All Time</SelectItem>
+                <SelectItem value="TODAY" className="text-xs">Today</SelectItem>
+                <SelectItem value="THIS_WEEK" className="text-xs">Last 7 Days</SelectItem>
+                <SelectItem value="THIS_MONTH" className="text-xs">This Month</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select value={sourceFilter} onValueChange={setSourceFilter}>
+              <SelectTrigger className="h-9 w-full sm:w-40 text-xs">
+                <SelectValue placeholder="Recorded Via" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL" className="text-xs">All Sources</SelectItem>
+                <SelectItem value="WHATSAPP" className="text-xs">WhatsApp Bot</SelectItem>
+                <SelectItem value="WEB" className="text-xs">Web Dashboard</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </Card>
 
@@ -199,95 +300,251 @@ export default function AttendancePage() {
         <Table>
           <TableHeader className="bg-muted/40">
             <TableRow className="hover:bg-transparent border-b">
-              <TableHead className="text-xs font-semibold h-10">Report Date</TableHead>
-              <TableHead className="text-xs font-semibold h-10">Recorded Via</TableHead>
-              <TableHead className="text-xs font-semibold h-10 text-center">Trade Lines</TableHead>
-              <TableHead className="text-xs font-semibold h-10 text-center">Total Headcount</TableHead>
-              <TableHead className="text-xs font-semibold h-10 text-right">Total Daily Cost</TableHead>
+              <TableHead className="w-10 text-center">
+                <input
+                  type="checkbox"
+                  checked={isAllSelected}
+                  onChange={toggleSelectAll}
+                  className="rounded border-input text-amber-600 focus:ring-amber-500 size-3.5"
+                />
+              </TableHead>
+
+              <TableHead className="text-xs font-semibold h-10">
+                <button
+                  onClick={() => toggleSort('date')}
+                  className="flex items-center gap-1.5 hover:text-foreground font-semibold"
+                >
+                  <span>Report Date</span>
+                  {sortField === 'date' ? (
+                    sortOrder === 'asc' ? <ArrowUp className="size-3 text-amber-500" /> : <ArrowDown className="size-3 text-amber-500" />
+                  ) : (
+                    <ArrowUpDown className="size-3 text-muted-foreground" />
+                  )}
+                </button>
+              </TableHead>
+
+              <TableHead className="text-xs font-semibold h-10">
+                <button
+                  onClick={() => toggleSort('via')}
+                  className="flex items-center gap-1.5 hover:text-foreground font-semibold"
+                >
+                  <span>Recorded Via</span>
+                  {sortField === 'via' ? (
+                    sortOrder === 'asc' ? <ArrowUp className="size-3 text-amber-500" /> : <ArrowDown className="size-3 text-amber-500" />
+                  ) : (
+                    <ArrowUpDown className="size-3 text-muted-foreground" />
+                  )}
+                </button>
+              </TableHead>
+
+              <TableHead className="text-xs font-semibold h-10 text-center">
+                <button
+                  onClick={() => toggleSort('lines')}
+                  className="flex items-center gap-1.5 mx-auto hover:text-foreground font-semibold"
+                >
+                  <span>Trade Lines</span>
+                  {sortField === 'lines' ? (
+                    sortOrder === 'asc' ? <ArrowUp className="size-3 text-amber-500" /> : <ArrowDown className="size-3 text-amber-500" />
+                  ) : (
+                    <ArrowUpDown className="size-3 text-muted-foreground" />
+                  )}
+                </button>
+              </TableHead>
+
+              <TableHead className="text-xs font-semibold h-10 text-center">
+                <button
+                  onClick={() => toggleSort('headcount')}
+                  className="flex items-center gap-1.5 mx-auto hover:text-foreground font-semibold"
+                >
+                  <span>Total Headcount</span>
+                  {sortField === 'headcount' ? (
+                    sortOrder === 'asc' ? <ArrowUp className="size-3 text-amber-500" /> : <ArrowDown className="size-3 text-amber-500" />
+                  ) : (
+                    <ArrowUpDown className="size-3 text-muted-foreground" />
+                  )}
+                </button>
+              </TableHead>
+
+              <TableHead className="text-xs font-semibold h-10 text-right">
+                <button
+                  onClick={() => toggleSort('cost')}
+                  className="flex items-center gap-1.5 ml-auto hover:text-foreground font-semibold"
+                >
+                  <span>Total Daily Cost</span>
+                  {sortField === 'cost' ? (
+                    sortOrder === 'asc' ? <ArrowUp className="size-3 text-amber-500" /> : <ArrowDown className="size-3 text-amber-500" />
+                  ) : (
+                    <ArrowUpDown className="size-3 text-muted-foreground" />
+                  )}
+                </button>
+              </TableHead>
+
               <TableHead className="text-xs font-semibold h-10">Notes / Summary</TableHead>
+
               <TableHead className="text-xs font-semibold h-10 w-12 text-right">Detail</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={7} className="h-32 text-center text-xs text-muted-foreground">
+                <TableCell colSpan={8} className="h-32 text-center text-xs text-muted-foreground">
                   Loading attendance reports...
                 </TableCell>
               </TableRow>
-            ) : reports.length === 0 ? (
+            ) : paginatedReports.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="h-32 text-center text-xs text-muted-foreground">
+                <TableCell colSpan={8} className="h-32 text-center text-xs text-muted-foreground">
                   No attendance reports logged for the selected scope & date filter.
                 </TableCell>
               </TableRow>
             ) : (
-              reports.map((item) => (
-                <TableRow
-                  key={item.id}
-                  onClick={() => {
-                    setSelectedReportId(item.id)
-                    setDetailOpen(true)
-                  }}
-                  className="hover:bg-muted/30 transition-colors cursor-pointer"
-                >
-                  <TableCell className="font-semibold text-xs py-3 text-foreground">
-                    <div className="flex items-center gap-2">
-                      <Calendar className="size-3.5 text-amber-500 shrink-0" />
-                      <span>{item.occurred_date}</span>
-                    </div>
-                  </TableCell>
+              paginatedReports.map((item) => {
+                const isSelected = selectedIds.includes(item.id)
+                return (
+                  <TableRow
+                    key={item.id}
+                    onClick={() => {
+                      setSelectedReportId(item.id)
+                      setDetailOpen(true)
+                    }}
+                    className={`hover:bg-muted/30 transition-colors cursor-pointer ${
+                      isSelected ? 'bg-amber-500/5 dark:bg-amber-500/10' : ''
+                    }`}
+                  >
+                    <TableCell className="text-center py-3" onClick={(e) => toggleSelectRow(item.id, e)}>
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => {}}
+                        className="rounded border-input text-amber-600 focus:ring-amber-500 size-3.5"
+                      />
+                    </TableCell>
 
-                  <TableCell className="text-xs py-3">
-                    <Badge
-                      variant="outline"
-                      className={
-                        item.recorded_via?.includes('whatsapp')
-                          ? 'border-emerald-500/30 text-emerald-600 bg-emerald-500/10 text-[10px]'
-                          : 'border-blue-500/30 text-blue-600 bg-blue-500/10 text-[10px]'
-                      }
-                    >
-                      {item.recorded_via?.includes('whatsapp') ? (
-                        <span className="flex items-center gap-1">
-                          <Bot className="size-3" /> WhatsApp Bot
-                        </span>
-                      ) : (
-                        <span className="flex items-center gap-1">
-                          <Globe className="size-3" /> Web Dashboard
-                        </span>
-                      )}
-                    </Badge>
-                  </TableCell>
+                    <TableCell className="font-semibold text-xs py-3 text-foreground">
+                      <div className="flex items-center gap-2">
+                        <Calendar className="size-3.5 text-amber-500 shrink-0" />
+                        <span>{item.occurred_date}</span>
+                      </div>
+                    </TableCell>
 
-                  <TableCell className="text-xs py-3 text-center font-semibold">
-                    <Badge variant="outline" className="text-[10px]">
-                      {item.line_count || 0} Lines
-                    </Badge>
-                  </TableCell>
+                    <TableCell className="text-xs py-3">
+                      <Badge
+                        variant="outline"
+                        className={
+                          item.recorded_via?.includes('whatsapp')
+                            ? 'border-emerald-500/30 text-emerald-600 bg-emerald-500/10 text-[10px]'
+                            : 'border-blue-500/30 text-blue-600 bg-blue-500/10 text-[10px]'
+                        }
+                      >
+                        {item.recorded_via?.includes('whatsapp') ? (
+                          <span className="flex items-center gap-1">
+                            <Bot className="size-3" /> WhatsApp Bot
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-1">
+                            <Globe className="size-3" /> Web Dashboard
+                          </span>
+                        )}
+                      </Badge>
+                    </TableCell>
 
-                  <TableCell className="text-xs py-3 text-center font-bold text-foreground">
-                    {item.total_headcount} Workers
-                  </TableCell>
+                    <TableCell className="text-xs py-3 text-center font-semibold">
+                      <Badge variant="outline" className="text-[10px]">
+                        {item.line_count || 0} Lines
+                      </Badge>
+                    </TableCell>
 
-                  <TableCell className="text-xs py-3 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                    ₹{item.total_cost ? item.total_cost.toLocaleString('en-IN') : '0'}
-                  </TableCell>
+                    <TableCell className="text-xs py-3 text-center font-bold text-foreground">
+                      {item.total_headcount} Workers
+                    </TableCell>
 
-                  <TableCell className="text-xs py-3 text-muted-foreground truncate max-w-xs">
-                    {item.notes || 'Daily site attendance log'}
-                  </TableCell>
+                    <TableCell className="text-xs py-3 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                      ₹{item.total_cost ? item.total_cost.toLocaleString('en-IN') : '0'}
+                    </TableCell>
 
-                  <TableCell className="text-xs py-3 text-right">
-                    <Button variant="ghost" size="icon" className="size-7">
-                      <Eye className="size-3.5 text-muted-foreground hover:text-foreground" />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))
+                    <TableCell className="text-xs py-3 text-muted-foreground truncate max-w-xs">
+                      {item.notes || 'Daily site attendance log'}
+                    </TableCell>
+
+                    <TableCell className="text-xs py-3 text-right">
+                      <Button variant="ghost" size="icon" className="size-7">
+                        <Eye className="size-3.5 text-muted-foreground hover:text-foreground" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                )
+              })
             )}
           </TableBody>
         </Table>
+
+        {/* Pagination Bar */}
+        <div className="flex items-center justify-between px-4 py-3 border-t bg-muted/20 text-xs">
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <span>Rows per page:</span>
+            <Select
+              value={String(pageSize)}
+              onValueChange={(val) => {
+                setPageSize(Number(val))
+                setCurrentPage(1)
+              }}
+            >
+              <SelectTrigger className="h-8 w-16 text-xs">
+                <SelectValue placeholder={String(pageSize)} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="10" className="text-xs">10</SelectItem>
+                <SelectItem value="25" className="text-xs">25</SelectItem>
+                <SelectItem value="50" className="text-xs">50</SelectItem>
+                <SelectItem value="100" className="text-xs">100</SelectItem>
+              </SelectContent>
+            </Select>
+            <span className="ml-2 hidden sm:inline">
+              Showing {filteredReports.length === 0 ? 0 : (currentPage - 1) * pageSize + 1} to{' '}
+              {Math.min(currentPage * pageSize, filteredReports.length)} of {filteredReports.length} reports
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground text-xs">
+              Page {currentPage} of {totalPages}
+            </span>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="outline"
+                size="icon"
+                className="size-8"
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+              >
+                <ChevronLeft className="size-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                className="size-8"
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages}
+              >
+                <ChevronRight className="size-4" />
+              </Button>
+            </div>
+          </div>
+        </div>
       </Card>
+
+      {/* Floating Bulk Action Bar */}
+      <BulkActionBar selectedCount={selectedIds.length} onClear={() => setSelectedIds([])}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={exportCsv}
+          className="text-xs font-semibold gap-1.5"
+        >
+          <Download className="size-3.5 text-blue-500" />
+          Export Selected CSV
+        </Button>
+      </BulkActionBar>
 
       {/* Report Detail Sheet */}
       <AttendanceDetailSheet

@@ -11,6 +11,13 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { updateWorkerApi, type WorkforceWorkerItem } from '@/lib/api'
 
 interface EditWorkerSheetProps {
@@ -156,19 +163,17 @@ export function EditWorkerSheet({ worker, open, onOpenChange, onSuccess }: EditW
               </div>
 
               <div className="space-y-1">
-                <Label htmlFor="edit-workerType" className="text-xs font-semibold">
-                  Worker Type
-                </Label>
-                <select
-                  id="edit-workerType"
-                  value={workerType}
-                  onChange={(e) => setWorkerType(e.target.value as any)}
-                  className="w-full h-9 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-sans ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <option value="permanent">Permanent Staff</option>
-                  <option value="temporary">Temporary Labor</option>
-                  <option value="contractor">Subcontractor</option>
-                </select>
+                <Label className="text-xs font-semibold">Worker Type</Label>
+                <Select value={workerType} onValueChange={(val: any) => setWorkerType(val)}>
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue placeholder="Select Type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="permanent" className="text-xs">Permanent Staff</SelectItem>
+                    <SelectItem value="temporary" className="text-xs">Temporary Labor</SelectItem>
+                    <SelectItem value="contractor" className="text-xs">Subcontractor</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 

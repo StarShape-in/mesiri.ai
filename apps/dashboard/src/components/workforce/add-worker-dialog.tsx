@@ -11,6 +11,13 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { createWorkerApi, type CreateWorkerPayload } from '@/lib/api'
 
 interface AddWorkerDialogProps {
@@ -115,37 +122,33 @@ export function AddWorkerDialog({ open, onOpenChange, onSuccess }: AddWorkerDial
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
-              <Label htmlFor="trade" className="text-xs font-semibold">
-                Trade / Skill
-              </Label>
-              <select
-                id="trade"
-                value={trade}
-                onChange={(e) => setTrade(e.target.value)}
-                className="w-full h-9 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-sans ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                {COMMON_TRADES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
+              <Label className="text-xs font-semibold">Trade / Skill</Label>
+              <Select value={trade} onValueChange={setTrade}>
+                <SelectTrigger className="h-9 text-xs">
+                  <SelectValue placeholder="Select Trade" />
+                </SelectTrigger>
+                <SelectContent>
+                  {COMMON_TRADES.map((t) => (
+                    <SelectItem key={t} value={t} className="text-xs">
+                      {t}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="space-y-1">
-              <Label htmlFor="workerType" className="text-xs font-semibold">
-                Worker Type
-              </Label>
-              <select
-                id="workerType"
-                value={workerType}
-                onChange={(e) => setWorkerType(e.target.value as any)}
-                className="w-full h-9 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-sans ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <option value="permanent">Permanent Staff</option>
-                <option value="temporary">Temporary Labor</option>
-                <option value="contractor">Subcontractor</option>
-              </select>
+              <Label className="text-xs font-semibold">Worker Type</Label>
+              <Select value={workerType} onValueChange={(val: any) => setWorkerType(val)}>
+                <SelectTrigger className="h-9 text-xs">
+                  <SelectValue placeholder="Select Type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="permanent" className="text-xs">Permanent Staff</SelectItem>
+                  <SelectItem value="temporary" className="text-xs">Temporary Labor</SelectItem>
+                  <SelectItem value="contractor" className="text-xs">Subcontractor</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
 
