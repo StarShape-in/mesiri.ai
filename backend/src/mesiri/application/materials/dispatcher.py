@@ -11,31 +11,26 @@ rejection-vs-failure semantics.
 
 from __future__ import annotations
 
-import logging
-
-from mesiri_contracts.application.results.execution_result import ExecutionResult, ExecutionStatus
+from mesiri.application.shared.execution import OperationalExecutionDispatcher
+from mesiri_contracts.application.results.execution_result import ExecutionResult
 from mesiri_contracts.assistant.v2.confirmed_action import ConfirmedActionV2
 
 from .handlers import ExecuteConfirmedMaterialActionHandler
 
-logger = logging.getLogger(__name__)
 
+class MaterialExecutionDispatcher(OperationalExecutionDispatcher):
+    """Satisfies interactions.ports.ExecutionDispatcher by wrapping the Handler.
 
-class MaterialExecutionDispatcher:
-    """Satisfies interactions.ports.ExecutionDispatcher by wrapping the Handler."""
+    Failure handling lives in OperationalExecutionDispatcher so it cannot
+    drift between operational modules -- see that class's docstring for why
+    reporting FAILED (rather than raising) leaves the workflow recoverable.
+    """
+
+    _LOG_LABEL = "material_execution"
 
     def __init__(self, handler: ExecuteConfirmedMaterialActionHandler) -> None:
-        self._handler = handler
+        super().__init__(handler)
+        self._handler: ExecuteConfirmedMaterialActionHandler = handler
 
-    async def dispatch(self, confirmed: ConfirmedActionV2) -> ExecutionResult:
-        try:
-            return await self._handler.handle(confirmed)
-        except Exception:
-            logger.exception(
-                "material_execution.failed workflow_instance_id=%s",
-                confirmed.workflow_instance_id,
-            )
-            return ExecutionResult(
-                status=ExecutionStatus.FAILED,
-                idempotency_key=confirmed.workflow_instance_id,
-            )
+    async def _execute(self, confirmed: ConfirmedActionV2) -> ExecutionResult:
+        return await self._handler.handle(confirmed)

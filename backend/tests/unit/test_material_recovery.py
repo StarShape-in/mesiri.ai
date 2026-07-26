@@ -74,7 +74,7 @@ async def test_recovery_only_processes_scoped_workflow_keys(monkeypatch: pytest.
         return [loaded for loaded in all_loaded if loaded.state.workflow_key.value in workflow_keys]
 
     monkeypatch.setattr(
-        "mesiri.application.materials.recovery.list_confirmed_by_workflow_keys",
+        "mesiri.application.shared.execution.list_confirmed_by_workflow_keys",
         fake_list_confirmed_by_workflow_keys,
     )
 
@@ -101,7 +101,7 @@ async def test_recovery_replays_confirmed_instance_idempotently(monkeypatch: pyt
         return [_FakeLoaded(state)]
 
     monkeypatch.setattr(
-        "mesiri.application.materials.recovery.list_confirmed_by_workflow_keys",
+        "mesiri.application.shared.execution.list_confirmed_by_workflow_keys",
         fake_list_confirmed_by_workflow_keys,
     )
 
@@ -140,7 +140,7 @@ async def test_recovery_skips_confirmed_row_without_draft_action(monkeypatch: py
         return [_FakeLoaded(bare_state)]
 
     monkeypatch.setattr(
-        "mesiri.application.materials.recovery.list_confirmed_by_workflow_keys",
+        "mesiri.application.shared.execution.list_confirmed_by_workflow_keys",
         fake_list_confirmed_by_workflow_keys,
     )
 

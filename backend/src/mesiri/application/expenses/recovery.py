@@ -8,17 +8,13 @@ Invocable manually or via a cron entry — not a background worker service.
 
 from __future__ import annotations
 
-import logging
-
-from backend.postgres.workflow_instance import list_confirmed_by_workflow_keys
+from mesiri.application.shared.execution import (
+    recover_confirmed_instances as _recover_confirmed_instances,
+)
 from mesiri_contracts.application.results.execution_result import ExecutionResult
 from mesiri_contracts.assistant.planner_decision import WorkflowKey
-from mesiri_contracts.assistant.v2.confirmed_action import ConfirmedActionV2
-from mesiri_contracts.common.ids import new_id
 
 from .handlers import RecordExpenseHandler
-
-logger = logging.getLogger(__name__)
 
 EXPENSE_WORKFLOW_KEYS = frozenset({WorkflowKey.EXPENSE_SUBMIT})
 
@@ -26,28 +22,12 @@ EXPENSE_WORKFLOW_KEYS = frozenset({WorkflowKey.EXPENSE_SUBMIT})
 async def recover_confirmed_instances(
     db, handler: RecordExpenseHandler, workflow_keys: frozenset[WorkflowKey]
 ) -> list[ExecutionResult]:
-    """Replay every CONFIRMED instance matching `workflow_keys` through `handler`."""
-    loaded_instances = await list_confirmed_by_workflow_keys(
-        db, [key.value for key in workflow_keys]
+    """Replay every CONFIRMED Expense instance matching `workflow_keys`.
+
+    The sweep itself is shared (application/shared/execution.py) so its
+    crash-window reasoning and replay safety live in one place; this wrapper
+    only says which handler method to call.
+    """
+    return await _recover_confirmed_instances(
+        db, execute=handler.handle_confirmed, workflow_keys=workflow_keys
     )
-
-    results: list[ExecutionResult] = []
-    for loaded in loaded_instances:
-        state = loaded.state
-        if state.draft_action is None:
-            logger.error(
-                "recovery.confirmed_without_draft workflow_instance_id=%s",
-                state.workflow_instance_id,
-            )
-            continue
-
-        confirmed = ConfirmedActionV2(
-            confirmed_action_id=new_id("confirmed"),
-            workflow_instance_id=state.workflow_instance_id,
-            correlation_id=state.correlation_id,
-            draft_action=state.draft_action,
-            confirmed_by_user_id=state.user_id,
-        )
-        result = await handler.handle_confirmed(confirmed)
-        results.append(result)
-    return results
