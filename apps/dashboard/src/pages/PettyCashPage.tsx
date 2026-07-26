@@ -82,111 +82,6 @@ export interface PettyCashVoucherItem {
   source: string
 }
 
-const INITIAL_CASH_BOXES: SiteCashBoxItem[] = [
-  {
-    id: 'cb_01',
-    name: 'Riverside Commercial Site Float',
-    opening_balance: 300000,
-    current_balance: 240000,
-    disbursed_month: 60000,
-    custodian_name: 'Ramesh Kumar (Site PM)',
-    project_id: 'p_riverside',
-    project_name: 'Riverside Commercial Center',
-    site_id: 's_tower_a',
-    site_name: 'Tower A Excavation',
-    status: 'active',
-  },
-  {
-    id: 'cb_02',
-    name: 'Green Valley Housing Petty Cash',
-    opening_balance: 150000,
-    current_balance: 35000, // Low balance alert
-    disbursed_month: 115000,
-    custodian_name: 'Suresh Patil (Supervisor)',
-    project_id: 'p_green_valley',
-    project_name: 'Green Valley Housing',
-    site_id: 's_block_b',
-    site_name: 'Block B Concreting',
-    status: 'active',
-  },
-  {
-    id: 'cb_03',
-    name: 'Metro Line Corridor Float',
-    opening_balance: 200000,
-    current_balance: 145000,
-    disbursed_month: 55000,
-    custodian_name: 'Vikram Singh (Site Lead)',
-    project_id: 'p_metro',
-    project_name: 'Metro Line Corridor',
-    site_id: 's_pier_4',
-    site_name: 'Pier 4 Substructure',
-    status: 'active',
-  },
-]
-
-const INITIAL_VOUCHERS: PettyCashVoucherItem[] = [
-  {
-    id: 'vch_01',
-    voucher_number: 'VCH-108',
-    cash_box_id: 'cb_01',
-    cash_box_name: 'Riverside Commercial Site Float',
-    amount: 4500,
-    category: 'Fuel & Logistics',
-    vendor_name: 'Indian Oil Bunk #4',
-    description: 'Diesel for JCB Excavator #2',
-    date: '2026-07-25',
-    custodian_name: 'Ramesh Kumar',
-    project_name: 'Riverside Commercial Center',
-    status: 'verified',
-    source: 'WhatsApp Assistant',
-  },
-  {
-    id: 'vch_02',
-    voucher_number: 'VCH-107',
-    cash_box_id: 'cb_01',
-    cash_box_name: 'Riverside Commercial Site Float',
-    amount: 1200,
-    category: 'Site Refreshments & Tea',
-    vendor_name: 'Local Tea Stall',
-    description: 'Daily morning labor refreshments & tea',
-    date: '2026-07-24',
-    custodian_name: 'Ramesh Kumar',
-    project_name: 'Riverside Commercial Center',
-    status: 'verified',
-    source: 'Web Manual Entry',
-  },
-  {
-    id: 'vch_03',
-    voucher_number: 'VCH-106',
-    cash_box_id: 'cb_02',
-    cash_box_name: 'Green Valley Housing Petty Cash',
-    amount: 8500,
-    category: 'Hardware & Small Tools',
-    vendor_name: 'City Hardware Mart',
-    description: 'Emergency shuttering clamps & nails',
-    date: '2026-07-23',
-    custodian_name: 'Suresh Patil',
-    project_name: 'Green Valley Housing',
-    status: 'pending',
-    source: 'WhatsApp Assistant',
-  },
-  {
-    id: 'vch_04',
-    voucher_number: 'VCH-105',
-    cash_box_id: 'cb_03',
-    cash_box_name: 'Metro Line Corridor Float',
-    amount: 3200,
-    category: 'Emergency Repairs',
-    vendor_name: 'National Auto Garage',
-    description: 'Site generator belt replacement',
-    date: '2026-07-21',
-    custodian_name: 'Vikram Singh',
-    project_name: 'Metro Line Corridor',
-    status: 'verified',
-    source: 'Web Manual Entry',
-  },
-]
-
 type SortField = 'date' | 'amount' | 'voucher_number'
 type SortOrder = 'asc' | 'desc'
 
@@ -195,69 +90,59 @@ import { fetchAccountsApi, fetchVouchersApi } from '@/lib/api'
 export default function PettyCashPage() {
   const { scope } = useScope()
 
-  const [cashBoxes, setCashBoxes] = React.useState<SiteCashBoxItem[]>(INITIAL_CASH_BOXES)
-  const [vouchers, setVouchers] = React.useState<PettyCashVoucherItem[]>(INITIAL_VOUCHERS)
+  const [cashBoxes, setCashBoxes] = React.useState<SiteCashBoxItem[]>([])
+  const [vouchers, setVouchers] = React.useState<PettyCashVoucherItem[]>([])
 
   React.useEffect(() => {
     let active = true
-    let backendResponded = false
     async function loadBackendPettyCash() {
       try {
         const [data, voucherData] = await Promise.all([
           fetchAccountsApi(),
           fetchVouchersApi().catch(() => []),
         ])
-        backendResponded = true
         if (active && Array.isArray(data)) {
           const pettyBoxes = data.filter((a: any) => a.account_type === 'petty_cash' || a.account_type === 'cash')
-          if (pettyBoxes.length > 0) {
-            const mappedBoxes: SiteCashBoxItem[] = pettyBoxes.map((b: any, idx: number) => ({
-              id: String(b.id) || `cb_real_${idx}`,
-              name: b.name || 'Site Float',
-              opening_balance: parseFloat(b.opening_balance) || 0,
-              current_balance: parseFloat(b.current_balance) || parseFloat(b.opening_balance) || 0,
-              disbursed_month: 0,
-              custodian_name: b.custodian_name || 'Site Supervisor',
-              project_id: b.project_id ? String(b.project_id) : undefined,
-              project_name: 'Project Site',
-              site_id: b.site_id ? String(b.site_id) : undefined,
-              site_name: b.site_name,
-              status: 'active',
-            }))
-            setCashBoxes(mappedBoxes)
-          } else {
-            setCashBoxes([])
-          }
+          const mappedBoxes: SiteCashBoxItem[] = pettyBoxes.map((b: any, idx: number) => ({
+            id: String(b.id) || `cb_real_${idx}`,
+            name: b.name || 'Site Float',
+            opening_balance: parseFloat(b.opening_balance) || 0,
+            current_balance: parseFloat(b.current_balance) || parseFloat(b.opening_balance) || 0,
+            disbursed_month: 0,
+            custodian_name: b.custodian_name || 'Site Supervisor',
+            project_id: b.project_id ? String(b.project_id) : undefined,
+            project_name: 'Project Site',
+            site_id: b.site_id ? String(b.site_id) : undefined,
+            site_name: b.site_name,
+            status: 'active',
+          }))
+          setCashBoxes(mappedBoxes)
         }
         if (active && Array.isArray(voucherData)) {
-          if (voucherData.length > 0) {
-            const mappedVouchers: PettyCashVoucherItem[] = voucherData.map((v: any) => ({
-              id: String(v.id),
-              voucher_number: `VCH-${String(v.id).slice(0, 4).toUpperCase()}`,
-              cash_box_id: String(v.from_account_id || ''),
-              cash_box_name: 'Site Cash Box',
-              amount: parseFloat(v.amount) || 0,
-              category: v.description || 'General Expense',
-              category_name: v.description || 'General Expense',
-              vendor_name: v.source_type || 'Direct Payee',
-              description: v.description || 'Petty Cash Voucher',
-              date: v.occurred_date || new Date().toISOString().split('T')[0],
-              custodian_name: 'Site Supervisor',
-              project_name: 'Project Site',
-              status: 'verified',
-              source: 'WhatsApp Assistant',
-              receipt_url: undefined,
-            }))
-            setVouchers(mappedVouchers)
-          } else if (backendResponded) {
-            setVouchers([])
-          }
+          const mappedVouchers: PettyCashVoucherItem[] = voucherData.map((v: any) => ({
+            id: String(v.id),
+            voucher_number: `VCH-${String(v.id).slice(0, 4).toUpperCase()}`,
+            cash_box_id: String(v.from_account_id || ''),
+            cash_box_name: 'Site Cash Box',
+            amount: parseFloat(v.amount) || 0,
+            category: v.description || 'General Expense',
+            category_name: v.description || 'General Expense',
+            vendor_name: v.source_type || 'Direct Payee',
+            description: v.description || 'Petty Cash Voucher',
+            date: v.occurred_date || new Date().toISOString().split('T')[0],
+            custodian_name: 'Site Supervisor',
+            project_name: 'Project Site',
+            status: 'verified',
+            source: 'WhatsApp Assistant',
+            receipt_url: undefined,
+          }))
+          setVouchers(mappedVouchers)
         }
       } catch (err) {
-        if (!backendResponded) {
-          console.warn('Live backend petty cash fetch unavailable, showing sample data:', err)
-          setCashBoxes(INITIAL_CASH_BOXES)
-          setVouchers(INITIAL_VOUCHERS)
+        console.warn('Live backend petty cash fetch error:', err)
+        if (active) {
+          setCashBoxes([])
+          setVouchers([])
         }
       }
     }

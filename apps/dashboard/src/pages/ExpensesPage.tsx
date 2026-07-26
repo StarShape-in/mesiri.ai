@@ -77,129 +77,6 @@ interface ExpenseItem {
   receipt_url?: string
 }
 
-const INITIAL_EXPENSES: ExpenseItem[] = [
-  {
-    id: 'exp_01',
-    expense_number: 'EXP-1048',
-    amount: 45000,
-    currency: 'INR',
-    category_name: 'Fuel & Transportation',
-    category_id: 'fuel',
-    description: 'Diesel for Site Excavator JCB-3DX',
-    vendor_name: 'Indian Oil Bunk #4',
-    occurred_date: '2026-07-24',
-    payment_status: 'paid',
-    workflow_status: 'confirmed',
-    source: 'whatsapp',
-    project_name: 'Riverside Commercial Center',
-    site_name: 'Tower A Excavation',
-    payment_method: 'bank_transfer',
-    receipt_url: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=600&auto=format&fit=crop&q=60',
-  },
-  {
-    id: 'exp_02',
-    expense_number: 'EXP-1049',
-    amount: 125000,
-    currency: 'INR',
-    category_name: 'Equipment & Machinery',
-    category_id: 'equipment',
-    description: 'Concrete Pump Hire (2 Days)',
-    vendor_name: 'UltraTech Rental Services',
-    occurred_date: '2026-07-23',
-    payment_status: 'unpaid',
-    workflow_status: 'confirmed',
-    source: 'web',
-    project_name: 'Riverside Commercial Center',
-    site_name: 'Basement Slab',
-    receipt_url: 'https://images.unsplash.com/photo-1554224154-26032ffc0d07?w=600&auto=format&fit=crop&q=60',
-  },
-  {
-    id: 'exp_03',
-    expense_number: 'EXP-1050',
-    amount: 32000,
-    currency: 'INR',
-    category_name: 'Labor & Daily Wages',
-    category_id: 'labor',
-    description: 'Overtime Wages for Steel Fixers',
-    vendor_name: 'Sub-contractor Skilled Crew',
-    occurred_date: '2026-07-22',
-    payment_status: 'paid',
-    workflow_status: 'confirmed',
-    source: 'whatsapp',
-    project_name: 'Green Valley Housing',
-    site_name: 'Phase 1 Structural',
-    payment_method: 'petty_cash',
-  },
-  {
-    id: 'exp_04',
-    expense_number: 'EXP-1051',
-    amount: 85000,
-    currency: 'INR',
-    category_name: 'Raw Materials & Supplies',
-    category_id: 'materials',
-    description: 'Scaffolding Clamps & Safety Nets',
-    vendor_name: 'Apex Construction Hardware',
-    occurred_date: '2026-07-21',
-    payment_status: 'partially_paid',
-    workflow_status: 'confirmed',
-    source: 'web',
-    project_name: 'Riverside Commercial Center',
-    site_name: 'Tower A Structural',
-    payment_method: 'upi',
-    receipt_url: 'https://images.unsplash.com/photo-1554224155-6726b3ff858f?w=600&auto=format&fit=crop&q=60',
-  },
-  {
-    id: 'exp_05',
-    expense_number: 'EXP-1052',
-    amount: 18500,
-    currency: 'INR',
-    category_name: 'Site Maintenance & Repairs',
-    category_id: 'maintenance',
-    description: 'Temporary Site Power Distribution Repair',
-    vendor_name: 'City Electric Works',
-    occurred_date: '2026-07-20',
-    payment_status: 'paid',
-    workflow_status: 'confirmed',
-    source: 'whatsapp',
-    project_name: 'Green Valley Housing',
-    site_name: 'Site Infrastructure',
-    payment_method: 'cash',
-  },
-  {
-    id: 'exp_06',
-    expense_number: 'EXP-1053',
-    amount: 64000,
-    currency: 'INR',
-    category_name: 'Fuel & Transportation',
-    category_id: 'fuel',
-    description: 'Crushed Stone Transport Trucking Charge',
-    vendor_name: 'Shree Logistics',
-    occurred_date: '2026-07-19',
-    payment_status: 'unpaid',
-    workflow_status: 'confirmed',
-    source: 'web',
-    project_name: 'Riverside Commercial Center',
-    site_name: 'Tower B Ground',
-  },
-  {
-    id: 'exp_07',
-    expense_number: 'EXP-1054',
-    amount: 92000,
-    currency: 'INR',
-    category_name: 'Equipment & Machinery',
-    category_id: 'equipment',
-    description: 'Tower Crane Monthly Operator Fee',
-    vendor_name: 'Mega Heavy Lift',
-    occurred_date: '2026-07-18',
-    payment_status: 'paid',
-    workflow_status: 'confirmed',
-    source: 'whatsapp',
-    project_name: 'Riverside Commercial Center',
-    site_name: 'Tower A Structural',
-    payment_method: 'bank_transfer',
-  },
-]
-
 type SortField = 'date' | 'amount' | 'number' | 'category'
 type SortOrder = 'asc' | 'desc'
 
@@ -208,7 +85,7 @@ import { fetchExpensesApi } from '@/lib/api'
 export default function ExpensesPage() {
   const { scope } = useScope()
 
-  const [expenses, setExpenses] = React.useState<ExpenseItem[]>(INITIAL_EXPENSES)
+  const [expenses, setExpenses] = React.useState<ExpenseItem[]>([])
   const [search, setSearch] = React.useState('')
   const [categoryFilter, setCategoryFilter] = React.useState('ALL')
   const [paymentStatusFilter, setPaymentStatusFilter] = React.useState('ALL')
@@ -217,20 +94,13 @@ export default function ExpensesPage() {
 
   React.useEffect(() => {
     let active = true
-    let backendResponded = false
     async function loadBackendExpenses() {
       try {
         const rawData = await fetchExpensesApi({
           project_id: scope.mode !== 'portfolio' ? scope.projectId : undefined,
           site_id: scope.mode === 'site' ? scope.siteId : undefined,
         })
-        backendResponded = true
         if (active && Array.isArray(rawData)) {
-          if (rawData.length === 0) {
-            // Backend responded with zero records — show nothing (not mock data)
-            setExpenses([])
-            return
-          }
           const mapped: ExpenseItem[] = rawData.map((item: any, idx: number) => ({
             id: String(item.id) || `exp_real_${idx}`,
             expense_number: `EXP-${String(item.id || '').slice(0, 4).toUpperCase() || String(1000 + idx)}`,
@@ -250,11 +120,8 @@ export default function ExpensesPage() {
           setExpenses(mapped)
         }
       } catch (err) {
-        if (!backendResponded) {
-          console.warn('Live backend expenses fetch unavailable, showing sample data:', err)
-          // Only fall back to sample data if we never got a response
-          setExpenses(INITIAL_EXPENSES)
-        }
+        console.warn('Live backend expenses fetch error:', err)
+        if (active) setExpenses([])
       }
     }
     loadBackendExpenses()

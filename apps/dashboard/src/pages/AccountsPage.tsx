@@ -66,81 +66,6 @@ export interface MoneyAccountItem {
   created_at: string
 }
 
-const INITIAL_ACCOUNTS: MoneyAccountItem[] = [
-  {
-    id: 'acc_01',
-    name: 'HDFC Corporate Main Account',
-    account_type: 'bank_account',
-    currency: 'INR',
-    opening_balance: 3000000,
-    current_balance: 3450000,
-    account_number_masked: '•••• 8412',
-    custodian_name: 'Finance Controller',
-    project_name: 'Org Wide',
-    scope_level: 'portfolio',
-    status: 'active',
-    created_at: '2026-01-10',
-  },
-  {
-    id: 'acc_02',
-    name: 'ICICI Operations Account',
-    account_type: 'bank_account',
-    currency: 'INR',
-    opening_balance: 1500000,
-    current_balance: 1820000,
-    account_number_masked: '•••• 1930',
-    custodian_name: 'Treasury Admin',
-    project_name: 'Org Wide',
-    scope_level: 'portfolio',
-    status: 'active',
-    created_at: '2026-02-01',
-  },
-  {
-    id: 'acc_03',
-    name: 'Riverside Commercial Site Float',
-    account_type: 'petty_cash',
-    currency: 'INR',
-    opening_balance: 150000,
-    current_balance: 240000,
-    custodian_name: 'Ramesh Kumar (Site PM)',
-    project_id: 'p_riverside',
-    project_name: 'Riverside Commercial Center',
-    site_id: 's_tower_a',
-    site_name: 'Tower A Excavation',
-    scope_level: 'site',
-    status: 'active',
-    created_at: '2026-03-15',
-  },
-  {
-    id: 'acc_04',
-    name: 'Green Valley Housing Petty Cash',
-    account_type: 'petty_cash',
-    currency: 'INR',
-    opening_balance: 100000,
-    current_balance: 35000,
-    custodian_name: 'Suresh Patil (Supervisor)',
-    project_id: 'p_green_valley',
-    project_name: 'Green Valley Housing',
-    scope_level: 'project',
-    status: 'active',
-    created_at: '2026-04-05',
-  },
-  {
-    id: 'acc_05',
-    name: 'HDFC Corporate Expense Card',
-    account_type: 'corporate_card',
-    currency: 'INR',
-    opening_balance: 500000,
-    current_balance: 350000,
-    account_number_masked: '•••• 4920',
-    custodian_name: 'Procurement Lead',
-    project_name: 'Org Wide',
-    scope_level: 'portfolio',
-    status: 'active',
-    created_at: '2026-05-12',
-  },
-]
-
 type SortField = 'name' | 'balance' | 'type'
 type SortOrder = 'asc' | 'desc'
 
@@ -149,7 +74,7 @@ import { fetchAccountsApi } from '@/lib/api'
 export default function AccountsPage() {
   const { scope } = useScope()
 
-  const [accounts, setAccounts] = React.useState<MoneyAccountItem[]>(INITIAL_ACCOUNTS)
+  const [accounts, setAccounts] = React.useState<MoneyAccountItem[]>([])
   const [search, setSearch] = React.useState('')
   const [typeFilter, setTypeFilter] = React.useState('ALL')
   const [statusFilter, setStatusFilter] = React.useState('ALL')
@@ -157,13 +82,10 @@ export default function AccountsPage() {
 
   React.useEffect(() => {
     let active = true
-    let backendResponded = false
     async function loadBackendAccounts() {
       try {
         const data = await fetchAccountsApi()
-        backendResponded = true
-        if (active && Array.isArray(data) && data.length > 0) {
-          // Map backend account_type (bank/cash/employee_advance/other) → UI type labels
+        if (active && Array.isArray(data)) {
           const typeMap: Record<string, MoneyAccountItem['account_type']> = {
             bank: 'bank_account',
             cash: 'petty_cash',
@@ -190,15 +112,10 @@ export default function AccountsPage() {
             created_at: a.opening_balance_date || new Date().toISOString().split('T')[0],
           }))
           setAccounts(mapped)
-        } else if (active && backendResponded) {
-          // Backend returned empty — don't show mock data, show empty state
-          setAccounts([])
         }
       } catch (err) {
-        if (!backendResponded) {
-          console.warn('Live backend accounts fetch unavailable, showing sample data:', err)
-          setAccounts(INITIAL_ACCOUNTS)
-        }
+        console.warn('Live backend accounts fetch error:', err)
+        if (active) setAccounts([])
       }
     }
     loadBackendAccounts()
