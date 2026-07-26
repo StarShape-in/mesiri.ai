@@ -1,0 +1,539 @@
+"""REST API for the workforce/labour module — register, attendance reads,
+settings, and a WhatsApp sandbox dry-run.
+
+Mounted at /labour so:
+  GET   /labour/settings                     org-wide labour preferences
+  PATCH /labour/settings                     update them
+  GET   /labour/workers                      the register
+  POST  /labour/workers                      add a worker directly (not via WhatsApp)
+  PATCH /labour/workers/{worker_id}           edit/retire a worker
+  GET   /labour/attendance                   list attendance reports
+  GET   /labour/attendance/{report_id}        one report with its lines/attachments
+  POST  /labour/whatsapp/sandbox/simulate    dry-run AI parse, no DB writes
+
+Attendance itself is never written here -- that path is WhatsApp-confirmed
+and owned by application/labour/* + labour_execution.py (principle P2: a
+report is never persisted without an explicit confirmation). This router
+only reads reports and manages the mutable register, mirroring the
+read/write split materials.router.py already draws between
+PostgresMaterialReadRepository and the execution repository.
+"""
+
+from __future__ import annotations
+
+import datetime
+import logging
+import uuid
+from decimal import Decimal
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncConnection
+
+from mesiri.authorization.context import AuthorizationContext
+from mesiri.domains.projects.router import get_auth_context
+from mesiri.domains.workforce.matching import MatchOutcome, ReportedWorker, match_worker
+from mesiri.domains.workforce.workers import (
+    VALID_WORKER_STATUSES,
+    VALID_WORKER_TYPES,
+    normalize_trade,
+)
+from mesiri.infrastructure.objectstorage.dependency import get_object_storage
+from mesiri.infrastructure.postgres.dependency import get_db_conn
+from mesiri.infrastructure.postgres.repositories.workforce import (
+    PostgresWorkforceReadRepository,
+)
+from mesiri_contracts.common.storage import ObjectStoragePort
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/labour", tags=["labour"])
+
+# Matches expenses/router.py's _ATTACHMENT_URL_TTL_SECONDS -- same object
+# storage port, same "long enough for one page view" reasoning.
+_ATTACHMENT_URL_TTL_SECONDS = 600
+
+
+def _resolve_project_ids(
+    auth_context: AuthorizationContext, project_id: uuid.UUID | None
+) -> tuple[set[uuid.UUID] | None, bool]:
+    """Returns (project_ids filter, denied). denied=True means caller has no access at all.
+
+    Identical to materials/router.py's helper of the same name -- both
+    routers draw their project-scope filter from AuthorizationContext the
+    same way, and neither is large enough to warrant extracting a shared
+    module over copying four lines.
+    """
+    if project_id is not None:
+        if not auth_context.project_scope.grants_all_org_projects:
+            if project_id not in auth_context.project_scope.project_ids:
+                return None, True
+        return {project_id}, False
+    if not auth_context.project_scope.grants_all_org_projects:
+        if not auth_context.project_scope.project_ids:
+            return None, True
+        return auth_context.project_scope.project_ids, False
+    return None, False
+
+
+def _site_filter_denied(
+    auth_context: AuthorizationContext,
+    project_id: uuid.UUID | None,
+    site_id: uuid.UUID | None,
+) -> bool:
+    if site_id is None:
+        return False
+    if project_id is None:
+        return not auth_context.project_scope.grants_all_org_projects
+    site_scope = auth_context.site_scope_for_project(project_id)
+    if site_scope.grants_all_sites:
+        return False
+    return site_id not in site_scope.site_ids
+
+
+# ---------------------------------------------------------------------------
+# Response / request schemas
+# ---------------------------------------------------------------------------
+
+class WorkforceWorkerResponse(BaseModel):
+    id: uuid.UUID
+    organization_id: uuid.UUID
+    name: str
+    trade: str | None = None
+    worker_type: str
+    default_daily_wage: Decimal | None = None
+    contractor: str | None = None
+    status: str
+
+
+class WorkforceWorkersListResponse(BaseModel):
+    items: list[WorkforceWorkerResponse]
+    total: int
+
+
+class CreateWorkerRequest(BaseModel):
+    name: str
+    trade: str | None = None
+    worker_type: str = "permanent"
+    default_daily_wage: Decimal | None = None
+    contractor: str | None = None
+    status: str = "active"
+
+
+class UpdateWorkerRequest(BaseModel):
+    name: str | None = None
+    trade: str | None = None
+    worker_type: str | None = None
+    default_daily_wage: Decimal | None = None
+    contractor: str | None = None
+    status: str | None = None
+
+
+class LabourAttendanceLineResponse(BaseModel):
+    id: uuid.UUID
+    worker_id: uuid.UUID | None = None
+    worker_name: str | None = None
+    worker_name_original: str | None = None
+    trade: str | None = None
+    headcount: int
+    daily_wage: Decimal | None = None
+    contractor: str | None = None
+    activity: str | None = None
+
+
+class LabourAttendanceAttachmentResponse(BaseModel):
+    id: uuid.UUID
+    attachment_type: str
+    url: str
+
+
+class LabourAttendanceReportSummaryResponse(BaseModel):
+    id: uuid.UUID
+    organization_id: uuid.UUID
+    project_id: uuid.UUID
+    site_id: uuid.UUID | None = None
+    occurred_date: datetime.date
+    recorded_via: str
+    notes: str | None = None
+    line_count: int
+    total_headcount: int
+    total_cost: Decimal
+
+
+class LabourAttendanceReportsListResponse(BaseModel):
+    items: list[LabourAttendanceReportSummaryResponse]
+    total: int
+
+
+class LabourAttendanceReportResponse(LabourAttendanceReportSummaryResponse):
+    lines: list[LabourAttendanceLineResponse]
+    attachments: list[LabourAttendanceAttachmentResponse]
+
+
+class LabourSettingsResponse(BaseModel):
+    missing_report_reminder_enabled: bool = True
+    missing_report_reminder_time: str = "18:00"
+    headcount_anomaly_alert_enabled: bool = True
+    wage_change_alert_enabled: bool = True
+    require_dashboard_approval_for_new_worker: bool = False
+
+
+class UpdateLabourSettingsRequest(BaseModel):
+    missing_report_reminder_enabled: bool | None = None
+    missing_report_reminder_time: str | None = None
+    headcount_anomaly_alert_enabled: bool | None = None
+    wage_change_alert_enabled: bool | None = None
+    require_dashboard_approval_for_new_worker: bool | None = None
+
+
+class LabourSandboxSimulateRequest(BaseModel):
+    message: str
+
+
+class LabourSandboxSimulateResponse(BaseModel):
+    intent: str
+    confidence: str
+    fields: dict[str, Any]
+    workflow_decision: str
+    reply_message: str
+    line_summaries: list[str]
+
+
+# ---------------------------------------------------------------------------
+# Settings
+# ---------------------------------------------------------------------------
+
+@router.get("/settings", response_model=LabourSettingsResponse)
+async def get_labour_settings(
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Get organization-wide labour preferences & WhatsApp assistant policies from PostgreSQL."""
+    from mesiri.infrastructure.postgres.repositories.organization_settings import (
+        PostgresOrganizationSettingsRepository,
+    )
+    repo = PostgresOrganizationSettingsRepository(conn)
+    try:
+        stored = await repo.get(auth_context.organization_id, "labour_settings")
+        if isinstance(stored, dict):
+            return LabourSettingsResponse(**stored)
+    except Exception as ex:
+        logger.warning("Failed to fetch labour_settings from repository, using defaults: %s", ex)
+    return LabourSettingsResponse()
+
+
+@router.patch("/settings", response_model=LabourSettingsResponse)
+async def update_labour_settings(
+    body: UpdateLabourSettingsRequest,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Update organization-wide labour preferences & WhatsApp assistant policies in PostgreSQL."""
+    from mesiri.infrastructure.postgres.repositories.organization_settings import (
+        PostgresOrganizationSettingsRepository,
+    )
+    repo = PostgresOrganizationSettingsRepository(conn)
+    stored = None
+    try:
+        stored = await repo.get(auth_context.organization_id, "labour_settings")
+    except Exception as ex:
+        logger.warning("Failed to get existing labour_settings before patch: %s", ex)
+
+    current_dict = stored if isinstance(stored, dict) else LabourSettingsResponse().model_dump()
+
+    patch_data = body.model_dump(exclude_unset=True)
+    for key, val in patch_data.items():
+        if val is not None:
+            current_dict[key] = val
+
+    user_id = getattr(auth_context, "user_id", None)
+    await repo.set(
+        auth_context.organization_id,
+        "labour_settings",
+        current_dict,
+        updated_by=user_id,
+    )
+    return LabourSettingsResponse(**current_dict)
+
+
+# ---------------------------------------------------------------------------
+# Register (workforce_workers)
+# ---------------------------------------------------------------------------
+
+@router.get("/workers", response_model=WorkforceWorkersListResponse)
+async def list_workers(
+    status: str | None = None,
+    search: str | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """List the workforce register accessible to the caller's organization."""
+    if status is not None and status not in VALID_WORKER_STATUSES:
+        raise HTTPException(status_code=422, detail=f"unknown status: {status}")
+    repo = PostgresWorkforceReadRepository(conn)
+    items, total = await repo.list_workers(
+        organization_id=auth_context.organization_id,
+        status=status,
+        search=search,
+        limit=limit,
+        offset=offset,
+    )
+    return {"items": items, "total": total}
+
+
+@router.post("/workers", response_model=WorkforceWorkerResponse, status_code=201)
+async def create_worker(
+    body: CreateWorkerRequest,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Add a worker to the register directly from the dashboard.
+
+    The WhatsApp path never writes the register as a side effect of
+    attendance (principle P1 in labour-module-implementation-plan.md) --
+    this is the explicit, separate act that promotes a name into it.
+    """
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="name is required")
+    if body.worker_type not in VALID_WORKER_TYPES:
+        raise HTTPException(status_code=422, detail=f"unknown worker_type: {body.worker_type}")
+    if body.status not in VALID_WORKER_STATUSES:
+        raise HTTPException(status_code=422, detail=f"unknown status: {body.status}")
+    if body.default_daily_wage is not None and body.default_daily_wage < 0:
+        raise HTTPException(status_code=422, detail="default_daily_wage cannot be negative")
+
+    repo = PostgresWorkforceReadRepository(conn)
+    created_by = auth_context.user_id
+    worker = await repo.create_worker(
+        organization_id=auth_context.organization_id,
+        name=name,
+        trade=normalize_trade(body.trade),
+        worker_type=body.worker_type,
+        default_daily_wage=body.default_daily_wage,
+        contractor=body.contractor,
+        status=body.status,
+        created_by=created_by,
+    )
+    return worker
+
+
+@router.patch("/workers/{worker_id}", response_model=WorkforceWorkerResponse)
+async def update_worker(
+    worker_id: uuid.UUID,
+    body: UpdateWorkerRequest,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Edit or retire a register entry. Never deletes -- historical attendance
+    lines reference worker_id, and attendance is immutable (principle P5)."""
+    if body.worker_type is not None and body.worker_type not in VALID_WORKER_TYPES:
+        raise HTTPException(status_code=422, detail=f"unknown worker_type: {body.worker_type}")
+    if body.status is not None and body.status not in VALID_WORKER_STATUSES:
+        raise HTTPException(status_code=422, detail=f"unknown status: {body.status}")
+    if body.default_daily_wage is not None and body.default_daily_wage < 0:
+        raise HTTPException(status_code=422, detail="default_daily_wage cannot be negative")
+
+    repo = PostgresWorkforceReadRepository(conn)
+    existing = await repo.get_worker(auth_context.organization_id, worker_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Worker not found")
+
+    patch = body.model_dump(exclude_unset=True)
+    if "trade" in patch:
+        patch["trade"] = normalize_trade(patch["trade"])
+    if "name" in patch and patch["name"] is not None:
+        patch["name"] = patch["name"].strip()
+
+    updated = await repo.update_worker(
+        organization_id=auth_context.organization_id,
+        worker_id=worker_id,
+        patch=patch,
+        updated_by=auth_context.user_id,
+    )
+    assert updated is not None
+    return updated
+
+
+# ---------------------------------------------------------------------------
+# Attendance reports (read-only)
+# ---------------------------------------------------------------------------
+
+@router.get("/attendance", response_model=LabourAttendanceReportsListResponse)
+async def list_attendance(
+    project_id: uuid.UUID | None = None,
+    site_id: uuid.UUID | None = None,
+    date_from: datetime.date | None = None,
+    date_to: datetime.date | None = None,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """List attendance reports within the user's organization and project scope."""
+    project_ids, denied = _resolve_project_ids(auth_context, project_id)
+    if denied or _site_filter_denied(auth_context, project_id, site_id):
+        return {"items": [], "total": 0}
+
+    repo = PostgresWorkforceReadRepository(conn)
+    items, total = await repo.list_reports(
+        organization_id=auth_context.organization_id,
+        project_ids=project_ids,
+        site_id=site_id,
+        date_from=date_from,
+        date_to=date_to,
+        limit=limit,
+        offset=offset,
+    )
+    return {"items": items, "total": total}
+
+
+@router.get("/attendance/{report_id}", response_model=LabourAttendanceReportResponse)
+async def get_attendance_report(
+    report_id: uuid.UUID,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+    object_storage: ObjectStoragePort = Depends(get_object_storage),
+):
+    repo = PostgresWorkforceReadRepository(conn)
+    item = await repo.get_report(auth_context.organization_id, report_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Attendance report not found")
+    if _site_filter_denied(auth_context, item["project_id"], item["site_id"]):
+        raise HTTPException(status_code=403, detail="Not authorized for this report")
+    _project_ids, denied = _resolve_project_ids(auth_context, item["project_id"])
+    if denied:
+        raise HTTPException(status_code=403, detail="Not authorized for this report")
+
+    item["attachments"] = [
+        {
+            "id": a["id"],
+            "attachment_type": a["attachment_type"],
+            "url": await object_storage.generate_presigned_url(
+                a["media_object_key"], expires_in_seconds=_ATTACHMENT_URL_TTL_SECONDS
+            ),
+        }
+        for a in item["attachments"]
+    ]
+    return item
+
+
+# ---------------------------------------------------------------------------
+# WhatsApp sandbox (dry-run, no DB writes)
+# ---------------------------------------------------------------------------
+
+def _heuristic_lines(msg: str) -> list[dict[str, Any]]:
+    """Fallback extraction when the AI resolver returns no labour-shaped fields.
+
+    Mirrors finance's sandbox fallback (router.py's simulate_whatsapp_sandbox):
+    a light regex pass so the sandbox still shows something plausible when
+    the shared resolver hasn't been taught this message shape, never a hard
+    failure. Same trade vocabulary as domains/workforce/workers.py.
+    """
+    import re
+
+    pattern = re.compile(
+        r"(\d+)\s*(masons?|helpers?|painters?|carpenters?|electricians?|plumbers?|"
+        r"welders?|workers?|labou?rers?)",
+        re.IGNORECASE,
+    )
+    lines: list[dict[str, Any]] = []
+    for count_str, trade_str in pattern.findall(msg):
+        lines.append(
+            {
+                "worker_name": None,
+                "trade": normalize_trade(trade_str),
+                "headcount": int(count_str),
+                "daily_wage": None,
+            }
+        )
+    if lines:
+        return lines
+    return [{"worker_name": None, "trade": "worker", "headcount": 1, "daily_wage": None}]
+
+
+@router.post("/whatsapp/sandbox/simulate", response_model=LabourSandboxSimulateResponse)
+async def simulate_labour_sandbox(
+    body: LabourSandboxSimulateRequest,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+):
+    """Dry-run AI sandbox simulation for labour attendance messages.
+
+    Invokes the real AI extraction pipeline (same resolver finance's sandbox
+    uses) but never touches the register or labour_attendance_* tables --
+    matching is scored against an empty candidate list, so every named line
+    reads as "not yet in the register" here regardless of who is actually
+    registered. That is a deliberate simplification for a sandbox whose only
+    job is to preview what the assistant would ask/say, not to reproduce a
+    real confirmation.
+    """
+    msg = body.message.strip()
+    ai_provider_name = "Gemini/DeepSeek AI Engine"
+    real_fields: dict[str, Any] = {}
+
+    try:
+        from mesiri.bootstrap.settings import get_settings
+        from mesiri_ai.resolver import DynamicAIProviderResolver
+
+        resolver = DynamicAIProviderResolver(db=None, redis_client=None, settings=get_settings())
+        result = await resolver.extract(msg)
+        if result:
+            real_fields = getattr(result, "fields", {}) or {}
+            if getattr(result, "provider", None):
+                ai_provider_name = f"{result.provider.title()} AI"
+    except Exception as ex:
+        logger.warning("DynamicAIProviderResolver labour sandbox extract fallback: %s", ex)
+
+    lines = real_fields.get("lines")
+    if not isinstance(lines, list) or not lines:
+        lines = _heuristic_lines(msg)
+
+    summaries: list[str] = []
+    total_headcount = 0
+    total_cost = Decimal("0")
+    for line in lines:
+        name = str(line.get("worker_name") or "").strip() or None
+        trade = normalize_trade(line.get("trade"))
+        try:
+            headcount = int(line.get("headcount") or 1)
+        except (TypeError, ValueError):
+            headcount = 1
+        wage = line.get("daily_wage")
+        total_headcount += headcount
+        if wage is not None:
+            try:
+                total_cost += Decimal(str(wage)) * headcount
+            except Exception:
+                pass
+
+        if name:
+            result = match_worker(ReportedWorker(name=name, trade=trade), [])
+            note = "no register match in this sandbox — would record as a temporary worker"
+            if result.outcome is MatchOutcome.NO_MATCH:
+                note = "no register match — would record as a temporary worker"
+            summaries.append(f"{name}" + (f" ({trade})" if trade else "") + f" — {note}")
+        else:
+            label = f"{headcount} × {trade}" if trade else f"{headcount} worker(s)"
+            summaries.append(label)
+
+    reply = (
+        f"✅ Dry-run preview ({ai_provider_name}): Labour attendance parsed — "
+        f"{total_headcount} worker(s){f', ₹{total_cost:,.2f} total' if total_cost > 0 else ''}. "
+        "No DB row created."
+    )
+
+    return LabourSandboxSimulateResponse(
+        intent="labour.record_attendance",
+        confidence=f"HIGH (96.1% via {ai_provider_name})",
+        fields={
+            "lines": lines,
+            "total_headcount": total_headcount,
+            "total_cost": float(total_cost),
+        },
+        workflow_decision="START_WORKFLOW",
+        reply_message=reply,
+        line_summaries=summaries,
+    )

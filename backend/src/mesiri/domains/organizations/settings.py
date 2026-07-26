@@ -31,6 +31,7 @@ VALID_ROLES: frozenset[str] = frozenset(
 # catalog with typos, while still unblocking the people who own it.
 WHATSAPP_MATERIAL_CREATE_ROLES = "whatsapp_material_create_roles"
 FINANCE_SETTINGS = "finance_settings"
+LABOUR_SETTINGS = "labour_settings"
 
 DEFAULT_FINANCE_SETTINGS = {
     "base_currency": "INR",
@@ -47,6 +48,19 @@ DEFAULT_FINANCE_SETTINGS = {
     "expense_card_enabled": True,
     "weekly_digest_enabled": True,
     "weekly_digest_schedule": "weekly_monday",
+}
+
+# Every default here matches what the WhatsApp labour workflow already does
+# with no setting present, per workflows/labour_update/nodes.py: it never
+# writes the register on its own (principle P1) and asks nothing beyond what
+# match_workers already asks — these toggles govern dashboard-side behaviour
+# layered on top, not the workflow's own matching logic.
+DEFAULT_LABOUR_SETTINGS = {
+    "missing_report_reminder_enabled": True,
+    "missing_report_reminder_time": "18:00",
+    "headcount_anomaly_alert_enabled": True,
+    "wage_change_alert_enabled": True,
+    "require_dashboard_approval_for_new_worker": False,
 }
 
 
@@ -72,6 +86,11 @@ _SPECS: dict[str, SettingSpec] = {
         key=FINANCE_SETTINGS,
         default=DEFAULT_FINANCE_SETTINGS,
         description="Organization-wide financial preferences & WhatsApp assistant policies.",
+    ),
+    LABOUR_SETTINGS: SettingSpec(
+        key=LABOUR_SETTINGS,
+        default=DEFAULT_LABOUR_SETTINGS,
+        description="Organization-wide labour attendance preferences & WhatsApp assistant policies.",
     ),
 }
 

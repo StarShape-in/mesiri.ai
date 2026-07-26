@@ -13,6 +13,7 @@ import ExpensesPage from '@/pages/ExpensesPage'
 import ReceiptsPage from '@/pages/ReceiptsPage'
 import AccountsPage from '@/pages/AccountsPage'
 import WhatsAppFinancePage from '@/pages/WhatsAppFinancePage'
+import WhatsAppLabourPage from '@/pages/WhatsAppLabourPage'
 import PettyCashPage from '@/pages/PettyCashPage'
 import FinanceOverviewPage from '@/pages/FinanceOverviewPage'
 import FinanceReportsPage from '@/pages/FinanceReportsPage'
@@ -75,6 +76,16 @@ export default function App() {
         <Route path="materials/purchases" element={<OperationalPlaceholder title="Material Purchases" />} />
         <Route path="materials/suppliers" element={<OperationalPlaceholder title="Suppliers" />} />
         <Route path="materials/categories" element={<OperationalPlaceholder title="Material Categories" />} />
+
+        {/* Labour & Workforce Section */}
+        <Route path="labour" element={<Navigate to="/labour/attendance" replace />} />
+        <Route path="labour/overview" element={<OperationalPlaceholder title="Labour Overview" />} />
+        <Route path="labour/attendance" element={<OperationalPlaceholder title="Labour Attendance" />} />
+        <Route path="labour/workers" element={<OperationalPlaceholder title="Worker Roster" />} />
+        <Route path="labour/whatsapp" element={<WhatsAppLabourPage />} />
+        <Route path="whatsapp/labour" element={<WhatsAppLabourPage />} />
+        <Route path="labour/reports" element={<OperationalPlaceholder title="Labour Reports" />} />
+        <Route path="labour/settings" element={<OperationalPlaceholder title="Labour Settings" />} />
 
         {/* Legacy operational routes fallbacks */}
         <Route path="field-reports" element={<FieldReportsPage />} />

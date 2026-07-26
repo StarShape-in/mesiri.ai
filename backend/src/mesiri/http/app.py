@@ -155,4 +155,11 @@ def create_app(lifecycle: AppLifecycle | None = None) -> FastAPI:
     except Exception as exc:  # noqa: BLE001
         _log.exception("vendors router not loaded: %s", exc)
 
+    try:
+        from mesiri.domains.workforce.router import router as workforce_router
+
+        app.include_router(workforce_router)
+    except Exception as exc:  # noqa: BLE001
+        _log.exception("workforce router not loaded: %s", exc)
+
     return app

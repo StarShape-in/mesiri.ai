@@ -798,10 +798,46 @@ export interface FinanceReportStatementItem {
 
 export async function fetchFinanceReportApi(params?: {
   report_type?: string
+  project_id?: string
 }): Promise<FinanceReportStatementItem> {
   const res = await api.get('/finance/reports/statement', { params })
   return res.data
 }
 
+// --- Labour & Workforce Module API Types & Helpers ---
 
+export interface LabourSettingsItem {
+  missing_report_reminder_enabled: boolean
+  missing_report_reminder_time: string
+  headcount_anomaly_alert_enabled: boolean
+  wage_change_alert_enabled: boolean
+  require_dashboard_approval_for_new_worker: boolean
+}
 
+export async function fetchLabourSettingsApi(): Promise<LabourSettingsItem> {
+  const res = await api.get('/labour/settings')
+  return res.data
+}
+
+export async function updateLabourSettingsApi(
+  payload: Partial<LabourSettingsItem>
+): Promise<LabourSettingsItem> {
+  const res = await api.patch('/labour/settings', payload)
+  return res.data
+}
+
+export interface LabourSandboxSimulationResult {
+  intent: string
+  confidence: string
+  fields: Record<string, any>
+  workflow_decision: string
+  reply_message: string
+  line_summaries?: string[]
+}
+
+export async function simulateLabourWhatsAppSandboxApi(
+  message: string
+): Promise<LabourSandboxSimulationResult> {
+  const res = await api.post('/labour/whatsapp/sandbox/simulate', { message })
+  return res.data
+}

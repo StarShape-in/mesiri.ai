@@ -31,6 +31,8 @@ import {
   Bot,
   Sun,
   Moon,
+  HardHat,
+  ClipboardCheck,
 } from 'lucide-react'
 import { NavLink, Link, useLocation } from 'react-router-dom'
 import {
@@ -93,6 +95,19 @@ const FINANCE_CATEGORY: NavCategory = {
     { title: 'Categories', url: '/finance/categories', icon: Tags },
     { title: 'Reports', url: '/finance/reports', icon: FileText },
     { title: 'Settings', url: '/finance/settings', icon: SlidersHorizontal },
+  ],
+}
+
+const LABOUR_CATEGORY: NavCategory = {
+  title: 'Labour & Workforce',
+  icon: HardHat,
+  items: [
+    { title: 'Overview', url: '/labour/overview', icon: PieChart },
+    { title: 'Attendance', url: '/labour/attendance', icon: ClipboardCheck },
+    { title: 'Workers Roster', url: '/labour/workers', icon: Users },
+    { title: 'WhatsApp Automations', url: '/labour/whatsapp', icon: Bot },
+    { title: 'Reports', url: '/labour/reports', icon: FileText },
+    { title: 'Settings', url: '/labour/settings', icon: SlidersHorizontal },
   ],
 }
 
@@ -407,6 +422,25 @@ export function AppSidebar() {
             <SidebarMenu className="gap-0.5">
               <CollapsibleNavCategory
                 category={FINANCE_CATEGORY}
+                getUrlWithScope={getUrlWithScope}
+                pathname={location.pathname}
+                allowedScopes={allowed}
+                userRole={me?.role}
+              />
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        {/* Labour & Workforce Section */}
+        <SidebarGroup className="p-1 py-0.5">
+          <SidebarGroupLabel className="flex items-center gap-1.5 text-[10px] font-bold tracking-wider text-amber-600 dark:text-amber-400 uppercase whitespace-nowrap px-1.5 h-6">
+            <span className="size-1.5 rounded-full bg-amber-600 dark:bg-amber-400 shrink-0" />
+            <span>Labour & Workforce</span>
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu className="gap-0.5">
+              <CollapsibleNavCategory
+                category={LABOUR_CATEGORY}
                 getUrlWithScope={getUrlWithScope}
                 pathname={location.pathname}
                 allowedScopes={allowed}
