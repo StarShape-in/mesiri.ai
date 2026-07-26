@@ -30,3 +30,8 @@ class WorkflowGraphState(TypedDict, total=False):
     # pick -- see workflows/slots.py. None means "not currently asking
     # anything" (resolved, or the field had 0/1 candidates).
     awaiting_slot: str | None
+    # The candidate list behind `awaiting_slot`, as plain {"value","label"}
+    # dicts (see workflows/slots.py's `slot_options`) -- lets the send side
+    # offer a real WhatsApp interactive list instead of only numbered text.
+    # Only ever set alongside awaiting_slot.
+    awaiting_slot_options: list[dict[str, str]] | None

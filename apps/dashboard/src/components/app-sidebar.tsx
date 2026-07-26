@@ -204,7 +204,7 @@ function CollapsibleNavCategory({
                   return cn(
                     'flex items-center gap-2 px-2 py-1.5 rounded-md text-xs font-medium transition-all duration-150',
                     active
-                      ? 'bg-blue-50 dark:bg-blue-950/70 text-blue-600 dark:text-blue-400 font-semibold border-l-2 border-blue-600 dark:border-blue-500 rounded-l-none pl-1.5'
+                      ? 'bg-blue-50 text-blue-600 border-l-2 border-blue-600 dark:bg-slate-800 dark:text-white dark:border-slate-300 font-semibold rounded-l-none pl-1.5'
                       : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100/70 dark:hover:bg-slate-800/50'
                   )
                 }}
@@ -213,7 +213,7 @@ function CollapsibleNavCategory({
                   const active = isLinkActive || isActive
                   return (
                     <>
-                      <ItemIcon className={cn('size-3.5 shrink-0', active ? 'text-blue-600 dark:text-blue-400' : 'text-slate-500 dark:text-slate-400')} />
+                      <ItemIcon className={cn('size-3.5 shrink-0', active ? 'text-blue-600 dark:text-white font-bold' : 'text-slate-500 dark:text-slate-400')} />
                       <span className="truncate">{item.title}</span>
                     </>
                   )
@@ -358,8 +358,8 @@ export function AppSidebar() {
       <SidebarContent className="px-1.5 py-1 gap-1">
         {/* Core Operations Section */}
         <SidebarGroup className="p-1 py-0.5">
-          <SidebarGroupLabel className="flex items-center gap-1.5 text-[10px] font-bold tracking-wider text-blue-600 dark:text-blue-400 uppercase whitespace-nowrap px-1.5 h-6">
-            <span className="size-1.5 rounded-full bg-blue-600 shrink-0" />
+          <SidebarGroupLabel className="flex items-center gap-1.5 text-[10px] font-bold tracking-wider text-blue-600 dark:text-slate-400 uppercase whitespace-nowrap px-1.5 h-6">
+            <span className="size-1.5 rounded-full bg-blue-600 dark:bg-slate-400 shrink-0" />
             <span>Core Operations</span>
           </SidebarGroupLabel>
           <SidebarGroupContent>
@@ -374,13 +374,13 @@ export function AppSidebar() {
                       return cn(
                         'flex items-center justify-between w-full px-2 py-1.5 rounded-md text-xs font-medium transition-colors',
                         active
-                          ? 'bg-blue-50 dark:bg-blue-950/70 text-blue-600 dark:text-blue-400 font-semibold border-l-2 border-blue-600 dark:border-blue-500 rounded-l-none pl-1.5'
+                          ? 'bg-blue-50 text-blue-600 border-l-2 border-blue-600 dark:bg-slate-800 dark:text-white dark:border-slate-300 font-semibold rounded-l-none pl-1.5'
                           : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/80'
                       )
                     }}
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
-                      <LayoutDashboard className={cn('size-4 shrink-0', isDashboardActive ? 'text-blue-600 dark:text-blue-400' : 'text-slate-600 dark:text-slate-400')} />
+                      <LayoutDashboard className={cn('size-4 shrink-0', isDashboardActive ? 'text-blue-600 dark:text-white font-bold' : 'text-slate-600 dark:text-slate-400')} />
                       <span className="truncate">Dashboard</span>
                     </div>
                   </NavLink>
@@ -399,8 +399,8 @@ export function AppSidebar() {
 
         {/* Financial Management Section */}
         <SidebarGroup className="p-1 py-0.5">
-          <SidebarGroupLabel className="flex items-center gap-1.5 text-[10px] font-bold tracking-wider text-emerald-600 dark:text-emerald-400 uppercase whitespace-nowrap px-1.5 h-6">
-            <span className="size-1.5 rounded-full bg-emerald-600 shrink-0" />
+          <SidebarGroupLabel className="flex items-center gap-1.5 text-[10px] font-bold tracking-wider text-emerald-600 dark:text-slate-400 uppercase whitespace-nowrap px-1.5 h-6">
+            <span className="size-1.5 rounded-full bg-emerald-600 dark:bg-slate-400 shrink-0" />
             <span>Financial Management</span>
           </SidebarGroupLabel>
           <SidebarGroupContent>
@@ -418,8 +418,8 @@ export function AppSidebar() {
 
         {/* Business & Materials Section */}
         <SidebarGroup className="p-1 py-0.5">
-          <SidebarGroupLabel className="flex items-center gap-1.5 text-[10px] font-bold tracking-wider text-purple-600 dark:text-purple-400 uppercase whitespace-nowrap px-1.5 h-6">
-            <span className="size-1.5 rounded-full bg-purple-600 shrink-0" />
+          <SidebarGroupLabel className="flex items-center gap-1.5 text-[10px] font-bold tracking-wider text-purple-600 dark:text-slate-400 uppercase whitespace-nowrap px-1.5 h-6">
+            <span className="size-1.5 rounded-full bg-purple-600 dark:bg-slate-400 shrink-0" />
             <span>Business Operations</span>
           </SidebarGroupLabel>
           <SidebarGroupContent>
@@ -438,8 +438,8 @@ export function AppSidebar() {
         {/* Management & Admin Section */}
         {visibleManagementItems.length > 0 && (
           <SidebarGroup className="p-1 py-0.5">
-            <SidebarGroupLabel className="flex items-center gap-1.5 text-[10px] font-bold tracking-wider text-cyan-600 dark:text-cyan-400 uppercase whitespace-nowrap px-1.5 h-6">
-              <span className="size-1.5 rounded-full bg-cyan-600 shrink-0" />
+            <SidebarGroupLabel className="flex items-center gap-1.5 text-[10px] font-bold tracking-wider text-cyan-600 dark:text-slate-400 uppercase whitespace-nowrap px-1.5 h-6">
+              <span className="size-1.5 rounded-full bg-cyan-600 dark:bg-slate-400 shrink-0" />
               <span>Management & Admin</span>
             </SidebarGroupLabel>
             <SidebarGroupContent>
@@ -457,13 +457,13 @@ export function AppSidebar() {
                             return cn(
                               'flex items-center justify-between w-full px-2 py-1.5 rounded-md text-xs font-medium transition-colors',
                               isAct
-                                ? 'bg-blue-50 dark:bg-blue-950/70 text-blue-600 dark:text-blue-400 font-semibold border-l-2 border-blue-600 dark:border-blue-500 rounded-l-none pl-1.5'
+                                ? 'bg-blue-50 text-blue-600 border-l-2 border-blue-600 dark:bg-slate-800 dark:text-white dark:border-slate-300 font-semibold rounded-l-none pl-1.5'
                                 : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/80'
                             )
                           }}
                         >
                           <div className="flex items-center gap-2.5 min-w-0">
-                            <ItemIcon className={cn('size-4 shrink-0', active ? 'text-blue-600 dark:text-blue-400' : 'text-slate-600 dark:text-slate-400')} />
+                            <ItemIcon className={cn('size-4 shrink-0', active ? 'text-blue-600 dark:text-white font-bold' : 'text-slate-600 dark:text-slate-400')} />
                             <span className="truncate">{item.title}</span>
                           </div>
                         </NavLink>

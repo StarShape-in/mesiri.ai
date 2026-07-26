@@ -44,6 +44,12 @@ def test_issue_prefills_to_account_from_recipient_and_asks_for_from_account():
     update = resolve_other_account(state)
     assert update["collected_fields"]["to_account_id"] == RECIPIENT_ACC
     assert update["awaiting_slot"] == "from_account_id"
+    # Real WhatsApp interactive list, not just numbered text -- see
+    # workflows/slots.py's slot_options.
+    assert update["awaiting_slot_options"] == [
+        {"value": ACC_A, "label": "Company Bank"},
+        {"value": ACC_B, "label": "Site Cash"},
+    ]
 
 
 def test_issue_autofills_from_account_on_single_candidate():

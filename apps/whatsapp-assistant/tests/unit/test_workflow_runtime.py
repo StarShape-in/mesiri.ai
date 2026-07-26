@@ -21,7 +21,8 @@ from mesiri_contracts.assistant.v2.workflow_state import WorkflowStateV2
 from mesiri_contracts.context.enums import WorkflowPhase
 from workflows.fakes import FakeWorkflowInstanceRepository
 from workflows.ports import LoadedWorkflowInstance
-from workflows.runtime import WorkflowRunStatus, WorkflowRuntime
+from workflows.runtime import WorkflowRunResult, WorkflowRunStatus, WorkflowRuntime
+from workflows.slots import SlotCandidate
 
 
 class _FakeGraph:
@@ -235,6 +236,69 @@ async def test_start_with_awaiting_slot_persists_collecting_fields_and_returns_a
     assert saved.phase is WorkflowPhase.COLLECTING_FIELDS
     assert saved.awaiting_slot == "account_id"
     assert saved.collected_fields["account_candidates"] == [{"id": "a1", "name": "Cash"}]
+
+
+async def test_start_with_awaiting_slot_options_carries_them_onto_the_result():
+    """A node that supplies `awaiting_slot_options` (workflows/slots.py's
+    slot_options helper) must have them surface on WorkflowRunResult.slot_options
+    so the send side can offer a real WhatsApp interactive list."""
+    graph = _FakeGraph(
+        result={
+            "awaiting_slot": "account_id",
+            "pending_prompt": "Which account?",
+            "awaiting_slot_options": [
+                {"value": "a1", "label": "Cash"},
+                {"value": "a2", "label": "Bank"},
+            ],
+            "collected_fields": {"amount": 250},
+        }
+    )
+    registry = _FakeRegistry({WorkflowKey.EXPENSE_SUBMIT: graph})
+    repo = FakeWorkflowInstanceRepository()
+    runtime = WorkflowRuntime(registry=registry, repo=repo)
+
+    decision = _decision(
+        decision_type=PlannerDecisionType.START_WORKFLOW, workflow_key=WorkflowKey.EXPENSE_SUBMIT
+    )
+    result = await runtime.start(decision, _event({"amount": 250}))
+
+    assert result.slot_options is not None
+    assert [(o.value, o.label) for o in result.slot_options] == [("a1", "Cash"), ("a2", "Bank")]
+
+
+async def test_start_without_awaiting_slot_options_leaves_it_none():
+    """A node that hasn't been updated to supply options yet must not crash --
+    slot_options is optional, plain text is the fallback."""
+    graph = _FakeGraph(
+        result={
+            "awaiting_slot": "account_id",
+            "pending_prompt": "Which account?",
+            "collected_fields": {"amount": 250},
+        }
+    )
+    registry = _FakeRegistry({WorkflowKey.EXPENSE_SUBMIT: graph})
+    repo = FakeWorkflowInstanceRepository()
+    runtime = WorkflowRuntime(registry=registry, repo=repo)
+
+    decision = _decision(
+        decision_type=PlannerDecisionType.START_WORKFLOW, workflow_key=WorkflowKey.EXPENSE_SUBMIT
+    )
+    result = await runtime.start(decision, _event({"amount": 250}))
+
+    assert result.slot_options is None
+
+
+def test_slot_options_on_a_non_awaiting_input_status_is_rejected():
+    """slot_options only ever means something alongside a live slot
+    question -- carrying it on e.g. a COMPLETED result would be a bug."""
+    with pytest.raises(ValueError, match="must not carry slot_options"):
+        WorkflowRunResult(
+            status=WorkflowRunStatus.COMPLETED,
+            workflow_key=WorkflowKey.WHO_AM_I,
+            correlation_id="cor_1",
+            pending_prompt="Here is your profile...",
+            slot_options=(SlotCandidate(value="a1", label="Cash"),),
+        )
 
 
 async def test_start_blocks_when_user_already_has_a_pending_slot_question():

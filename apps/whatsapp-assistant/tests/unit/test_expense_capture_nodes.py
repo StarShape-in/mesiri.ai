@@ -95,6 +95,12 @@ def test_resolve_account_with_candidates_asks_since_own_pocket_is_always_an_opti
     assert update["awaiting_slot"] == "account_id"
     assert "Site Cash" in update["pending_prompt"]
     assert "own pocket" in update["pending_prompt"].lower()
+    # Real WhatsApp interactive list, not just numbered text -- see
+    # workflows/slots.py's slot_options.
+    assert update["awaiting_slot_options"] == [
+        {"value": "a1", "label": "Site Cash"},
+        {"value": "own_pocket", "label": "My own pocket (reimburse me later)"},
+    ]
 
 
 def test_resolve_account_numbered_answer_selects_account():
@@ -180,6 +186,12 @@ def test_check_duplicate_flagged_asks_yes_no():
     assert update["awaiting_slot"] == "duplicate_confirm"
     assert "duplicate" in update["pending_prompt"]
     assert "1." in update["pending_prompt"] and "2." in update["pending_prompt"]
+    # Real WhatsApp interactive list (Yes/No as tappable rows), not just
+    # numbered text -- see workflows/slots.py's slot_options.
+    assert update["awaiting_slot_options"] == [
+        {"value": "yes", "label": "Yes, record it anyway"},
+        {"value": "no", "label": "No, cancel"},
+    ]
 
 
 def test_check_duplicate_yes_answer_proceeds():

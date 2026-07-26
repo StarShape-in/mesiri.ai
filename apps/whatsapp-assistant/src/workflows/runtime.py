@@ -25,6 +25,7 @@ from mesiri_contracts.context.enums import WorkflowPhase
 
 from .ports import LoadedWorkflowInstance, SingleActiveConflict, WorkflowInstanceRepository
 from .registry import WorkflowRegistry
+from .slots import SlotCandidate
 from .state import WorkflowGraphState
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,16 @@ _NO_DRAFT_ALLOWED_WORKFLOW_KEYS = _INFORMATIONAL_WORKFLOW_KEYS | frozenset(
 )
 
 
+def _to_slot_candidates(raw: list[dict[str, str]] | None) -> tuple[SlotCandidate, ...] | None:
+    """Convert a node's `awaiting_slot_options` (plain dicts, LangGraph-state-
+    safe) back into `SlotCandidate`s for `WorkflowRunResult`. None (a node
+    that didn't set the field) stays None -- the send side falls back to
+    plain text in that case."""
+    if not raw:
+        return None
+    return tuple(SlotCandidate(value=c["value"], label=c["label"]) for c in raw)
+
+
 class WorkflowRunStatus(str, Enum):
     STARTED = "started"
     COMPLETED = "completed"
@@ -93,8 +104,17 @@ class WorkflowRunResult:
     workflow_instance_id: str | None = None
     draft_action: DraftActionV2 | None = None
     pending_prompt: str | None = None
+    # The candidate list behind an AWAITING_INPUT prompt, if the node
+    # supplied one (see workflows/slots.py's `slot_options`) -- lets the
+    # send side (runtime/inbound_journey.py) offer a real WhatsApp
+    # interactive list instead of only numbered text. None for every other
+    # status, and also legal for AWAITING_INPUT itself (a node that doesn't
+    # set awaiting_slot_options just gets plain text, no crash).
+    slot_options: tuple[SlotCandidate, ...] | None = None
 
     def __post_init__(self) -> None:
+        if self.slot_options is not None and self.status is not WorkflowRunStatus.AWAITING_INPUT:
+            raise ValueError(f"{self.status.value} must not carry slot_options")
         if self.status is WorkflowRunStatus.STARTED:
             if not (self.workflow_instance_id and self.draft_action and self.pending_prompt):
                 raise ValueError(
@@ -191,6 +211,7 @@ class WorkflowRunResult:
         correlation_id: str,
         workflow_instance_id: str,
         pending_prompt: str,
+        slot_options: tuple[SlotCandidate, ...] | None = None,
     ) -> WorkflowRunResult:
         return cls(
             status=WorkflowRunStatus.AWAITING_INPUT,
@@ -198,6 +219,7 @@ class WorkflowRunResult:
             correlation_id=correlation_id,
             workflow_instance_id=workflow_instance_id,
             pending_prompt=pending_prompt,
+            slot_options=slot_options,
         )
 
 
@@ -384,6 +406,7 @@ class WorkflowRuntime:
                 correlation_id=event.correlation_id,
                 workflow_instance_id=workflow_instance_id,
                 pending_prompt=pending_prompt,
+                slot_options=_to_slot_candidates(result_state.get("awaiting_slot_options")),
             )
 
         if pending_prompt is None:
@@ -611,6 +634,7 @@ class WorkflowRuntime:
                 correlation_id=state.correlation_id,
                 workflow_instance_id=instance_id,
                 pending_prompt=pending_prompt,
+                slot_options=_to_slot_candidates(result_state.get("awaiting_slot_options")),
             )
 
         if draft_action is None or pending_prompt is None:
