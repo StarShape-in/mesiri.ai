@@ -1,16 +1,14 @@
 """Deploy migration 0210 to prod: apply schema, restart uvicorn, verify debug tables."""
-
 from __future__ import annotations
 
+import os
 import time
 
 import paramiko
 
-HOST = "187.127.180.98"
-USER = "root"
-PASS = "Mercondatabase1234@"
-
-
+HOST = os.environ["MESIRI_VPS_HOST"]
+USER = os.environ["MESIRI_VPS_USER"]
+PASS = os.environ["MESIRI_VPS_PASSWORD"]
 def run(client: paramiko.SSHClient, cmd: str) -> str:
     print(f"\n>>> {cmd[:120]}")
     _, stdout, stderr = client.exec_command(cmd)

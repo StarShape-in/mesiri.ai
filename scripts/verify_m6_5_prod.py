@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import os
+
 import paramiko
 
-HOST = "187.127.180.98"
-USER = "root"
-PASS = "Mercondatabase1234@"
-
-
+HOST = os.environ["MESIRI_VPS_HOST"]
+USER = os.environ["MESIRI_VPS_USER"]
+PASS = os.environ["MESIRI_VPS_PASSWORD"]
 def run(client: paramiko.SSHClient, sql: str) -> None:
     cmd = f'docker exec mesiri-postgres psql -U mesiri -d mesiri -c "{sql}"'
     print(f"\n--- {sql[:80]}...")

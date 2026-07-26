@@ -2,13 +2,13 @@
 
 Idempotent — safe to re-run. Matches Alan by email (alan@erp.com) which is unique.
 """
+import os
 
 import paramiko
 
-HOST = "187.127.180.98"
-USER = "root"
-PASS = "Mercondatabase1234@"
-
+HOST = os.environ["MESIRI_VPS_HOST"]
+USER = os.environ["MESIRI_VPS_USER"]
+PASS = os.environ["MESIRI_VPS_PASSWORD"]
 NEW_NUMBER = "+91 7034926395"
 
 

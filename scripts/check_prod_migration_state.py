@@ -1,14 +1,13 @@
 """Check prod migration head + which application tables exist, to find un-run migrations/tables."""
-
 from __future__ import annotations
+
+import os
 
 import paramiko
 
-HOST = "187.127.180.98"
-USER = "root"
-PASS = "Mercondatabase1234@"
-
-
+HOST = os.environ["MESIRI_VPS_HOST"]
+USER = os.environ["MESIRI_VPS_USER"]
+PASS = os.environ["MESIRI_VPS_PASSWORD"]
 def run(client: paramiko.SSHClient, sql: str) -> str:
     cmd = f'docker exec mesiri-postgres psql -U mesiri -d mesiri -t -A -c "{sql}"'
     _, stdout, _ = client.exec_command(cmd)

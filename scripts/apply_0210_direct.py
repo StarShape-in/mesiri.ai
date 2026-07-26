@@ -1,16 +1,15 @@
 """Apply migration 0210 SQL directly to prod via paramiko with timeouts."""
-
 from __future__ import annotations
 
+import os
 import sys
 import time
 
 import paramiko
 
-HOST = "187.127.180.98"
-USER = "root"
-PASS = "Mercondatabase1234@"
-
+HOST = os.environ["MESIRI_VPS_HOST"]
+USER = os.environ["MESIRI_VPS_USER"]
+PASS = os.environ["MESIRI_VPS_PASSWORD"]
 SQLS = [
     # G1: RBAC created_at
     "ALTER TABLE roles ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();",

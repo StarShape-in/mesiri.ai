@@ -2,9 +2,9 @@ import os
 
 import paramiko
 
-HOST = "187.127.180.98"
-USER = "root"
-PASS = "Mercondatabase1234@"
+HOST = os.environ["MESIRI_VPS_HOST"]
+USER = os.environ["MESIRI_VPS_USER"]
+PASS = os.environ["MESIRI_VPS_PASSWORD"]
 DIST_DIR = r"e:\Mesiri.AI\apps\control-panel\dist"
 REMOTE_DIR = "/var/www/mesiriadmin"
 

@@ -12,10 +12,9 @@ import time
 
 import paramiko
 
-HOST = "187.127.180.98"
-USER = "root"
-PASS = "Mercondatabase1234@"
-
+HOST = os.environ["MESIRI_VPS_HOST"]
+USER = os.environ["MESIRI_VPS_USER"]
+PASS = os.environ["MESIRI_VPS_PASSWORD"]
 LOCAL_ROOT = r"E:\Mesiri.AI\apps\whatsapp-assistant\src"
 REMOTE_SRC = "/opt/mesiri/apps/whatsapp-assistant/src"
 
