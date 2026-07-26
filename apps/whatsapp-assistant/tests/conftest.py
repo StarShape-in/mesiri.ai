@@ -4,8 +4,22 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import importlib.machinery
+import importlib.util
 import json
+import os
+import sys
+import sysconfig
 from typing import Any
+
+_stdlib_dir = sysconfig.get_path("stdlib")
+_platform_py = os.path.join(_stdlib_dir, "platform.py")
+if os.path.isfile(_platform_py):
+    _loader = importlib.machinery.SourceFileLoader("_stdlib_platform", _platform_py)
+    _spec = importlib.util.spec_from_loader("_stdlib_platform", _loader)
+    _mod = importlib.util.module_from_spec(_spec)
+    _loader.exec_module(_mod)
+    sys.modules["platform"] = _mod
 
 import pytest
 from httpx import ASGITransport, AsyncClient
