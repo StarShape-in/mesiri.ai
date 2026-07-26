@@ -760,6 +760,19 @@ export async function updateFinanceSettingsApi(
   return res.data
 }
 
+export interface SandboxSimulationResult {
+  intent: string
+  confidence: string
+  fields: Record<string, any>
+  workflow_decision: string
+  reply_message: string
+}
+
+export async function simulateWhatsAppSandboxApi(message: string): Promise<SandboxSimulationResult> {
+  const res = await api.post('/finance/whatsapp/sandbox/simulate', { message })
+  return res.data
+}
+
 export interface FinanceReportRow {
   id: string
   code: string | null

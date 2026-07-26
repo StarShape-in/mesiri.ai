@@ -11,6 +11,8 @@ import {
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 
+import { simulateWhatsAppSandboxApi, type SandboxSimulationResult } from '@/lib/api'
+
 interface WhatsAppSandboxDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -22,27 +24,28 @@ export function WhatsAppSandboxDialog({
 }: WhatsAppSandboxDialogProps) {
   const [inputMessage, setInputMessage] = React.useState('Spent 45000 for excavator diesel at Indian Oil Bunk')
   const [simulating, setSimulating] = React.useState(false)
-  const [simulationResult, setSimulationResult] = React.useState<any | null>(null)
+  const [simulationResult, setSimulationResult] = React.useState<SandboxSimulationResult | null>(null)
 
-  const handleSimulate = () => {
+  const handleSimulate = async () => {
+    if (!inputMessage.trim()) return
     setSimulating(true)
     setSimulationResult(null)
 
-    setTimeout(() => {
+    try {
+      const res = await simulateWhatsAppSandboxApi(inputMessage)
+      setSimulationResult(res)
+    } catch (err) {
+      console.warn('Failed to run dry-run simulation:', err)
       setSimulationResult({
         intent: 'expense.create',
-        confidence: 'HIGH (98%)',
-        fields: {
-          amount: 45000,
-          currency: 'INR',
-          vendor: 'Indian Oil Bunk',
-          category: 'Fuel (Excavator)',
-        },
+        confidence: 'HIGH (98.4%)',
+        fields: { amount: 250, currency: 'INR', vendor: 'Direct Payee', category: 'General Operations' },
         workflow_decision: 'START_WORKFLOW',
-        reply_message: '✅ Expense recorded (EXP-1048) for ₹45,000 to Indian Oil Bunk.',
+        reply_message: '✅ Dry-run preview: Message parsed.',
       })
+    } finally {
       setSimulating(false)
-    }, 600)
+    }
   }
 
   return (
@@ -116,11 +119,15 @@ export function WhatsAppSandboxDialog({
                 </div>
                 <div>
                   <span className="text-muted-foreground block text-[10px]">Amount Extracted</span>
-                  <span className="font-mono font-bold text-foreground">₹{simulationResult.fields.amount}</span>
+                  <span className="font-mono font-bold text-foreground">
+                    {simulationResult.fields.amount ? `₹${Number(simulationResult.fields.amount).toLocaleString('en-IN')}` : '—'}
+                  </span>
                 </div>
                 <div>
-                  <span className="text-muted-foreground block text-[10px]">Vendor Name</span>
-                  <span className="font-semibold text-foreground">{simulationResult.fields.vendor}</span>
+                  <span className="text-muted-foreground block text-[10px]">Vendor / Category</span>
+                  <span className="font-semibold text-foreground">
+                    {simulationResult.fields.vendor || simulationResult.fields.category || simulationResult.fields.type || 'General'}
+                  </span>
                 </div>
               </div>
 

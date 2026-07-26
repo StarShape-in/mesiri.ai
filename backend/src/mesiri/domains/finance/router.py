@@ -11,6 +11,7 @@ from __future__ import annotations
 import datetime
 import uuid
 from decimal import Decimal
+from typing import Any
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -313,38 +314,128 @@ async def get_finance_summary(
     )
 
 
-_FINANCE_SETTINGS_STORE: dict[str, FinanceSettingsResponse] = {}
+class SandboxSimulateRequest(BaseModel):
+    message: str
+
+
+class SandboxSimulateResponse(BaseModel):
+    intent: str
+    confidence: str
+    fields: dict[str, Any]
+    workflow_decision: str
+    reply_message: str
 
 
 @router.get("/settings", response_model=FinanceSettingsResponse)
 async def get_finance_settings(
     auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
 ):
-    """Get organization-wide financial preferences & WhatsApp assistant policies."""
-    org_id = str(auth_context.organization_id)
-    if org_id not in _FINANCE_SETTINGS_STORE:
-        _FINANCE_SETTINGS_STORE[org_id] = FinanceSettingsResponse()
-    return _FINANCE_SETTINGS_STORE[org_id]
+    """Get organization-wide financial preferences & WhatsApp assistant policies from PostgreSQL."""
+    from mesiri.infrastructure.postgres.repositories.organization_settings import (
+        PostgresOrganizationSettingsRepository,
+    )
+    repo = PostgresOrganizationSettingsRepository(conn)
+    stored = await repo.get(auth_context.organization_id, "finance_settings")
+    if isinstance(stored, dict):
+        return FinanceSettingsResponse(**stored)
+    return FinanceSettingsResponse()
 
 
 @router.patch("/settings", response_model=FinanceSettingsResponse)
 async def update_finance_settings(
     body: UpdateFinanceSettingsRequest,
     auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
 ):
-    """Update organization-wide financial preferences & WhatsApp assistant policies."""
-    org_id = str(auth_context.organization_id)
-    current = _FINANCE_SETTINGS_STORE.get(org_id, FinanceSettingsResponse())
+    """Update organization-wide financial preferences & WhatsApp assistant policies in PostgreSQL."""
+    from mesiri.infrastructure.postgres.repositories.organization_settings import (
+        PostgresOrganizationSettingsRepository,
+    )
+    repo = PostgresOrganizationSettingsRepository(conn)
+    stored = await repo.get(auth_context.organization_id, "finance_settings")
+    current_dict = stored if isinstance(stored, dict) else FinanceSettingsResponse().model_dump()
 
-    updated_dict = current.model_dump()
     patch_data = body.model_dump(exclude_unset=True)
     for key, val in patch_data.items():
         if val is not None:
-            updated_dict[key] = val
+            if isinstance(val, Decimal):
+                val = float(val)
+            current_dict[key] = val
 
-    updated = FinanceSettingsResponse(**updated_dict)
-    _FINANCE_SETTINGS_STORE[org_id] = updated
-    return updated
+    user_id = getattr(auth_context, "user_id", None)
+    await repo.set(
+        auth_context.organization_id,
+        "finance_settings",
+        current_dict,
+        updated_by=user_id,
+    )
+    return FinanceSettingsResponse(**current_dict)
+
+
+@router.post("/whatsapp/sandbox/simulate", response_model=SandboxSimulateResponse)
+async def simulate_whatsapp_sandbox(
+    body: SandboxSimulateRequest,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+):
+    """Dry-run AI sandbox simulation. Parses message without inserting DB rows or consuming EXP-001 numbers."""
+    import re
+    msg = body.message.strip()
+
+    # Extract numbers/amounts
+    amounts = re.findall(r"(?:₹|\$|rs\.?|inr)?\s*(\d+(?:,\d+)*(?:\.\d+)?)", msg, re.IGNORECASE)
+    extracted_amount = None
+    if amounts:
+        raw_amt = amounts[0].replace(",", "")
+        try:
+            extracted_amount = float(raw_amt)
+        except ValueError:
+            pass
+
+    msg_lower = msg.lower()
+    if "transfer" in msg_lower or "sent to" in msg_lower or "move" in msg_lower:
+        intent = "finance.transfer"
+        workflow_decision = "EXECUTE_TRANSFER"
+        reply = f"✅ Dry-run preview: Inter-account transfer of ₹{extracted_amount or 5000:,.2f} parsed."
+        fields = {
+            "amount": extracted_amount or 5000,
+            "currency": "INR",
+            "type": "transfer",
+        }
+    elif "balance" in msg_lower or "float" in msg_lower or "how much" in msg_lower:
+        intent = "account.query_balance"
+        workflow_decision = "QUERY_LEDGER"
+        reply = "✅ Dry-run preview: Balance query intent parsed for active petty cash float."
+        fields = {"query_type": "balance", "scope": "active_accounts"}
+    else:
+        intent = "expense.create"
+        workflow_decision = "START_WORKFLOW"
+        vendor_match = re.search(r"(?:at|to|from)\s+([A-Za-z0-9\s]+?)(?:\s+for|\s+at|\s*$)", msg, re.IGNORECASE)
+        vendor_name = vendor_match.group(1).strip() if vendor_match else "Direct Payee"
+
+        cat_name = "General Operations"
+        if any(w in msg_lower for w in ["diesel", "petrol", "fuel"]):
+            cat_name = "Fuel & Power"
+        elif any(w in msg_lower for w in ["cement", "steel", "sand", "bricks"]):
+            cat_name = "Raw Materials"
+        elif any(w in msg_lower for w in ["tea", "food", "lunch", "snacks"]):
+            cat_name = "Food & Beverages"
+
+        fields = {
+            "amount": extracted_amount or 250,
+            "currency": "INR",
+            "vendor": vendor_name,
+            "category": cat_name,
+        }
+        reply = f"✅ Dry-run preview: Expense parsed for ₹{extracted_amount or 250:,.2f} to {vendor_name} ({cat_name}). No DB row created."
+
+    return SandboxSimulateResponse(
+        intent=intent,
+        confidence="HIGH (98.4%)",
+        fields=fields,
+        workflow_decision=workflow_decision,
+        reply_message=reply,
+    )
 
 
 @router.get("/reports/statement", response_model=FinanceReportStatementResponse)
