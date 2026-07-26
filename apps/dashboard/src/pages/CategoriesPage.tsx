@@ -53,8 +53,11 @@ function formatCurrency(amount: number): string {
   }).format(amount)
 }
 
+import { useToast } from '@/components/ui/toast-notification'
+
 export default function CategoriesPage() {
   const { scope } = useScope()
+  const toast = useToast()
 
   const [categories, setCategories] = React.useState<CategoryItem[]>([])
   const [loading, setLoading] = React.useState(true)
@@ -128,9 +131,10 @@ export default function CategoriesPage() {
     const nextStatus = cat.status === 'active' ? 'inactive' : 'active'
     try {
       await updateCategoryApi(cat.id, { status: nextStatus })
+      toast.success(`Category "${cat.name}" updated`, `Status set to ${nextStatus.toUpperCase()}`)
       loadCategories()
     } catch (err: any) {
-      alert(`Failed to update status: ${err.message || 'Server error'}`)
+      toast.error('Failed to update category status', err.message || 'Server error')
     }
   }
 

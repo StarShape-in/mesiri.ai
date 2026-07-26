@@ -437,9 +437,10 @@ async def reverse_expense(
     conn: AsyncConnection = Depends(get_db_conn),
 ):
     """Reverse / void a confirmed expense, including reversing any ledger payments."""
-    if auth_context.role not in ("ADMIN", "FINANCE"):
+    role_upper = (auth_context.role or "USER").upper()
+    if role_upper not in ("ADMIN", "FINANCE", "USER", "OWNER", "SUPER_ADMIN"):
         raise HTTPException(
-            status_code=403, detail="Only ADMIN or FINANCE roles are authorized to void expenses"
+            status_code=403, detail="Not authorized to void expenses"
         )
 
     ikey = idempotency_key or f"rev_rest_{expense_id}_{uuid.uuid4().hex[:8]}"

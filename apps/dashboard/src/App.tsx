@@ -19,6 +19,8 @@ import VendorsPage from '@/pages/VendorsPage'
 import CategoriesPage from '@/pages/CategoriesPage'
 import { OperationalPlaceholder } from '@/components/operational-placeholder'
 
+import { ToastProvider } from '@/components/ui/toast-notification'
+
 function IndexRedirect() {
   const location = useLocation()
   return <Navigate to={`/overview${location.search}`} replace />
@@ -26,7 +28,8 @@ function IndexRedirect() {
 
 export default function App() {
   return (
-    <Routes>
+    <ToastProvider>
+      <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/" element={<AppLayout />}>
         <Route index element={<IndexRedirect />} />
@@ -75,8 +78,9 @@ export default function App() {
         <Route path="gallery" element={<OperationalPlaceholder title="Gallery" />} />
         <Route path="reports" element={<OperationalPlaceholder title="Reports" />} />
         <Route path="expenses" element={<ExpensesPage />} />
-        <Route path="petty-cash" element={<OperationalPlaceholder title="Petty Cash" />} />
+        <Route path="petty-cash" element={<PettyCashPage />} />
       </Route>
     </Routes>
+    </ToastProvider>
   )
 }

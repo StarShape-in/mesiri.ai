@@ -52,8 +52,11 @@ function formatCurrency(amount: number): string {
   }).format(amount)
 }
 
+import { useToast } from '@/components/ui/toast-notification'
+
 export default function VendorsPage() {
   const { scope } = useScope()
+  const toast = useToast()
 
   const [vendors, setVendors] = React.useState<VendorItem[]>([])
   const [loading, setLoading] = React.useState(true)
@@ -124,9 +127,10 @@ export default function VendorsPage() {
     const nextStatus = vendor.status === 'active' ? 'inactive' : 'active'
     try {
       await updateVendorApi(vendor.id, { status: nextStatus })
+      toast.success(`Vendor "${vendor.name}" updated`, `Status set to ${nextStatus.toUpperCase()}`)
       loadVendors()
     } catch (err: any) {
-      alert(`Failed to update vendor status: ${err.message || 'Server error'}`)
+      toast.error('Failed to update vendor status', err.message || 'Server error')
     }
   }
 

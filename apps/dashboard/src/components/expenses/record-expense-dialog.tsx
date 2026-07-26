@@ -19,6 +19,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import type { AppScope } from '@/lib/scope-types'
+import { useToast } from '@/components/ui/toast-notification'
 
 interface RecordExpenseDialogProps {
   open: boolean
@@ -53,6 +54,7 @@ export function RecordExpenseDialog({
   const [paymentStatus, setPaymentStatus] = React.useState<'unpaid' | 'paid'>('paid')
   const [paymentMethod, setPaymentMethod] = React.useState('bank_transfer')
   const [submitting, setSubmitting] = React.useState(false)
+  const toast = useToast()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -101,6 +103,7 @@ export function RecordExpenseDialog({
       }
 
       onExpenseCreated?.(newEntry)
+      toast.success('Expense recorded successfully', `Logged ₹${parseFloat(amount).toLocaleString('en-IN')}`)
       setSubmitting(false)
       onOpenChange(false)
       setAmount('')

@@ -19,6 +19,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import type { AppScope } from '@/lib/scope-types'
+import { useToast } from '@/components/ui/toast-notification'
 
 interface CreateAccountDialogProps {
   open: boolean
@@ -41,6 +42,7 @@ export function CreateAccountDialog({
   const [custodian, setCustodian] = React.useState('')
   const [accountNumber, setAccountNumber] = React.useState('')
   const [submitting, setSubmitting] = React.useState(false)
+  const toast = useToast()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -82,6 +84,7 @@ export function CreateAccountDialog({
       }
 
       onAccountCreated?.(newEntry)
+      toast.success(`Account "${name}" created`, 'Money account registered')
       setSubmitting(false)
       onOpenChange(false)
       setName('')

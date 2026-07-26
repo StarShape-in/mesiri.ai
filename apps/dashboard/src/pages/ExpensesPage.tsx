@@ -80,9 +80,11 @@ type SortField = 'date' | 'amount' | 'number' | 'category'
 type SortOrder = 'asc' | 'desc'
 
 import { fetchExpensesApi, reverseExpenseApi, fetchAllExpenseAttachmentsApi } from '@/lib/api'
+import { useToast } from '@/components/ui/toast-notification'
 
 export default function ExpensesPage() {
   const { scope } = useScope()
+  const toast = useToast()
 
   const [expenses, setExpenses] = React.useState<ExpenseItem[]>([])
   const [search, setSearch] = React.useState('')
@@ -289,10 +291,11 @@ export default function ExpensesPage() {
       setExpenses((prev) =>
         prev.map((e) => (e.id === id ? { ...e, workflow_status: 'reversed' as const } : e))
       )
+      toast.success(`Expense ${expenseNumber} voided`, 'Reversal entry posted to general ledger')
     } catch (err: any) {
       const detail = err?.response?.data?.detail
-      const msg = Array.isArray(detail) ? detail.join(', ') : detail || err.message || 'Server error'
-      alert(`Failed to void expense: ${msg}`)
+      const msg = Array.isArray(detail) ? detail.join(', ') : detail || err.message || 'Server connection error'
+      toast.error('Failed to void expense', msg)
     }
   }
 
@@ -300,15 +303,20 @@ export default function ExpensesPage() {
     if (!confirm(`Are you sure you want to void ${selectedIds.length} selected expenses?`)) return
     const idsToVoid = [...selectedIds]
     setSelectedIds([])
+    let successCount = 0
     for (const id of idsToVoid) {
       try {
         await reverseExpenseApi(id)
         setExpenses((prev) =>
           prev.map((e) => (e.id === id ? { ...e, workflow_status: 'reversed' as const } : e))
         )
+        successCount++
       } catch (err: any) {
         console.warn(`Failed to void expense ${id}:`, err)
       }
+    }
+    if (successCount > 0) {
+      toast.success(`${successCount} expenses voided`, 'Reversal transactions recorded')
     }
   }
 
