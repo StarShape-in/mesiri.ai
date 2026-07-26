@@ -584,9 +584,25 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             _log.exception("interaction.slot_answer_failed user=%s", ctx.user_id)
             slot_handled = None
         if slot_handled is not None:
-            await sender.send_text(wa_id, slot_handled.reply_text)
+            # Resuming a slot answer can land on any WorkflowRunResult status
+            # -- another AWAITING_INPUT (next slot) or STARTED (draft ready,
+            # needs Yes/No) just as often as COMPLETED -- so this must render
+            # through the same status-aware ReplySpec logic every other
+            # workflow-run reply uses, not always plain text. See
+            # runtime/inbound_journey.py's render_workflow_run_reply_spec
+            # docstring for the bug this fixes.
+            from runtime.inbound_journey import render_workflow_run_reply_spec
+
+            reply = render_workflow_run_reply_spec(slot_handled.result)
+            await send_reply_spec(
+                reply,
+                wa_id,
+                send_text=sender.send_text,
+                send_list=sender.send_list,
+                send_button=sender.send_button,
+            )
             await message_logger.log_reply(
-                correlation_id=message.correlation_id, reply=slot_handled.reply_text
+                correlation_id=message.correlation_id, reply=reply.text
             )
             if slot_handled.result.workflow_instance_id:
                 await message_logger.link_workflow_instance(
