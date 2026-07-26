@@ -114,7 +114,7 @@ export default function OrganizationDetail() {
       });
 
       setSeedResult(
-        `Finance data seeded successfully! Created ${res.accounts_created} accounts, ${res.categories_created} categories, ${res.vendors_created} vendors, ${res.settings_created} settings, ${res.expenses_created} expenses, and ${res.transactions_created} transactions.`
+        `Finance data seeded successfully! Created ${res.data.accounts_created} accounts, ${res.data.categories_created} categories, ${res.data.vendors_created} vendors, ${res.data.settings_created} settings, ${res.data.expenses_created} expenses, and ${res.data.transactions_created} transactions.`
       );
       setShowSeedModal(false);
     } catch (err: unknown) {
