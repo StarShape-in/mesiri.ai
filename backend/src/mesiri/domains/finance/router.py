@@ -22,6 +22,10 @@ from mesiri.application.finance.transfer_resolution import PostgresTransferAccou
 from mesiri.authorization.context import AuthorizationContext
 from mesiri.domains.projects.router import get_auth_context
 from mesiri.infrastructure.postgres.dependency import get_db_conn
+from mesiri.infrastructure.postgres.repositories.expenses import (
+    PostgresExpenseCategoryRepository,
+    PostgresExpenseRepository,
+)
 from mesiri.infrastructure.postgres.repositories.finance import (
     PostgresMoneyAccountRepository,
     PostgresMoneyTransactionRepository,
@@ -29,6 +33,7 @@ from mesiri.infrastructure.postgres.repositories.finance import (
 from mesiri.infrastructure.postgres.repositories.transfer_execution import (
     PostgresTransferExecutionRepository,
 )
+from mesiri.infrastructure.postgres.repositories.vendors import PostgresVendorRepository
 from mesiri_contracts.application.results.execution_result import ExecutionStatus
 
 router = APIRouter(prefix="/finance", tags=["finance"])
@@ -70,6 +75,22 @@ class MoneyTransactionResponse(BaseModel):
     correlation_id: str | None = None
 
 
+class CategoryBreakdownItem(BaseModel):
+    id: uuid.UUID
+    name: str
+    amount: Decimal
+
+
+class FinanceSummaryResponse(BaseModel):
+    total_liquidity: Decimal
+    total_expenses: Decimal
+    unpaid_expenses: Decimal
+    active_accounts_count: int
+    active_vendors_count: int
+    active_categories_count: int
+    category_breakdown: list[CategoryBreakdownItem]
+
+
 
 # ---------------------------------------------------------------------------
 # Request schema
@@ -98,6 +119,57 @@ class TransferMoneyRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+@router.get("/summary", response_model=FinanceSummaryResponse)
+async def get_finance_summary(
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Return executive-level financial summary metrics for the organization."""
+    acc_repo = PostgresMoneyAccountRepository(conn)
+    cat_repo = PostgresExpenseCategoryRepository(conn)
+    vendor_repo = PostgresVendorRepository(conn)
+    exp_repo = PostgresExpenseRepository(conn)
+
+    # 1. Accounts & Total Liquidity
+    accounts = await acc_repo.list_accounts(auth_context.organization_id, status="active")
+    total_liquidity = Decimal("0")
+    for acc in accounts:
+        try:
+            bal = await acc_repo.get_balance(auth_context.organization_id, acc.id)
+        except Exception:
+            bal = acc.opening_balance
+        total_liquidity += Decimal(bal)
+
+    # 2. Expenses & Unpaid Liabilities
+    expenses = await exp_repo.list_confirmed(auth_context.organization_id)
+    total_expenses = sum((e.amount for e in expenses), Decimal("0"))
+    unpaid_expenses = sum((e.amount for e in expenses if e.payment_status == "unpaid"), Decimal("0"))
+
+    # 3. Vendors Count
+    vendors = await vendor_repo.list_active(auth_context.organization_id)
+
+    # 4. Categories & Category Breakdown
+    cat_metrics = await cat_repo.list_with_metrics(auth_context.organization_id)
+    cat_breakdown = [
+        CategoryBreakdownItem(
+            id=m["category"].id,
+            name=m["category"].name,
+            amount=m["total_amount"],
+        )
+        for m in cat_metrics
+    ]
+
+    return FinanceSummaryResponse(
+        total_liquidity=total_liquidity,
+        total_expenses=total_expenses,
+        unpaid_expenses=unpaid_expenses,
+        active_accounts_count=len(accounts),
+        active_vendors_count=len(vendors),
+        active_categories_count=len(cat_metrics),
+        category_breakdown=cat_breakdown,
+    )
+
 
 @router.get("/accounts", response_model=list[MoneyAccountResponse])
 async def list_accounts(

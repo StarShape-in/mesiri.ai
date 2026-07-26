@@ -677,5 +677,26 @@ export async function fetchTransactionsApi(params?: {
   return res.data
 }
 
+export interface CategoryBreakdownItem {
+  id: string
+  name: string
+  amount: number
+}
+
+export interface FinanceSummaryItem {
+  total_liquidity: number
+  total_expenses: number
+  unpaid_expenses: number
+  active_accounts_count: number
+  active_vendors_count: number
+  active_categories_count: number
+  category_breakdown: CategoryBreakdownItem[]
+}
+
+export async function fetchFinanceSummaryApi(): Promise<FinanceSummaryItem> {
+  const res = await api.get('/finance/summary')
+  return res.data
+}
+
 
 
