@@ -21,7 +21,16 @@ from .template import render_html
 logger = logging.getLogger(__name__)
 
 
-class MaterialReceiptBuilder:
+class RecordReceiptBuilder:
+    """Builds the receipt card for ANY confirmed record.
+
+    Named for materials once, when that was all there was. It has since served
+    expense, and now labour attendance -- so the old name pointed anyone
+    debugging a wrong-looking expense or attendance receipt away from the one
+    file that renders it. `build_receipt_data` branches per action type; this
+    class is type-agnostic.
+    """
+
     def __init__(self, renderer: ReceiptRenderer) -> None:
         self._renderer = renderer
 

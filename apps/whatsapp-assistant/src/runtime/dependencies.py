@@ -397,10 +397,10 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     # the whole process -- ReceiptRenderer launches it lazily on first
     # render, not here, so container construction never needs a browser
     # installed. Closed in runtime/lifecycle.py's shutdown handler.
-    from channel.receipt import MaterialReceiptBuilder, ReceiptRenderer
+    from channel.receipt import ReceiptRenderer, RecordReceiptBuilder
 
     receipt_renderer = ReceiptRenderer()
-    material_receipt_builder = MaterialReceiptBuilder(receipt_renderer)
+    record_receipt_builder = RecordReceiptBuilder(receipt_renderer)
     # M7: resolves a confirmation reply into the pending workflow, or None
     # (fall through to the normal understanding journey). M8: when a CONFIRM
     # resolves to CONFIRMED, the dispatcher executes the domain write
@@ -409,7 +409,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         workflow_runtime,
         classifier=interaction_classifier,
         dispatcher=execution_dispatcher,
-        receipt_builder=material_receipt_builder,
+        receipt_builder=record_receipt_builder,
     )
     sender = WhatsAppSender(
         client=http_client,
