@@ -1,6 +1,6 @@
 # Labour Module — Master Implementation Plan
 
-**Status:** In progress — Phases 0–3 complete. **Next: Phase 4 (persistence).**
+**Status:** In progress — Phases 0–4 complete. **Next: Phase 5 (repositories + application layer).**
 **Owner:** Alan Raj
 **Started:** 2026-07-25
 **Last updated:** 2026-07-26
@@ -581,10 +581,22 @@ See §13 for the one structurally new thing Phase 3 introduced (a re-entrant,
 variable-length slot loop) and why it was done that way.
 
 ### Phase 4 — Persistence
-- [ ] Migration: workforce register
-- [ ] Migration: attendance + line items + attachments
-- [ ] Duplicate-image detection support
-- [ ] Cascade-delete wiring (mirror 0361)
+- [x] Migration: workforce register (`workforce_workers`)
+- [x] Migration: attendance + line items + attachments
+      (`labour_attendance_reports` / `_lines` / `_attachments` — new names,
+      0120 untouched, ADR-L1)
+- [ ] Duplicate-image detection support — deferred; `labour_attendance_attachments`
+      deliberately mirrors `expense_attachments` exactly (no hash column) since
+      Q3 (exact-hash vs perceptual) is still open. Add the column when Q3 is
+      resolved, not speculatively.
+- [x] Cascade-delete wiring (mirror 0361) — `ON DELETE CASCADE` set directly in
+      migration 0371 on all four tables' path to `organizations.id`; no
+      changes to `admin/router.py` needed (`delete_organization` already
+      relies purely on the DB cascade). `test_organizations_cascade_delete_schema.py`
+      extended to cover the two child tables.
+
+Migration 0371. See §14 for the full schema explanation and the two
+decisions the user approved before this was built (Attendance ID, `recorded_via`).
 
 ### Phase 5 — Repositories & application layer
 - [ ] Repository port + Postgres implementation
@@ -895,3 +907,116 @@ mismatch *lowers confidence*, and only an otherwise-strong match lands in the
 ask band. Both behaviours are pinned by tests
 (`test_trade_change_question_names_both_trades` and
 `test_partial_name_with_changed_trade_is_a_new_worker`).
+
+---
+
+## 14. Phase 4 — the database schema, and why it's shaped this way
+
+Approved by the user 2026-07-26 after a plain-language design review before
+any code was written. Recorded here so a future session doesn't have to
+re-derive it.
+
+### 14.1 Two tables that must never write to each other
+
+**`workforce_workers`** — the editable register. Name, trade, worker_type
+(permanent/temporary/contractor), default_daily_wage, contractor (free text —
+Q2), status (active/inactive). No address, ID documents, bank details, next
+of kin — operational reference data, not an HR record.
+
+**`labour_attendance_reports`** — one immutable row per WhatsApp report.
+Deliberately **not** unique on (site_id, occurred_date) — that constraint is
+exactly what made 0120 unusable. A second report for the same site and day is
+a second row.
+
+The only relationship between them is `labour_attendance_lines.worker_id`,
+nullable, read-only from the attendance side. There is no write path from
+attendance into the register anywhere in the schema — principle P1 enforced
+structurally, not by convention.
+
+### 14.2 Table names had to change
+
+The old 0120 tables are named `labour_attendance` / `labour_attendance_entries`
+and are left in place, untouched (ADR-L1 — no destructive drop, unverified
+production contents). So the new tables use different names entirely:
+`labour_attendance_reports`, `labour_attendance_lines`,
+`labour_attendance_attachments`. The two schemas can never collide or be
+mistaken for each other.
+
+### 14.3 Two additions from the 2026-07-26 design review
+
+The user approved the design with two requirements, both incorporated:
+
+1. **Every report gets its own unique Attendance ID.** This is the table's
+   UUID primary key — already the plan's design, made explicit in the
+   migration's comments as *the* Attendance ID. Went further than asked:
+   added `corrects_report_id`, a nullable self-reference on
+   `labour_attendance_reports`, so a future correction workflow can point a
+   new report back at the one it corrects **without either row being
+   mutated**. No correction workflow exists yet — the column is reserved
+   because provenance cannot be added retroactively (P8), and this was the
+   cheapest possible moment to reserve it.
+
+2. **Store how the report was recorded.** `recorded_via` on
+   `labour_attendance_reports`: `whatsapp_text` / `whatsapp_voice` /
+   `whatsapp_image` / `dashboard`. Not a foreign key to the assistant's
+   internal `InputModality` enum — dashboard entry has no modality, and this
+   column must never need a migration just because the application side adds
+   a new capture path.
+
+### 14.4 Line-level detail
+
+`labour_attendance_lines`: `worker_id` (nullable — temporary worker or
+headcount group), `worker_name`, `worker_name_original` (non-Latin source
+script, per the Malayalam work), `trade`, `headcount`, `daily_wage`,
+`contractor`, `activity` (P7, free text — no activities table exists yet).
+
+`trade` and `daily_wage` are **copied onto the line**, never read from
+`workforce_workers` at query time — this is P5's corollary. If a line
+pointed at the register instead, raising a worker's wage next month would
+silently change what last month's attendance appears to have cost.
+
+Check constraints: `headcount > 0`, `daily_wage IS NULL OR daily_wage >= 0`.
+
+### 14.5 Attachments
+
+`labour_attendance_attachments` is intentionally byte-for-byte the same
+shape as `expense_attachments` (ADR-L3) — same columns, same audit pattern —
+so Timeline and Image Gallery integration come for free later by consuming
+an attachment pattern they already consume for receipts. No image-hash
+column: Q3 (exact-hash vs perceptual duplicate detection) is still open, and
+speculatively adding a column for an undecided algorithm would be building
+ahead of a decision that hasn't been made. Add it when Q3 resolves.
+
+### 14.6 Cascade delete
+
+All four tables get `ON DELETE CASCADE` on their path to `organizations.id`
+directly in migration 0371 — `workforce_workers` and
+`labour_attendance_reports` from their own `organization_id`; the two child
+tables from their parent `report_id`. `admin/router.py`'s
+`delete_organization` needed **zero changes**: it already does a bare
+`DELETE FROM organizations` and relies entirely on the DB-level cascade
+(0361). `test_organizations_cascade_delete_schema.py` was extended with the
+two child-table entries so this stays guarded automatically.
+
+### 14.7 Verification without a live database
+
+No Postgres was available in this session. Verified instead:
+
+- Python syntax and the full down_revision chain (0371 is the sole new head
+  off 0370, no branch).
+- No index/constraint name collisions anywhere in the migration history.
+- **Real Postgres DDL**, rendered via `alembic upgrade 0370:0371 --sql` and
+  `alembic downgrade 0371:0370 --sql` (offline mode) — both produced clean,
+  valid SQL for every table, index, FK and check constraint. This is
+  materially stronger than a Python parse check.
+- `test_organizations_cascade_delete_schema.py` updated but not run (needs a
+  live DB — `pytest.mark.integration`, skipped by default). **Run this
+  against a real database before considering Phase 4 fully verified.**
+
+### 14.8 What Phase 4 explicitly did not build
+
+No SQLAlchemy ORM models, no repository, no application handler/mapper/
+dispatcher, no wiring into `runtime/dependencies.py`. The codebase's own
+convention (confirmed by reading `material_execution.py`) is raw SQL via
+SQLAlchemy Core inside repositories, not an ORM layer — so there's nothing
+to add here beyond the migration. That's Phase 5.

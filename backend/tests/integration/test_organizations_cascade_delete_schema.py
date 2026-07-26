@@ -42,6 +42,12 @@ _CHILD_TABLES_WITHOUT_ORG_ID = {
     ("budget_allocations", "budget_id"),
     ("labour_attendance_entries", "attendance_id"),
     ("interactions", "user_id"),
+    # 0371: the real Labour schema. labour_attendance_reports and
+    # workforce_workers both carry organization_id directly and are already
+    # covered by the generic test above; these two are the child tables that
+    # only reach organizations through their parent.
+    ("labour_attendance_lines", "report_id"),
+    ("labour_attendance_attachments", "report_id"),
 }
 
 
