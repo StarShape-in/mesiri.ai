@@ -112,6 +112,18 @@ class ReversalCandidate(Candidate):
     # runtime/reversal_query.py, not stated by the user.
 
 
+class AccountAdminCandidate(Candidate):
+    semantic_type: SemanticType = SemanticType.ACCOUNT_ADMIN
+    # Conventional keys: action (create/rename/deactivate, required to
+    # route -- see canonicalization/mapping.py), name (create), target_name
+    # (rename/deactivate), new_name (rename), account_type (create only,
+    # cash/bank). target_name/new_name/name are best-effort hints as stated
+    # -- resolved against the org's actual accounts by
+    # application/finance/resolution.py, exactly as the deterministic
+    # regex-parsed path already worked. ADMIN/FINANCE only -- see
+    # runtime/inbound_journey.py and application/finance/validation.py.
+
+
 # Registry so callers can build the right candidate from a semantic type.
 CANDIDATE_TYPES: dict[SemanticType, type[Candidate]] = {
     SemanticType.EXPENSE: ExpenseCandidate,
@@ -125,4 +137,5 @@ CANDIDATE_TYPES: dict[SemanticType, type[Candidate]] = {
     SemanticType.TRANSFER: TransferCandidate,
     SemanticType.PETTY_CASH: PettyCashCandidate,
     SemanticType.REVERSAL: ReversalCandidate,
+    SemanticType.ACCOUNT_ADMIN: AccountAdminCandidate,
 }

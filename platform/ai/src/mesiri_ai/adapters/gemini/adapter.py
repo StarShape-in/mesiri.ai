@@ -62,7 +62,7 @@ _EXTRACTION_PROMPT = (
     "Extract structured construction data from the text. Return strict JSON with "
     'keys: "semantic_type" (expense|equipment_usage|material_update|labour_update|'
     "general_site_update|general_question|whoami_question|inventory_query|"
-    "finance_query|transfer|petty_cash|reversal|unknown), "
+    "finance_query|transfer|petty_cash|reversal|account_admin|unknown), "
     '"fields" (object), "missing_fields" (array), '
     '"field_confidences" (object of field->0..1). '
     "Never invent values. quantity is always a plain number: strip approximation "
@@ -159,7 +159,28 @@ _EXTRACTION_PROMPT = (
     'word; infer it from what the user refers to, defaulting to "expense" '
     "if genuinely ambiguous, since that is the more common case. This "
     "always targets the single most recent record of that kind -- never "
-    "extract an amount, date, or description for it."
+    "extract an amount, date, or description for it.\n"
+    "- account_admin: action, name, target_name, new_name, account_type. "
+    "Use this type when the user wants to manage the organization's own "
+    "money accounts themselves (create a new account, rename one, or "
+    "deactivate one) -- never a specific transaction against one. action "
+    'MUST be exactly "create", "rename", or "deactivate" -- never any '
+    'other word. For "create": name is the new account\'s name (e.g. '
+    '"create a new account called Petrol Card" -> name "Petrol Card"); '
+    'account_type is "cash" or "bank" if stated, otherwise omit. For '
+    '"rename": target_name is the account\'s current name and new_name is '
+    'what it should become (e.g. "rename Main HDFC Bank Account to Office '
+    'Cash" -> target_name "Main HDFC Bank Account", new_name "Office '
+    'Cash"; "change the name of the main HDFC account to Alan Cash" -> '
+    'target_name "main HDFC account", new_name "Alan Cash"). For '
+    '"deactivate": target_name is the account to deactivate (e.g. '
+    '"deactivate Petrol Card" -> target_name "Petrol Card"). '
+    "target_name/new_name/name are best-effort hints as stated -- extract "
+    "them even if you're not sure they match a real account, they will be "
+    "matched against the organization's actual accounts afterwards. Never "
+    "confuse with transfer (moving money between accounts) or petty_cash "
+    "(money to/from a person) -- this only ever changes an account record "
+    "itself, never moves money."
 )
 
 

@@ -45,11 +45,13 @@ class CanonicalEventType(str, Enum):
     PETTY_CASH_RETURN_REQUESTED = "PettyCashReturnRequested"
     EXPENSE_REVERSAL_REQUESTED = "ExpenseReversalRequested"
     TRANSFER_REVERSAL_REQUESTED = "TransferReversalRequested"
-    # Deterministic (non-AI) command, never produced by canonicalization/
-    # extraction -- constructed directly by
-    # runtime/account_admin_journey.py when it recognizes a "create/rename/
-    # deactivate account" phrase. Present here (rather than skipping the
-    # enum) so PlannerDecisionV2.reason and telemetry are accurate.
+    # "create/rename/deactivate account". Two producers as of 2026-07-26:
+    # runtime/account_admin_journey.py constructs this directly (zero-token
+    # fast path) when its regex parser recognizes the exact phrasing;
+    # canonicalization/mapping.py's resolve_event_type also maps
+    # SemanticType.ACCOUNT_ADMIN here for everything else (other phrasing,
+    # voice, non-English) the AI pipeline understood. Both converge on the
+    # same WorkflowKey.ACCOUNT_ADMIN graph and the same role enforcement.
     ACCOUNT_ADMIN_REQUESTED = "AccountAdminRequested"
     CLARIFICATION_REQUIRED = "ClarificationRequired"
     UNRECOGNIZED = "Unrecognized"

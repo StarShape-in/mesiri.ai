@@ -23,6 +23,7 @@ class ManageMoneyAccountCommand(BaseModel):
     idempotency_key: str
     organization_id: str
     created_by: str
+    created_by_role: str | None = None
     action: str  # "create" | "rename" | "deactivate"
 
     # create

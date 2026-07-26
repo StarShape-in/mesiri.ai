@@ -56,6 +56,7 @@ _REQUIRED_FIELDS: dict[SemanticType, tuple[str, ...]] = {
     SemanticType.TRANSFER: ("amount",),
     SemanticType.PETTY_CASH: ("amount", "recipient_name"),
     SemanticType.REVERSAL: (),
+    SemanticType.ACCOUNT_ADMIN: ("action",),
     SemanticType.UNKNOWN: (),
 }
 

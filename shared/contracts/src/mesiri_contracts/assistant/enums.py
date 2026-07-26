@@ -76,4 +76,17 @@ class SemanticType(str, Enum):
     # picking among several, per the V1 scope in
     # docs/execution/FINANCE_MODULE_PLAN.md.
     REVERSAL = "reversal"
+    # Managing the org's own money accounts themselves -- create/rename/
+    # deactivate (e.g. "rename Main HDFC Bank Account to Office Cash") --
+    # never a transaction against one. Until 2026-07-26 this bypassed
+    # Understanding entirely (a hand-written English-only regex parser,
+    # runtime/account_admin_parser.py, still runs first as a zero-token fast
+    # path for the exact phrasing it recognizes); this semantic type is the
+    # AI-understood fallback for everything else -- other phrasing, voice,
+    # non-English -- the same as every other finance workflow. ADMIN/FINANCE
+    # only, enforced independently of Understanding (see
+    # runtime/inbound_journey.py and application/finance/validation.py) --
+    # this type alone existing here does not grant a lower-privileged role
+    # the ability to act on it.
+    ACCOUNT_ADMIN = "account_admin"
     UNKNOWN = "unknown"

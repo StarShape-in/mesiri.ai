@@ -12,7 +12,6 @@ import {
   Printer,
   Trash2,
   CheckCircle2,
-  AlertCircle,
   XCircle,
   Hash,
   Sparkles,
@@ -20,14 +19,21 @@ import {
   Building2,
   MapPin,
   ShieldCheck,
-  FileText,
-  DollarSign,
   ChevronRight,
 } from 'lucide-react'
 import { useToast } from '@/components/ui/toast-notification'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
+import { Separator } from '@/components/ui/separator'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 import {
   fetchExpenseApi,
   fetchAllExpenseAttachmentsApi,
@@ -76,7 +82,7 @@ function formatCurrency(amount: number): string {
   return new Intl.NumberFormat('en-IN', {
     style: 'currency',
     currency: 'INR',
-    maximumFractionDigits: 0,
+    maximumFractionDigits: 2,
   }).format(amount)
 }
 
@@ -103,16 +109,24 @@ export default function ExpenseDetailPage() {
     try {
       const data = await fetchExpenseApi(id)
       if (data) {
+        const amt = Number(data.amount) || 0
         setExpense({
           ...data,
+          amount: amt,
           created_by_name: data.created_by_name || 'Ramesh Kumar',
           created_by_role: data.created_by_role || 'SITE_ENGINEER',
           created_by_email: data.created_by_email || 'ramesh.k@mesiri.ai',
-          created_at: data.created_at || `${data.occurred_date} 14:32:05 IST`,
+          created_at: data.created_at || `${data.occurred_date} 14:32 IST`,
+          project_name: data.project_name || 'Hyperion Commercial Towers',
           project_code: data.project_code || 'PROJ-01',
+          site_name: data.site_name || 'Tower 2 North Wing Site',
+          category_name: data.category_name || 'General Operations',
+          vendor_name: data.vendor_name || 'Direct Payee',
+          account_name: data.account_name || 'Main Bank Account',
+          custodian_name: data.custodian_name || 'Finance Custodian',
           tax_rate: 18,
-          net_amount: Math.round(data.amount / 1.18),
-          tax_amount: Math.round(data.amount - data.amount / 1.18),
+          net_amount: Math.round((amt / 1.18) * 100) / 100,
+          tax_amount: Math.round((amt - amt / 1.18) * 100) / 100,
         })
       }
     } catch (err) {
@@ -121,30 +135,32 @@ export default function ExpenseDetailPage() {
       setExpense({
         id,
         expense_number: id.startsWith('exp_') ? id : `EXP-${id.slice(0, 8)}`,
-        amount: 4500,
+        amount: 246,
         currency: 'INR',
-        category_name: 'Fuel & Transportation',
-        category_id: 'cat_fuel',
-        description: 'Diesel fuel for 250kVA generator & Site Alpha excavator (Ref: IOCL Invoice #9021)',
-        vendor_name: 'IOCL Fuel Station (Indiranagar Pump #4)',
+        category_name: 'General Operations',
+        category_id: 'cat_gen',
+        description: 'Food and beverages: Tea, Toast White',
+        vendor_name: 'Direct Payee',
         occurred_date: today,
         created_by_name: 'Ramesh Kumar',
         created_by_role: 'SITE_ENGINEER',
         created_by_email: 'ramesh.k@mesiri.ai',
-        created_at: `${today} 14:32:05 IST`,
+        created_at: `${today} 14:32 IST`,
         payment_status: 'paid',
         workflow_status: 'confirmed',
         source: 'whatsapp',
         project_name: 'Hyperion Commercial Towers',
         project_code: 'PROJ-01',
         site_name: 'Tower 2 North Wing Site',
+        account_name: 'Main Bank Account',
+        custodian_name: 'Finance Custodian',
         payment_method: 'Bank Transfer',
         tax_rate: 18,
-        net_amount: 3814,
-        tax_amount: 686,
+        net_amount: 208,
+        tax_amount: 38,
         correlation_id: `corr_${id.slice(0, 8)}`,
         whatsapp_sender: '+919876543210',
-        raw_message_text: 'Spent ₹4,500 for diesel fuel at IOCL pump #4 for Site Alpha generator',
+        raw_message_text: 'Spent ₹246 for Tea and White Toast for site engineering meeting',
       })
     } finally {
       setLoading(false)
@@ -192,20 +208,20 @@ export default function ExpenseDetailPage() {
 
   if (loading) {
     return (
-      <div className="py-24 text-center text-xs text-muted-foreground flex flex-col items-center justify-center gap-3">
-        <Receipt className="size-10 text-emerald-500 animate-pulse" />
-        <span className="font-semibold text-foreground">Loading executive voucher details...</span>
+      <div className="py-20 text-center text-xs text-muted-foreground flex flex-col items-center justify-center gap-2">
+        <Receipt className="size-8 text-emerald-500 animate-pulse" />
+        <span className="font-semibold text-foreground">Loading disbursement voucher...</span>
       </div>
     )
   }
 
   if (!expense) {
     return (
-      <div className="space-y-4 text-xs">
+      <div className="space-y-3 text-xs">
         <Link to="/finance/expenses" className="flex items-center gap-1 text-muted-foreground hover:text-foreground font-semibold">
           <ArrowLeft className="size-3.5" /> Back to Expenses List
         </Link>
-        <Card className="p-12 text-center text-muted-foreground">
+        <Card className="p-8 text-center text-muted-foreground">
           Expense voucher record not found.
         </Card>
       </div>
@@ -216,407 +232,377 @@ export default function ExpenseDetailPage() {
   const isVoided = expense.workflow_status === 'reversed' || expense.workflow_status === 'voided'
 
   return (
-    <div className="flex flex-col gap-6 w-full max-w-full relative pb-20">
-      {/* Top Navigation & Executive Actions Toolbar */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b pb-4">
+    <div className="flex flex-col gap-4 w-full max-w-full relative pb-10">
+      {/* Compact Top Header & Action Controls */}
+      <div className="flex items-center justify-between gap-3 border-b pb-3">
         <div className="flex items-center gap-2 text-xs">
           <Button
             size="sm"
             variant="ghost"
-            className="h-8 text-xs font-semibold gap-1 text-muted-foreground hover:text-foreground"
+            className="h-7 text-xs font-semibold gap-1 text-muted-foreground hover:text-foreground px-2"
             onClick={() => navigate('/finance/expenses')}
           >
-            <ArrowLeft className="size-4" />
+            <ArrowLeft className="size-3.5" />
             Expenses
           </Button>
 
-          <span className="text-muted-foreground font-mono">/</span>
+          <span className="text-muted-foreground font-mono text-xs">/</span>
 
-          <span className="font-mono text-xs font-semibold text-foreground">
-            {expense.expense_number || expense.id.slice(0, 8)}
+          <span className="font-mono text-xs font-bold text-foreground">
+            Voucher #{expense.expense_number || expense.id.slice(0, 8)}
           </span>
         </div>
 
-        {/* Action Controls */}
-        <div className="flex items-center gap-2">
+        {/* Compact Action Buttons */}
+        <div className="flex items-center gap-1.5">
+          {receiptUrl && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-[11px] font-semibold gap-1"
+              onClick={() => window.open(receiptUrl, '_blank')}
+            >
+              <ExternalLink className="size-3" /> Receipt
+            </Button>
+          )}
           <Button
             size="sm"
             variant="outline"
-            className="h-8 text-xs font-semibold gap-1.5 shadow-2xs"
+            className="h-7 text-[11px] font-semibold gap-1 shadow-2xs"
             onClick={handlePrint}
           >
-            <Printer className="size-3.5 text-muted-foreground" />
-            Print Statement
+            <Printer className="size-3 text-muted-foreground" /> Print
           </Button>
           {!isVoided && (
             <Button
               size="sm"
               variant="outline"
               disabled={voiding}
-              className="h-8 text-xs font-semibold gap-1.5 text-rose-600 border-rose-500/30 hover:bg-rose-500/10 shadow-2xs"
+              className="h-7 text-[11px] font-semibold gap-1 text-rose-600 border-rose-500/30 hover:bg-rose-500/10 shadow-2xs"
               onClick={handleVoidExpense}
             >
-              <Trash2 className="size-3.5" />
-              {voiding ? 'Voiding...' : 'Void Voucher'}
+              <Trash2 className="size-3" />
+              {voiding ? 'Voiding...' : 'Void'}
             </Button>
           )}
         </div>
       </div>
 
-      {/* Hero Financial Voucher Card */}
-      <Card className="p-6 border shadow-xs bg-gradient-to-r from-card via-card to-muted/30 relative overflow-hidden flex flex-col md:flex-row md:items-center justify-between gap-6">
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[10px] font-mono uppercase px-2 py-0.5">
-              Financial Voucher
-            </Badge>
-            {isConfirmed ? (
-              <Badge className="bg-emerald-600 text-white text-[10px] gap-1 font-semibold">
-                <CheckCircle2 className="size-3" /> Confirmed
-              </Badge>
-            ) : isVoided ? (
-              <Badge variant="destructive" className="text-[10px] gap-1 font-semibold">
-                <XCircle className="size-3" /> Voided / Reversed
-              </Badge>
-            ) : (
-              <Badge variant="outline" className="text-[10px] gap-1 font-semibold">
-                <AlertCircle className="size-3" /> {expense.workflow_status}
-              </Badge>
-            )}
-          </div>
-
-          <div>
-            <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground block mb-0.5">
-              Total Disbursement Amount
-            </span>
-            <div className="text-4xl font-black font-mono tracking-tight text-foreground">
-              {formatCurrency(expense.amount)}
-            </div>
-          </div>
-
-          <p className="text-xs text-muted-foreground font-medium flex items-center gap-2">
-            <span>Occurred: <strong className="text-foreground font-mono">{expense.occurred_date}</strong></span>
-            <span>•</span>
-            <span>Method: <strong className="text-foreground">{expense.payment_method || 'Bank Transfer'}</strong></span>
-          </p>
-        </div>
-
-        {/* Status Badges Stack */}
-        <div className="flex flex-col items-start md:items-end gap-2 shrink-0">
-          <Badge
-            className={
-              expense.payment_status === 'paid'
-                ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-xs px-3 py-1 font-bold'
-                : expense.payment_status === 'partially_paid'
-                ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 text-xs px-3 py-1 font-bold'
-                : 'bg-rose-500/15 text-rose-700 dark:text-rose-300 text-xs px-3 py-1 font-bold'
-            }
-          >
-            Payment Status: {expense.payment_status === 'paid' ? 'Paid' : expense.payment_status === 'partially_paid' ? 'Partial' : 'Unpaid'}
-          </Badge>
-          <span className="text-[11px] text-muted-foreground font-mono">
-            Voucher Ref: {expense.expense_number}
-          </span>
-        </div>
-      </Card>
-
-      {/* Main 2-Column Responsive Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column (65% Width): Receipt, Notes, Tax Breakdown, Audit Timeline */}
-        <div className="lg:col-span-2 space-y-6">
-          {/* High-Resolution Receipt Inspector Card */}
-          <Card className="p-5 border shadow-2xs space-y-3 bg-card">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="p-1.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                  <Receipt className="size-4" />
+      {/* Main 2-Column Layout (60% Left Voucher Card / 40% Right Compact Sidebar) */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+        {/* Left Voucher Document Card (3 / 5Cols = 60% Width) */}
+        <div className="lg:col-span-3 space-y-4">
+          <Card className="p-4 border shadow-2xs bg-card space-y-4">
+            {/* Voucher Header & Hero Amount Banner */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-3">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <Badge variant="outline" className="text-[10px] font-mono uppercase px-1.5 py-0 bg-muted/40">
+                    Official Voucher
+                  </Badge>
+                  {isConfirmed ? (
+                    <Badge className="bg-emerald-600 text-white text-[9px] px-1.5 py-0 gap-1 font-semibold">
+                      <CheckCircle2 className="size-2.5" /> Confirmed
+                    </Badge>
+                  ) : isVoided ? (
+                    <Badge variant="destructive" className="text-[9px] px-1.5 py-0 gap-1 font-semibold">
+                      <XCircle className="size-2.5" /> Voided
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-[9px] px-1.5 py-0">
+                      {expense.workflow_status}
+                    </Badge>
+                  )}
                 </div>
-                <h3 className="text-xs font-bold text-foreground">Attached Receipt Photo & Document</h3>
+                <h2 className="text-sm font-bold text-foreground">
+                  Disbursement Voucher #{expense.expense_number}
+                </h2>
+                <span className="text-[11px] text-muted-foreground font-mono">
+                  Recorded: {expense.occurred_date}
+                </span>
               </div>
 
-              {receiptUrl && (
-                <div className="flex items-center gap-2">
-                  <a
-                    href={receiptUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-xs font-semibold text-emerald-600 hover:text-emerald-700 flex items-center gap-1"
-                  >
-                    <ExternalLink className="size-3.5" /> Full Resolution
-                  </a>
+              <div className="sm:text-right">
+                <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">
+                  Disbursement Amount
+                </span>
+                <div className="text-2xl font-black font-mono tracking-tight text-foreground">
+                  {formatCurrency(expense.amount)}
                 </div>
+                <Badge
+                  className={
+                    expense.payment_status === 'paid'
+                      ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold px-2 py-0 mt-0.5'
+                      : 'bg-rose-500/15 text-rose-700 dark:text-rose-300 text-[10px] font-bold px-2 py-0 mt-0.5'
+                  }
+                >
+                  {expense.payment_status === 'paid' ? 'PAID' : 'UNPAID'} • {expense.payment_method || 'Bank Transfer'}
+                </Badge>
+              </div>
+            </div>
+
+            {/* Line Item & GST Tax Table */}
+            <div className="space-y-1.5">
+              <span className="text-[11px] font-bold text-foreground uppercase tracking-wider block">
+                Line Items & Financial Breakdown
+              </span>
+              <div className="border rounded-md overflow-hidden bg-background">
+                <Table className="text-xs">
+                  <TableHeader className="bg-muted/40">
+                    <TableRow className="h-7 hover:bg-transparent">
+                      <TableHead className="h-7 py-1 text-foreground font-bold">Item Description</TableHead>
+                      <TableHead className="h-7 py-1 text-right font-bold">Net Base</TableHead>
+                      <TableHead className="h-7 py-1 text-right font-bold">GST ({expense.tax_rate || 18}%)</TableHead>
+                      <TableHead className="h-7 py-1 text-right font-bold">Total Gross</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    <TableRow className="h-9 hover:bg-muted/20">
+                      <TableCell className="py-1.5 font-medium text-foreground">
+                        {expense.description || 'General Disbursement Line Item'}
+                      </TableCell>
+                      <TableCell className="py-1.5 text-right font-mono">
+                        {formatCurrency(expense.net_amount || Math.round((expense.amount / 1.18) * 100) / 100)}
+                      </TableCell>
+                      <TableCell className="py-1.5 text-right font-mono text-muted-foreground">
+                        {formatCurrency(expense.tax_amount || Math.round((expense.amount - expense.amount / 1.18) * 100) / 100)}
+                      </TableCell>
+                      <TableCell className="py-1.5 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                        {formatCurrency(expense.amount)}
+                      </TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+
+            {/* Connected Entities 2x2 Matrix Grid */}
+            <div className="space-y-1.5 pt-1">
+              <span className="text-[11px] font-bold text-foreground uppercase tracking-wider block">
+                Connected Financial Entities Matrix
+              </span>
+              <div className="grid grid-cols-2 gap-2">
+                {/* Category Pill */}
+                <div
+                  onClick={() => setCategorySheetId(expense.category_id || expense.category_name)}
+                  className="p-2.5 rounded-lg border bg-card/60 hover:bg-muted/30 hover:border-indigo-500/40 cursor-pointer transition-all flex items-center justify-between group"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="p-1 rounded bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 shrink-0">
+                      <Tag className="size-3.5" />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="text-[9px] text-muted-foreground uppercase font-bold tracking-wider block">Category</span>
+                      <span className="font-bold text-xs text-foreground group-hover:text-indigo-600 transition-colors truncate block">
+                        {expense.category_name || 'General Operations'}
+                      </span>
+                    </div>
+                  </div>
+                  <ChevronRight className="size-3.5 text-muted-foreground group-hover:text-indigo-600 shrink-0" />
+                </div>
+
+                {/* Vendor Pill */}
+                <div
+                  onClick={() => setVendorSheetId(expense.vendor_name)}
+                  className="p-2.5 rounded-lg border bg-card/60 hover:bg-muted/30 hover:border-emerald-500/40 cursor-pointer transition-all flex items-center justify-between group"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="p-1 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 shrink-0">
+                      <Store className="size-3.5" />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="text-[9px] text-muted-foreground uppercase font-bold tracking-wider block">Vendor / Payee</span>
+                      <span className="font-bold text-xs text-foreground group-hover:text-emerald-600 transition-colors truncate block">
+                        {expense.vendor_name || 'Direct Payee'}
+                      </span>
+                    </div>
+                  </div>
+                  <ChevronRight className="size-3.5 text-muted-foreground group-hover:text-emerald-600 shrink-0" />
+                </div>
+
+                {/* Paid Account Pill */}
+                <div
+                  onClick={() => setAccountSheetId(expense.account_id || 'main')}
+                  className="p-2.5 rounded-lg border bg-card/60 hover:bg-muted/30 hover:border-blue-500/40 cursor-pointer transition-all flex items-center justify-between group"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="p-1 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400 shrink-0">
+                      <Landmark className="size-3.5" />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="text-[9px] text-muted-foreground uppercase font-bold tracking-wider block">Paid Account</span>
+                      <span className="font-bold text-xs text-foreground group-hover:text-blue-600 transition-colors truncate block">
+                        {expense.account_name || 'Main Bank Account'}
+                      </span>
+                    </div>
+                  </div>
+                  <ChevronRight className="size-3.5 text-muted-foreground group-hover:text-blue-600 shrink-0" />
+                </div>
+
+                {/* Custodian Pill */}
+                <div
+                  onClick={() => setCustodianSheetId(expense.custodian_name || 'Finance Custodian')}
+                  className="p-2.5 rounded-lg border bg-card/60 hover:bg-muted/30 hover:border-amber-500/40 cursor-pointer transition-all flex items-center justify-between group"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="p-1 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 shrink-0">
+                      <User className="size-3.5" />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="text-[9px] text-muted-foreground uppercase font-bold tracking-wider block">Custodian</span>
+                      <span className="font-bold text-xs text-foreground group-hover:text-amber-600 transition-colors truncate block">
+                        {expense.custodian_name || 'Finance Custodian'}
+                      </span>
+                    </div>
+                  </div>
+                  <ChevronRight className="size-3.5 text-muted-foreground group-hover:text-amber-600 shrink-0" />
+                </div>
+              </div>
+            </div>
+
+            {/* Compact Voucher Lifecycle Audit Timeline */}
+            <div className="space-y-1.5 pt-1">
+              <span className="text-[11px] font-bold text-foreground uppercase tracking-wider flex items-center gap-1">
+                <ShieldCheck className="size-3.5 text-emerald-500" />
+                Voucher Lifecycle Audit
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 p-2.5 rounded-lg border bg-muted/20 text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="size-2 rounded-full bg-emerald-500 shrink-0" />
+                  <div className="min-w-0">
+                    <span className="font-semibold block text-foreground truncate">1. Ingested</span>
+                    <span className="text-[10px] text-muted-foreground block truncate">{expense.source === 'whatsapp' ? 'WhatsApp Assistant' : 'Dashboard'}</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="size-2 rounded-full bg-emerald-500 shrink-0" />
+                  <div className="min-w-0">
+                    <span className="font-semibold block text-foreground truncate">2. AI Extracted</span>
+                    <span className="text-[10px] text-emerald-600 block truncate">98.4% Confidence</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="size-2 rounded-full bg-emerald-500 shrink-0" />
+                  <div className="min-w-0">
+                    <span className="font-semibold block text-foreground truncate">3. Ledger Confirmed</span>
+                    <span className="text-[10px] text-muted-foreground block truncate">PostgreSQL DB</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Card>
+        </div>
+
+        {/* Right Sidebar Stack (2 / 5Cols = 40% Width) */}
+        <div className="lg:col-span-2 space-y-4">
+          {/* Creator & Scope Audit Card */}
+          <Card className="p-3.5 border shadow-2xs space-y-3 bg-card">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
+              Creator & Project Scope Audit
+            </span>
+
+            {/* Creator Row */}
+            <div className="flex items-center gap-2.5">
+              <div className="size-8 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 flex items-center justify-center font-bold text-xs shrink-0">
+                {(expense.created_by_name || 'R').charAt(0)}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <h4 className="font-bold text-xs text-foreground truncate">
+                    {expense.created_by_name || 'System User'}
+                  </h4>
+                  <Badge variant="outline" className="text-[9px] px-1 py-0 font-mono">
+                    {expense.created_by_role || 'STAFF'}
+                  </Badge>
+                </div>
+                <span className="text-[10px] text-muted-foreground block truncate">{expense.created_by_email}</span>
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* Scope Details */}
+            <div className="space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground flex items-center gap-1">
+                  <Building2 className="size-3.5 text-amber-500 shrink-0" /> Project:
+                </span>
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="font-semibold text-foreground truncate">{expense.project_name}</span>
+                  <Badge variant="outline" className="font-mono text-[9px] shrink-0">
+                    {expense.project_code || 'PROJ-01'}
+                  </Badge>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground flex items-center gap-1">
+                  <MapPin className="size-3.5 text-emerald-500 shrink-0" /> Site:
+                </span>
+                <span className="font-medium text-foreground truncate">{expense.site_name}</span>
+              </div>
+            </div>
+          </Card>
+
+          {/* Receipt Thumbnail Frame Card */}
+          <Card className="p-3.5 border shadow-2xs space-y-2 bg-card">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                <Receipt className="size-3.5 text-emerald-500" /> Attached Receipt Photo
+              </span>
+              {receiptUrl && (
+                <a
+                  href={receiptUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[11px] font-semibold text-emerald-600 hover:text-emerald-700 flex items-center gap-0.5"
+                >
+                  <ExternalLink className="size-3" /> Full View
+                </a>
               )}
             </div>
 
             {receiptUrl ? (
-              <div className="relative rounded-lg overflow-hidden border bg-black/95 max-h-96 flex items-center justify-center p-3 group">
+              <div
+                onClick={() => window.open(receiptUrl, '_blank')}
+                className="relative rounded border bg-black/90 h-32 flex items-center justify-center p-1.5 cursor-pointer hover:border-emerald-500/50 transition-all group overflow-hidden"
+              >
                 <img
                   src={receiptUrl}
-                  alt="Attached Receipt Photo"
-                  className="max-h-96 w-auto object-contain rounded transition-transform group-hover:scale-102"
+                  alt="Receipt Preview"
+                  className="max-h-full w-auto object-contain rounded group-hover:scale-105 transition-transform"
                 />
               </div>
             ) : (
-              <div className="p-10 border border-dashed rounded-lg text-center text-muted-foreground flex flex-col items-center justify-center gap-1 bg-muted/10 text-xs">
-                <Receipt className="size-8 text-muted-foreground/30 mb-1" />
-                <span className="font-semibold text-foreground">No receipt photo attached</span>
-                <span>Captured receipts via WhatsApp or Dashboard will appear here.</span>
+              <div className="p-4 border border-dashed rounded text-center text-muted-foreground text-xs bg-muted/10">
+                No receipt attachment found.
               </div>
             )}
           </Card>
 
-          {/* Expense Purpose & Line Item Notes Card */}
-          <Card className="p-5 border shadow-2xs space-y-2 bg-card">
-            <h3 className="text-xs font-bold text-foreground flex items-center gap-1.5">
-              <FileText className="size-4 text-indigo-500" />
-              Expense Purpose & Line Item Description
-            </h3>
-            <div className="p-3.5 rounded-lg border-l-4 border-indigo-500 bg-muted/20 text-xs text-foreground font-medium leading-relaxed">
-              {expense.description || 'No description recorded for this financial entry.'}
-            </div>
-          </Card>
-
-          {/* GST Tax & Financial Breakdown Card */}
-          <Card className="p-5 border shadow-2xs space-y-3 bg-card">
-            <h3 className="text-xs font-bold text-foreground flex items-center gap-1.5">
-              <DollarSign className="size-4 text-emerald-500" />
-              GST Tax & Financial Breakdown
-            </h3>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3.5 rounded-lg border bg-muted/20 text-xs">
-              <div>
-                <span className="text-[10px] text-muted-foreground font-semibold uppercase block">Net Base Amount</span>
-                <span className="font-mono font-bold text-foreground">{formatCurrency(expense.net_amount || Math.round(expense.amount / 1.18))}</span>
-              </div>
-              <div>
-                <span className="text-[10px] text-muted-foreground font-semibold uppercase block">Applied GST Rate</span>
-                <Badge variant="outline" className="font-mono text-[10px] px-1.5 py-0 mt-0.5">
-                  {expense.tax_rate || 18}% GST
-                </Badge>
-              </div>
-              <div>
-                <span className="text-[10px] text-muted-foreground font-semibold uppercase block">Calculated Tax</span>
-                <span className="font-mono font-bold text-foreground">{formatCurrency(expense.tax_amount || Math.round(expense.amount - expense.amount / 1.18))}</span>
-              </div>
-              <div>
-                <span className="text-[10px] text-muted-foreground font-semibold uppercase block">Gross Total</span>
-                <span className="font-mono font-black text-emerald-600 dark:text-emerald-400">{formatCurrency(expense.amount)}</span>
-              </div>
-            </div>
-          </Card>
-
-          {/* Step-by-Step Audit Trail Timeline */}
-          <Card className="p-5 border shadow-2xs space-y-4 bg-card">
-            <h3 className="text-xs font-bold text-foreground flex items-center gap-1.5">
-              <ShieldCheck className="size-4 text-emerald-500" />
-              Voucher Lifecycle & Audit Trail Timeline
-            </h3>
-
-            <div className="relative pl-6 space-y-4 before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-border">
-              {/* Step 1: Ingestion */}
-              <div className="relative text-xs">
-                <div className="absolute -left-6 top-0.5 size-4 rounded-full bg-emerald-500 text-white flex items-center justify-center text-[10px] font-bold">
-                  ✓
-                </div>
-                <div className="font-bold text-foreground">
-                  Ingested via {expense.source === 'whatsapp' ? 'WhatsApp Assistant' : 'Web Dashboard'}
-                </div>
-                <div className="text-[11px] text-muted-foreground">
-                  Recorded by <span className="font-semibold text-foreground">{expense.created_by_name || 'System User'}</span> on {expense.created_at || expense.occurred_date}
-                </div>
-              </div>
-
-              {/* Step 2: AI Parsing */}
-              {expense.source === 'whatsapp' && (
-                <div className="relative text-xs">
-                  <div className="absolute -left-6 top-0.5 size-4 rounded-full bg-emerald-500 text-white flex items-center justify-center text-[10px] font-bold">
-                    ✓
-                  </div>
-                  <div className="font-bold text-foreground">
-                    Gemini AI Extraction & Structured Validation
-                  </div>
-                  <div className="text-[11px] text-muted-foreground">
-                    Parsed with <span className="font-semibold text-emerald-600">98.4% confidence score</span> (Amount: ₹{expense.amount}, Category: {expense.category_name})
-                  </div>
-                </div>
-              )}
-
-              {/* Step 3: Ledger Execution */}
-              <div className="relative text-xs">
-                <div className="absolute -left-6 top-0.5 size-4 rounded-full bg-emerald-500 text-white flex items-center justify-center text-[10px] font-bold">
-                  ✓
-                </div>
-                <div className="font-bold text-foreground">
-                  PostgreSQL Financial Ledger Execution
-                </div>
-                <div className="text-[11px] text-muted-foreground">
-                  Debited from Money Account <span className="font-semibold text-foreground">{expense.account_name || 'Main Bank Account'}</span>
-                </div>
-              </div>
-            </div>
-          </Card>
-        </div>
-
-        {/* Right Sidebar Column (35% Width): Creator, Scope, Entities, WhatsApp Trace */}
-        <div className="space-y-4">
-          {/* Creator & Governance Panel */}
-          <Card className="p-4 border shadow-2xs space-y-3 bg-card">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
-              Creator & Governance Audit
-            </span>
-
-            <div className="flex items-center gap-3">
-              <div className="size-10 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 flex items-center justify-center font-bold text-sm shrink-0">
-                {(expense.created_by_name || 'R').charAt(0)}
-              </div>
-              <div className="min-w-0 flex-1">
-                <h4 className="font-bold text-xs text-foreground truncate">
-                  {expense.created_by_name || 'System User'}
-                </h4>
-                <div className="flex items-center gap-1.5 mt-0.5">
-                  <Badge variant="outline" className="text-[9px] px-1 py-0 font-mono">
-                    {expense.created_by_role || 'STAFF'}
-                  </Badge>
-                  <span className="text-[10px] text-muted-foreground truncate">{expense.created_by_email}</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="pt-2 border-t text-[11px] text-muted-foreground flex items-center justify-between">
-              <span>Timestamp:</span>
-              <span className="font-mono font-semibold text-foreground">{expense.created_at || expense.occurred_date}</span>
-            </div>
-          </Card>
-
-          {/* Project & Construction Site Scope Panel */}
-          <Card className="p-4 border shadow-2xs space-y-3 bg-card">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
-              Project & Construction Site Scope
-            </span>
-
-            <div className="space-y-2 text-xs">
-              <div className="p-2.5 rounded-lg border bg-muted/20 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Building2 className="size-4 text-amber-500" />
-                  <span className="font-semibold text-foreground">{expense.project_name}</span>
-                </div>
-                <Badge variant="outline" className="font-mono text-[9px]">
-                  {expense.project_code || 'PROJ'}
-                </Badge>
-              </div>
-
-              <div className="p-2.5 rounded-lg border bg-muted/20 flex items-center gap-2 text-muted-foreground">
-                <MapPin className="size-4 text-emerald-500 shrink-0" />
-                <span className="font-medium text-foreground">{expense.site_name}</span>
-              </div>
-            </div>
-          </Card>
-
-          {/* Connected Financial Entities Navigation Stack */}
-          <div className="space-y-2">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block px-1">
-              Connected Financial Entities
-            </span>
-
-            {/* Category Card */}
-            <Card
-              onClick={() => setCategorySheetId(expense.category_id || expense.category_name)}
-              className="p-3 border hover:border-indigo-500/50 cursor-pointer transition-all flex items-center justify-between group bg-card"
-            >
-              <div className="flex items-center gap-2.5">
-                <div className="p-1.5 rounded bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
-                  <Tag className="size-4" />
-                </div>
-                <div>
-                  <span className="text-[9px] text-muted-foreground uppercase font-bold tracking-wider block">Category</span>
-                  <h4 className="font-bold text-xs text-foreground group-hover:text-indigo-600 transition-colors">
-                    {expense.category_name || 'General Operations'}
-                  </h4>
-                </div>
-              </div>
-              <ChevronRight className="size-4 text-muted-foreground group-hover:text-indigo-600 transition-colors" />
-            </Card>
-
-            {/* Vendor Card */}
-            <Card
-              onClick={() => setVendorSheetId(expense.vendor_name)}
-              className="p-3 border hover:border-emerald-500/50 cursor-pointer transition-all flex items-center justify-between group bg-card"
-            >
-              <div className="flex items-center gap-2.5">
-                <div className="p-1.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                  <Store className="size-4" />
-                </div>
-                <div>
-                  <span className="text-[9px] text-muted-foreground uppercase font-bold tracking-wider block">Vendor / Payee</span>
-                  <h4 className="font-bold text-xs text-foreground group-hover:text-emerald-600 transition-colors">
-                    {expense.vendor_name || 'Direct Payee'}
-                  </h4>
-                </div>
-              </div>
-              <ChevronRight className="size-4 text-muted-foreground group-hover:text-emerald-600 transition-colors" />
-            </Card>
-
-            {/* Paid Account Card */}
-            <Card
-              onClick={() => setAccountSheetId(expense.account_id || 'main')}
-              className="p-3 border hover:border-blue-500/50 cursor-pointer transition-all flex items-center justify-between group bg-card"
-            >
-              <div className="flex items-center gap-2.5">
-                <div className="p-1.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400">
-                  <Landmark className="size-4" />
-                </div>
-                <div>
-                  <span className="text-[9px] text-muted-foreground uppercase font-bold tracking-wider block">Paid Money Account</span>
-                  <h4 className="font-bold text-xs text-foreground group-hover:text-blue-600 transition-colors">
-                    {expense.account_name || 'Main Bank Account'}
-                  </h4>
-                </div>
-              </div>
-              <ChevronRight className="size-4 text-muted-foreground group-hover:text-blue-600 transition-colors" />
-            </Card>
-
-            {/* Custodian Card */}
-            <Card
-              onClick={() => setCustodianSheetId(expense.custodian_name || 'Finance Custodian')}
-              className="p-3 border hover:border-amber-500/50 cursor-pointer transition-all flex items-center justify-between group bg-card"
-            >
-              <div className="flex items-center gap-2.5">
-                <div className="p-1.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400">
-                  <User className="size-4" />
-                </div>
-                <div>
-                  <span className="text-[9px] text-muted-foreground uppercase font-bold tracking-wider block">Custodian / Manager</span>
-                  <h4 className="font-bold text-xs text-foreground group-hover:text-amber-600 transition-colors">
-                    {expense.custodian_name || 'Finance Custodian'}
-                  </h4>
-                </div>
-              </div>
-              <ChevronRight className="size-4 text-muted-foreground group-hover:text-amber-600 transition-colors" />
-            </Card>
-          </div>
-
-          {/* WhatsApp Channel Audit Trace Card */}
+          {/* WhatsApp Channel Audit Trace Box */}
           {(expense.correlation_id || expense.whatsapp_sender) && (
-            <Card className="p-4 border border-emerald-500/30 bg-emerald-500/5 space-y-3">
+            <Card className="p-3.5 border border-emerald-500/30 bg-emerald-500/5 space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5">
-                  <MessageSquare className="size-4 text-emerald-500" />
-                  WhatsApp Ingestion Trace
+                <span className="text-xs font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-1">
+                  <MessageSquare className="size-3.5 text-emerald-500" /> WhatsApp Ingestion
                 </span>
-                <Badge className="bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 text-[9px]">
-                  <Sparkles className="size-3 mr-1" />
-                  98.4% Confidence
+                <Badge className="bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 text-[9px] px-1.5 py-0">
+                  <Sparkles className="size-2.5 mr-0.5" /> 98.4% AI
                 </Badge>
               </div>
 
               {expense.whatsapp_sender && (
-                <div className="text-xs text-muted-foreground flex items-center gap-2 font-mono">
-                  <Phone className="size-3.5 text-emerald-500" />
+                <div className="text-[11px] text-muted-foreground font-mono flex items-center gap-1">
+                  <Phone className="size-3 text-emerald-500" />
                   <span>Sender: {expense.whatsapp_sender}</span>
                 </div>
               )}
 
               {expense.raw_message_text && (
-                <div className="p-2.5 rounded bg-background border text-[11px] font-mono italic text-muted-foreground">
+                <div className="p-2 rounded bg-background border text-[11px] font-mono italic text-muted-foreground">
                   "{expense.raw_message_text}"
                 </div>
               )}
@@ -625,11 +611,10 @@ export default function ExpenseDetailPage() {
                 <Button
                   size="sm"
                   variant="outline"
-                  className="w-full h-7 text-xs font-mono gap-1 text-emerald-600 border-emerald-500/40 hover:bg-emerald-500/10"
+                  className="w-full h-6 text-[10px] font-mono gap-1 text-emerald-600 border-emerald-500/40 hover:bg-emerald-500/10"
                   onClick={() => setWhatsappTraceId(expense.correlation_id!)}
                 >
-                  <Hash className="size-3.5" />
-                  Inspect Correlation ID ({expense.correlation_id.slice(0, 10)}...)
+                  <Hash className="size-3" /> Trace #{expense.correlation_id.slice(0, 10)}...
                 </Button>
               )}
             </Card>
@@ -637,7 +622,7 @@ export default function ExpenseDetailPage() {
         </div>
       </div>
 
-      {/* Connected Sub-sheets */}
+      {/* Sub-sheets */}
       <AccountDetailSheet
         open={!!accountSheetId}
         onOpenChange={(op) => !op && setAccountSheetId(null)}

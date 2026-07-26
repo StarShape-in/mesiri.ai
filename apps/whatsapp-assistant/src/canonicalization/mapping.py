@@ -20,6 +20,7 @@ _SIMPLE_EVENT_TYPE: dict[SemanticType, CanonicalEventType] = {
     SemanticType.WHOAMI_QUESTION: CanonicalEventType.IDENTITY_LOOKUP_REQUESTED,
     SemanticType.INVENTORY_QUERY: CanonicalEventType.INVENTORY_QUERY_ASKED,
     SemanticType.TRANSFER: CanonicalEventType.TRANSFER_REQUESTED,
+    SemanticType.ACCOUNT_ADMIN: CanonicalEventType.ACCOUNT_ADMIN_REQUESTED,
 }
 
 # MATERIAL_UPDATE is the one semantic type that splits by the candidate's
@@ -81,6 +82,17 @@ REQUIRED_FIELDS: dict[CanonicalEventType, tuple[str, ...]] = {
     # stated by the user.
     CanonicalEventType.EXPENSE_REVERSAL_REQUESTED: (),
     CanonicalEventType.TRANSFER_REVERSAL_REQUESTED: (),
+    # Only `action` -- the action-specific fields (name / target_name+
+    # new_name / target_name) can't be expressed here since one
+    # CanonicalEventType covers all three actions (see resolve_event_type's
+    # docstring -- account_admin deliberately does NOT split by action the
+    # way MATERIAL_UPDATE/PETTY_CASH/REVERSAL split by their own field,
+    # since all three actions share one workflow with no per-action
+    # routing need). workflows/account_admin/nodes.py's build_draft checks
+    # action-specific completeness itself and asks for what's missing,
+    # mirroring reverse/nodes.py's own "nothing to reverse" completeness
+    # check.
+    CanonicalEventType.ACCOUNT_ADMIN_REQUESTED: ("action",),
     CanonicalEventType.CLARIFICATION_REQUIRED: (),
     CanonicalEventType.UNRECOGNIZED: (),
 }

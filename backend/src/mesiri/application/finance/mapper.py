@@ -18,6 +18,7 @@ def build_command(confirmed: ConfirmedActionV2) -> ManageMoneyAccountCommand:
         idempotency_key=confirmed.workflow_instance_id,
         organization_id=draft.organization_id,
         created_by=confirmed.confirmed_by_user_id,
+        created_by_role=fields.get("created_by_role"),
         action=str(fields.get("action", "")),
         name=fields.get("name"),
         account_type=str(fields.get("account_type") or "cash"),
