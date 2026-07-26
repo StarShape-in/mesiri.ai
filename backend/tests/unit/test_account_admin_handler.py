@@ -140,7 +140,9 @@ async def test_handle_confirmed_maps_and_persists_end_to_end():
     handler = ManageMoneyAccountHandler(repo, db=FakeDatabase(), resolver=FakeAccountLookupResolver())
 
     result = await handler.handle_confirmed(
-        _confirmed({"action": "create", "name": "Site Cash", "account_type": "cash"})
+        _confirmed(
+            {"action": "create", "name": "Site Cash", "account_type": "cash", "created_by_role": "ADMIN"}
+        )
     )
 
     assert result.status == ExecutionStatus.SUCCEEDED
@@ -152,7 +154,7 @@ async def test_handle_confirmed_maps_and_persists_end_to_end():
 async def test_handle_confirmed_replays_on_repeat_workflow_instance_id():
     repo = FakeAccountAdminExecutionRepository()
     handler = ManageMoneyAccountHandler(repo, db=FakeDatabase(), resolver=FakeAccountLookupResolver())
-    confirmed = _confirmed({"action": "create", "name": "Site Cash"})
+    confirmed = _confirmed({"action": "create", "name": "Site Cash", "created_by_role": "ADMIN"})
 
     first = await handler.handle_confirmed(confirmed)
     second = await handler.handle_confirmed(confirmed)
