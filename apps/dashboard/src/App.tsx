@@ -14,6 +14,7 @@ import ReceiptsPage from '@/pages/ReceiptsPage'
 import AccountsPage from '@/pages/AccountsPage'
 import WhatsAppFinancePage from '@/pages/WhatsAppFinancePage'
 import PettyCashPage from '@/pages/PettyCashPage'
+import VendorsPage from '@/pages/VendorsPage'
 import CategoriesPage from '@/pages/CategoriesPage'
 import { OperationalPlaceholder } from '@/components/operational-placeholder'
 
@@ -53,7 +54,7 @@ export default function App() {
         <Route path="whatsapp/finance" element={<WhatsAppFinancePage />} />
         <Route path="finance/transactions" element={<OperationalPlaceholder title="Transactions" />} />
         <Route path="finance/petty-cash" element={<PettyCashPage />} />
-        <Route path="finance/vendors" element={<OperationalPlaceholder title="Vendors" />} />
+        <Route path="finance/vendors" element={<VendorsPage />} />
         <Route path="finance/categories" element={<CategoriesPage />} />
         <Route path="finance/reports" element={<OperationalPlaceholder title="Finance Reports" />} />
         <Route path="finance/settings" element={<OperationalPlaceholder title="Finance Settings" />} />

@@ -467,7 +467,38 @@ export async function updateCategoryApi(
   return res.data
 }
 
-export async function fetchExpensesApi(params?: { project_id?: string; site_id?: string; category_id?: string }) {
+export interface VendorItem {
+  id: string
+  name: string
+  status: 'active' | 'inactive'
+  expense_count: number
+  total_amount_paid: number
+}
+
+export async function fetchVendorsApi(): Promise<VendorItem[]> {
+  const res = await api.get('/finance/vendors')
+  return res.data
+}
+
+export async function createVendorApi(payload: { name: string }): Promise<VendorItem> {
+  const res = await api.post('/finance/vendors', payload)
+  return res.data
+}
+
+export async function updateVendorApi(
+  vendorId: string,
+  payload: { name?: string; status?: 'active' | 'inactive' }
+): Promise<VendorItem> {
+  const res = await api.patch(`/finance/vendors/${vendorId}`, payload)
+  return res.data
+}
+
+export async function fetchExpensesApi(params?: {
+  project_id?: string
+  site_id?: string
+  category_id?: string
+  vendor_id?: string
+}) {
   const res = await api.get('/expenses', { params })
   return res.data
 }

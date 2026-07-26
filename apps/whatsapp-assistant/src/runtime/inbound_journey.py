@@ -834,7 +834,7 @@ async def process_inbound_message(
         expense_categories: list[str] | None = None
         if expense_category_query is not None and actor is not None and actor.organization_id:
             expense_categories = await expense_category_query.list_active_category_names(
-                organization_id=actor.organization_id
+                organization_id=actor.organization_id, created_by=actor.user_id
             )
         understanding = await pipeline.understand(
             message, semantic_hint=semantic_hint, expense_categories=expense_categories

@@ -177,8 +177,15 @@ async def list_expense_categories(
     auth_context: AuthorizationContext = Depends(get_auth_context),
     conn: AsyncConnection = Depends(get_db_conn),
 ):
-    """Return all expense categories for the org with metrics."""
+    """Return all expense categories for the org with metrics. Seeds a
+    construction-generic starter set the first time an org's category list
+    is read empty (see PostgresExpenseCategoryRepository.seed_defaults_if_empty)
+    -- otherwise this dropdown, and the AI extraction it stays in sync
+    with, would start from nothing."""
     cat_repo = PostgresExpenseCategoryRepository(conn)
+    await cat_repo.seed_defaults_if_empty(
+        auth_context.organization_id, created_by=auth_context.user_id
+    )
     metrics = await cat_repo.list_with_metrics(auth_context.organization_id)
     return [
         CategoryResponse(

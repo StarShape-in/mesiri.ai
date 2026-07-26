@@ -169,6 +169,22 @@ def _row_to_payment(row) -> ExpensePayment:
     )
 
 
+# Construction-generic starter set, seeded once per org the first time its
+# category list is read empty (see PostgresExpenseCategoryRepository.
+# seed_defaults_if_empty). Deliberately small and broad -- an admin can
+# rename/deactivate/add freely afterward via the Categories page; this only
+# exists so day-one AI extraction and the dashboard's category dropdown
+# aren't staring at an empty list.
+_DEFAULT_CATEGORIES: tuple[tuple[str, str], ...] = (
+    ("Materials", "MAT"),
+    ("Labour", "LAB"),
+    ("Fuel & Transport", "FUEL"),
+    ("Equipment Rental", "EQUIP"),
+    ("Site Utilities", "UTIL"),
+    ("Miscellaneous", "MISC"),
+)
+
+
 class PostgresExpenseCategoryRepository:
     def __init__(self, conn: AsyncConnection):
         self.conn = conn
@@ -235,6 +251,42 @@ class PostgresExpenseCategoryRepository:
         category = await self.find_by_name_exact_active(organization_id, "Uncategorized")
         assert category is not None
         return category
+
+    async def seed_defaults_if_empty(
+        self, organization_id: uuid.UUID, *, created_by: uuid.UUID
+    ) -> list[ExpenseCategory]:
+        """A brand-new org otherwise starts with zero categories -- every
+        expense falls through to `get_or_create_default`'s single
+        "Uncategorized" bucket until someone remembers to visit the
+        Categories page, which defeats category-aware AI extraction from
+        message one (see understanding/pipeline.py's `expense_categories`
+        nudge). Seeds a small construction-generic starter set the first
+        time categories are read for an org -- mirrors
+        runtime/money_account_query.py's default-account bootstrap (same
+        lazy, create-on-first-use, ON-CONFLICT-safe shape), not an
+        org-creation hook, so this stays free of any org-lifecycle wiring.
+        An org with at least one active category already is left
+        untouched -- this only ever fires once, for a genuinely empty list.
+        """
+        existing = await self.list_active(organization_id)
+        if existing:
+            return existing
+        for name, code in _DEFAULT_CATEGORIES:
+            await self.conn.execute(
+                sa.text(
+                    "INSERT INTO expense_categories (id, organization_id, name, code, status, created_by) "
+                    "VALUES (:id, :organization_id, :name, :code, 'active', :created_by) "
+                    "ON CONFLICT (organization_id, name) DO NOTHING"
+                ),
+                {
+                    "id": uuid.uuid4(),
+                    "organization_id": organization_id,
+                    "name": name,
+                    "code": code,
+                    "created_by": created_by,
+                },
+            )
+        return await self.list_active(organization_id)
 
     async def list_with_metrics(self, organization_id: uuid.UUID) -> list[dict]:
         """List categories for org along with expense count and total spend."""
@@ -410,17 +462,12 @@ class PostgresExpenseRepository:
         start_date: datetime.date | None = None,
         end_date: datetime.date | None = None,
         category_id: uuid.UUID | None = None,
+        vendor_id: uuid.UUID | None = None,
         without_attachment: bool = False,
     ) -> list[Expense]:
         """Confirmed (non-voided, non-draft) expenses matching the given
         filters -- read path for Finance Module Slice 2's expense query
-        workflow. All filters are optional and additive (AND'd together).
-
-        `without_attachment` is Slice 6's missing-receipt nudge: True
-        restricts to expenses with zero `expense_attachments` rows (a NOT
-        EXISTS subquery, not a join+GROUP BY -- an expense with any
-        attachment row at all, of any attachment_type, counts as "has a
-        receipt")."""
+        workflow. All filters are optional and additive (AND'd together)."""
         where_clauses = [
             _expenses.c.organization_id == organization_id,
             _expenses.c.workflow_status == "confirmed",
@@ -435,6 +482,8 @@ class PostgresExpenseRepository:
             where_clauses.append(_expenses.c.occurred_date <= end_date)
         if category_id is not None:
             where_clauses.append(_expenses.c.category_id == category_id)
+        if vendor_id is not None:
+            where_clauses.append(_expenses.c.vendor_id == vendor_id)
         if without_attachment:
             where_clauses.append(
                 ~sa.exists(
