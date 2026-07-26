@@ -58,14 +58,12 @@ async def test_normalized_message_has_default_correlation_id():
     assert _msg().correlation_id.startswith("cor_")
 
 
-async def test_media_upload_populates_object_key_before_m3(tmp_path):
-    media_file = tmp_path / "receipt.jpg"
-    media_file.write_bytes(b"\xff\xd8fake-jpeg")
+async def test_media_upload_populates_object_key_before_m3():
     storage = FakeObjectStorage()
     downloaded = DownloadedMedia(
         media_id="m1",
         mime_type="image/jpeg",
-        file_path=str(media_file),
+        content=b"\xff\xd8fake-jpeg",
         sha256="abc",
         file_size=len(b"\xff\xd8fake-jpeg"),
     )

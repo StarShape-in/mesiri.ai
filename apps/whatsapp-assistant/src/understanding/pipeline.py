@@ -270,6 +270,17 @@ class UnderstandingPipeline:
             expense_categories=expense_categories,
             correlation_id=result.correlation_id,
         )
+        if not result.detected_language:
+            # Sarvam's transcribe() genuinely does STT+translate in one call
+            # and returns a real detected_language; Gemini's transcribe()
+            # only ever transcribes (see the Gemini adapter -- its prompt
+            # never asks for translation) and always leaves this None. extract()
+            # reads the raw transcript directly and identifies the language
+            # itself regardless of which STT provider ran, so it's a strictly
+            # better source than "no answer at all" -- this is what stops the
+            # control panel from showing a false "Translation did not run"
+            # warning on every Gemini-routed voice message.
+            result.detected_language = extraction.detected_language
         self._apply_extraction(result, extraction, is_empty=False)
 
     async def _handle_image(

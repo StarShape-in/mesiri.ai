@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from datetime import timedelta
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -44,7 +43,6 @@ class Settings(BaseSettings):
     phone_number_id: str = ""
     api_version: str = "v21.0"
     graph_base_url: str = "https://graph.facebook.com"
-    media_download_dir: str = "/tmp/mesiri/whatsapp-media"
     dedup_ttl_hours: int = 24
     context_debug: bool = False
 
@@ -122,7 +120,6 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         client=http_client,
         access_token=settings.access_token,
         api_version=settings.api_version,
-        download_dir=Path(settings.media_download_dir),
         graph_base_url=settings.graph_base_url,
     )
 

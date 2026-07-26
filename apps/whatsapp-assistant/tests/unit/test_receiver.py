@@ -62,29 +62,24 @@ async def test_receiver_deduplicates_duplicate_webhooks() -> None:
 
 
 @pytest.mark.asyncio
-async def test_receiver_downloads_media_for_image_and_voice(tmp_path) -> None:
+async def test_receiver_downloads_media_for_image_and_voice() -> None:
     deduplication_store = InMemoryDeduplicationStore()
     message_store = InMemoryNormalizedMessageStore()
     object_storage = FakeObjectStorage()
     media_downloader = AsyncMock()
 
-    image_path = tmp_path / "media-image-1.jpg"
-    image_path.write_bytes(b"jpeg-bytes")
-    voice_path = tmp_path / "media-audio-1.ogg"
-    voice_path.write_bytes(b"voice-bytes")
-
     media_downloader.download.side_effect = [
         DownloadedMedia(
             media_id="media-image-1",
             mime_type="image/jpeg",
-            file_path=str(image_path),
+            content=b"jpeg-bytes",
             sha256="abc123",
             file_size=1024,
         ),
         DownloadedMedia(
             media_id="media-audio-1",
             mime_type="audio/ogg",
-            file_path=str(voice_path),
+            content=b"voice-bytes",
             sha256="voice123",
             file_size=2048,
         ),

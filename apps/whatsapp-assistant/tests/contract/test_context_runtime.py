@@ -386,12 +386,11 @@ async def test_inbound_journey_blocks_new_workflow_while_confirmation_pending():
     assert len(repo.saved) == 1
 
 
-async def test_build_container_wires_context_resolver(tmp_path):
+async def test_build_container_wires_context_resolver():
     settings = Settings(
         verify_token="test-verify-token",
         app_secret="test-app-secret",
         access_token="test-access-token",
-        media_download_dir=str(tmp_path / "media"),
     )
     async with httpx.AsyncClient(timeout=30.0) as http_client:
         container = build_container(settings, http_client)

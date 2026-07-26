@@ -29,14 +29,13 @@ from runtime.lifecycle import create_app
 
 
 @pytest.fixture
-def settings(tmp_path) -> Settings:
+def settings() -> Settings:
     """Return test settings for WhatsApp ingress."""
     return Settings(
         verify_token="test-verify-token",
         app_secret="test-app-secret",
         access_token="test-access-token",
         api_version="v21.0",
-        media_download_dir=str(tmp_path / "media"),
     )
 
 

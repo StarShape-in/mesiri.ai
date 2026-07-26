@@ -6,8 +6,6 @@ import hashlib
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from pathlib import Path
-from uuid import uuid4
 
 import httpx
 
@@ -16,11 +14,18 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class DownloadedMedia:
-    """Local representation of media retrieved from Meta."""
+    """In-memory representation of media retrieved from Meta.
+
+    Carries the bytes directly (``content``) rather than a path to a
+    temp-directory copy -- the old shape wrote every download to disk and had
+    media_handoff.py immediately read it back before uploading to object
+    storage, which is a synchronous disk write + read on the event loop for
+    every image/voice message, for a file nothing else ever consumed (see the
+    latency report's ~10-16s of untraced "ingress" time on images)."""
 
     media_id: str
     mime_type: str | None
-    file_path: str
+    content: bytes
     sha256: str | None
     file_size: int
 
@@ -42,13 +47,11 @@ class MetaMediaDownloader(MediaDownloader):
         client: httpx.AsyncClient,
         access_token: str,
         api_version: str,
-        download_dir: Path,
         graph_base_url: str = "https://graph.facebook.com",
     ) -> None:
         self._client = client
         self._access_token = access_token
         self._api_version = api_version
-        self._download_dir = download_dir
         self._graph_base_url = graph_base_url.rstrip("/")
 
     async def download(self, media_id: str) -> DownloadedMedia:
@@ -76,11 +79,6 @@ class MetaMediaDownloader(MediaDownloader):
         media_response.raise_for_status()
         content = media_response.content
 
-        self._download_dir.mkdir(parents=True, exist_ok=True)
-        extension = _extension_for_mime_type(mime_type)
-        file_path = self._download_dir / f"{media_id}-{uuid4().hex}{extension}"
-        file_path.write_bytes(content)
-
         computed_sha256 = hashlib.sha256(content).hexdigest()
         if sha256 and sha256 != computed_sha256:
             logger.warning(
@@ -91,36 +89,15 @@ class MetaMediaDownloader(MediaDownloader):
             )
 
         logger.info(
-            "Downloaded WhatsApp media %s to %s (%s bytes)",
+            "Downloaded WhatsApp media %s (%s bytes)",
             media_id,
-            file_path,
             len(content),
         )
 
         return DownloadedMedia(
             media_id=media_id,
             mime_type=mime_type,
-            file_path=str(file_path),
+            content=content,
             sha256=sha256 or computed_sha256,
             file_size=len(content),
         )
-
-
-def _extension_for_mime_type(mime_type: str | None) -> str:
-    if not mime_type:
-        return ".bin"
-
-    mapping = {
-        "image/jpeg": ".jpg",
-        "image/png": ".png",
-        "image/webp": ".webp",
-        "audio/ogg": ".ogg",
-        "audio/mpeg": ".mp3",
-        "audio/mp4": ".m4a",
-    }
-
-    for prefix, extension in mapping.items():
-        if mime_type.startswith(prefix):
-            return extension
-
-    return ".bin"
