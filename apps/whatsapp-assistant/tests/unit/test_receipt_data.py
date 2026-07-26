@@ -42,7 +42,7 @@ def test_receipt_reflects_material_usage():
     )
     data = build_receipt_data(
         draft,
-        material_row_id="abcd1234-0000",
+        record_row_id="abcd1234-0000",
         reporter_name="Mohammed",
         projects=[_Named(PRJ, "Riverside Tower")],
         sites=[_Named(SITE, "Site B")],
@@ -64,7 +64,7 @@ def test_receipt_reflects_material_receipt():
     )
     data = build_receipt_data(
         draft,
-        material_row_id="ef567890-0000",
+        record_row_id="ef567890-0000",
         reporter_name="Priya",
         projects=[_Named(PRJ, "Riverside Tower")],
         sites=[_Named(SITE, "Site B")],
@@ -85,7 +85,7 @@ def test_receipt_degrades_gracefully_with_missing_optional_data():
     )
     data = build_receipt_data(
         draft,
-        material_row_id="ghij0000-0000",
+        record_row_id="ghij0000-0000",
         reporter_name=None,
         projects=[],
         sites=[],
@@ -108,7 +108,7 @@ def test_two_record_types_share_identical_shape():
         {"material_name": "cement", "quantity": 20, "unit": "bags"},
     )
     common = {
-        "material_row_id": "xxxx-0000",
+        "record_row_id": "xxxx-0000",
         "reporter_name": "Mohammed",
         "projects": [_Named(PRJ, "Riverside Tower")],
         "sites": [_Named(SITE, "Site B")],
@@ -123,7 +123,7 @@ def test_two_record_types_share_identical_shape():
 def _labour_receipt(lines: list[dict]):
     return build_receipt_data(
         _draft(DraftActionType.RECORD_LABOUR_ATTENDANCE, {"lines": lines}),
-        material_row_id="stub-9999abcd",
+        record_row_id="stub-9999abcd",
         reporter_name="Mohammed",
         projects=[_Named(PRJ, "Riverside Tower")],
         sites=[_Named(SITE, "Site B")],
@@ -201,7 +201,7 @@ def test_labour_receipt_singular_worker_reads_naturally():
 def _finance_receipt(action_type: DraftActionType, fields: dict):
     return build_receipt_data(
         _draft(action_type, fields),
-        material_row_id="stub-9999abcd",
+        record_row_id="stub-9999abcd",
         reporter_name="Mohammed",
         projects=[],
         sites=[],

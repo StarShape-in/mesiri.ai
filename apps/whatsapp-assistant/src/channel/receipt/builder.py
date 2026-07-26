@@ -42,7 +42,7 @@ class RecordReceiptBuilder:
         try:
             data = build_receipt_data(
                 confirmed.draft_action,
-                material_row_id=execution.material_row_id,
+                record_row_id=execution.material_row_id,
                 reporter_name=actor.full_name if actor else None,
                 projects=actor.projects if actor else [],
                 sites=actor.sites if actor else [],

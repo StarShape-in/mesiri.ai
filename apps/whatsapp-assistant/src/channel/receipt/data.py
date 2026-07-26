@@ -111,7 +111,7 @@ def _labour_people(headcount: int, named: int) -> str:
 def build_receipt_data(
     draft: DraftActionV2,
     *,
-    material_row_id: str,
+    record_row_id: str,
     reporter_name: str | None,
     projects: list[Any],
     sites: list[Any],
@@ -119,9 +119,13 @@ def build_receipt_data(
 ) -> ReceiptData:
     """Build the generic receipt shape for a confirmed DraftAction.
 
-    ``material_row_id`` comes from ExecutionResult, not the draft -- it's the
-    real persisted row id, so the receipt's "Record id" points at something
-    that actually exists in material_receipts/material_usage.
+    ``record_row_id`` comes from ExecutionResult, not the draft -- it is the
+    real persisted row id, so the receipt's "Record id" points at a row that
+    actually exists. Named for materials on the contract
+    (``ExecutionResult.material_row_id``) because materials came first; it
+    now carries the expense, transfer, petty-cash and labour ids too, so the
+    parameter is spelled for what it is rather than inheriting a name that
+    stopped being true several record types ago.
     """
     fields = draft.fields
     material_name = str(fields.get("material_name", "")).strip() or "Material"
@@ -306,7 +310,7 @@ def build_receipt_data(
         ]
         id_prefix = "MU"
 
-    record_id = f"{id_prefix}-{confirmed_at:%d%m%y}-{material_row_id.replace('-', '')[:4].upper()}"
+    record_id = f"{id_prefix}-{confirmed_at:%d%m%y}-{record_row_id.replace('-', '')[:4].upper()}"
 
     return ReceiptData(
         brand="MESIRI",
