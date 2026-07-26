@@ -14,6 +14,7 @@ import ReceiptsPage from '@/pages/ReceiptsPage'
 import AccountsPage from '@/pages/AccountsPage'
 import WhatsAppFinancePage from '@/pages/WhatsAppFinancePage'
 import WhatsAppLabourPage from '@/pages/WhatsAppLabourPage'
+import WhatsAppInboxPage from '@/pages/WhatsAppInboxPage'
 import WorkersPage from '@/pages/WorkersPage'
 import PettyCashPage from '@/pages/PettyCashPage'
 import FinanceOverviewPage from '@/pages/FinanceOverviewPage'
@@ -40,6 +41,7 @@ export default function App() {
       <Route path="/" element={<AppLayout />}>
         <Route index element={<IndexRedirect />} />
         <Route path="overview" element={<Overview />} />
+        <Route path="whatsapp/inbox" element={<WhatsAppInboxPage />} />
         <Route path="users" element={<Users />} />
         <Route path="users/:id" element={<UserDetails />} />
         <Route path="company" element={<CompanyDetails />} />

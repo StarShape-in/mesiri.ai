@@ -33,6 +33,7 @@ import {
   Moon,
   HardHat,
   ClipboardCheck,
+  MessageSquare,
 } from 'lucide-react'
 import { NavLink, Link, useLocation } from 'react-router-dom'
 import {
@@ -398,6 +399,32 @@ export function AppSidebar() {
                       <LayoutDashboard className={cn('size-4 shrink-0', isDashboardActive ? 'text-blue-600 dark:text-zinc-100 font-bold' : 'text-slate-600 dark:text-slate-400')} />
                       <span className="truncate">Dashboard</span>
                     </div>
+                  </NavLink>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild tooltip="WhatsApp Inbox">
+                  <NavLink
+                    to={getUrlWithScope('/whatsapp/inbox')}
+                    className={({ isActive: isLinkActive }) => {
+                      const active = isLinkActive || checkIsItemActive(location.pathname, '/whatsapp/inbox')
+                      return cn(
+                        'flex items-center justify-between w-full px-2 py-1.5 rounded-md text-xs font-medium transition-colors',
+                        active
+                          ? 'bg-blue-50 text-blue-600 border-l-2 border-blue-600 dark:bg-zinc-800 dark:text-zinc-100 dark:border-zinc-300 font-semibold rounded-l-none pl-1.5'
+                          : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-zinc-800/60'
+                      )
+                    }}
+                  >
+                    {({ isActive: isLinkActive }) => {
+                      const active = isLinkActive || checkIsItemActive(location.pathname, '/whatsapp/inbox')
+                      return (
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <MessageSquare className={cn('size-4 shrink-0', active ? 'text-blue-600 dark:text-zinc-100 font-bold' : 'text-slate-600 dark:text-slate-400')} />
+                          <span className="truncate">WhatsApp Inbox</span>
+                        </div>
+                      )
+                    }}
                   </NavLink>
                 </SidebarMenuButton>
               </SidebarMenuItem>
