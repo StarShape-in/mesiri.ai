@@ -356,6 +356,12 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from runtime.duplicate_expense_query import DuplicateExpenseQueryService
 
     duplicate_expense_query = DuplicateExpenseQueryService(material_db)
+    # Flags a vendor name that doesn't match any existing active vendor, fed
+    # into expense_capture's "create this vendor?" slot -- same reasoning and
+    # same material_db as catalog_query above. See runtime/vendor_query.py.
+    from runtime.vendor_query import VendorQueryService
+
+    vendor_query = VendorQueryService(material_db)
     # Read-only expense list/sum lookups for the expense-query workflow
     # (Finance Module Slice 2) -- same reasoning and same material_db as
     # money_account_query above. See runtime/expense_query_service.py.
@@ -717,6 +723,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
                 petty_cash_query=petty_cash_query,
                 reversal_query=reversal_query,
                 duplicate_expense_query=duplicate_expense_query,
+                vendor_query=vendor_query,
                 expense_query_service=expense_query_service,
                 pending_report_store=pending_report_store,
             )
@@ -1004,6 +1011,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             petty_cash_query=petty_cash_query,
             reversal_query=reversal_query,
             duplicate_expense_query=duplicate_expense_query,
+            vendor_query=vendor_query,
             expense_query_service=expense_query_service,
             pending_report_store=pending_report_store,
         )

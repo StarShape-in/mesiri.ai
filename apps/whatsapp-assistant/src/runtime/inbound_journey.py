@@ -64,6 +64,7 @@ from runtime.org_settings_query import OrganizationSettingsQueryService
 from runtime.petty_cash_query import PettyCashRecipientQueryService
 from runtime.reply_dispatch import send_reply_spec
 from runtime.reversal_query import ReversalTargetQueryService
+from runtime.vendor_query import VendorQueryService
 from understanding.pipeline import UnderstandingPipeline
 from workflows import (
     WorkflowResumeResult,
@@ -696,6 +697,33 @@ async def _seed_duplicate_check(
         event.fields["is_potential_duplicate"] = True
 
 
+async def _seed_vendor_check(
+    event: CanonicalEventV2,
+    decision: PlannerDecisionV2,
+    vendor_query: VendorQueryService | None,
+    actor: ActorIdentity | None,
+) -> None:
+    """Flag a vendor name that doesn't match any existing active vendor
+    before the graph runs (a node must never query a repository itself, same
+    principle as _seed_account_candidates above). Only ever runs for
+    EXPENSE_SUBMIT, and only when a vendor was actually extracted --
+    otherwise there is nothing to confirm and expense_capture's build_draft
+    proceeds vendor-less exactly as before. See workflows/expense_capture/
+    nodes.py's `resolve_vendor`."""
+    if vendor_query is None or actor is None or not actor.organization_id:
+        return
+    if decision.workflow_key is not WorkflowKey.EXPENSE_SUBMIT:
+        return
+    vendor_name = event.fields.get("vendor")
+    if not vendor_name:
+        return
+    matched = await vendor_query.exists(
+        organization_id=actor.organization_id, vendor_name=str(vendor_name)
+    )
+    if not matched:
+        event.fields["vendor_needs_confirmation"] = True
+
+
 async def _seed_finance_query_context(
     event: CanonicalEventV2,
     decision: PlannerDecisionV2,
@@ -818,6 +846,7 @@ async def process_inbound_message(
     petty_cash_query: PettyCashRecipientQueryService | None = None,
     reversal_query: ReversalTargetQueryService | None = None,
     duplicate_expense_query: DuplicateExpenseQueryService | None = None,
+    vendor_query: VendorQueryService | None = None,
     expense_query_service: ExpenseQueryService | None = None,
     semantic_hint: str | None = None,
     direction_hint: str | None = None,
@@ -1184,6 +1213,9 @@ async def process_inbound_message(
                     )
                     await _seed_duplicate_check(
                         canonical_event, planner_decision, duplicate_expense_query, actor
+                    )
+                    await _seed_vendor_check(
+                        canonical_event, planner_decision, vendor_query, actor
                     )
                     await _seed_finance_query_context(
                         canonical_event,

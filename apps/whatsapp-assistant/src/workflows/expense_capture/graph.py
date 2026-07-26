@@ -17,10 +17,12 @@ from ..state import WorkflowGraphState
 from .nodes import (
     _ACCOUNT_SLOT_NAME,
     _DUPLICATE_SLOT_NAME,
+    _VENDOR_SLOT_NAME,
     build_draft,
     check_duplicate,
     request_confirmation,
     resolve_account,
+    resolve_vendor,
 )
 
 
@@ -41,11 +43,20 @@ def _route_after_duplicate_check(state: WorkflowGraphState) -> str:
     return "continue"
 
 
+def _route_after_vendor_resolution(state: WorkflowGraphState) -> str:
+    """Same stale-awaiting_slot guard as the two routers above -- with three
+    slots now sharing this graph, only a "no" answered specifically for
+    vendor_confirm should end this pass. Unlike duplicate, "no" here never
+    cancels the record (see nodes.py's `resolve_vendor` docstring)."""
+    return "ask_slot" if state.get("awaiting_slot") == _VENDOR_SLOT_NAME else "continue"
+
+
 def build_expense_capture_graph() -> Any:
     """Compile the Expense Capture graph:
 
     START -> resolve_account -> (ask_slot -> END | continue)
           -> check_duplicate -> (ask_slot -> END | cancelled -> END | continue)
+          -> resolve_vendor -> (ask_slot -> END | continue)
           -> build_draft -> request_confirmation -> END
 
     `resolve_account` either resolves the paid-from choice outright (0 or 1
@@ -54,15 +65,20 @@ def build_expense_capture_graph() -> Any:
     flagged a likely duplicate (Finance Module Slice 8); a "no" answer ends
     the workflow with no draft at all (see nodes.py's `check_duplicate` and
     workflows/runtime.py's `_INFORMATIONAL_WORKFLOW_KEYS`, which allows
-    EXPENSE_SUBMIT to complete without a draft for exactly this case). Both
-    "ask" outcomes persist as COLLECTING_FIELDS and re-invoke the graph via
-    provide_input() once the user answers.
+    EXPENSE_SUBMIT to complete without a draft for exactly this case).
+    `resolve_vendor` only asks when the caller flagged the vendor name as
+    unmatched; unlike check_duplicate, its "no" answer never ends the
+    workflow -- it drops the vendor from the draft and continues to
+    build_draft, so an unrecognized vendor never blocks recording the
+    expense. All three "ask" outcomes persist as COLLECTING_FIELDS and
+    re-invoke the graph via provide_input() once the user answers.
     """
     from langgraph.graph import END, START, StateGraph
 
     graph = StateGraph(WorkflowGraphState)
     graph.add_node("resolve_account", resolve_account)
     graph.add_node("check_duplicate", check_duplicate)
+    graph.add_node("resolve_vendor", resolve_vendor)
     graph.add_node("build_draft", build_draft)
     graph.add_node("request_confirmation", request_confirmation)
     graph.add_edge(START, "resolve_account")
@@ -74,7 +90,12 @@ def build_expense_capture_graph() -> Any:
     graph.add_conditional_edges(
         "check_duplicate",
         _route_after_duplicate_check,
-        {"ask_slot": END, "cancelled": END, "continue": "build_draft"},
+        {"ask_slot": END, "cancelled": END, "continue": "resolve_vendor"},
+    )
+    graph.add_conditional_edges(
+        "resolve_vendor",
+        _route_after_vendor_resolution,
+        {"ask_slot": END, "continue": "build_draft"},
     )
     graph.add_edge("build_draft", "request_confirmation")
     graph.add_edge("request_confirmation", END)

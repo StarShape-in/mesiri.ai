@@ -23,6 +23,18 @@ only asks the yes/no question -- reusing the same single-choice slot
 machinery as resolve_account, since a genuine yes/no is just an N=2 choice --
 and, uniquely among this graph's nodes, can end the whole workflow with no
 draft at all when the answer is "no" (see graph.py's routing).
+
+`resolve_vendor` is the "vendor not found, create it?" gate: whether the
+extracted vendor name matches an existing active vendor is decided by the
+caller (runtime/inbound_journey.py's `_seed_vendor_check`, same rule) and
+seeded as `collected_fields['vendor_needs_confirmation']`. Reuses the same
+yes/no slot machinery as check_duplicate. Unlike check_duplicate, "no" never
+cancels the whole record -- it just drops the vendor from the draft (so
+application/expenses/resolution.py resolves vendor_id=None instead of
+auto-creating), matching the user's explicit request that this must never
+block the expense itself. "yes" leaves the vendor field untouched, letting
+the resolver's existing create-on-first-use behavior create it exactly as
+before.
 """
 
 from __future__ import annotations
@@ -169,7 +181,78 @@ def check_duplicate(state: WorkflowGraphState) -> dict:
     }
 
 
-_INTERNAL_FIELD_KEYS = frozenset({"account_candidates", "is_potential_duplicate", "duplicate_confirmed"})
+_VENDOR_SLOT_NAME = "vendor_confirm"
+_VENDOR_CANDIDATES = [
+    SlotCandidate(value="yes", label="Yes, add it as a new vendor"),
+    SlotCandidate(value="no", label="No, record without a vendor"),
+]
+
+
+def _vendor_prompt(vendor_name: str) -> str:
+    return f'I don\'t have "{vendor_name}" as a vendor yet. Add it as a new vendor?'
+
+
+def resolve_vendor(state: WorkflowGraphState) -> dict:
+    """Ask "create this vendor?" only when the caller flagged the vendor name
+    as unmatched and it hasn't been answered yet. No flag (vendor omitted, or
+    it matched an existing vendor) or already answered -> no-op, straight
+    through to build_draft."""
+    fields = dict(state.get("collected_fields") or {})
+    if fields.get("vendor_confirmed") is not None or not fields.get("vendor_needs_confirmation"):
+        return {}
+
+    vendor_name = str(fields.get("vendor") or "").strip()
+    if not vendor_name:
+        return {}
+    prompt_title = _vendor_prompt(vendor_name)
+
+    is_awaiting_this_slot = state.get("awaiting_slot") == _VENDOR_SLOT_NAME
+    if is_awaiting_this_slot:
+        answer_text = fields.pop("_slot_answer_text", None)
+        if answer_text is not None:
+            matched = match_slot_answer(answer_text, _VENDOR_CANDIDATES)
+            if matched is not None:
+                if matched == "no":
+                    resolved = dict(fields)
+                    resolved.pop("vendor", None)
+                    resolved["vendor_confirmed"] = "no"
+                    return {"collected_fields": resolved, "awaiting_slot": None}
+                return {
+                    "collected_fields": {**fields, "vendor_confirmed": "yes"},
+                    "awaiting_slot": None,
+                }
+            resolution = resolve_single_choice_slot(
+                slot_name=_VENDOR_SLOT_NAME,
+                prompt_title=f"Sorry, I didn't catch that. {prompt_title}",
+                candidates=_VENDOR_CANDIDATES,
+            )
+            return {
+                "collected_fields": fields,
+                "awaiting_slot": resolution.awaiting_slot,
+                "awaiting_slot_options": slot_options(_VENDOR_CANDIDATES),
+                "pending_prompt": resolution.slot_prompt,
+            }
+
+    resolution = resolve_single_choice_slot(
+        slot_name=_VENDOR_SLOT_NAME, prompt_title=prompt_title, candidates=_VENDOR_CANDIDATES
+    )
+    return {
+        "collected_fields": fields,
+        "awaiting_slot": resolution.awaiting_slot,
+        "awaiting_slot_options": slot_options(_VENDOR_CANDIDATES),
+        "pending_prompt": resolution.slot_prompt,
+    }
+
+
+_INTERNAL_FIELD_KEYS = frozenset(
+    {
+        "account_candidates",
+        "is_potential_duplicate",
+        "duplicate_confirmed",
+        "vendor_needs_confirmation",
+        "vendor_confirmed",
+    }
+)
 
 
 def build_draft(state: WorkflowGraphState) -> dict:

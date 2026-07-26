@@ -10,6 +10,7 @@ from workflows.expense_capture.nodes import (
     check_duplicate,
     request_confirmation,
     resolve_account,
+    resolve_vendor,
 )
 
 ORG = "11111111-1111-4111-8111-111111111111"
@@ -238,3 +239,93 @@ def test_build_draft_excludes_duplicate_plumbing_fields():
     draft = build_draft(state)["draft_action"]
     assert "is_potential_duplicate" not in draft.fields
     assert "duplicate_confirmed" not in draft.fields
+
+
+def test_resolve_vendor_not_flagged_is_a_no_op():
+    state = _base_state({"amount": 250, "vendor": "Indian Oil"})
+    assert resolve_vendor(state) == {}
+
+
+def test_resolve_vendor_flagged_asks_yes_no():
+    state = _base_state({"amount": 250, "vendor": "New Fuel Co", "vendor_needs_confirmation": True})
+    update = resolve_vendor(state)
+    assert update["awaiting_slot"] == "vendor_confirm"
+    assert "New Fuel Co" in update["pending_prompt"]
+    assert update["awaiting_slot_options"] == [
+        {"value": "yes", "label": "Yes, add it as a new vendor"},
+        {"value": "no", "label": "No, record without a vendor"},
+    ]
+
+
+def test_resolve_vendor_yes_answer_keeps_vendor():
+    state = _base_state(
+        {
+            "amount": 250,
+            "vendor": "New Fuel Co",
+            "vendor_needs_confirmation": True,
+            "_slot_answer_text": "yes",
+        }
+    )
+    state["awaiting_slot"] = "vendor_confirm"
+    update = resolve_vendor(state)
+    assert update["collected_fields"]["vendor_confirmed"] == "yes"
+    assert update["collected_fields"]["vendor"] == "New Fuel Co"
+    assert update["awaiting_slot"] is None
+
+
+def test_resolve_vendor_no_answer_drops_vendor_but_does_not_cancel():
+    """Unlike check_duplicate's "no", this must never end the workflow --
+    the expense still gets recorded, just without a vendor."""
+    state = _base_state(
+        {
+            "amount": 250,
+            "vendor": "New Fuel Co",
+            "vendor_needs_confirmation": True,
+            "_slot_answer_text": "no",
+        }
+    )
+    state["awaiting_slot"] = "vendor_confirm"
+    update = resolve_vendor(state)
+    assert update["collected_fields"]["vendor_confirmed"] == "no"
+    assert "vendor" not in update["collected_fields"]
+    assert update["awaiting_slot"] is None
+    assert "pending_prompt" not in update
+
+
+def test_resolve_vendor_unmatched_answer_reasks():
+    state = _base_state(
+        {
+            "amount": 250,
+            "vendor": "New Fuel Co",
+            "vendor_needs_confirmation": True,
+            "_slot_answer_text": "maybe idk",
+        }
+    )
+    state["awaiting_slot"] = "vendor_confirm"
+    update = resolve_vendor(state)
+    assert update["awaiting_slot"] == "vendor_confirm"
+    assert "didn't catch" in update["pending_prompt"]
+
+
+def test_resolve_vendor_already_answered_is_a_no_op():
+    state = _base_state(
+        {"amount": 250, "vendor": "New Fuel Co", "vendor_needs_confirmation": True, "vendor_confirmed": "yes"}
+    )
+    assert resolve_vendor(state) == {}
+
+
+def test_resolve_vendor_no_vendor_text_is_a_no_op():
+    """A flag with no vendor name to confirm can't happen in practice, but
+    the node must not crash if it ever does."""
+    state = _base_state({"amount": 250, "vendor_needs_confirmation": True})
+    assert resolve_vendor(state) == {}
+
+
+def test_build_draft_excludes_vendor_plumbing_fields():
+    state = _base_state(
+        {"amount": 250, "vendor": "New Fuel Co", "vendor_needs_confirmation": True, "vendor_confirmed": "yes"}
+    )
+    draft = build_draft(state)["draft_action"]
+    assert "vendor_needs_confirmation" not in draft.fields
+    assert "vendor_confirmed" not in draft.fields
+    assert draft.fields["vendor"] == "New Fuel Co"
