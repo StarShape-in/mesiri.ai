@@ -74,7 +74,7 @@ const INTENT_CONFIG: Record<NonNullable<IntentType>, { label: string; className:
   },
   labour: {
     label: 'Labour',
-    className: 'border-emerald-500/30 text-emerald-600 bg-emerald-500/10 dark:text-emerald-400',
+    className: 'border-[#008069]/30 text-[#008069] bg-[#008069]/10 text-[#008069]',
     Icon: HardHat,
   },
   materials: {
@@ -143,7 +143,7 @@ function ConversationRow({
       className={cn(
         'w-full flex items-start gap-3 px-3 py-2.5 rounded-lg text-left transition-all',
         isActive
-          ? 'bg-emerald-500/10 dark:bg-emerald-500/15 border border-emerald-500/20'
+          ? 'bg-[#008069]/10 dark:bg-[#008069]/15 border border-[#008069]/20'
           : 'hover:bg-muted/60 border border-transparent',
         hasError && !isActive && 'border-l-2 border-l-rose-500/60 bg-rose-500/5 dark:bg-rose-500/5 rounded-l-none'
       )}
@@ -154,7 +154,7 @@ function ConversationRow({
           className={cn(
             'text-xs font-bold ring-2',
             isActive
-              ? 'bg-emerald-500 text-white ring-emerald-500/30'
+              ? 'bg-[#008069] text-white ring-[#008069]/30'
               : hasError
               ? 'bg-rose-100 dark:bg-rose-950 text-rose-600 dark:text-rose-400 ring-rose-500/20'
               : 'bg-muted text-muted-foreground ring-border'
@@ -183,7 +183,7 @@ function ConversationRow({
         {/* Message preview */}
         <div className="flex items-center gap-1 mt-0.5">
           {conversation.last_direction === 'outbound' && (
-            <Bot className="size-3 text-emerald-500 shrink-0" />
+            <Bot className="size-3 text-[#008069] shrink-0" />
           )}
           <p className="text-xs text-muted-foreground truncate">
             {conversation.last_message_preview || 'No message content'}
@@ -225,8 +225,8 @@ function MessageBubble({ message }: { message: CompanyMessage }) {
     <div className={cn('flex w-full', isOutbound ? 'justify-end' : 'justify-start')}>
       {/* Inbound: small bot avatar */}
       {!isOutbound && (
-        <div className="size-7 rounded-full bg-emerald-500/15 border border-emerald-500/20 flex items-center justify-center shrink-0 mr-2 mt-1">
-          <Bot className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+        <div className="size-7 rounded-full bg-[#008069]/15 border border-[#008069]/20 flex items-center justify-center shrink-0 mr-2 mt-1">
+          <Bot className="size-3.5 text-[#008069]" />
         </div>
       )}
 
@@ -235,7 +235,7 @@ function MessageBubble({ message }: { message: CompanyMessage }) {
           className={cn(
             'rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap break-words shadow-sm',
             isOutbound
-              ? 'bg-emerald-600 text-white rounded-br-sm'
+              ? 'bg-[#008069] text-white rounded-br-sm'
               : 'bg-card border border-border text-foreground rounded-bl-sm',
             hasError && 'ring-1 ring-rose-500/50'
           )}
@@ -254,7 +254,7 @@ function MessageBubble({ message }: { message: CompanyMessage }) {
             {formatFullTimestamp(message.timestamp)}
           </span>
           {isOutbound && !hasError && (
-            <CheckCheck className="size-3 text-emerald-500" />
+            <CheckCheck className="size-3 text-[#008069]" />
           )}
           {hasError && (
             <>
@@ -288,14 +288,14 @@ function ContactMetadataPanel({ conversation }: { conversation: Conversation }) 
         {/* Avatar + Name */}
         <div className="flex flex-col items-center gap-2 py-2">
           <Avatar className="size-14">
-            <AvatarFallback className="text-base font-bold bg-emerald-500 text-white ring-2 ring-emerald-500/30">
+            <AvatarFallback className="text-base font-bold bg-[#008069] text-white ring-2 ring-[#008069]/30">
               {initialsFor(conversation.member?.full_name, conversation.sender_wa_id)}
             </AvatarFallback>
           </Avatar>
           <div className="text-center">
             <p className="text-sm font-bold text-foreground">{name}</p>
             {conversation.member?.role && (
-              <Badge variant="outline" className="mt-1 text-[10px] font-semibold border-emerald-500/30 text-emerald-600 bg-emerald-500/10">
+              <Badge variant="outline" className="mt-1 text-[10px] font-semibold border-[#008069]/30 text-[#008069] bg-[#008069]/10">
                 {conversation.member.role}
               </Badge>
             )}
@@ -419,13 +419,13 @@ export default function WhatsAppInboxPage() {
       {/* ── Top Header Bar ───────────────────────────────────── */}
       <div className="px-5 py-3.5 border-b shrink-0 flex items-center justify-between gap-4 bg-card">
         <div className="flex items-center gap-3">
-          <div className="size-9 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center shrink-0">
-            <MessageSquare className="size-4 text-emerald-600 dark:text-emerald-400" />
+          <div className="size-9 rounded-lg bg-[#008069]/10 border border-[#008069]/30 flex items-center justify-center shrink-0">
+            <MessageSquare className="size-4 text-[#008069]" />
           </div>
           <div>
             <h1 className="text-base font-bold text-foreground flex items-center gap-2">
               WhatsApp Inbox
-              <Badge variant="outline" className="text-[10px] font-mono border-emerald-500/30 text-emerald-600 dark:text-emerald-400">
+              <Badge variant="outline" className="text-[10px] font-mono border-[#008069]/30 text-[#008069]">
                 {allConversations.length} Conversations
               </Badge>
             </h1>
@@ -492,8 +492,8 @@ export default function WhatsAppInboxPage() {
               <ConversationListSkeleton />
             ) : conversations.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-center px-6 py-12 gap-3">
-                <div className="size-12 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
-                  <MessageSquare className="size-5 text-emerald-500/60" />
+                <div className="size-12 rounded-full bg-[#008069]/10 border border-[#008069]/20 flex items-center justify-center">
+                  <MessageSquare className="size-5 text-[#008069]/60" />
                 </div>
                 <div>
                   <p className="text-sm font-semibold text-foreground">No conversations</p>
@@ -521,8 +521,8 @@ export default function WhatsAppInboxPage() {
         <div className="flex-1 flex flex-col min-h-0 bg-[#efeae2] dark:bg-[#0b141a]">
           {!selectedConversation ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center px-6">
-              <div className="size-16 rounded-full bg-emerald-500/10 border-2 border-emerald-500/20 flex items-center justify-center">
-                <MessageSquare className="size-7 text-emerald-500/50" />
+              <div className="size-16 rounded-full bg-[#008069]/10 border-2 border-[#008069]/20 flex items-center justify-center">
+                <MessageSquare className="size-7 text-[#008069]/50" />
               </div>
               <div>
                 <p className="text-sm font-semibold text-foreground/70">Select a conversation</p>
@@ -536,7 +536,7 @@ export default function WhatsAppInboxPage() {
               {/* Thread header */}
               <div className="flex items-center gap-3 px-5 py-3 border-b border-border/60 bg-card/90 backdrop-blur-sm shrink-0">
                 <Avatar className="size-9 shrink-0">
-                  <AvatarFallback className="text-xs font-bold bg-emerald-500 text-white ring-2 ring-emerald-500/30">
+                  <AvatarFallback className="text-xs font-bold bg-[#008069] text-white ring-2 ring-[#008069]/30">
                     {initialsFor(selectedConversation.member?.full_name, selectedConversation.sender_wa_id)}
                   </AvatarFallback>
                 </Avatar>
@@ -585,10 +585,10 @@ export default function WhatsAppInboxPage() {
               {/* Read-only footer */}
               <div className="px-5 py-2.5 border-t border-border/60 bg-card/80 backdrop-blur-sm shrink-0 flex items-center justify-center gap-2">
                 <div className="flex items-center gap-1.5 bg-muted/60 border border-border px-3 py-1.5 rounded-full text-[11px] text-muted-foreground">
-                  <Bot className="size-3 text-emerald-500" />
+                  <Bot className="size-3 text-[#008069]" />
                   <span>Read-only monitoring view · Replies sent automatically by</span>
-                  <span className="font-semibold text-emerald-600 dark:text-emerald-400">Mesiri AI</span>
-                  <Check className="size-3 text-emerald-500" />
+                  <span className="font-semibold text-[#008069]">Mesiri AI</span>
+                  <Check className="size-3 text-[#008069]" />
                 </div>
               </div>
             </>
@@ -603,3 +603,4 @@ export default function WhatsAppInboxPage() {
     </div>
   )
 }
+
