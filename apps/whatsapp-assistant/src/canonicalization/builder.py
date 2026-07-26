@@ -107,6 +107,117 @@ def _normalize_material_fields(fields: dict) -> dict:
     return out
 
 
+_LABOUR_NAME_ALIASES = ("name", "worker_name", "worker")
+_LABOUR_COUNT_ALIASES = ("headcount", "count", "number", "quantity", "workers")
+
+
+def _coerce_headcount(raw: object, *, named: bool) -> int:
+    """A line's headcount, defaulting sanely rather than rejecting.
+
+    A named person is always 1 -- a provider that returns ``{"name": "Ravi",
+    "headcount": 12}`` has misread "Ravi" and "12 helpers" as one line, and
+    trusting the 12 would silently bill twelve days to one man.
+    """
+    if named:
+        return 1
+    try:
+        value = int(float(str(raw)))
+    except (TypeError, ValueError):
+        return 1
+    return value if value > 0 else 1
+
+
+def _labour_line(raw: dict) -> dict | None:
+    """Normalize one extracted worker entry, or None if it says nothing."""
+    name = next((raw[k] for k in _LABOUR_NAME_ALIASES if raw.get(k)), None)
+    name = str(name).strip() if name else None
+    count_raw = next((raw[k] for k in _LABOUR_COUNT_ALIASES if raw.get(k) is not None), None)
+    trade = raw.get("trade") or raw.get("skill") or raw.get("role")
+    wage = raw.get("daily_wage") or raw.get("wage") or raw.get("rate")
+
+    if not name and not trade and count_raw is None:
+        return None
+
+    line: dict = {
+        "worker_name": name,
+        "trade": str(trade).strip() if trade else None,
+        "headcount": _coerce_headcount(count_raw, named=bool(name)),
+    }
+    if wage is not None:
+        line["daily_wage"] = wage
+    for key in ("contractor", "activity"):
+        if raw.get(key):
+            line[key] = str(raw[key]).strip()
+    return line
+
+
+def _normalize_labour_fields(fields: dict) -> dict:
+    """Map whatever the provider returned onto the canonical ``lines`` shape.
+
+    The workflow (workflows/labour_update) only ever reads ``lines``: a list
+    where each entry is either a named person or an anonymous headcount group
+    (plan principle P10). Getting to that single shape here -- rather than
+    teaching the graph three input dialects -- is the same job
+    ``_normalize_material_fields`` does for ``material``/``event`` aliases.
+
+    Three inputs are accepted because all three genuinely occur:
+
+    1. ``workers``: [...] -- what the extraction prompt now asks for.
+    2. ``lines``: [...] -- already canonical (a corrected/replayed event).
+    3. flat ``headcount``/``trade`` -- what the prompt asked for until
+       2026-07-26, and what a provider still falls back to on a terse message
+       like "12 masons". Folded into a single group line so an older or
+       simpler extraction keeps working rather than becoming unactionable.
+
+    Alias keys are popped, not copied: leaving both ``workers`` and ``lines``
+    behind would show the same attendance twice in the confirmation text.
+    """
+    out = dict(fields)
+    raw_lines = out.pop("workers", None) or out.pop("lines", None)
+
+    lines: list[dict] = []
+    if isinstance(raw_lines, list):
+        for entry in raw_lines:
+            if isinstance(entry, dict):
+                line = _labour_line(entry)
+            elif entry:
+                # A bare string ("12 helpers", or just "Ravi") -- keep it as a
+                # name rather than discarding the only thing the user said.
+                line = _labour_line({"name": str(entry)})
+            else:
+                line = None
+            if line is not None:
+                lines.append(line)
+
+    if not lines:
+        flat = _labour_line(
+            {
+                "name": next((out.get(k) for k in _LABOUR_NAME_ALIASES if out.get(k)), None),
+                "headcount": out.get("headcount") or out.get("count"),
+                "trade": out.get("trade"),
+                "daily_wage": out.get("daily_wage"),
+            }
+        )
+        if flat is not None:
+            lines.append(flat)
+
+    # Popped once folded in, so they don't also render as their own lines in
+    # the confirmation prompt alongside the line they produced.
+    for key in ("headcount", "count", "trade", "daily_wage", "worker_name", "name"):
+        out.pop(key, None)
+
+    if lines:
+        contractor = out.get("contractor")
+        if contractor:
+            # Stated once for the whole report ("all from Kumar Team"), but
+            # matching scores it per worker -- so push it down to any line
+            # that didn't state its own.
+            for line in lines:
+                line.setdefault("contractor", str(contractor).strip())
+        out["lines"] = lines
+    return out
+
+
 def build_canonical_event(
     understanding: UnderstandingResult,
     context: ResolvedContextV2,
@@ -137,6 +248,9 @@ def build_canonical_event(
         # row). Not expense-specific: any future domain that wants to attach
         # the source media gets this for free.
         fields["media_object_key"] = understanding.original_content_reference
+
+    if understanding.semantic_type is SemanticType.LABOUR_UPDATE:
+        fields = _normalize_labour_fields(fields)
 
     if understanding.semantic_type is SemanticType.MATERIAL_UPDATE:
         fields = _normalize_material_fields(fields)

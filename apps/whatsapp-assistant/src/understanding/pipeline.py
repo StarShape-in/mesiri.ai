@@ -40,7 +40,13 @@ _REQUIRED_FIELDS: dict[SemanticType, tuple[str, ...]] = {
     SemanticType.EXPENSE: ("amount",),
     SemanticType.EQUIPMENT_USAGE: ("equipment_name", "duration_hours"),
     SemanticType.MATERIAL_UPDATE: ("material_name",),
-    SemanticType.LABOUR_UPDATE: ("headcount",),
+    # Confidence is judged on the provider's own output, before
+    # canonicalization folds the shapes together -- so this names what the
+    # extraction prompt actually asks for (`workers`). A provider that falls
+    # back to a flat `headcount` still canonicalizes fine (see
+    # canonicalization/builder._normalize_labour_fields); it just scores as
+    # one missing field, which is honest -- that reply lost the names.
+    SemanticType.LABOUR_UPDATE: ("workers",),
     SemanticType.GENERAL_SITE_UPDATE: (),
     SemanticType.GENERAL_QUESTION: (),
     SemanticType.WHOAMI_QUESTION: (),

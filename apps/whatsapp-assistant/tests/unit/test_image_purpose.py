@@ -55,7 +55,7 @@ async def test_new_image_is_held_and_returns_the_picker():
     assert "photo" in reply.text.lower()
     assert reply.list_rows is not None
     row_ids = {row.id for row in reply.list_rows}
-    assert row_ids == {"img_expense", "img_site_update"}
+    assert row_ids == {"img_expense", "img_attendance", "img_site_update"}
 
     held = await store.pop_pending(user_id=USR)
     assert held is not None

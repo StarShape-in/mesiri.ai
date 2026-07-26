@@ -295,6 +295,15 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from interactions.execution_router import ActionTypeRoutingDispatcher
     from mesiri_contracts.assistant.draft_action import DraftActionType
 
+    # TEMPORARY: Labour is being built conversation-first, so attendance is
+    # logged rather than saved until Phase 5 adds the tables and repository.
+    # Registered anyway because the alternative is worse: with no dispatcher
+    # for this action type the router returns FAILED, and the user hits an
+    # error at the exact moment we are trying to observe -- confirmation.
+    # Swap this one line for the real LabourExecutionDispatcher when Phase 5
+    # lands, and delete runtime/labour_execution_stub.py.
+    from runtime.labour_execution_stub import StubLabourExecutionDispatcher
+
     execution_dispatcher = ActionTypeRoutingDispatcher(
         {
             DraftActionType.RECORD_MATERIAL_RECEIPT: material_dispatcher,
@@ -303,6 +312,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             DraftActionType.MANAGE_MONEY_ACCOUNT: account_admin_dispatcher,
             DraftActionType.TRANSFER_MONEY: transfer_dispatcher,
             DraftActionType.REVERSE_TRANSACTION: reverse_dispatcher,
+            DraftActionType.RECORD_LABOUR_ATTENDANCE: StubLabourExecutionDispatcher(),
         }
     )
     # Read-only inventory lookups for the material.inventory_query workflow --

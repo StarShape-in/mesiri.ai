@@ -61,7 +61,12 @@ REQUIRED_FIELDS: dict[CanonicalEventType, tuple[str, ...]] = {
     CanonicalEventType.MATERIAL_USAGE_REQUESTED: ("material_name", "quantity", "unit"),
     CanonicalEventType.EXPENSE_REQUESTED: ("amount",),
     CanonicalEventType.EQUIPMENT_USAGE_REQUESTED: ("equipment_name", "duration_hours"),
-    CanonicalEventType.LABOUR_ATTENDANCE_REQUESTED: ("headcount",),
+    # `lines`, not `headcount`: builder._normalize_labour_fields folds every
+    # accepted input shape (workers[], lines[], or a flat headcount/trade)
+    # into `lines` before this check runs, so requiring the canonical field
+    # covers all three. An attendance naming nobody and counting nobody is
+    # genuinely unactionable and asks for clarification.
+    CanonicalEventType.LABOUR_ATTENDANCE_REQUESTED: ("lines",),
     CanonicalEventType.GENERAL_SITE_UPDATE_REQUESTED: (),
     CanonicalEventType.GENERAL_QUESTION_ASKED: (),
     CanonicalEventType.IDENTITY_LOOKUP_REQUESTED: (),
