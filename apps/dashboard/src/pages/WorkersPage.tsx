@@ -17,8 +17,8 @@ import {
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react'
+import { useScope } from '@/lib/ScopeContext'
 import { KpiCard } from '@/components/ui/kpi-card'
-import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -44,6 +44,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { fetchWorkersApi, updateWorkerApi, type WorkforceWorkerItem } from '@/lib/api'
 import { AddWorkerDialog } from '@/components/workforce/add-worker-dialog'
 import { EditWorkerSheet } from '@/components/workforce/edit-worker-sheet'
@@ -52,6 +53,7 @@ type SortField = 'name' | 'trade' | 'type' | 'wage' | 'status'
 type SortOrder = 'asc' | 'desc'
 
 export default function WorkersPage() {
+  const { scope } = useScope()
   const [workers, setWorkers] = React.useState<WorkforceWorkerItem[]>([])
   const [loading, setLoading] = React.useState(true)
   const [search, setSearch] = React.useState('')
@@ -101,6 +103,15 @@ export default function WorkersPage() {
       setSortField(field)
       setSortOrder('asc')
     }
+  }
+
+  const renderSortIcon = (field: SortField) => {
+    if (sortField !== field) return <ArrowUpDown className="size-3 text-muted-foreground/60 ml-1 inline" />
+    return sortOrder === 'asc' ? (
+      <ArrowUp className="size-3 text-amber-500 ml-1 inline" />
+    ) : (
+      <ArrowDown className="size-3 text-amber-500 ml-1 inline" />
+    )
   }
 
   // Filtered & Sorted workers
@@ -193,6 +204,12 @@ export default function WorkersPage() {
         )
       : 0
 
+  const scopeLabel = React.useMemo(() => {
+    if (scope.mode === 'portfolio') return 'Portfolio Scope (All Site Labor Roster)'
+    if (scope.mode === 'project') return `Project Scope: ${scope.projectName}`
+    return `Site Scope: ${scope.projectName} / ${scope.siteName}`
+  }, [scope])
+
   return (
     <div className="flex flex-col gap-4 w-full max-w-full relative pb-12">
       {/* Page Header */}
@@ -208,26 +225,25 @@ export default function WorkersPage() {
                 Workforce Module
               </Badge>
             </h1>
-            <p className="text-xs text-muted-foreground font-medium">
-              Manage organization site workers, trade skills, default daily wages, and subcontractor listings.
-            </p>
+            <p className="text-xs text-muted-foreground font-medium">{scopeLabel}</p>
           </div>
         </div>
 
         <div className="flex items-center gap-2 self-start sm:self-auto">
           <Button
-            variant="outline"
             size="sm"
+            variant="outline"
             onClick={exportCsv}
-            className="text-xs font-semibold gap-1.5"
+            className="h-8 gap-1.5 text-xs font-medium"
           >
             <Download className="size-3.5" />
             Export CSV
           </Button>
 
           <Button
+            size="sm"
             onClick={() => setAddOpen(true)}
-            className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs gap-1.5 shadow-2xs"
+            className="h-8 gap-1.5 text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white shadow-2xs"
           >
             <UserPlus className="size-4" />
             Register Worker
@@ -272,10 +288,10 @@ export default function WorkersPage() {
         />
       </div>
 
-      {/* Controls Toolbar with Shadcn Select */}
-      <Card className="p-3 border shadow-2xs flex flex-col sm:flex-row gap-3 items-center justify-between bg-card">
-        <div className="flex flex-col sm:flex-row gap-2 w-full items-center">
-          <div className="relative w-full sm:w-72">
+      {/* Filter & Toolbar (Matching ExpensesPage container styling) */}
+      <div className="flex flex-col sm:flex-row gap-2.5 items-center justify-between border border-border/80 p-2.5 rounded-lg bg-card/40">
+        <div className="flex flex-wrap gap-2 w-full sm:w-auto flex-1 items-center">
+          <div className="relative w-full sm:w-64">
             <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
             <Input
               placeholder="Search worker name, trade, contractor..."
@@ -285,117 +301,91 @@ export default function WorkersPage() {
             />
           </div>
 
-          <div className="flex items-center gap-2 w-full sm:w-auto">
-            <Select value={typeFilter} onValueChange={setTypeFilter}>
-              <SelectTrigger className="h-9 w-full sm:w-44 text-xs">
-                <SelectValue placeholder="Worker Type" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL" className="text-xs">All Worker Types</SelectItem>
-                <SelectItem value="permanent" className="text-xs">Permanent Staff</SelectItem>
-                <SelectItem value="temporary" className="text-xs">Temporary Labor</SelectItem>
-                <SelectItem value="contractor" className="text-xs">Subcontractor</SelectItem>
-              </SelectContent>
-            </Select>
-
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="h-9 w-full sm:w-36 text-xs">
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL" className="text-xs">All Statuses</SelectItem>
-                <SelectItem value="active" className="text-xs">Active ({activeCount})</SelectItem>
-                <SelectItem value="inactive" className="text-xs">Retired</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          <Select value={typeFilter} onValueChange={setTypeFilter}>
+            <SelectTrigger className="h-9 text-xs w-full sm:w-40">
+              <SelectValue placeholder="All Worker Types" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL">All Worker Types</SelectItem>
+              <SelectItem value="permanent">Permanent Staff</SelectItem>
+              <SelectItem value="temporary">Temporary Labor</SelectItem>
+              <SelectItem value="contractor">Subcontractor</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
-      </Card>
 
-      {/* Worker Roster Table */}
-      <Card className="border shadow-2xs overflow-hidden bg-card">
+        {/* Status Tab Filter (Matching ExpensesPage status tabs) */}
+        <Tabs value={statusFilter} onValueChange={setStatusFilter} className="w-full sm:w-auto">
+          <TabsList className="h-9 text-xs grid grid-cols-3 w-full sm:w-auto">
+            <TabsTrigger value="ALL" className="text-xs">All</TabsTrigger>
+            <TabsTrigger value="active" className="text-xs">Active ({activeCount})</TabsTrigger>
+            <TabsTrigger value="inactive" className="text-xs">Retired</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </div>
+
+      {/* Filter Summary Banner */}
+      <div className="flex items-center justify-between text-xs px-1 text-muted-foreground font-medium">
+        <div>
+          Showing <span className="text-foreground font-semibold">{filteredWorkers.length}</span> of {workers.length} records
+        </div>
+        {selectedIds.length > 0 && (
+          <span className="text-amber-600 font-semibold text-xs">
+            {selectedIds.length} items checked
+          </span>
+        )}
+      </div>
+
+      {/* Main Worker Table Container (Matching ExpensesPage table styling) */}
+      <div className="border rounded-lg overflow-hidden bg-card shadow-2xs">
         <Table>
           <TableHeader className="bg-muted/40">
             <TableRow className="hover:bg-transparent border-b">
-              <TableHead className="w-10 text-center">
+              <TableHead className="w-[40px] px-3">
                 <input
                   type="checkbox"
                   checked={isAllSelected}
                   onChange={toggleSelectAll}
-                  className="rounded border-input text-amber-600 focus:ring-amber-500 size-3.5"
+                  className="size-4 rounded border-border text-amber-600 focus:ring-amber-500 cursor-pointer accent-amber-600"
+                  title="Select All"
                 />
               </TableHead>
 
-              <TableHead className="text-xs font-semibold h-10">
-                <button
-                  onClick={() => toggleSort('name')}
-                  className="flex items-center gap-1.5 hover:text-foreground font-semibold"
-                >
-                  <span>Worker Name</span>
-                  {sortField === 'name' ? (
-                    sortOrder === 'asc' ? <ArrowUp className="size-3 text-amber-500" /> : <ArrowDown className="size-3 text-amber-500" />
-                  ) : (
-                    <ArrowUpDown className="size-3 text-muted-foreground" />
-                  )}
-                </button>
+              <TableHead
+                className="text-xs font-semibold h-10 cursor-pointer select-none"
+                onClick={() => toggleSort('name')}
+              >
+                Worker Name {renderSortIcon('name')}
               </TableHead>
 
-              <TableHead className="text-xs font-semibold h-10">
-                <button
-                  onClick={() => toggleSort('trade')}
-                  className="flex items-center gap-1.5 hover:text-foreground font-semibold"
-                >
-                  <span>Trade / Skill</span>
-                  {sortField === 'trade' ? (
-                    sortOrder === 'asc' ? <ArrowUp className="size-3 text-amber-500" /> : <ArrowDown className="size-3 text-amber-500" />
-                  ) : (
-                    <ArrowUpDown className="size-3 text-muted-foreground" />
-                  )}
-                </button>
+              <TableHead
+                className="text-xs font-semibold h-10 cursor-pointer select-none"
+                onClick={() => toggleSort('trade')}
+              >
+                Trade / Skill {renderSortIcon('trade')}
               </TableHead>
 
-              <TableHead className="text-xs font-semibold h-10">
-                <button
-                  onClick={() => toggleSort('type')}
-                  className="flex items-center gap-1.5 hover:text-foreground font-semibold"
-                >
-                  <span>Worker Type</span>
-                  {sortField === 'type' ? (
-                    sortOrder === 'asc' ? <ArrowUp className="size-3 text-amber-500" /> : <ArrowDown className="size-3 text-amber-500" />
-                  ) : (
-                    <ArrowUpDown className="size-3 text-muted-foreground" />
-                  )}
-                </button>
+              <TableHead
+                className="text-xs font-semibold h-10 cursor-pointer select-none"
+                onClick={() => toggleSort('type')}
+              >
+                Worker Type {renderSortIcon('type')}
               </TableHead>
 
-              <TableHead className="text-xs font-semibold h-10 text-right">
-                <button
-                  onClick={() => toggleSort('wage')}
-                  className="flex items-center gap-1.5 ml-auto hover:text-foreground font-semibold"
-                >
-                  <span>Default Daily Wage</span>
-                  {sortField === 'wage' ? (
-                    sortOrder === 'asc' ? <ArrowUp className="size-3 text-amber-500" /> : <ArrowDown className="size-3 text-amber-500" />
-                  ) : (
-                    <ArrowUpDown className="size-3 text-muted-foreground" />
-                  )}
-                </button>
+              <TableHead
+                className="text-xs font-semibold h-10 text-right cursor-pointer select-none"
+                onClick={() => toggleSort('wage')}
+              >
+                Default Daily Wage {renderSortIcon('wage')}
               </TableHead>
 
               <TableHead className="text-xs font-semibold h-10">Contractor / Agency</TableHead>
 
-              <TableHead className="text-xs font-semibold h-10 text-center">
-                <button
-                  onClick={() => toggleSort('status')}
-                  className="flex items-center gap-1.5 mx-auto hover:text-foreground font-semibold"
-                >
-                  <span>Status</span>
-                  {sortField === 'status' ? (
-                    sortOrder === 'asc' ? <ArrowUp className="size-3 text-amber-500" /> : <ArrowDown className="size-3 text-amber-500" />
-                  ) : (
-                    <ArrowUpDown className="size-3 text-muted-foreground" />
-                  )}
-                </button>
+              <TableHead
+                className="text-xs font-semibold h-10 text-center cursor-pointer select-none"
+                onClick={() => toggleSort('status')}
+              >
+                Status {renderSortIcon('status')}
               </TableHead>
 
               <TableHead className="text-xs font-semibold h-10 w-12 text-right">Action</TableHead>
@@ -424,12 +414,12 @@ export default function WorkersPage() {
                       isSelected ? 'bg-amber-500/5 dark:bg-amber-500/10' : ''
                     }`}
                   >
-                    <TableCell className="text-center py-3" onClick={(e) => toggleSelectRow(item.id, e)}>
+                    <TableCell className="text-center px-3" onClick={(e) => toggleSelectRow(item.id, e)}>
                       <input
                         type="checkbox"
                         checked={isSelected}
                         onChange={() => {}}
-                        className="rounded border-input text-amber-600 focus:ring-amber-500 size-3.5"
+                        className="size-4 rounded border-border text-amber-600 focus:ring-amber-500 cursor-pointer accent-amber-600"
                       />
                     </TableCell>
 
@@ -528,10 +518,10 @@ export default function WorkersPage() {
           </TableBody>
         </Table>
 
-        {/* Pagination Bar */}
-        <div className="flex items-center justify-between px-4 py-3 border-t bg-muted/20 text-xs">
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <span>Rows per page:</span>
+        {/* Pagination Footer (Matching ExpensesPage pagination footer styling) */}
+        <div className="border-t bg-card/40 px-3 py-2 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">Rows per page</span>
             <Select
               value={String(pageSize)}
               onValueChange={(val) => {
@@ -539,49 +529,45 @@ export default function WorkersPage() {
                 setCurrentPage(1)
               }}
             >
-              <SelectTrigger className="h-8 w-16 text-xs">
+              <SelectTrigger className="h-7 w-16 text-xs font-mono">
                 <SelectValue placeholder={String(pageSize)} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="10" className="text-xs">10</SelectItem>
-                <SelectItem value="25" className="text-xs">25</SelectItem>
-                <SelectItem value="50" className="text-xs">50</SelectItem>
-                <SelectItem value="100" className="text-xs">100</SelectItem>
+                <SelectItem value="5">5</SelectItem>
+                <SelectItem value="10">10</SelectItem>
+                <SelectItem value="25">25</SelectItem>
+                <SelectItem value="50">50</SelectItem>
               </SelectContent>
             </Select>
-            <span className="ml-2 hidden sm:inline">
-              Showing {filteredWorkers.length === 0 ? 0 : (currentPage - 1) * pageSize + 1} to{' '}
-              {Math.min(currentPage * pageSize, filteredWorkers.length)} of {filteredWorkers.length} workers
-            </span>
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-muted-foreground text-xs">
+          <div className="flex items-center gap-3">
+            <span className="text-muted-foreground font-mono">
               Page {currentPage} of {totalPages}
             </span>
-            <div className="flex items-center gap-1">
+            <div className="flex gap-1">
               <Button
                 variant="outline"
-                size="icon"
-                className="size-8"
-                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                disabled={currentPage === 1}
+                size="sm"
+                className="h-7 size-7 p-0"
+                disabled={currentPage <= 1}
+                onClick={() => setCurrentPage((p) => p - 1)}
               >
                 <ChevronLeft className="size-4" />
               </Button>
               <Button
                 variant="outline"
-                size="icon"
-                className="size-8"
-                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                disabled={currentPage === totalPages}
+                size="sm"
+                className="h-7 size-7 p-0"
+                disabled={currentPage >= totalPages}
+                onClick={() => setCurrentPage((p) => p + 1)}
               >
                 <ChevronRight className="size-4" />
               </Button>
             </div>
           </div>
         </div>
-      </Card>
+      </div>
 
       {/* Floating Bulk Action Bar */}
       <BulkActionBar selectedCount={selectedIds.length} onClear={() => setSelectedIds([])}>
@@ -589,7 +575,7 @@ export default function WorkersPage() {
           variant="outline"
           size="sm"
           onClick={() => handleBulkStatusChange('inactive')}
-          className="text-xs font-semibold gap-1.5 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20"
+          className="h-7 text-xs font-semibold gap-1.5 text-red-600 border-red-500/40 hover:bg-red-500/10"
         >
           <UserX className="size-3.5" />
           Retire Selected
@@ -598,7 +584,7 @@ export default function WorkersPage() {
           variant="outline"
           size="sm"
           onClick={() => handleBulkStatusChange('active')}
-          className="text-xs font-semibold gap-1.5 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/20"
+          className="h-7 text-xs font-semibold gap-1.5 text-emerald-600 border-emerald-500/40 hover:bg-emerald-500/10"
         >
           <UserCheck className="size-3.5" />
           Reactivate Selected
@@ -607,7 +593,7 @@ export default function WorkersPage() {
           variant="outline"
           size="sm"
           onClick={exportCsv}
-          className="text-xs font-semibold gap-1.5"
+          className="h-7 text-xs font-semibold gap-1.5"
         >
           <Download className="size-3.5" />
           Export Selected CSV

@@ -17,7 +17,6 @@ import {
 } from 'lucide-react'
 import { useScope } from '@/lib/ScopeContext'
 import { KpiCard } from '@/components/ui/kpi-card'
-import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { BulkActionBar } from '@/components/ui/bulk-action-bar'
@@ -36,6 +35,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   fetchAttendanceReportsApi,
   type LabourAttendanceSummaryItem,
@@ -110,6 +110,15 @@ export default function AttendancePage() {
       setSortField(field)
       setSortOrder('desc')
     }
+  }
+
+  const renderSortIcon = (field: SortField) => {
+    if (sortField !== field) return <ArrowUpDown className="size-3 text-muted-foreground/60 ml-1 inline" />
+    return sortOrder === 'asc' ? (
+      <ArrowUp className="size-3 text-amber-500 ml-1 inline" />
+    ) : (
+      <ArrowDown className="size-3 text-amber-500 ml-1 inline" />
+    )
   }
 
   // Filtered & Sorted reports
@@ -209,10 +218,10 @@ export default function AttendancePage() {
         </div>
 
         <Button
-          variant="outline"
           size="sm"
+          variant="outline"
           onClick={exportCsv}
-          className="text-xs font-semibold gap-1.5 self-start sm:self-auto"
+          className="h-8 gap-1.5 text-xs font-medium self-start sm:self-auto"
         >
           <Download className="size-3.5" />
           Export Statement CSV
@@ -260,123 +269,104 @@ export default function AttendancePage() {
         />
       </div>
 
-      {/* Controls Toolbar with Shadcn Select */}
-      <Card className="p-3 border shadow-2xs flex flex-col sm:flex-row gap-3 items-center justify-between bg-card">
-        <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto items-center">
-          <div className="flex items-center gap-2">
-            <Calendar className="size-4 text-amber-500 shrink-0" />
-            <span className="text-xs font-bold text-foreground">Filters:</span>
-          </div>
+      {/* Filter & Toolbar (Matching ExpensesPage container styling) */}
+      <div className="flex flex-col sm:flex-row gap-2.5 items-center justify-between border border-border/80 p-2.5 rounded-lg bg-card/40">
+        <div className="flex flex-wrap gap-2 w-full sm:w-auto flex-1 items-center">
+          <Select value={dateFilter} onValueChange={setDateFilter}>
+            <SelectTrigger className="h-9 text-xs w-full sm:w-40">
+              <Calendar className="size-3.5 mr-1 text-amber-500" />
+              <SelectValue placeholder="Date Range" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL">All Time</SelectItem>
+              <SelectItem value="TODAY">Today</SelectItem>
+              <SelectItem value="THIS_WEEK">Last 7 Days</SelectItem>
+              <SelectItem value="THIS_MONTH">This Month</SelectItem>
+            </SelectContent>
+          </Select>
 
-          <div className="flex items-center gap-2 w-full sm:w-auto">
-            <Select value={dateFilter} onValueChange={setDateFilter}>
-              <SelectTrigger className="h-9 w-full sm:w-40 text-xs">
-                <SelectValue placeholder="Date Range" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL" className="text-xs">All Time</SelectItem>
-                <SelectItem value="TODAY" className="text-xs">Today</SelectItem>
-                <SelectItem value="THIS_WEEK" className="text-xs">Last 7 Days</SelectItem>
-                <SelectItem value="THIS_MONTH" className="text-xs">This Month</SelectItem>
-              </SelectContent>
-            </Select>
-
-            <Select value={sourceFilter} onValueChange={setSourceFilter}>
-              <SelectTrigger className="h-9 w-full sm:w-40 text-xs">
-                <SelectValue placeholder="Recorded Via" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL" className="text-xs">All Sources</SelectItem>
-                <SelectItem value="WHATSAPP" className="text-xs">WhatsApp Bot</SelectItem>
-                <SelectItem value="WEB" className="text-xs">Web Dashboard</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          <Select value={sourceFilter} onValueChange={setSourceFilter}>
+            <SelectTrigger className="h-9 text-xs w-full sm:w-40">
+              <SelectValue placeholder="Recorded Via" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL">All Sources</SelectItem>
+              <SelectItem value="WHATSAPP">WhatsApp Bot</SelectItem>
+              <SelectItem value="WEB">Web Dashboard</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
-      </Card>
 
-      {/* Attendance Reports Table */}
-      <Card className="border shadow-2xs overflow-hidden bg-card">
+        {/* Source Tab Filter */}
+        <Tabs value={sourceFilter} onValueChange={setSourceFilter} className="w-full sm:w-auto">
+          <TabsList className="h-9 text-xs grid grid-cols-3 w-full sm:w-auto">
+            <TabsTrigger value="ALL" className="text-xs">All</TabsTrigger>
+            <TabsTrigger value="WHATSAPP" className="text-xs">WhatsApp</TabsTrigger>
+            <TabsTrigger value="WEB" className="text-xs">Web</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </div>
+
+      {/* Filter Summary Banner */}
+      <div className="flex items-center justify-between text-xs px-1 text-muted-foreground font-medium">
+        <div>
+          Showing <span className="text-foreground font-semibold">{filteredReports.length}</span> of {reports.length} records
+        </div>
+        {selectedIds.length > 0 && (
+          <span className="text-amber-600 font-semibold text-xs">
+            {selectedIds.length} items checked
+          </span>
+        )}
+      </div>
+
+      {/* Main Attendance Table Container (Matching ExpensesPage table styling) */}
+      <div className="border rounded-lg overflow-hidden bg-card shadow-2xs">
         <Table>
           <TableHeader className="bg-muted/40">
             <TableRow className="hover:bg-transparent border-b">
-              <TableHead className="w-10 text-center">
+              <TableHead className="w-[40px] px-3">
                 <input
                   type="checkbox"
                   checked={isAllSelected}
                   onChange={toggleSelectAll}
-                  className="rounded border-input text-amber-600 focus:ring-amber-500 size-3.5"
+                  className="size-4 rounded border-border text-amber-600 focus:ring-amber-500 cursor-pointer accent-amber-600"
+                  title="Select All"
                 />
               </TableHead>
 
-              <TableHead className="text-xs font-semibold h-10">
-                <button
-                  onClick={() => toggleSort('date')}
-                  className="flex items-center gap-1.5 hover:text-foreground font-semibold"
-                >
-                  <span>Report Date</span>
-                  {sortField === 'date' ? (
-                    sortOrder === 'asc' ? <ArrowUp className="size-3 text-amber-500" /> : <ArrowDown className="size-3 text-amber-500" />
-                  ) : (
-                    <ArrowUpDown className="size-3 text-muted-foreground" />
-                  )}
-                </button>
+              <TableHead
+                className="text-xs font-semibold h-10 cursor-pointer select-none"
+                onClick={() => toggleSort('date')}
+              >
+                Report Date {renderSortIcon('date')}
               </TableHead>
 
-              <TableHead className="text-xs font-semibold h-10">
-                <button
-                  onClick={() => toggleSort('via')}
-                  className="flex items-center gap-1.5 hover:text-foreground font-semibold"
-                >
-                  <span>Recorded Via</span>
-                  {sortField === 'via' ? (
-                    sortOrder === 'asc' ? <ArrowUp className="size-3 text-amber-500" /> : <ArrowDown className="size-3 text-amber-500" />
-                  ) : (
-                    <ArrowUpDown className="size-3 text-muted-foreground" />
-                  )}
-                </button>
+              <TableHead
+                className="text-xs font-semibold h-10 cursor-pointer select-none"
+                onClick={() => toggleSort('via')}
+              >
+                Recorded Via {renderSortIcon('via')}
               </TableHead>
 
-              <TableHead className="text-xs font-semibold h-10 text-center">
-                <button
-                  onClick={() => toggleSort('lines')}
-                  className="flex items-center gap-1.5 mx-auto hover:text-foreground font-semibold"
-                >
-                  <span>Trade Lines</span>
-                  {sortField === 'lines' ? (
-                    sortOrder === 'asc' ? <ArrowUp className="size-3 text-amber-500" /> : <ArrowDown className="size-3 text-amber-500" />
-                  ) : (
-                    <ArrowUpDown className="size-3 text-muted-foreground" />
-                  )}
-                </button>
+              <TableHead
+                className="text-xs font-semibold h-10 text-center cursor-pointer select-none"
+                onClick={() => toggleSort('lines')}
+              >
+                Trade Lines {renderSortIcon('lines')}
               </TableHead>
 
-              <TableHead className="text-xs font-semibold h-10 text-center">
-                <button
-                  onClick={() => toggleSort('headcount')}
-                  className="flex items-center gap-1.5 mx-auto hover:text-foreground font-semibold"
-                >
-                  <span>Total Headcount</span>
-                  {sortField === 'headcount' ? (
-                    sortOrder === 'asc' ? <ArrowUp className="size-3 text-amber-500" /> : <ArrowDown className="size-3 text-amber-500" />
-                  ) : (
-                    <ArrowUpDown className="size-3 text-muted-foreground" />
-                  )}
-                </button>
+              <TableHead
+                className="text-xs font-semibold h-10 text-center cursor-pointer select-none"
+                onClick={() => toggleSort('headcount')}
+              >
+                Total Headcount {renderSortIcon('headcount')}
               </TableHead>
 
-              <TableHead className="text-xs font-semibold h-10 text-right">
-                <button
-                  onClick={() => toggleSort('cost')}
-                  className="flex items-center gap-1.5 ml-auto hover:text-foreground font-semibold"
-                >
-                  <span>Total Daily Cost</span>
-                  {sortField === 'cost' ? (
-                    sortOrder === 'asc' ? <ArrowUp className="size-3 text-amber-500" /> : <ArrowDown className="size-3 text-amber-500" />
-                  ) : (
-                    <ArrowUpDown className="size-3 text-muted-foreground" />
-                  )}
-                </button>
+              <TableHead
+                className="text-xs font-semibold h-10 text-right cursor-pointer select-none"
+                onClick={() => toggleSort('cost')}
+              >
+                Total Daily Cost {renderSortIcon('cost')}
               </TableHead>
 
               <TableHead className="text-xs font-semibold h-10">Notes / Summary</TableHead>
@@ -411,12 +401,12 @@ export default function AttendancePage() {
                       isSelected ? 'bg-amber-500/5 dark:bg-amber-500/10' : ''
                     }`}
                   >
-                    <TableCell className="text-center py-3" onClick={(e) => toggleSelectRow(item.id, e)}>
+                    <TableCell className="text-center px-3" onClick={(e) => toggleSelectRow(item.id, e)}>
                       <input
                         type="checkbox"
                         checked={isSelected}
                         onChange={() => {}}
-                        className="rounded border-input text-amber-600 focus:ring-amber-500 size-3.5"
+                        className="size-4 rounded border-border text-amber-600 focus:ring-amber-500 cursor-pointer accent-amber-600"
                       />
                     </TableCell>
 
@@ -478,10 +468,10 @@ export default function AttendancePage() {
           </TableBody>
         </Table>
 
-        {/* Pagination Bar */}
-        <div className="flex items-center justify-between px-4 py-3 border-t bg-muted/20 text-xs">
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <span>Rows per page:</span>
+        {/* Pagination Footer (Matching ExpensesPage pagination footer styling) */}
+        <div className="border-t bg-card/40 px-3 py-2 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">Rows per page</span>
             <Select
               value={String(pageSize)}
               onValueChange={(val) => {
@@ -489,49 +479,45 @@ export default function AttendancePage() {
                 setCurrentPage(1)
               }}
             >
-              <SelectTrigger className="h-8 w-16 text-xs">
+              <SelectTrigger className="h-7 w-16 text-xs font-mono">
                 <SelectValue placeholder={String(pageSize)} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="10" className="text-xs">10</SelectItem>
-                <SelectItem value="25" className="text-xs">25</SelectItem>
-                <SelectItem value="50" className="text-xs">50</SelectItem>
-                <SelectItem value="100" className="text-xs">100</SelectItem>
+                <SelectItem value="5">5</SelectItem>
+                <SelectItem value="10">10</SelectItem>
+                <SelectItem value="25">25</SelectItem>
+                <SelectItem value="50">50</SelectItem>
               </SelectContent>
             </Select>
-            <span className="ml-2 hidden sm:inline">
-              Showing {filteredReports.length === 0 ? 0 : (currentPage - 1) * pageSize + 1} to{' '}
-              {Math.min(currentPage * pageSize, filteredReports.length)} of {filteredReports.length} reports
-            </span>
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-muted-foreground text-xs">
+          <div className="flex items-center gap-3">
+            <span className="text-muted-foreground font-mono">
               Page {currentPage} of {totalPages}
             </span>
-            <div className="flex items-center gap-1">
+            <div className="flex gap-1">
               <Button
                 variant="outline"
-                size="icon"
-                className="size-8"
-                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                disabled={currentPage === 1}
+                size="sm"
+                className="h-7 size-7 p-0"
+                disabled={currentPage <= 1}
+                onClick={() => setCurrentPage((p) => p - 1)}
               >
                 <ChevronLeft className="size-4" />
               </Button>
               <Button
                 variant="outline"
-                size="icon"
-                className="size-8"
-                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                disabled={currentPage === totalPages}
+                size="sm"
+                className="h-7 size-7 p-0"
+                disabled={currentPage >= totalPages}
+                onClick={() => setCurrentPage((p) => p + 1)}
               >
                 <ChevronRight className="size-4" />
               </Button>
             </div>
           </div>
         </div>
-      </Card>
+      </div>
 
       {/* Floating Bulk Action Bar */}
       <BulkActionBar selectedCount={selectedIds.length} onClear={() => setSelectedIds([])}>
@@ -539,7 +525,7 @@ export default function AttendancePage() {
           variant="outline"
           size="sm"
           onClick={exportCsv}
-          className="text-xs font-semibold gap-1.5"
+          className="h-7 text-xs font-semibold gap-1.5"
         >
           <Download className="size-3.5 text-blue-500" />
           Export Selected CSV
