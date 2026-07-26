@@ -556,6 +556,7 @@ export interface CreateAccountApiPayload {
   bank_name?: string
   ifsc_code?: string
   custodian_name?: string
+  owner_user_id?: string
   project_id?: string
   site_id?: string
 }

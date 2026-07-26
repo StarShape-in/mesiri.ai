@@ -28,7 +28,7 @@ interface CreateAccountDialogProps {
   onAccountCreated?: (newAccount: any) => void
 }
 
-import { createAccountApi } from '@/lib/api'
+import { createAccountApi, fetchUsers, type User as UserItem } from '@/lib/api'
 
 export function CreateAccountDialog({
   open,
@@ -39,10 +39,31 @@ export function CreateAccountDialog({
   const [name, setName] = React.useState('')
   const [accountType, setAccountType] = React.useState<'bank' | 'cash' | 'employee_advance' | 'other'>('bank')
   const [openingBalance, setOpeningBalance] = React.useState('')
-  const [custodian, setCustodian] = React.useState('')
+  const [selectedUserId, setSelectedUserId] = React.useState('')
+  const [users, setUsers] = React.useState<UserItem[]>([])
   const [accountNumber, setAccountNumber] = React.useState('')
   const [submitting, setSubmitting] = React.useState(false)
   const toast = useToast()
+
+  React.useEffect(() => {
+    let active = true
+    async function loadUsers() {
+      try {
+        const list = await fetchUsers()
+        if (active && Array.isArray(list)) {
+          setUsers(list.filter((u) => u.status === 'active'))
+        }
+      } catch (err) {
+        console.warn('Failed to load users for custodian selection:', err)
+      }
+    }
+    if (open) {
+      loadUsers()
+    }
+    return () => {
+      active = false
+    }
+  }, [open])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -50,6 +71,8 @@ export function CreateAccountDialog({
 
     setSubmitting(true)
     const balance = parseFloat(openingBalance) || 0
+    const selectedUser = users.find((u) => u.id === selectedUserId)
+    const custodianName = selectedUser ? selectedUser.full_name || selectedUser.email : undefined
 
     try {
       await createAccountApi({
@@ -58,7 +81,8 @@ export function CreateAccountDialog({
         currency: 'INR',
         opening_balance: balance,
         account_number: accountNumber || undefined,
-        custodian_name: custodian || undefined,
+        custodian_name: custodianName,
+        owner_user_id: selectedUserId || undefined,
         project_id: scope.mode !== 'portfolio' ? scope.projectId : undefined,
         site_id: scope.mode === 'site' ? scope.siteId : undefined,
       })
@@ -73,7 +97,8 @@ export function CreateAccountDialog({
         opening_balance: balance,
         current_balance: balance,
         account_number_masked: accountNumber ? `•••• ${accountNumber.slice(-4)}` : undefined,
-        custodian_name: custodian || 'Finance Admin',
+        custodian_name: custodianName || 'Finance Admin',
+        owner_user_id: selectedUserId || undefined,
         project_id: scope.mode !== 'portfolio' ? scope.projectId : undefined,
         project_name: scope.mode === 'portfolio' ? 'Org Wide' : scope.projectName,
         site_id: scope.mode === 'site' ? scope.siteId : undefined,
@@ -89,7 +114,7 @@ export function CreateAccountDialog({
       onOpenChange(false)
       setName('')
       setOpeningBalance('')
-      setCustodian('')
+      setSelectedUserId('')
       setAccountNumber('')
     }
   }
@@ -176,15 +201,29 @@ export function CreateAccountDialog({
               <div className="space-y-1.5">
                 <Label htmlFor="custodian" className="text-xs font-semibold flex items-center gap-1">
                   <User className="size-3.5 text-muted-foreground" />
-                  Account Custodian / Manager
+                  Assigned Custodian / Manager
                 </Label>
-                <Input
-                  id="custodian"
-                  placeholder="e.g. Ramesh Kumar (Site Manager)"
-                  value={custodian}
-                  onChange={(e) => setCustodian(e.target.value)}
-                  className="h-9 text-xs"
-                />
+                <Select value={selectedUserId} onValueChange={setSelectedUserId}>
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue placeholder="Select assigned custodian..." />
+                  </SelectTrigger>
+                  <SelectContent className="text-xs max-h-56">
+                    {users.length === 0 ? (
+                      <SelectItem value="none" disabled className="text-xs">
+                        No active users found
+                      </SelectItem>
+                    ) : (
+                      users.map((u) => (
+                        <SelectItem key={u.id} value={u.id} className="text-xs cursor-pointer">
+                          <div className="flex flex-col">
+                            <span className="font-semibold">{u.full_name || u.email}</span>
+                            <span className="text-[10px] text-muted-foreground">{u.role} • {u.email}</span>
+                          </div>
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="space-y-1.5">

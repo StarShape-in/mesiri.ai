@@ -12,6 +12,7 @@ import datetime
 import uuid
 from decimal import Decimal
 
+import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -33,6 +34,7 @@ from mesiri.infrastructure.postgres.repositories.finance import (
 from mesiri.infrastructure.postgres.repositories.transfer_execution import (
     PostgresTransferExecutionRepository,
 )
+from mesiri.infrastructure.postgres.repositories.users import _users
 from mesiri.infrastructure.postgres.repositories.vendors import PostgresVendorRepository
 from mesiri_contracts.application.results.execution_result import ExecutionStatus
 
@@ -55,6 +57,7 @@ class MoneyAccountResponse(BaseModel):
     project_id: uuid.UUID | None = None
     site_id: uuid.UUID | None = None
     owner_user_id: uuid.UUID | None = None
+    custodian_name: str | None = None
     opening_balance_date: datetime.date | None = None
 
 
@@ -474,6 +477,14 @@ async def list_accounts(
         account_type=account_type,
         status=status,
     )
+    user_ids = {acc.owner_user_id for acc in accounts if acc.owner_user_id}
+    custodian_names: dict[uuid.UUID, str] = {}
+    if user_ids:
+        users_stmt = sa.select(_users.c.id, _users.c.full_name).where(_users.c.id.in_(user_ids))
+        users_res = await conn.execute(users_stmt)
+        for urow in users_res.mappings():
+            custodian_names[urow["id"]] = urow["full_name"]
+
     result = []
     for acc in accounts:
         try:
@@ -493,6 +504,7 @@ async def list_accounts(
                 project_id=acc.project_id,
                 site_id=acc.site_id,
                 owner_user_id=acc.owner_user_id,
+                custodian_name=custodian_names.get(acc.owner_user_id) if acc.owner_user_id else None,
                 opening_balance_date=acc.opening_balance_date,
             )
         )

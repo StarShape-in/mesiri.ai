@@ -109,7 +109,7 @@ export default function AccountsPage() {
             currency: a.currency || 'INR',
             opening_balance: parseFloat(a.opening_balance) || 0,
             current_balance: parseFloat(a.current_balance) || parseFloat(a.opening_balance) || 0,
-            custodian_name: a.owner_user_id ? String(a.owner_user_id).slice(0, 8) : 'Finance Admin',
+            custodian_name: a.custodian_name || (a.owner_user_id ? String(a.owner_user_id).slice(0, 8) : 'Finance Admin'),
             project_id: a.project_id ? String(a.project_id) : undefined,
             project_name: 'Org Wide',
             site_id: a.site_id ? String(a.site_id) : undefined,
