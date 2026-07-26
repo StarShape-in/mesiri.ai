@@ -17,6 +17,7 @@ selection (Understanding Module Boundary).
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from mesiri_ai.confidence import ConfidencePolicy, ConfidenceSignals
@@ -57,6 +58,30 @@ _REQUIRED_FIELDS: dict[SemanticType, tuple[str, ...]] = {
     SemanticType.REVERSAL: (),
     SemanticType.UNKNOWN: (),
 }
+
+
+def _render_vision_value(value: object) -> str:
+    """Render one vision field for the text extraction call that follows.
+
+    Scalars pass through as plain text, exactly as before -- a receipt's
+    ``amount: 250`` must keep reading like prose, since that is what the
+    extraction prompt was tuned against.
+
+    Lists and dicts are JSON-encoded instead of being str()'d. This matters
+    for attendance sheets specifically: a roster arrives as a ``workers``
+    array of 15 rows, and Python's repr renders it with single quotes
+    (``[{'name': 'Ravi'}]``), which is not JSON and which the extraction
+    model then has to re-parse by eye. Nested structure is the one thing an
+    attendance sheet cannot afford to lose in this hand-off -- lose it and 15
+    named workers collapse into an unparseable blob, which reads exactly like
+    the model having failed to read the handwriting.
+    """
+    if isinstance(value, (list, dict)):
+        try:
+            return json.dumps(value, ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            return str(value)
+    return str(value)
 
 
 class UnderstandingPipeline:
@@ -270,7 +295,7 @@ class UnderstandingPipeline:
         image = await self._read_media(message)
         mime = message.media.mime_type if message.media else None
         vision = await self._vision.analyze_image(
-            image, mime_type=mime, correlation_id=result.correlation_id
+            image, mime_type=mime, hint=semantic_hint, correlation_id=result.correlation_id
         )
         result.document_classification = vision.document_classification
         result.normalized_text = vision.description
@@ -298,7 +323,9 @@ class UnderstandingPipeline:
         # is silently lost between the vision call and the extraction call.
         source = vision.description or ""
         if vision.raw_fields:
-            details = "; ".join(f"{k}: {v}" for k, v in vision.raw_fields.items())
+            details = "; ".join(
+                f"{key}: {_render_vision_value(value)}" for key, value in vision.raw_fields.items()
+            )
             source = f"{source} ({details})" if source else details
         extraction = await self._extraction.extract(
             source,

@@ -26,9 +26,24 @@ except Exception:  # pragma: no cover
 
 _VISION_PROMPT = (
     "You are analysing a construction-site image. Return strict JSON with keys: "
-    '"document_classification" (e.g. receipt, invoice, site_photo, unknown), '
+    '"document_classification" (e.g. receipt, invoice, attendance_sheet, '
+    "site_photo, unknown), "
     '"description" (short), and "fields" (object of any legible key/values). '
-    "Never invent values; omit unknown keys."
+    "Never invent values; omit unknown keys.\n\n"
+    "If the image is an attendance sheet, muster roll, labour register or any "
+    "handwritten list of people who worked (classify it as attendance_sheet), "
+    'then "fields" MUST contain a "workers" array with one entry per person or '
+    "group listed, each with: "
+    '"name" (as written -- omit for an unnamed group), '
+    '"trade" (mason, helper, painter, carpenter, electrician, plumber, welder, '
+    'bar bender, fitter, supervisor, operator, driver, ...), '
+    '"headcount" (1 for a named person; the count for a group row), '
+    '"daily_wage" (plain number, only if a rate is written). '
+    "Transcribe EVERY row, in the order written. Do not summarise, do not total, "
+    "and do not drop rows you are unsure of -- transcribe the name as best you "
+    "can read it. If a row is marked absent, leave it out. If you genuinely "
+    'cannot read a name, use "?" for that name rather than skipping the row, so '
+    "the count stays right."
 )
 
 _EXTRACTION_PROMPT = (
@@ -275,8 +290,19 @@ class GeminiProvider:
         from google.genai import types  # lazy
 
         part = types.Part.from_bytes(data=image, mime_type=mime_type or "image/jpeg")
+        # The hint is what the user already told us this photo is (they tapped
+        # a row in the image-purpose picker -- see channel/replies.py's
+        # IMAGE_PURPOSE_SEMANTIC_HINT). Handing it to the vision model is worth
+        # a lot on a poor-quality attendance sheet: knowing it is a roster
+        # rather than a site photo is the difference between transcribing rows
+        # and writing "a handwritten document on a clipboard". Still a nudge,
+        # not an instruction to obey -- the model may classify it otherwise if
+        # the image plainly disagrees, exactly as with the extraction hint.
+        prompt = _VISION_PROMPT
+        if hint:
+            prompt = f"{_VISION_PROMPT}\n\nThe sender says this image is: {hint}."
         text, latency_ms = await self._generate(
-            [_VISION_PROMPT, part], correlation_id, "analyze_image", json_mode=True
+            [prompt, part], correlation_id, "analyze_image", json_mode=True
         )
         data = self._parse_json(text, correlation_id)
         return VisionResult(
