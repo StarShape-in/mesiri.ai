@@ -93,6 +93,19 @@ _organization_settings = sa.Table(
     sa.Column("updated_by", sa.UUID(as_uuid=True)),
 )
 
+_users = sa.Table(
+    "users",
+    sa.MetaData(),
+    sa.Column("id", sa.UUID(as_uuid=True)),
+    sa.Column("organization_id", sa.UUID(as_uuid=True)),
+    sa.Column("email", sa.String),
+    sa.Column("hashed_password", sa.String),
+    sa.Column("full_name", sa.String),
+    sa.Column("role", sa.String),
+    sa.Column("created_at", sa.DateTime(timezone=True)),
+    sa.Column("updated_at", sa.DateTime(timezone=True)),
+)
+
 DEFAULT_CATEGORIES = [
     ("Materials & Supplies", "MAT"),
     ("Subcontractor Labour", "LAB"),
@@ -133,6 +146,39 @@ class AdminFinanceSeedingService:
         expenses_created = 0
         transactions_created = 0
         settings_created = 0
+
+        # Ensure created_by references a valid user in users table for foreign key integrity
+        user_check = await self.conn.execute(
+            sa.select(_users.c.id).where(
+                _users.c.organization_id == organization_id,
+                _users.c.id == created_by,
+            )
+        )
+        found_user = user_check.first()
+        if not found_user:
+            org_user_check = await self.conn.execute(
+                sa.select(_users.c.id).where(
+                    _users.c.organization_id == organization_id
+                ).limit(1)
+            )
+            found_org_user = org_user_check.first()
+            if found_org_user:
+                created_by = found_org_user.id
+            else:
+                system_user_id = uuid.uuid4()
+                await self.conn.execute(
+                    sa.insert(_users).values(
+                        id=system_user_id,
+                        organization_id=organization_id,
+                        email=f"system-seeder-{organization_id.hex[:8]}@mesiri.internal",
+                        hashed_password="N/A",
+                        full_name="System Finance Seeder",
+                        role="ADMIN",
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+                created_by = system_user_id
 
         # 1. Seed Expense Categories
         category_ids: dict[str, uuid.UUID] = {}

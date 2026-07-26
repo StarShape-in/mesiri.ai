@@ -178,6 +178,10 @@ jobs:
             echo "  waiting... (attempt ${i}/5)"
           done
 
+          echo "── Startup logs (last 60 lines) ─────────"
+          journalctl -u mesiri -n 60 --no-pager || true
+          echo "─────────────────────────────────────────"
+
           if [ "${HEALTHY}" = "false" ]; then
             echo "✗ Health check failed"
             echo ""

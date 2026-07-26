@@ -139,6 +139,20 @@ class UserStatusUpdate(BaseModel):
     status: str
 
 
+class FinanceSeedRequest(BaseModel):
+    include_demo_transactions: bool = True
+
+
+class FinanceSeedResponse(BaseModel):
+    organization_id: uuid.UUID
+    categories_created: int
+    accounts_created: int
+    vendors_created: int
+    settings_created: int
+    expenses_created: int
+    transactions_created: int
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -1109,3 +1123,38 @@ async def provision_tenant(
         created_at=now,
         updated_at=now,
     )
+
+
+@router.post("/{org_id}/seed-finance", response_model=FinanceSeedResponse)
+async def seed_organization_finance(
+    org_id: uuid.UUID,
+    payload: FinanceSeedRequest | None = None,
+    admin: dict = Depends(require_platform_admin),
+):
+    from mesiri.domains.finance.seeder import AdminFinanceSeedingService
+
+    if payload is None:
+        payload = FinanceSeedRequest()
+
+    engine = get_engine()
+    async with engine.begin() as conn:
+        result = await conn.execute(
+            sa.select(organizations_table.c.id).where(organizations_table.c.id == org_id)
+        )
+        if result.first() is None:
+            raise HTTPException(status_code=404, detail="Organization not found")
+
+        admin_user_id = uuid.uuid4()
+        if admin.get("sub"):
+            try:
+                admin_user_id = uuid.UUID(admin["sub"])
+            except (ValueError, TypeError):
+                pass
+
+        seeder = AdminFinanceSeedingService(conn)
+        stats = await seeder.seed_organization(
+            organization_id=org_id,
+            created_by=admin_user_id,
+            include_demo_transactions=payload.include_demo_transactions,
+        )
+    return FinanceSeedResponse(organization_id=org_id, **stats)
