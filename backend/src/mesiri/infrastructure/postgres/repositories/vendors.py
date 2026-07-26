@@ -21,6 +21,19 @@ _vendors = sa.Table(
 )
 
 
+from decimal import Decimal
+
+_expenses = sa.Table(
+    "expenses",
+    sa.MetaData(),
+    sa.Column("id", sa.UUID(as_uuid=True)),
+    sa.Column("organization_id", sa.UUID(as_uuid=True)),
+    sa.Column("vendor_id", sa.UUID(as_uuid=True)),
+    sa.Column("amount", sa.Numeric),
+    sa.Column("workflow_status", sa.String),
+)
+
+
 def _row_to_vendor(row) -> Vendor:
     return Vendor(id=row.id, organization_id=row.organization_id, name=row.name, status=row.status)
 
@@ -37,6 +50,41 @@ class PostgresVendorRepository:
         )
         res = await self.conn.execute(stmt)
         return [_row_to_vendor(r) for r in res.mappings().all()]
+
+    async def list_with_metrics(self, organization_id: uuid.UUID) -> list[dict]:
+        """List all vendors for org along with expense count and total amount paid."""
+        exp_count = sa.func.count(_expenses.c.id).label("expense_count")
+        exp_sum = sa.func.coalesce(sa.func.sum(_expenses.c.amount), 0).label("total_amount")
+
+        stmt = (
+            sa.select(
+                _vendors,
+                exp_count,
+                exp_sum,
+            )
+            .select_from(
+                _vendors.outerjoin(
+                    _expenses,
+                    sa.and_(
+                        _expenses.c.vendor_id == _vendors.c.id,
+                        _expenses.c.workflow_status == "confirmed",
+                    ),
+                )
+            )
+            .where(_vendors.c.organization_id == organization_id)
+            .group_by(_vendors.c.id)
+            .order_by(exp_sum.desc(), _vendors.c.name.asc())
+        )
+        res = await self.conn.execute(stmt)
+        results = []
+        for row in res.mappings().all():
+            vendor = _row_to_vendor(row)
+            results.append({
+                "vendor": vendor,
+                "expense_count": row.expense_count,
+                "total_amount": Decimal(row.total_amount),
+            })
+        return results
 
     async def get_by_id(self, organization_id: uuid.UUID, vendor_id: uuid.UUID) -> Vendor | None:
         stmt = sa.select(_vendors).where(
@@ -63,11 +111,7 @@ class PostgresVendorRepository:
         self, organization_id: uuid.UUID, name: str, *, created_by: uuid.UUID
     ) -> Vendor:
         """Create-on-first-use: a new vendor name typed/spoken over WhatsApp
-        becomes a real vendor row immediately, unlike expense_categories'
-        single shared "Uncategorized" fallback — every distinct vendor name
-        is itself worth keeping, not merged into one bucket. ON CONFLICT
-        DO NOTHING on the (organization_id, name) unique constraint makes a
-        concurrent first-use race safe, mirroring get_or_create_default."""
+        becomes a real vendor row immediately."""
         new_id = uuid.uuid4()
         await self.conn.execute(
             sa.text(
@@ -85,3 +129,29 @@ class PostgresVendorRepository:
         existing = await self.find_by_name_exact_active(organization_id, name)
         assert existing is not None
         return existing
+
+    async def update(
+        self,
+        organization_id: uuid.UUID,
+        vendor_id: uuid.UUID,
+        *,
+        name: str | None = None,
+        status: str | None = None,
+        updated_by: uuid.UUID,
+    ) -> Vendor | None:
+        values: dict = {"updated_by": updated_by, "updated_at": sa.func.now()}
+        if name is not None:
+            values["name"] = name.strip()
+        if status is not None:
+            values["status"] = status.strip().lower()
+
+        await self.conn.execute(
+            sa.update(_vendors)
+            .where(
+                _vendors.c.id == vendor_id,
+                _vendors.c.organization_id == organization_id,
+            )
+            .values(**values)
+        )
+        return await self.get_by_id(organization_id, vendor_id)
+

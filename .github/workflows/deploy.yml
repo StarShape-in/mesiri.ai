@@ -175,7 +175,27 @@ jobs:
           done
 
           if [ "${HEALTHY}" = "false" ]; then
-            echo "✗ Health check failed — reverting to ${PREV_SHA}"
+            echo "✗ Health check failed"
+            echo ""
+            echo "── Diagnostics ──────────────────────────"
+            echo "--- systemctl status mesiri ---"
+            systemctl status mesiri --no-pager -l || true
+            echo ""
+            echo "--- journalctl -u mesiri (last 150 lines) ---"
+            journalctl -u mesiri -n 150 --no-pager || true
+            echo ""
+            echo "--- disk space ---"
+            df -h || true
+            echo ""
+            echo "--- memory ---"
+            free -h || true
+            echo ""
+            echo "--- dependent services ---"
+            systemctl is-active postgresql 2>&1 || true
+            systemctl is-active redis-server 2>&1 || true
+            echo "──────────────────────────────────────────"
+            echo ""
+            echo "Reverting to ${PREV_SHA}"
             cd "${REPO}"
             git reset --hard "${PREV_SHA}"
             ~/.local/bin/uv pip install --python ${VENV}/bin/python -e ".[infra,providers,workflow,receipt]" --quiet
@@ -185,7 +205,15 @@ jobs:
             if curl -sf http://127.0.0.1:8000/health/live > /dev/null; then
               echo "✓ Rollback succeeded — old version is live"
             else
-              echo "✗ Rollback also failed — service may be down, check journalctl"
+              echo "✗ Rollback also failed — service may be down"
+              echo ""
+              echo "── Post-rollback diagnostics ────────────"
+              echo "--- systemctl status mesiri ---"
+              systemctl status mesiri --no-pager -l || true
+              echo ""
+              echo "--- journalctl -u mesiri (last 150 lines) ---"
+              journalctl -u mesiri -n 150 --no-pager || true
+              echo "──────────────────────────────────────────"
             fi
             exit 1
           fi

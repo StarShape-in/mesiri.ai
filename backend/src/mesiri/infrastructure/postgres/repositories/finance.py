@@ -379,3 +379,39 @@ class PostgresMoneyTransactionRepository:
         res = await self.conn.execute(stmt)
         return [_row_to_transaction(r) for r in res.mappings().all()]
 
+    async def list_all(
+        self,
+        organization_id: uuid.UUID,
+        *,
+        transaction_type: str | None = None,
+        account_id: uuid.UUID | None = None,
+        start_date: datetime.date | None = None,
+        end_date: datetime.date | None = None,
+        limit: int = 100,
+    ) -> list[MoneyTransaction]:
+        """List company-wide money transactions with optional filters."""
+        where_clauses = [_money_transactions.c.organization_id == organization_id]
+        if transaction_type is not None and transaction_type.upper() != "ALL":
+            where_clauses.append(_money_transactions.c.transaction_type == transaction_type.lower())
+        if account_id is not None:
+            where_clauses.append(
+                sa.or_(
+                    _money_transactions.c.from_account_id == account_id,
+                    _money_transactions.c.to_account_id == account_id,
+                )
+            )
+        if start_date is not None:
+            where_clauses.append(_money_transactions.c.occurred_date >= start_date)
+        if end_date is not None:
+            where_clauses.append(_money_transactions.c.occurred_date <= end_date)
+
+        stmt = (
+            sa.select(_money_transactions)
+            .where(*where_clauses)
+            .order_by(_money_transactions.c.occurred_date.desc(), _money_transactions.c.created_at.desc())
+            .limit(limit)
+        )
+        res = await self.conn.execute(stmt)
+        return [_row_to_transaction(r) for r in res.mappings().all()]
+
+

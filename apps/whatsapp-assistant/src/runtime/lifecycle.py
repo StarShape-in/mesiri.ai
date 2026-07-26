@@ -78,6 +78,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def health() -> dict:
         return {"status": "ok"}
 
+    # Alias matching the documented liveness-probe convention
+    # (README.md / backend/src/mesiri/http/app.py) -- infra/mesiri.service's
+    # deploy health check hits this exact path.
+    @app.get("/health/live", tags=["ops"])
+    async def health_live() -> dict:
+        return {"status": "ok"}
+
     app.include_router(webhook_router, prefix="/webhook")
 
     # CORS for Control Plane dashboard
@@ -210,5 +217,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         import logging
 
         logging.getLogger(__name__).warning("Organizations router not loaded: %s", exc)
+
+    # Expenses routes (dashboard Expenses/Receipts/Categories pages) -- was
+    # never wired into this app, only into backend/src/mesiri/http/app.py,
+    # which infra/mesiri.service does not actually run (ExecStart is
+    # `main:app`, i.e. this create_app()). Every dashboard finance/expense
+    # call 404'd in production until this was added.
+    try:
+        from mesiri.domains.expenses.router import router as expenses_router
+
+        app.include_router(expenses_router)
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("Expenses router not loaded: %s", exc)
+
+    # Finance routes (dashboard Accounts/Petty Cash pages) -- same gap as
+    # expenses above.
+    try:
+        from mesiri.domains.finance.router import router as finance_router
+
+        app.include_router(finance_router)
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("Finance router not loaded: %s", exc)
+
+    # Vendors routes (dashboard Vendors & Payees page) -- same gap as
+    # expenses above.
+    try:
+        from mesiri.domains.vendors.router import router as vendors_router
+
+        app.include_router(vendors_router)
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("Vendors router not loaded: %s", exc)
 
     return app

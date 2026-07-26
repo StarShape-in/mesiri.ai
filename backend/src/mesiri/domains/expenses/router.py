@@ -152,21 +152,117 @@ async def record_expense(
     )
 
 
-@router.get("/categories")
+class CategoryResponse(BaseModel):
+    id: uuid.UUID
+    name: str
+    code: str | None = None
+    status: str
+    expense_count: int = 0
+    total_amount_spent: Decimal = Decimal("0")
+
+
+class CreateCategoryRequest(BaseModel):
+    name: str
+    code: str | None = None
+
+
+class UpdateCategoryRequest(BaseModel):
+    name: str | None = None
+    code: str | None = None
+    status: str | None = None
+
+
+@router.get("/categories", response_model=list[CategoryResponse])
 async def list_expense_categories(
     auth_context: AuthorizationContext = Depends(get_auth_context),
     conn: AsyncConnection = Depends(get_db_conn),
 ):
-    """Return all active expense categories for the org — used by dashboard dropdowns."""
+    """Return all expense categories for the org with metrics. Seeds a
+    construction-generic starter set the first time an org's category list
+    is read empty (see PostgresExpenseCategoryRepository.seed_defaults_if_empty)
+    -- otherwise this dropdown, and the AI extraction it stays in sync
+    with, would start from nothing."""
     cat_repo = PostgresExpenseCategoryRepository(conn)
-    cats = await cat_repo.list_active(auth_context.organization_id)
-    return [{"id": str(c.id), "name": c.name} for c in cats]
+    await cat_repo.seed_defaults_if_empty(
+        auth_context.organization_id, created_by=auth_context.user_id
+    )
+    metrics = await cat_repo.list_with_metrics(auth_context.organization_id)
+    return [
+        CategoryResponse(
+            id=m["category"].id,
+            name=m["category"].name,
+            code=m["category"].code,
+            status=m["category"].status,
+            expense_count=m["expense_count"],
+            total_amount_spent=m["total_amount"],
+        )
+        for m in metrics
+    ]
+
+
+@router.post("/categories", response_model=CategoryResponse, status_code=201)
+async def create_expense_category(
+    body: CreateCategoryRequest,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Create a new expense category."""
+    cat_repo = PostgresExpenseCategoryRepository(conn)
+    existing = await cat_repo.find_by_name_exact_active(auth_context.organization_id, body.name)
+    if existing:
+        raise HTTPException(status_code=409, detail="Category with this name already exists")
+    cat = await cat_repo.create(
+        organization_id=auth_context.organization_id,
+        name=body.name,
+        code=body.code,
+        created_by=auth_context.user_id,
+    )
+    return CategoryResponse(
+        id=cat.id,
+        name=cat.name,
+        code=cat.code,
+        status=cat.status,
+        expense_count=0,
+        total_amount_spent=Decimal("0"),
+    )
+
+
+@router.patch("/categories/{category_id}", response_model=CategoryResponse)
+async def update_expense_category(
+    category_id: uuid.UUID,
+    body: UpdateCategoryRequest,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Update category name, code, or status."""
+    cat_repo = PostgresExpenseCategoryRepository(conn)
+    cat = await cat_repo.get_by_id(auth_context.organization_id, category_id)
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+    updated = await cat_repo.update(
+        organization_id=auth_context.organization_id,
+        category_id=category_id,
+        name=body.name,
+        code=body.code,
+        status=body.status,
+        updated_by=auth_context.user_id,
+    )
+    assert updated is not None
+    return CategoryResponse(
+        id=updated.id,
+        name=updated.name,
+        code=updated.code,
+        status=updated.status,
+        expense_count=0,
+        total_amount_spent=Decimal("0"),
+    )
 
 
 @router.get("", response_model=list[ExpenseResponse])
 async def list_expenses(
     project_id: uuid.UUID | None = None,
     site_id: uuid.UUID | None = None,
+    category_id: uuid.UUID | None = None,
     auth_context: AuthorizationContext = Depends(get_auth_context),
     conn: AsyncConnection = Depends(get_db_conn),
 ):
@@ -177,6 +273,7 @@ async def list_expenses(
         auth_context.organization_id,
         project_id=project_id,
         site_id=site_id,
+        category_id=category_id,
     )
 
     # Build a category name lookup in one pass (avoids N queries)

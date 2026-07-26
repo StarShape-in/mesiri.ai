@@ -440,7 +440,65 @@ export async function fetchExpenseApi(expenseId: string) {
   return res.data
 }
 
-export async function fetchExpensesApi(params?: { project_id?: string; site_id?: string }) {
+export interface CategoryItem {
+  id: string
+  name: string
+  code: string | null
+  status: 'active' | 'inactive'
+  expense_count: number
+  total_amount_spent: number
+}
+
+export async function fetchCategoriesApi(): Promise<CategoryItem[]> {
+  const res = await api.get('/expenses/categories')
+  return res.data
+}
+
+export async function createCategoryApi(payload: { name: string; code?: string }): Promise<CategoryItem> {
+  const res = await api.post('/expenses/categories', payload)
+  return res.data
+}
+
+export async function updateCategoryApi(
+  categoryId: string,
+  payload: { name?: string; code?: string; status?: 'active' | 'inactive' }
+): Promise<CategoryItem> {
+  const res = await api.patch(`/expenses/categories/${categoryId}`, payload)
+  return res.data
+}
+
+export interface VendorItem {
+  id: string
+  name: string
+  status: 'active' | 'inactive'
+  expense_count: number
+  total_amount_paid: number
+}
+
+export async function fetchVendorsApi(): Promise<VendorItem[]> {
+  const res = await api.get('/finance/vendors')
+  return res.data
+}
+
+export async function createVendorApi(payload: { name: string }): Promise<VendorItem> {
+  const res = await api.post('/finance/vendors', payload)
+  return res.data
+}
+
+export async function updateVendorApi(
+  vendorId: string,
+  payload: { name?: string; status?: 'active' | 'inactive' }
+): Promise<VendorItem> {
+  const res = await api.patch(`/finance/vendors/${vendorId}`, payload)
+  return res.data
+}
+
+export async function fetchExpensesApi(params?: {
+  project_id?: string
+  site_id?: string
+  category_id?: string
+  vendor_id?: string
+}) {
   const res = await api.get('/expenses', { params })
   return res.data
 }
@@ -583,6 +641,34 @@ export async function fetchVouchersApi(cashBoxId?: string) {
   const res = await api.get('/finance/petty-cash/vouchers', {
     params: cashBoxId ? { cash_box_id: cashBoxId } : undefined,
   })
+  return res.data
+}
+
+export interface MoneyTransactionItem {
+  id: string
+  organization_id: string
+  transaction_type: string
+  amount: number
+  occurred_date: string
+  created_by: string
+  from_account_id: string | null
+  from_account_name: string | null
+  to_account_id: string | null
+  to_account_name: string | null
+  source_type: string | null
+  source_id: string | null
+  description: string | null
+  correlation_id: string | null
+}
+
+export async function fetchTransactionsApi(params?: {
+  transaction_type?: string
+  account_id?: string
+  start_date?: string
+  end_date?: string
+  limit?: number
+}): Promise<MoneyTransactionItem[]> {
+  const res = await api.get('/finance/transactions', { params })
   return res.data
 }
 

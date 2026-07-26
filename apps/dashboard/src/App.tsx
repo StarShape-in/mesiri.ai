@@ -14,6 +14,9 @@ import ReceiptsPage from '@/pages/ReceiptsPage'
 import AccountsPage from '@/pages/AccountsPage'
 import WhatsAppFinancePage from '@/pages/WhatsAppFinancePage'
 import PettyCashPage from '@/pages/PettyCashPage'
+import TransactionsPage from '@/pages/TransactionsPage'
+import VendorsPage from '@/pages/VendorsPage'
+import CategoriesPage from '@/pages/CategoriesPage'
 import { OperationalPlaceholder } from '@/components/operational-placeholder'
 
 function IndexRedirect() {
@@ -28,30 +31,32 @@ export default function App() {
       <Route path="/" element={<AppLayout />}>
         <Route index element={<IndexRedirect />} />
         <Route path="overview" element={<Overview />} />
-        <Route path="company" element={<CompanyDetails />} />
         <Route path="users" element={<Users />} />
         <Route path="users/:id" element={<UserDetails />} />
+        <Route path="company" element={<CompanyDetails />} />
         <Route path="projects" element={<Projects />} />
         <Route path="projects/:id" element={<ProjectDetails />} />
 
         {/* Operations Section */}
+        <Route path="operations" element={<IndexRedirect />} />
         <Route path="operations/overview" element={<Overview />} />
-        <Route path="operations/timeline" element={<OperationalPlaceholder title="Timeline" />} />
+        <Route path="operations/timeline" element={<OperationalPlaceholder title="Operations Timeline" />} />
         <Route path="operations/field-reports" element={<FieldReportsPage />} />
-        <Route path="operations/gallery" element={<OperationalPlaceholder title="Gallery" />} />
-        <Route path="operations/analytics" element={<OperationalPlaceholder title="Analytics" />} />
+        <Route path="operations/gallery" element={<OperationalPlaceholder title="Operations Gallery" />} />
+        <Route path="operations/analytics" element={<OperationalPlaceholder title="Operations Analytics" />} />
 
         {/* Finance Section */}
+        <Route path="finance" element={<Navigate to="/finance/expenses" replace />} />
         <Route path="finance/overview" element={<OperationalPlaceholder title="Finance Overview" />} />
         <Route path="finance/expenses" element={<ExpensesPage />} />
         <Route path="finance/receipts" element={<ReceiptsPage />} />
         <Route path="finance/accounts" element={<AccountsPage />} />
         <Route path="finance/whatsapp" element={<WhatsAppFinancePage />} />
         <Route path="whatsapp/finance" element={<WhatsAppFinancePage />} />
-        <Route path="finance/transactions" element={<OperationalPlaceholder title="Transactions" />} />
+        <Route path="finance/transactions" element={<TransactionsPage />} />
         <Route path="finance/petty-cash" element={<PettyCashPage />} />
-        <Route path="finance/vendors" element={<OperationalPlaceholder title="Vendors" />} />
-        <Route path="finance/categories" element={<OperationalPlaceholder title="Finance Categories" />} />
+        <Route path="finance/vendors" element={<VendorsPage />} />
+        <Route path="finance/categories" element={<CategoriesPage />} />
         <Route path="finance/reports" element={<OperationalPlaceholder title="Finance Reports" />} />
         <Route path="finance/settings" element={<OperationalPlaceholder title="Finance Settings" />} />
 
