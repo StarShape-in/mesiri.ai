@@ -199,7 +199,10 @@ class AdminFinanceSeedingService:
             res = await self.conn.execute(
                 sa.select(_expense_categories.c.id).where(
                     _expense_categories.c.organization_id == organization_id,
-                    _expense_categories.c.code == code,
+                    sa.or_(
+                        _expense_categories.c.name == name,
+                        _expense_categories.c.code == code,
+                    ),
                 )
             )
             row = res.first()
