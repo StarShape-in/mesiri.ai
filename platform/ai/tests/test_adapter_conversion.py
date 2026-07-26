@@ -106,18 +106,27 @@ async def test_gemini_json_mode_sets_response_mime_type():
     assert captured["config"].response_mime_type == "application/json"
 
 
-async def test_gemini_transcribe_does_not_force_json_mode():
-    """transcribe() returns a plain transcript, not JSON -- it must NOT set
-    response_mime_type (that would make Gemini try to wrap plain speech
-    text in a JSON envelope it was never asked to produce). It does set
-    thinking_budget=0 (transcription doesn't benefit from reasoning), so a
-    config object is present -- just without response_mime_type."""
+async def test_gemini_transcribe_requests_json_with_translation_and_language():
+    """transcribe() asks Gemini to transcribe, translate, and identify the
+    source language in one call -- it used to only transcribe and silently
+    copy the transcript into translated_text (no real translation ever
+    happened), which the control panel's log viewer correctly flagged as
+    "Translation did not run" on every non-English voice message. Regression
+    coverage for that fix: response_mime_type must be set (structured JSON,
+    not a bare transcript string) and thinking stays off (transcription/
+    translation doesn't need reasoning)."""
     captured: dict = {}
 
     class _FakeModels:
         def generate_content(self, *, model, contents, config=None):
             captured["config"] = config
-            return SimpleNamespace(text="the transcript")
+            return SimpleNamespace(
+                text=(
+                    '{"transcript": "ജേസിബി ഓടി",'
+                    ' "translated_text": "The JCB ran",'
+                    ' "detected_language": "Malayalam"}'
+                )
+            )
 
     provider = GeminiProvider.__new__(GeminiProvider)
     provider._settings = SimpleNamespace(
@@ -125,9 +134,33 @@ async def test_gemini_transcribe_does_not_force_json_mode():
     )
     provider._client = SimpleNamespace(models=_FakeModels())
 
-    await provider.transcribe(b"audio-bytes", correlation_id="cor_1")
+    result = await provider.transcribe(b"audio-bytes", correlation_id="cor_1")
 
-    assert captured["config"].response_mime_type is None
+    assert captured["config"].response_mime_type == "application/json"
+    assert result.translated_text == "The JCB ran"
+    assert result.detected_language == "Malayalam"
+
+
+async def test_gemini_transcribe_falls_back_to_transcript_when_translation_missing():
+    """A response that parses but omits translated_text must not silently
+    lose the message -- transcript is a safe, always-available fallback
+    (extract() reads either just fine, per the translate_to_english removal),
+    unlike translate_to_english's stricter fail-loud guard."""
+
+    class _FakeModels:
+        def generate_content(self, *, model, contents, config=None):
+            return SimpleNamespace(text='{"transcript": "hi there", "detected_language": "English"}')
+
+    provider = GeminiProvider.__new__(GeminiProvider)
+    provider._settings = SimpleNamespace(
+        model="gemini-test", timeout_seconds=5, max_retries=0
+    )
+    provider._client = SimpleNamespace(models=_FakeModels())
+
+    result = await provider.transcribe(b"audio-bytes", correlation_id="cor_1")
+
+    assert result.transcript == "hi there"
+    assert result.translated_text == "hi there"
 
 
 async def test_gemini_translate_raises_when_translated_text_missing():

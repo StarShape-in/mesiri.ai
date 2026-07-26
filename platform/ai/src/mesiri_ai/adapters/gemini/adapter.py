@@ -496,15 +496,35 @@ class GeminiProvider:
     ) -> SpeechResult:
         from google.genai import types  # lazy
 
+        # Previously just transcribed and copied the transcript into
+        # translated_text verbatim -- no translation ever actually happened
+        # here (unlike Sarvam's real combined STT+translate), which the
+        # control panel's log viewer correctly flagged as "Translation did
+        # not run" on every non-English voice message. extract() (post the
+        # translate_to_english removal -- see understanding/pipeline.py)
+        # already reads the raw transcript directly regardless, so this
+        # isn't load-bearing for correctness, only for accurate logging --
+        # but it's free to ask for in the same call, so ask for it. One
+        # request, no extra round trip.
         part = types.Part.from_bytes(data=audio, mime_type="audio/ogg")
-        prompt = "Transcribe the audio accurately. Output the transcript directly without any prefix or commentary."
-        text, latency_ms = await self._generate(
-            [prompt, part], correlation_id, "transcribe", thinking_budget=0
+        prompt = (
+            "Transcribe the audio accurately, in its own language. Then "
+            "translate that transcript to English (if it's already English, "
+            "translated_text is the same as the transcript). Return strict "
+            'JSON with keys: "transcript" (verbatim, original language), '
+            '"translated_text" (English), "detected_language" (the source '
+            'language\'s common English name, e.g. "Malayalam", "English").'
         )
+        text, latency_ms = await self._generate(
+            [prompt, part], correlation_id, "transcribe", json_mode=True, thinking_budget=0
+        )
+        data = self._parse_json(text, correlation_id)
+        transcript = (data.get("transcript") or "").strip()
+        translated_text = data.get("translated_text") or transcript
         return SpeechResult(
-            transcript=text.strip(),
-            detected_language=None,
-            translated_text=text.strip(),
+            transcript=transcript,
+            detected_language=data.get("detected_language"),
+            translated_text=translated_text,
             provider=self.provider,
             model=self._settings.model,
             latency_ms=latency_ms,
