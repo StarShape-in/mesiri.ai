@@ -1,9 +1,14 @@
 # Labour Module — Master Implementation Plan
 
-**Status:** In progress · Phase 0 complete (reconnaissance + design)
+**Status:** In progress — Phases 0, 1, 2 complete. **Next: Phase 3 (workflow).**
 **Owner:** Alan Raj
 **Started:** 2026-07-25
-**Linear:** _(issue to be created at first code commit)_
+**Last updated:** 2026-07-26
+**Linear:** _(issue to be created — see §12)_
+
+> **Resuming in a new session?** Read §12 first — it says exactly where work
+> stopped and what to do next. Then read §2 (what already exists), §3
+> (the binding principles) and §3A (the finish line).
 
 > **Purpose of this document.** It is the durable memory for this module. If a
 > future session — human or AI — loses all conversational context, this file
@@ -646,3 +651,80 @@ data for a future dashboard — so that building the UI later requires
 | 2026-07-26 | **Phase 1 (domain) and Phase 2 (contracts) complete.** Workforce vocabulary + worker matching with confidence scoring; `RecordLabourAttendanceCommand` with lines that are either a named worker or a headcount group. Four decisions taken: shared abstraction approved, Q5 resolved (support both, mixed — now P10), Q2 resolved (contractor free text), and P4 amended so a trade mismatch lowers confidence rather than proving a different person. 1091 tests passing. |
 | 2026-07-26 | Shared execution scaffolding extracted (§7.1) as an isolated commit before Labour: dispatcher failure contract + recovery sweep. Corrected the earlier wrong claim that `ResolutionResult` was duplicated — it is not, and was left alone. 124 lines removed, 1046 tests passing. |
 | 2026-07-26 | Product-clarity pass following design review. Added §3A **Definition of Done** (the finish line, 10 criteria), **P8 Future integration readiness** with expected-consumer table, **P9 Optimize for speed of recording** including its acknowledged tension with P4, strengthened **P7** to name Activity as the connective tissue between all operational modules, expanded **P2** to the full Module→Action→Project→Site→Capture→AI→Preview→Confirm→Save pattern, added **Q5** (headcount-only attendance — flagged decide-early as it affects the domain model), and made the dashboard deferral explicit. No architectural changes; scope unchanged. |
+
+---
+
+## 12. Resume here — state as of 2026-07-26
+
+**Read this first if you are picking this up in a new session.**
+
+### Done and on `origin/main`
+
+| Phase | What landed | Commit |
+|---|---|---|
+| 0 | Reconnaissance, this plan, `labour-dashboard-plan.md` | `42191af`, `931508d` |
+| — | Shared execution scaffolding (§7.1) — extracted *before* Labour so it adds no scaffolding of its own | `ddb20dd` |
+| 1 | `domains/workforce/workers.py` + `matching.py`, 29 tests | `08e3cee` |
+| 2 | `DraftActionType.RECORD_LABOUR_ATTENDANCE`, `RecordLabourAttendanceCommand`, 20 tests | `2f78ca9` |
+
+**1098 tests passing, lint clean** at the last verified point.
+
+### Not started
+
+**Phase 3 (workflow) onwards.** Nothing exists yet in
+`apps/whatsapp-assistant/src/workflows/labour_update/` beyond an empty
+`__init__.py`.
+
+### What Phase 3 has to do
+
+Build the LangGraph workflow, mirroring `workflows/material/` for shape and
+`workflows/expense_capture/` for slot-filling.
+
+1. `graph.py` + `nodes.py` in `workflows/labour_update/`.
+2. A **worker-matching node**. Candidates are seeded into `collected_fields`
+   by the caller — a node must never query a repository itself (see
+   `workflows/runtime.py`). Call `domains/workforce/matching.match_worker`
+   and, on `ASK_USER`, use `workflows/slots.py` to ask. When
+   `ScoredCandidate.trade_changed` is set, word the question as *"same worker
+   with an updated trade, or a different Ravi?"* — not a bare "which of
+   these?".
+3. **Temporary workers** — an unmatched name is recorded on the attendance
+   line with `worker_id=None`. It must **not** be written to the register
+   (principle P1). Promotion is a separate explicit act, offered after
+   confirmation.
+4. **Preview + confirmation node** — same shape as material's
+   `request_confirmation`. Must show project, site, date, the lines
+   (named and headcount together), and estimated cost.
+5. Register the graph in `workflows/registry.py` under
+   `WorkflowKey.LABOUR_ATTENDANCE` (the key already exists).
+
+### Then
+
+Phase 4 persistence (migration — **do not touch 0120's tables**, see ADR-L1),
+Phase 5 repositories + application layer, Phase 6 WhatsApp wiring
+(canonicalization mapping, planner routing, extraction prompt rewritten for
+named workers *and* headcount, image attachment via the existing
+`IMAGE_PURPOSE_ROWS` mechanism), Phase 7 platform readiness.
+
+### Working agreements in force
+
+- **Do not `git push` unless explicitly asked.** Commit locally and say what
+  is ready. (Ilan was stabilising the CI/deploy pipeline on 2026-07-26.)
+- **Pull often** — this repo takes frequent concurrent commits from Ilan.
+  Check for migration-number collisions on every pull; it has already
+  happened once.
+- Run the full suite the way CI does (from a scratch dir, `-P`,
+  `--rootdir`) — running it from the repo root makes the repo's own
+  `platform/` directory shadow Python's stdlib `platform` module.
+- Explain before implementing; plain language first, technical second.
+- Record finished work in Linear, assigned to ALAN RAJ, marked Done.
+
+### Still open
+
+- **Q1** — can the AI reliably extract *named* workers from a photographed
+  attendance sheet? Untested, and it is the least predictable part of the
+  build. **Test with a real sheet early in Phase 6.**
+- **Q3** — image duplicate detection: exact-hash or perceptual? The existing
+  precedent (`find_potential_duplicate`) is field-based, not image-based.
+- **Q4** — wage per line vs inherited. Current design stores the value used
+  on the line so history cannot drift; flagged to Alan, not yet confirmed.
