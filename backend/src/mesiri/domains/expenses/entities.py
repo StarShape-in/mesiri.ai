@@ -84,6 +84,9 @@ class Expense:
     occurred_time: datetime.time | None = None
     source_message_id: str | None = None
     correlation_id: str | None = None
+    tax_rate: Decimal | None = None
+    tax_amount: Decimal | None = None
+    is_tax_inclusive: bool = True
 
 
 @dataclass(frozen=True, slots=True)

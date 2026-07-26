@@ -98,6 +98,9 @@ class RecordExpenseRequest(BaseModel):
     source: str = "web"
     source_message_id: str | None = None
     correlation_id: str | None = None
+    tax_rate: Decimal | None = None
+    tax_amount: Decimal | None = None
+    is_tax_inclusive: bool = True
 
 
 def _authorize_write(
@@ -487,6 +490,9 @@ async def get_expense(
         source=expense.source,
         source_message_id=expense.source_message_id,
         correlation_id=expense.correlation_id,
+        tax_rate=getattr(expense, "tax_rate", None),
+        tax_amount=getattr(expense, "tax_amount", None),
+        is_tax_inclusive=getattr(expense, "is_tax_inclusive", True) if getattr(expense, "is_tax_inclusive", None) is not None else True,
         created_by=expense.created_by,
         created_by_name=user_name,
         created_by_email=user_email,

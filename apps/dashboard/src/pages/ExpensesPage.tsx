@@ -80,6 +80,9 @@ interface ExpenseItem {
   project_name: string
   site_name: string
   payment_method?: string
+  tax_rate?: number | null
+  tax_amount?: number | null
+  is_tax_inclusive?: boolean
 }
 
 type SortField = 'date' | 'amount' | 'number' | 'category'

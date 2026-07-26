@@ -32,6 +32,9 @@ class ExpenseResponse(BaseModel):
     source: str
     source_message_id: str | None
     correlation_id: str | None
+    tax_rate: Decimal | None = None
+    tax_amount: Decimal | None = None
+    is_tax_inclusive: bool = True
     whatsapp_sender: str | None = None
     raw_message_text: str | None = None
     created_by: uuid.UUID

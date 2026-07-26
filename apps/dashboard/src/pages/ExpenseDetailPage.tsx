@@ -76,9 +76,9 @@ export interface ExpenseDetailRecord {
   project_code?: string
   site_name: string
   payment_method?: string
-  tax_rate?: number
-  tax_amount?: number
-  net_amount?: number
+  tax_rate?: number | null
+  tax_amount?: number | null
+  is_tax_inclusive?: boolean
   correlation_id?: string
   whatsapp_sender?: string
   raw_message_text?: string
@@ -396,12 +396,12 @@ export default function ExpenseDetailPage() {
                       {expense.tax_amount ? (
                         <>
                           <TableHead className="h-7 py-1 text-right font-bold">Net Base</TableHead>
-                          <TableHead className="h-7 py-1 text-right font-bold">GST ({expense.tax_rate || 18}%)</TableHead>
+                          <TableHead className="h-7 py-1 text-right font-bold">Tax ({expense.tax_rate || 0}%)</TableHead>
                           <TableHead className="h-7 py-1 text-right font-bold">Total Gross</TableHead>
                         </>
                       ) : (
                         <>
-                          <TableHead className="h-7 py-1 text-center font-bold">Tax Itemization</TableHead>
+                          <TableHead className="h-7 py-1 text-center font-bold">Tax</TableHead>
                           <TableHead className="h-7 py-1 text-right font-bold">Disbursement Amount</TableHead>
                         </>
                       )}
@@ -415,10 +415,10 @@ export default function ExpenseDetailPage() {
                       {expense.tax_amount ? (
                         <>
                           <TableCell className="py-1.5 text-right font-mono">
-                            {formatCurrency(expense.net_amount || expense.amount - expense.tax_amount)}
+                            {formatCurrency(expense.amount - expense.tax_amount)}
                           </TableCell>
                           <TableCell className="py-1.5 text-right font-mono text-muted-foreground">
-                            {formatCurrency(expense.tax_amount)}
+                            {formatCurrency(expense.tax_amount)} ({expense.tax_rate || 0}%)
                           </TableCell>
                           <TableCell className="py-1.5 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
                             {formatCurrency(expense.amount)}
@@ -426,10 +426,8 @@ export default function ExpenseDetailPage() {
                         </>
                       ) : (
                         <>
-                          <TableCell className="py-1.5 text-center">
-                            <Badge variant="outline" className="text-[10px] font-normal text-muted-foreground">
-                              Direct Expense / Non-Itemized
-                            </Badge>
+                          <TableCell className="py-1.5 text-center font-mono text-muted-foreground">
+                            —
                           </TableCell>
                           <TableCell className="py-1.5 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
                             {formatCurrency(expense.amount)}

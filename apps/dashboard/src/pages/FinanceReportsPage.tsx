@@ -98,7 +98,7 @@ export default function FinanceReportsPage() {
   const handleExportCSV = () => {
     if (!statement || !statement.rows) return
 
-    const headers = ['Line Item / Title', 'Code', 'Category', 'Status', 'Percentage (%)', 'Amount (INR)', 'Notes']
+    const headers = ['Line Item / Title', 'Code', 'Category', 'Tax', 'Status', 'Percentage (%)', 'Amount (INR)', 'Notes']
     const csvRows = [headers.join(',')]
 
     for (const r of statement.rows) {
@@ -106,6 +106,7 @@ export default function FinanceReportsPage() {
         `"${r.title.replace(/"/g, '""')}"`,
         `"${r.code || ''}"`,
         `"${r.category || ''}"`,
+        `"${(r as any).tax_amount ? `₹${(r as any).tax_amount}` : '—'}"`,
         `"${r.status || 'Active'}"`,
         `"${r.percentage ? `${r.percentage}%` : 'N/A'}"`,
         `"${parseFloat(String(r.amount)) || 0}"`,

@@ -51,6 +51,9 @@ _expenses = sa.Table(
     sa.Column("source", sa.String),
     sa.Column("source_message_id", sa.String),
     sa.Column("correlation_id", sa.String),
+    sa.Column("tax_rate", sa.Numeric),
+    sa.Column("tax_amount", sa.Numeric),
+    sa.Column("is_tax_inclusive", sa.Boolean),
     sa.Column("created_at", sa.DateTime(timezone=True)),
     sa.Column("created_by", sa.UUID(as_uuid=True)),
     sa.Column("updated_at", sa.DateTime(timezone=True)),
@@ -150,6 +153,9 @@ def _row_to_expense(row) -> Expense:
         occurred_time=row.occurred_time,
         source_message_id=row.source_message_id,
         correlation_id=row.correlation_id,
+        tax_rate=getattr(row, "tax_rate", None),
+        tax_amount=getattr(row, "tax_amount", None),
+        is_tax_inclusive=getattr(row, "is_tax_inclusive", True) if getattr(row, "is_tax_inclusive", None) is not None else True,
     )
 
 
