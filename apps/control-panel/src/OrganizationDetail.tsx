@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
-import { AlertTriangle, ArrowLeft, Cloud, Plus, Server, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, CheckCircle, Cloud, Plus, Server, Sparkles, Trash2, X } from 'lucide-react';
 import { api } from './api';
 import UserAccessEditor, { type OrgProject } from './UserAccessEditor';
 import AddUserDialog from './AddUserDialog';
@@ -89,6 +89,41 @@ export default function OrganizationDetail() {
   const [orgSettings, setOrgSettings] = useState<OrgSettingsPayload | null>(null);
   const [savingSetting, setSavingSetting] = useState<string | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
+
+  const [showSeedModal, setShowSeedModal] = useState(false);
+  const [includeDemoTx, setIncludeDemoTx] = useState(true);
+  const [seeding, setSeeding] = useState(false);
+  const [seedResult, setSeedResult] = useState<string | null>(null);
+
+  const handleSeedFinance = async () => {
+    if (!id) return;
+    setSeeding(true);
+    setError(null);
+    setSeedResult(null);
+
+    try {
+      const res = await api.post<{
+        categories_created: number;
+        accounts_created: number;
+        vendors_created: number;
+        settings_created: number;
+        expenses_created: number;
+        transactions_created: number;
+      }>(`/admin/organizations/${id}/seed-finance`, {
+        include_demo_transactions: includeDemoTx,
+      });
+
+      setSeedResult(
+        `Finance data seeded successfully! Created ${res.accounts_created} accounts, ${res.categories_created} categories, ${res.vendors_created} vendors, ${res.settings_created} settings, ${res.expenses_created} expenses, and ${res.transactions_created} transactions.`
+      );
+      setShowSeedModal(false);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to seed finance data';
+      setError(msg);
+    } finally {
+      setSeeding(false);
+    }
+  };
 
   useEffect(() => {
     if (!id) return;
@@ -263,15 +298,32 @@ export default function OrganizationDetail() {
             <span className={`badge ${statusBadgeClass(org.status)}`}>{org.status}</span>
           </p>
         </div>
-        <button
-          className="btn-secondary"
-          style={{ color: 'var(--error)', borderColor: 'var(--error)' }}
-          onClick={() => setShowDeleteModal(true)}
-          disabled={deleting}
-        >
-          <Trash2 size={16} /> Delete Tenant
-        </button>
+        <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+          <button
+            className="btn-secondary"
+            style={{ color: '#2563EB', borderColor: '#93C5FD' }}
+            onClick={() => setShowSeedModal(true)}
+            disabled={seeding}
+          >
+            <Sparkles size={16} /> {seeding ? 'Seeding…' : 'Seed Finance Data'}
+          </button>
+          <button
+            className="btn-secondary"
+            style={{ color: 'var(--error)', borderColor: 'var(--error)' }}
+            onClick={() => setShowDeleteModal(true)}
+            disabled={deleting}
+          >
+            <Trash2 size={16} /> Delete Tenant
+          </button>
+        </div>
       </header>
+
+      {seedResult && (
+        <div style={{ padding: 'var(--space-3)', background: '#F0FDF4', border: '1px solid #86EFAC', borderRadius: 'var(--radius-md)', color: '#166534', marginBottom: 'var(--space-4)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <CheckCircle size={18} />
+          <span>{seedResult}</span>
+        </div>
+      )}
 
       {error && <p style={{ color: 'var(--error)', marginBottom: 'var(--space-4)' }}>{error}</p>}
 
@@ -559,6 +611,18 @@ export default function OrganizationDetail() {
           onConfirm={executeDelete}
         />
       )}
+
+      {showSeedModal && (
+        <SeedFinanceModal
+          orgName={org.name}
+          isOpen={showSeedModal}
+          seeding={seeding}
+          includeDemoTx={includeDemoTx}
+          setIncludeDemoTx={setIncludeDemoTx}
+          onClose={() => setShowSeedModal(false)}
+          onConfirm={handleSeedFinance}
+        />
+      )}
     </div>
   );
 }
@@ -700,6 +764,103 @@ function DeleteOrgModal({ orgName, isOpen, deleting, onClose, onConfirm }: Delet
             disabled={!isConfirmed || deleting}
           >
             <Trash2 size={15} /> {deleting ? 'Deleting…' : 'Permanently Delete'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SeedFinanceModal({
+  orgName,
+  isOpen,
+  seeding,
+  includeDemoTx,
+  setIncludeDemoTx,
+  onClose,
+  onConfirm,
+}: {
+  orgName: string;
+  isOpen: boolean;
+  seeding: boolean;
+  includeDemoTx: boolean;
+  setIncludeDemoTx: (val: boolean) => void;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  if (!isOpen) return null;
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        background: 'rgba(0, 0, 0, 0.5)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1000,
+      }}
+    >
+      <div
+        style={{
+          background: 'var(--white, #fff)',
+          borderRadius: 'var(--radius-lg, 12px)',
+          padding: '24px',
+          maxWidth: '500px',
+          width: '90%',
+          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Sparkles size={20} style={{ color: '#2563EB' }} /> Seed Finance Data
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--neutral-400)' }}
+            disabled={seeding}
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        <p style={{ fontSize: '14px', color: 'var(--neutral-600)', marginBottom: '16px', lineHeight: 1.5 }}>
+          This will populate starter money accounts, expense categories, vendors, and finance settings for <strong>{orgName}</strong>.
+        </p>
+
+        <div style={{ background: '#F3F4F6', padding: '12px 16px', borderRadius: '8px', marginBottom: '20px' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '14px', cursor: 'pointer', fontWeight: 500 }}>
+            <input
+              type="checkbox"
+              checked={includeDemoTx}
+              onChange={(e) => setIncludeDemoTx(e.target.checked)}
+              disabled={seeding}
+              style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+            />
+            <span>Include Sample Past Expenses & Ledger Transactions</span>
+          </label>
+          <p style={{ margin: '4px 0 0 26px', fontSize: '12px', color: 'var(--neutral-500)' }}>
+            Adds realistic historical payments, petty cash disbursements, and vendor bills for instant visual testing in the Web Dashboard.
+          </p>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+          <button type="button" className="btn-secondary" onClick={onClose} disabled={seeding}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="btn-primary"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+            onClick={onConfirm}
+            disabled={seeding}
+          >
+            <Sparkles size={15} /> {seeding ? 'Seeding Data…' : 'Seed Finance Data'}
           </button>
         </div>
       </div>

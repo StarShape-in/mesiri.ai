@@ -247,3 +247,41 @@ async def provision_tenant(
     # 3. Commit transaction (if not auto-commit, but AsyncConnection execution is auto-committed in this context or managed by dependency, assuming managed)
     # Return the created organization
     return org
+
+
+class FinanceSeedRequest(BaseModel):
+    include_demo_transactions: bool = True
+
+
+class FinanceSeedResponse(BaseModel):
+    organization_id: uuid.UUID
+    categories_created: int
+    accounts_created: int
+    vendors_created: int
+    settings_created: int
+    expenses_created: int
+    transactions_created: int
+
+
+@router.post("/{org_id}/seed-finance", response_model=FinanceSeedResponse)
+async def seed_organization_finance(
+    org_id: uuid.UUID,
+    payload: FinanceSeedRequest = FinanceSeedRequest(),
+    conn: AsyncConnection = Depends(get_db_conn),
+    admin: dict = Depends(require_platform_admin),
+):
+    from mesiri.domains.finance.seeder import AdminFinanceSeedingService
+
+    res = await conn.execute(select(OrganizationModel).where(OrganizationModel.id == org_id))
+    if not res.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    admin_user_id = uuid.UUID(admin["sub"]) if admin.get("sub") else uuid.uuid4()
+    seeder = AdminFinanceSeedingService(conn)
+    stats = await seeder.seed_organization(
+        organization_id=org_id,
+        created_by=admin_user_id,
+        include_demo_transactions=payload.include_demo_transactions,
+    )
+    return FinanceSeedResponse(organization_id=org_id, **stats)
+
