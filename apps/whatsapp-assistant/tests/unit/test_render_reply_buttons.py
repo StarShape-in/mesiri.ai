@@ -14,6 +14,7 @@ from mesiri_contracts.assistant.planner_decision import WorkflowKey
 from mesiri_contracts.assistant.v2.draft_action import DraftActionV2
 from runtime.inbound_journey import _render_reply
 from workflows import WorkflowRunResult
+from workflows.slots import SlotCandidate
 
 ORG = "11111111-1111-4111-8111-111111111111"
 USR = "22222222-2222-4222-8222-222222222222"
@@ -82,4 +83,79 @@ def test_awaiting_input_reply_has_no_buttons():
     assert reply is not None
     assert reply.text == "Which account would you like to pay from?\n1. Site Cash\n2. Own Pocket"
     assert reply.buttons is None
+
+
+def test_awaiting_input_with_slot_options_becomes_a_real_interactive_list():
+    """A node that supplied candidates (workflows/slots.py's slot_options)
+    gets a tappable WhatsApp list, not just numbered text -- the fix for
+    the "most messages tell you to type instead of using WhatsApp's
+    interactive buttons/lists" gap."""
+    result = WorkflowRunResult.awaiting_input(
+        workflow_key=WorkflowKey.EXPENSE_SUBMIT,
+        correlation_id="cor_1",
+        workflow_instance_id="wf_1",
+        pending_prompt="Which account did you pay from?\n1. Site Cash\n2. Own Pocket",
+        slot_options=(
+            SlotCandidate(value="acc_1", label="Site Cash"),
+            SlotCandidate(value="own_pocket", label="Own Pocket"),
+        ),
+    )
+    reply = _render_reply(result, None, None, None)
+    assert reply is not None
+    assert reply.buttons is None
+    assert reply.list_rows is not None
+    assert [row.id for row in reply.list_rows] == ["acc_1", "own_pocket"]
+    assert [row.title for row in reply.list_rows] == ["Site Cash", "Own Pocket"]
+    assert reply.list_button_label == "Choose one"
+
+
+def test_awaiting_input_with_a_single_slot_option_falls_back_to_text():
+    """A list needs at least 2 real choices -- resolve_single_choice_slot
+    never asks with fewer than 2 candidates, but this guards the render
+    side defensively too rather than sending WhatsApp a 1-row list."""
+    result = WorkflowRunResult.awaiting_input(
+        workflow_key=WorkflowKey.EXPENSE_SUBMIT,
+        correlation_id="cor_1",
+        workflow_instance_id="wf_1",
+        pending_prompt="Which account did you pay from?",
+        slot_options=(SlotCandidate(value="acc_1", label="Site Cash"),),
+    )
+    reply = _render_reply(result, None, None, None)
+    assert reply is not None
+    assert reply.list_rows is None
+
+
+def test_awaiting_input_with_too_many_options_falls_back_to_text():
+    """WhatsApp caps an interactive list at 10 rows -- more than that must
+    degrade to plain (still typeable) text instead of a request Meta
+    would reject outright."""
+    options = tuple(SlotCandidate(value=f"acc_{i}", label=f"Account {i}") for i in range(11))
+    result = WorkflowRunResult.awaiting_input(
+        workflow_key=WorkflowKey.EXPENSE_SUBMIT,
+        correlation_id="cor_1",
+        workflow_instance_id="wf_1",
+        pending_prompt="Which account did you pay from?",
+        slot_options=options,
+    )
+    reply = _render_reply(result, None, None, None)
+    assert reply is not None
+    assert reply.list_rows is None
+
+
+def test_awaiting_input_with_a_too_long_label_falls_back_to_text():
+    """WhatsApp caps a list row title at 24 characters."""
+    options = (
+        SlotCandidate(value="acc_1", label="A Very Long Account Name That Exceeds Limits"),
+        SlotCandidate(value="acc_2", label="Site Cash"),
+    )
+    result = WorkflowRunResult.awaiting_input(
+        workflow_key=WorkflowKey.EXPENSE_SUBMIT,
+        correlation_id="cor_1",
+        workflow_instance_id="wf_1",
+        pending_prompt="Which account did you pay from?",
+        slot_options=options,
+    )
+    reply = _render_reply(result, None, None, None)
+    assert reply is not None
+    assert reply.list_rows is None
 

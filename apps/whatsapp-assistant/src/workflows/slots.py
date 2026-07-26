@@ -84,6 +84,19 @@ def match_slot_answer(text: str, candidates: list[SlotCandidate]) -> str | None:
     return None
 
 
+def slot_options(candidates: list[SlotCandidate]) -> list[dict[str, str]]:
+    """Plain-dict form of a candidate list, for a node to attach to its
+    return dict as `awaiting_slot_options` alongside `awaiting_slot`/
+    `pending_prompt` -- the send side (runtime/inbound_journey.py) turns
+    this into a real WhatsApp interactive list so the question is tappable,
+    not just a numbered block of text. `match_slot_answer` already accepts
+    free text, so a tapped row (which comes back as `NormalizedMessage.text
+    = title`, see ingress/normalization.py's `_resolve_interactive_reply`)
+    is matched exactly the same way a typed reply would be -- no new
+    parsing needed on the way back in."""
+    return [{"value": c.value, "label": c.label} for c in candidates]
+
+
 def _format_prompt(title: str, candidates: list[SlotCandidate]) -> str:
     lines = [title, ""]
     lines.extend(f"{i}. {c.label}" for i, c in enumerate(candidates, start=1))

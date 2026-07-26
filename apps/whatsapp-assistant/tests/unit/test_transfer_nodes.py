@@ -54,6 +54,12 @@ def test_resolve_from_account_unmatched_name_asks():
     assert update["awaiting_slot"] == "from_account_id"
     assert "Company Bank" in update["pending_prompt"]
     assert "Site Cash" in update["pending_prompt"]
+    # Real WhatsApp interactive list, not just numbered text -- see
+    # workflows/slots.py's slot_options.
+    assert update["awaiting_slot_options"] == [
+        {"value": ACC_A, "label": "Company Bank"},
+        {"value": ACC_B, "label": "Site Cash"},
+    ]
 
 
 def test_resolve_from_account_no_name_asks_when_multiple_candidates():

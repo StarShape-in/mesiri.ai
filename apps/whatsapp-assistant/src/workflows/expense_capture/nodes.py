@@ -33,7 +33,7 @@ from mesiri_contracts.assistant.draft_action import DraftActionType
 from mesiri_contracts.assistant.v2.draft_action import DraftActionV2
 from mesiri_contracts.common.ids import new_id
 
-from ..slots import SlotCandidate, match_slot_answer, resolve_single_choice_slot
+from ..slots import SlotCandidate, match_slot_answer, resolve_single_choice_slot, slot_options
 from ..state import WorkflowGraphState
 
 OWN_POCKET_SENTINEL = "own_pocket"
@@ -90,6 +90,7 @@ def resolve_account(state: WorkflowGraphState) -> dict:
         return {
             "collected_fields": fields,
             "awaiting_slot": resolution.awaiting_slot,
+            "awaiting_slot_options": slot_options(candidates),
             "pending_prompt": resolution.slot_prompt,
         }
 
@@ -101,6 +102,7 @@ def resolve_account(state: WorkflowGraphState) -> dict:
     return {
         "collected_fields": fields,
         "awaiting_slot": resolution.awaiting_slot,
+        "awaiting_slot_options": slot_options(candidates),
         "pending_prompt": resolution.slot_prompt,
     }
 
@@ -150,6 +152,7 @@ def check_duplicate(state: WorkflowGraphState) -> dict:
             return {
                 "collected_fields": fields,
                 "awaiting_slot": resolution.awaiting_slot,
+                "awaiting_slot_options": slot_options(_DUPLICATE_CANDIDATES),
                 "pending_prompt": resolution.slot_prompt,
             }
 
@@ -161,6 +164,7 @@ def check_duplicate(state: WorkflowGraphState) -> dict:
     return {
         "collected_fields": fields,
         "awaiting_slot": resolution.awaiting_slot,
+        "awaiting_slot_options": slot_options(_DUPLICATE_CANDIDATES),
         "pending_prompt": resolution.slot_prompt,
     }
 

@@ -36,13 +36,15 @@ class ListRow:
 
 @dataclass(frozen=True, slots=True)
 class ReplySpec:
-    """What to send back, decoupled from how. `list_rows` is only ever set
-    for the category-menu reply (see render_direct_reply's UNRECOGNIZED
-    case); `buttons` is only ever set for a workflow confirmation prompt
-    (see runtime/inbound_journey.py's _render_reply). At most one of the two
-    is ever populated. The caller (runtime/inbound_journey.py) picks
-    send_text vs send_list vs send_button based on which is set --
-    render_* functions never touch the transport."""
+    """What to send back, decoupled from how. `list_rows` is set for a
+    deterministic picker (category menu, image-purpose picker, etc.) or for
+    a workflow's mid-flow slot-fill question when the node supplied
+    candidates (see workflows/slots.py's `slot_options`); `buttons` is only
+    ever set for a workflow confirmation prompt (see
+    runtime/inbound_journey.py's _render_reply). At most one of the two is
+    ever populated. The caller (runtime/inbound_journey.py) picks send_text
+    vs send_list vs send_button based on which is set -- render_* functions
+    never touch the transport."""
 
     text: str
     list_button_label: str | None = None

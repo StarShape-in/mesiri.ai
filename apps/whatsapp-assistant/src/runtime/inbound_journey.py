@@ -135,13 +135,14 @@ def _render_reply(
     path must produce something: a message that reaches the assistant and gets
     no answer is indistinguishable from Mesiri being down.
 
-    Only render_direct_reply's UNRECOGNIZED case ever sets list_rows on the
-    returned ReplySpec (the greeting/category menu). STARTED and
-    BLOCKED_PENDING_CONFIRMATION are the only two statuses that are actually
-    asking the user to confirm something -- those get Yes/No buttons.
-    COMPLETED (who_am_i, inventory_query) is informational, nothing to
-    confirm, so it stays plain text. Every other branch is plain text too,
-    wrapped here so callers only ever handle one return shape.
+    render_direct_reply's UNRECOGNIZED case and AWAITING_INPUT (when the node
+    supplied slot_options -- see workflows/slots.py's `slot_options`) both
+    set list_rows on the returned ReplySpec. STARTED and
+    BLOCKED_PENDING_CONFIRMATION are the two statuses actually asking the
+    user to confirm a draft -- those get Yes/No buttons. COMPLETED
+    (who_am_i, inventory_query) is informational, nothing to confirm, so it
+    stays plain text. Every other branch is plain text too, wrapped here so
+    callers only ever handle one return shape.
     """
     if workflow_run is not None and workflow_run.status in (
         WorkflowRunStatus.STARTED,
@@ -154,10 +155,25 @@ def _render_reply(
             buttons=CONFIRM_BUTTONS,
         )
 
-    if workflow_run is not None and workflow_run.status in (
-        WorkflowRunStatus.COMPLETED,
-        WorkflowRunStatus.AWAITING_INPUT,
-    ):
+    if workflow_run is not None and workflow_run.status is WorkflowRunStatus.AWAITING_INPUT:
+        text = render_workflow_run_reply(workflow_run, pending_prompt=workflow_run.pending_prompt)
+        # A tapped row normalizes to NormalizedMessage.text = its title
+        # (ingress/normalization.py's _resolve_interactive_reply), matched
+        # by match_slot_answer exactly like a typed reply -- so title must
+        # equal the candidate's own label, byte for byte. WhatsApp caps a
+        # list at 10 rows and a row title at 24 chars; degrade to plain
+        # text (still answerable by typing) rather than send a request Meta
+        # would reject outright.
+        options = workflow_run.slot_options
+        if options and 1 < len(options) <= 10 and all(len(o.label) <= 24 for o in options):
+            return ReplySpec(
+                text=text,
+                list_button_label="Choose one",
+                list_rows=tuple(ListRow(o.value, o.label) for o in options),
+            )
+        return ReplySpec(text=text)
+
+    if workflow_run is not None and workflow_run.status is WorkflowRunStatus.COMPLETED:
         return ReplySpec(
             text=render_workflow_run_reply(workflow_run, pending_prompt=workflow_run.pending_prompt)
         )
