@@ -54,3 +54,17 @@ async def test_rename_account_runs_end_to_end():
 
     assert "Rename" in result["pending_prompt"]
     assert "Kochi Cash" in result["pending_prompt"]
+
+
+async def test_incomplete_ai_extraction_asks_instead_of_crashing_end_to_end():
+    """Real LangGraph exercise of the conditional edge added 2026-07-26:
+    AI extraction (unlike the deterministic parser, which always has every
+    field by construction) can resolve `action` without the action-specific
+    fields -- must route straight to END with a clarifying prompt, never
+    reach request_confirmation with a half-built draft."""
+    graph = build_account_admin_graph()
+
+    result = await graph.ainvoke(_base_state({"action": "rename", "target_name": "Site Cash"}))
+
+    assert result.get("draft_action") is None
+    assert "new name" in result["pending_prompt"].lower()

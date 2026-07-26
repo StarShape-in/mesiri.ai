@@ -12,6 +12,17 @@ of going through canonicalization/planner.decide() -- there is nothing for
 the AI understanding pipeline to extract here; the regex parser already has
 every field.
 
+As of 2026-07-26 this is no longer the only way to reach account-admin: it
+remains a zero-token fast path checked first (see runtime/dependencies.py),
+but any phrasing it doesn't recognize -- different wording, voice, non-
+English -- now falls through to the normal AI-understood journey via
+SemanticType.ACCOUNT_ADMIN (see canonicalization/mapping.py,
+platform/ai's extraction prompts, and runtime/inbound_journey.py's own
+_ACCOUNT_ADMIN_ROLES gate, which enforces the identical role set this
+module's _ACCOUNT_ADMIN_ROLES does for that path). Both converge on the
+same WorkflowKey.ACCOUNT_ADMIN graph and the same
+application/finance/validation.py role check.
+
 Execution (the actual create/rename/deactivate SQL) does NOT happen here --
 once WorkflowRuntime.start() returns STARTED, the draft sits AWAITING_CONFIRMATION
 exactly like an expense capture draft, and the user's "YES" reply is picked

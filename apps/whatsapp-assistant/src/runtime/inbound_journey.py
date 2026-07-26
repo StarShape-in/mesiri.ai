@@ -1325,6 +1325,38 @@ async def process_inbound_message(
                         expense_query_service,
                         actor,
                     )
+                    _seed_account_admin_role(canonical_event, planner_decision, actor)
+
+                    # Account-admin role gate: refused before the workflow
+                    # even starts (no draft, no confirmation prompt) --
+                    # "should not even be an option" for a disallowed role,
+                    # not merely rejected after they complete a confirm
+                    # flow (unlike TRANSFER, which only gates at confirm
+                    # time -- see transfer_validation.py's docstring for why
+                    # that's an accepted tradeoff there but not here).
+                    # application/finance/validation.py's role check (fed by
+                    # _seed_account_admin_role above) is the defense-in-depth
+                    # backstop if this is ever bypassed.
+                    if (
+                        planner_decision.workflow_key is WorkflowKey.ACCOUNT_ADMIN
+                        and str(getattr(actor, "role", None) or "").strip().upper()
+                        not in _ACCOUNT_ADMIN_ROLES
+                    ):
+                        await send_text(message.sender.wa_id, _ACCOUNT_ADMIN_DENIED_REPLY)
+                        await _safe(
+                            mlog.log_reply(
+                                correlation_id=correlation_id, reply=_ACCOUNT_ADMIN_DENIED_REPLY
+                            )
+                        )
+                        await _safe(mlog.mark_completed(correlation_id=correlation_id))
+                        return JourneyResult(
+                            understanding=understanding,
+                            resolved_context=resolved,
+                            canonical_event=canonical_event,
+                            planner_decision=planner_decision,
+                            workflow_run=None,
+                        )
+
                     workflow_run = await workflow_runtime.start(planner_decision, canonical_event)
                     if context_debug:
                         log_workflow_run(workflow_run)
