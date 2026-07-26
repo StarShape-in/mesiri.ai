@@ -31,29 +31,40 @@ logger = logging.getLogger(__name__)
 
 # Workflows that only answer a question and never produce a draft_action --
 # no business record to confirm, so they are exempt from the single-active
-# pending-confirmation gate and complete without AWAITING_CONFIRMATION.
-#
-# WorkflowKey.REVERSE and WorkflowKey.EXPENSE_SUBMIT are mixed cases, not
-# purely informational: when runtime/inbound_journey.py's seeding step finds
-# nothing to reverse (no recent expense/transfer of the requested kind),
-# workflows/reverse/nodes.py omits draft_action and completes with a
-# "nothing to reverse" reply -- exactly the same no-draft outcome as a real
-# informational workflow. Likewise, workflows/expense_capture/nodes.py's
-# `check_duplicate` (Finance Module Slice 8) omits draft_action when the
-# user answers "no" to a "looks like a duplicate, record anyway?" prompt.
-# When a target *is* found (or the duplicate answer is "yes"), the same
-# graph still produces a draft_action and the normal AWAITING_CONFIRMATION
-# path below runs unaffected (this set is only consulted when draft_action
-# is None).
+# pending-confirmation gate (a balance/inventory question shouldn't be
+# blocked just because an unrelated expense confirmation is pending) and
+# complete without AWAITING_CONFIRMATION.
 _INFORMATIONAL_WORKFLOW_KEYS = frozenset(
     {
         WorkflowKey.WHO_AM_I,
         WorkflowKey.MATERIAL_INVENTORY_QUERY,
         WorkflowKey.ACCOUNT_BALANCE_QUERY,
         WorkflowKey.EXPENSE_QUERY,
-        WorkflowKey.REVERSE,
-        WorkflowKey.EXPENSE_SUBMIT,
     }
+)
+
+# WorkflowKey.REVERSE and WorkflowKey.EXPENSE_SUBMIT are mixed cases, NOT
+# purely informational -- unlike the keys above, they still write a business
+# record most of the time and must still respect the single-active
+# pending-confirmation gate (a user reversing one expense must not be able
+# to start a second reversal, or record a new expense, while one is already
+# awaiting confirmation). The only thing they share with an informational
+# workflow is that they can *sometimes* complete with no draft_action at
+# all: when runtime/inbound_journey.py's seeding step finds nothing to
+# reverse (no recent expense/transfer of the requested kind),
+# workflows/reverse/nodes.py omits draft_action and completes with a
+# "nothing to reverse" reply. Likewise, workflows/expense_capture/nodes.py's
+# `check_duplicate` (Finance Module Slice 8) omits draft_action when the
+# user answers "no" to a "looks like a duplicate, record anyway?" prompt.
+# When a target *is* found (or the duplicate answer is "yes"), the same
+# graph still produces a draft_action and the normal AWAITING_CONFIRMATION
+# path runs unaffected. So these keys must NOT be added to
+# _INFORMATIONAL_WORKFLOW_KEYS above (that would also exempt them from the
+# single-active gate, which is wrong) -- they get their own set, consulted
+# only where a missing draft_action is decided to be a legitimate no-op
+# rather than WorkflowRunStatus.FAILED.
+_NO_DRAFT_ALLOWED_WORKFLOW_KEYS = _INFORMATIONAL_WORKFLOW_KEYS | frozenset(
+    {WorkflowKey.REVERSE, WorkflowKey.EXPENSE_SUBMIT}
 )
 
 
@@ -386,7 +397,7 @@ class WorkflowRuntime:
             )
 
         if draft_action is None:
-            if workflow_key not in _INFORMATIONAL_WORKFLOW_KEYS:
+            if workflow_key not in _NO_DRAFT_ALLOWED_WORKFLOW_KEYS:
                 logger.error(
                     "workflow.missing_draft_action workflow_key=%s workflow_instance_id=%s",
                     workflow_key.value,

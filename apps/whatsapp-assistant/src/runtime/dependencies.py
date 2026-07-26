@@ -350,6 +350,12 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from runtime.reversal_query import ReversalTargetQueryService
 
     reversal_query = ReversalTargetQueryService(material_db)
+    # Flags a likely-duplicate expense before expense_capture's graph runs
+    # (Finance Module Slice 8) -- same reasoning and same material_db as
+    # catalog_query above. See runtime/duplicate_expense_query.py.
+    from runtime.duplicate_expense_query import DuplicateExpenseQueryService
+
+    duplicate_expense_query = DuplicateExpenseQueryService(material_db)
     # Read-only expense list/sum lookups for the expense-query workflow
     # (Finance Module Slice 2) -- same reasoning and same material_db as
     # money_account_query above. See runtime/expense_query_service.py.
@@ -710,6 +716,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
                 money_account_query=money_account_query,
                 petty_cash_query=petty_cash_query,
                 reversal_query=reversal_query,
+                duplicate_expense_query=duplicate_expense_query,
                 expense_query_service=expense_query_service,
                 pending_report_store=pending_report_store,
             )
@@ -996,6 +1003,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             money_account_query=money_account_query,
             petty_cash_query=petty_cash_query,
             reversal_query=reversal_query,
+            duplicate_expense_query=duplicate_expense_query,
             expense_query_service=expense_query_service,
             pending_report_store=pending_report_store,
         )

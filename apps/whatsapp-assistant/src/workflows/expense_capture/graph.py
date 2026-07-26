@@ -14,15 +14,27 @@ from __future__ import annotations
 from typing import Any
 
 from ..state import WorkflowGraphState
-from .nodes import build_draft, check_duplicate, request_confirmation, resolve_account
+from .nodes import (
+    _ACCOUNT_SLOT_NAME,
+    _DUPLICATE_SLOT_NAME,
+    build_draft,
+    check_duplicate,
+    request_confirmation,
+    resolve_account,
+)
 
 
 def _route_after_account_resolution(state: WorkflowGraphState) -> str:
-    return "ask_slot" if state.get("awaiting_slot") else "continue"
+    """Slot-specific, not a generic truthy check: with two slots now sharing
+    this graph (account_id, duplicate_confirm), a stale awaiting_slot left
+    over from resuming the *other* one must not re-trigger this edge --
+    exactly the routing bug Finance Module Slice 3 found and fixed for
+    transfer's two-slot chain (see workflows/transfer/graph.py)."""
+    return "ask_slot" if state.get("awaiting_slot") == _ACCOUNT_SLOT_NAME else "continue"
 
 
 def _route_after_duplicate_check(state: WorkflowGraphState) -> str:
-    if state.get("awaiting_slot"):
+    if state.get("awaiting_slot") == _DUPLICATE_SLOT_NAME:
         return "ask_slot"
     if (state.get("collected_fields") or {}).get("duplicate_confirmed") == "no":
         return "cancelled"
