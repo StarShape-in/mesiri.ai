@@ -205,7 +205,15 @@ jobs:
             if curl -sf http://127.0.0.1:8000/health/live > /dev/null; then
               echo "✓ Rollback succeeded — old version is live"
             else
-              echo "✗ Rollback also failed — service may be down, check journalctl"
+              echo "✗ Rollback also failed — service may be down"
+              echo ""
+              echo "── Post-rollback diagnostics ────────────"
+              echo "--- systemctl status mesiri ---"
+              systemctl status mesiri --no-pager -l || true
+              echo ""
+              echo "--- journalctl -u mesiri (last 150 lines) ---"
+              journalctl -u mesiri -n 150 --no-pager || true
+              echo "──────────────────────────────────────────"
             fi
             exit 1
           fi
