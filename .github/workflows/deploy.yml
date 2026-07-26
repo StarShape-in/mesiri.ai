@@ -166,7 +166,7 @@ jobs:
           HEALTHY=false
           for i in 1 2 3 4 5; do
             sleep 2
-            if curl -sf http://127.0.0.1:8000/health > /dev/null; then
+            if curl -sf http://127.0.0.1:8000/health/live > /dev/null; then
               echo "✓ Service is healthy"
               HEALTHY=true
               break
@@ -182,7 +182,7 @@ jobs:
             systemctl restart mesiri
             # Give the old code a moment to come back up so the VPS stays live
             sleep 3
-            if curl -sf http://127.0.0.1:8000/health > /dev/null; then
+            if curl -sf http://127.0.0.1:8000/health/live > /dev/null; then
               echo "✓ Rollback succeeded — old version is live"
             else
               echo "✗ Rollback also failed — service may be down, check journalctl"
