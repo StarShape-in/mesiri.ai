@@ -172,16 +172,22 @@ class WhatsAppReceiver:
                 media=media,
             )
 
-            await self._message_store.save(normalized)
-            if self._on_normalized is not None:
-                await self._on_normalized(normalized, self._envelope(context), retry_of_id)
-
             if downloaded_media is not None:
-                # This success path used to write nothing at all -- traced
-                # report found ~10-16s of untraced time on image messages,
-                # bigger than every logged LLM call combined, with no way to
-                # tell whether it was the Meta CDN download or the R2
-                # upload. download_ms/upload_ms split settles that.
+                # Logged here, before message_store.save()/on_normalized() --
+                # on_normalized runs the ENTIRE rest of the pipeline
+                # (understanding, context, canonicalization, planner,
+                # workflow) synchronously and this used to be logged *after*
+                # that call returned, so duration_ms was actually "ingress +
+                # everything downstream", not ingress alone (real bug: a
+                # 6-10s "ingress" duration_ms was really ~1.5-1.7s of actual
+                # download+upload plus the whole rest of the journey hiding
+                # inside it). This success path used to write nothing at all
+                # before that -- traced report found ~10-16s of untraced
+                # time on image messages, bigger than every logged LLM call
+                # combined, with no way to tell whether it was the Meta CDN
+                # download or the R2 upload. download_ms/upload_ms settles
+                # that split correctly now that duration_ms only covers
+                # ingress's own work.
                 await self._trace_logger.log_stage(
                     correlation_id=normalized.correlation_id,
                     stage="ingress",
@@ -194,6 +200,10 @@ class WhatsAppReceiver:
                     duration_ms=int((time.perf_counter() - ingress_t0) * 1000),
                     succeeded=True,
                 )
+
+            await self._message_store.save(normalized)
+            if self._on_normalized is not None:
+                await self._on_normalized(normalized, self._envelope(context), retry_of_id)
             return normalized
         except Exception as exc:
             logger.exception("Failed to process WhatsApp message %s", message_id)
