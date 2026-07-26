@@ -28,7 +28,7 @@ jobs:
         with:
           python-version: '3.11'
           enable-cache: true
-      - run: uv venv --python 3.11
+      - run: uv venv --python 3.11 --clear
       - run: uv pip install -e ".[dev,infra,providers]"
       - name: Lint
         run: uv run ruff check .
