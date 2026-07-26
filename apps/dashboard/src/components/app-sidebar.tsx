@@ -204,7 +204,7 @@ function CollapsibleNavCategory({
                   return cn(
                     'flex items-center gap-2 px-2 py-1.5 rounded-md text-xs font-medium transition-all duration-150',
                     active
-                      ? 'bg-blue-50 dark:bg-blue-950/70 text-blue-600 dark:text-blue-400 font-semibold border-l-2 border-blue-600 dark:border-blue-500 rounded-l-none pl-1.5'
+                      ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-semibold border-l-2 border-slate-900 dark:border-slate-300 rounded-l-none pl-1.5'
                       : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100/70 dark:hover:bg-slate-800/50'
                   )
                 }}
@@ -213,7 +213,7 @@ function CollapsibleNavCategory({
                   const active = isLinkActive || isActive
                   return (
                     <>
-                      <ItemIcon className={cn('size-3.5 shrink-0', active ? 'text-blue-600 dark:text-blue-400' : 'text-slate-500 dark:text-slate-400')} />
+                      <ItemIcon className={cn('size-3.5 shrink-0', active ? 'text-slate-900 dark:text-white font-bold' : 'text-slate-500 dark:text-slate-400')} />
                       <span className="truncate">{item.title}</span>
                     </>
                   )
@@ -374,13 +374,13 @@ export function AppSidebar() {
                       return cn(
                         'flex items-center justify-between w-full px-2 py-1.5 rounded-md text-xs font-medium transition-colors',
                         active
-                          ? 'bg-blue-50 dark:bg-blue-950/70 text-blue-600 dark:text-blue-400 font-semibold border-l-2 border-blue-600 dark:border-blue-500 rounded-l-none pl-1.5'
+                          ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-semibold border-l-2 border-slate-900 dark:border-slate-300 rounded-l-none pl-1.5'
                           : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/80'
                       )
                     }}
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
-                      <LayoutDashboard className={cn('size-4 shrink-0', isDashboardActive ? 'text-blue-600 dark:text-blue-400' : 'text-slate-600 dark:text-slate-400')} />
+                      <LayoutDashboard className={cn('size-4 shrink-0', isDashboardActive ? 'text-slate-900 dark:text-white font-bold' : 'text-slate-600 dark:text-slate-400')} />
                       <span className="truncate">Dashboard</span>
                     </div>
                   </NavLink>
@@ -457,13 +457,13 @@ export function AppSidebar() {
                             return cn(
                               'flex items-center justify-between w-full px-2 py-1.5 rounded-md text-xs font-medium transition-colors',
                               isAct
-                                ? 'bg-blue-50 dark:bg-blue-950/70 text-blue-600 dark:text-blue-400 font-semibold border-l-2 border-blue-600 dark:border-blue-500 rounded-l-none pl-1.5'
+                                ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-semibold border-l-2 border-slate-900 dark:border-slate-300 rounded-l-none pl-1.5'
                                 : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/80'
                             )
                           }}
                         >
                           <div className="flex items-center gap-2.5 min-w-0">
-                            <ItemIcon className={cn('size-4 shrink-0', active ? 'text-blue-600 dark:text-blue-400' : 'text-slate-600 dark:text-slate-400')} />
+                            <ItemIcon className={cn('size-4 shrink-0', active ? 'text-slate-900 dark:text-white font-bold' : 'text-slate-600 dark:text-slate-400')} />
                             <span className="truncate">{item.title}</span>
                           </div>
                         </NavLink>
