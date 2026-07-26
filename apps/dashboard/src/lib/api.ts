@@ -644,5 +644,33 @@ export async function fetchVouchersApi(cashBoxId?: string) {
   return res.data
 }
 
+export interface MoneyTransactionItem {
+  id: string
+  organization_id: string
+  transaction_type: string
+  amount: number
+  occurred_date: string
+  created_by: string
+  from_account_id: string | null
+  from_account_name: string | null
+  to_account_id: string | null
+  to_account_name: string | null
+  source_type: string | null
+  source_id: string | null
+  description: string | null
+  correlation_id: string | null
+}
+
+export async function fetchTransactionsApi(params?: {
+  transaction_type?: string
+  account_id?: string
+  start_date?: string
+  end_date?: string
+  limit?: number
+}): Promise<MoneyTransactionItem[]> {
+  const res = await api.get('/finance/transactions', { params })
+  return res.data
+}
+
 
 

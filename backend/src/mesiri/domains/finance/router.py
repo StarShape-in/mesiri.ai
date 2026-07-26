@@ -61,7 +61,9 @@ class MoneyTransactionResponse(BaseModel):
     occurred_date: datetime.date
     created_by: uuid.UUID
     from_account_id: uuid.UUID | None = None
+    from_account_name: str | None = None
     to_account_id: uuid.UUID | None = None
+    to_account_name: str | None = None
     source_type: str | None = None
     source_id: uuid.UUID | None = None
     description: str | None = None
@@ -250,6 +252,64 @@ async def list_petty_cash_vouchers(
             created_by=t.created_by,
             from_account_id=t.from_account_id,
             to_account_id=t.to_account_id,
+            source_type=t.source_type,
+            source_id=t.source_id,
+            description=t.description,
+            correlation_id=t.correlation_id,
+        )
+        for t in txs
+    ]
+
+
+@router.get("/transactions", response_model=list[MoneyTransactionResponse])
+async def list_transactions(
+    transaction_type: str | None = None,
+    account_id: uuid.UUID | None = None,
+    start_date: datetime.date | None = None,
+    end_date: datetime.date | None = None,
+    limit: int = 100,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """List company-wide money transactions with optional filters and account names."""
+    tx_repo = PostgresMoneyTransactionRepository(conn)
+    acc_repo = PostgresMoneyAccountRepository(conn)
+
+    txs = await tx_repo.list_all(
+        auth_context.organization_id,
+        transaction_type=transaction_type,
+        account_id=account_id,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+    )
+
+    # Batch lookup account names for from_account_id and to_account_id
+    acc_ids: set[uuid.UUID] = set()
+    for t in txs:
+        if t.from_account_id:
+            acc_ids.add(t.from_account_id)
+        if t.to_account_id:
+            acc_ids.add(t.to_account_id)
+
+    acc_names: dict[uuid.UUID, str] = {}
+    for aid in acc_ids:
+        acc = await acc_repo.get_by_id(auth_context.organization_id, aid)
+        if acc:
+            acc_names[aid] = acc.name
+
+    return [
+        MoneyTransactionResponse(
+            id=t.id,
+            organization_id=t.organization_id,
+            transaction_type=t.transaction_type,
+            amount=t.amount,
+            occurred_date=t.occurred_date,
+            created_by=t.created_by,
+            from_account_id=t.from_account_id,
+            from_account_name=acc_names.get(t.from_account_id) if t.from_account_id else None,
+            to_account_id=t.to_account_id,
+            to_account_name=acc_names.get(t.to_account_id) if t.to_account_id else None,
             source_type=t.source_type,
             source_id=t.source_id,
             description=t.description,
