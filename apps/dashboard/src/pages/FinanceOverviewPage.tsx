@@ -113,13 +113,7 @@ export default function FinanceOverviewPage() {
   }, [summary])
 
   const barChartData = React.useMemo(() => {
-    if (!summary?.monthly_trend || summary.monthly_trend.length === 0) {
-      return [
-        { month: 'May 2026', amount: 185000 },
-        { month: 'Jun 2026', amount: 240000 },
-        { month: 'Jul 2026', amount: parseFloat(String(summary?.total_expenses || 310000)) },
-      ]
-    }
+    if (!summary?.monthly_trend) return []
     return summary.monthly_trend.map((m) => ({
       month: m.month,
       amount: parseFloat(String(m.amount)) || 0,
@@ -289,25 +283,36 @@ export default function FinanceOverviewPage() {
             </span>
           </div>
 
-          <div className="h-64 w-full pt-2">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={barChartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
-                <XAxis dataKey="month" tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} />
-                <YAxis tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} tickFormatter={(val) => `₹${val / 1000}k`} />
-                <Tooltip
-                  formatter={(val: any) => formatCurrency(Number(val))}
-                  contentStyle={{
-                    fontSize: '12px',
-                    backgroundColor: 'var(--card)',
-                    borderColor: 'var(--border)',
-                    borderRadius: '8px',
-                  }}
-                />
-                <Bar dataKey="amount" fill="#3b82f6" radius={[6, 6, 0, 0]} maxBarSize={45} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+          {loading ? (
+            <div className="h-64 flex items-center justify-center text-xs text-muted-foreground">
+              Loading financial trends...
+            </div>
+          ) : barChartData.length === 0 ? (
+            <div className="h-64 flex flex-col items-center justify-center text-xs text-muted-foreground gap-2">
+              <BarChart3 className="size-8 text-muted-foreground/30" />
+              <span>No monthly expense trends recorded yet.</span>
+            </div>
+          ) : (
+            <div className="h-64 w-full pt-2">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={barChartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                  <XAxis dataKey="month" tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} />
+                  <YAxis tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} tickFormatter={(val) => `₹${val / 1000}k`} />
+                  <Tooltip
+                    formatter={(val: any) => formatCurrency(Number(val))}
+                    contentStyle={{
+                      fontSize: '12px',
+                      backgroundColor: 'var(--card)',
+                      borderColor: 'var(--border)',
+                      borderRadius: '8px',
+                    }}
+                  />
+                  <Bar dataKey="amount" fill="#3b82f6" radius={[6, 6, 0, 0]} maxBarSize={45} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
         </Card>
 
         {/* Category Spend Distribution Chart (Recharts PieChart) */}
@@ -410,7 +415,7 @@ export default function FinanceOverviewPage() {
             {summary?.petty_cash_accounts && summary.petty_cash_accounts.length > 0 ? (
               summary.petty_cash_accounts.map((box) => {
                 const bal = parseFloat(String(box.current_balance)) || 0
-                const openBal = parseFloat(String(box.opening_balance)) || 100000
+                const openBal = parseFloat(String(box.opening_balance)) || (bal > 0 ? bal : 1)
                 const pct = Math.min(100, Math.max(0, Math.round((bal / openBal) * 100)))
                 const isLow = bal < 50000
                 return (
