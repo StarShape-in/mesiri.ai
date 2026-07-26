@@ -111,6 +111,16 @@ const ROOT_MANAGEMENT_ITEMS: NavItem[] = [
   { title: 'Company', url: '/company', icon: Building, requiredRole: 'ADMIN' },
 ]
 
+function checkIsItemActive(pathname: string, itemUrl: string): boolean {
+  if (pathname === itemUrl) return true
+  if (itemUrl === '/overview' && pathname === '/') return true
+  if (itemUrl === '/operations/overview' && (pathname === '/operations' || pathname === '/overview')) return true
+  if (itemUrl === '/finance/overview' && pathname === '/finance') return true
+  if (itemUrl === '/materials/overview' && pathname === '/materials') return true
+  if (itemUrl !== '/' && pathname.startsWith(itemUrl)) return true
+  return false
+}
+
 function CollapsibleNavCategory({
   category,
   getUrlWithScope,
@@ -133,9 +143,7 @@ function CollapsibleNavCategory({
       (!item.requiredRole || userRole === item.requiredRole)
   )
 
-  const isChildActive = filteredItems.some(
-    (item) => pathname === item.url || (item.url === '/materials/overview' && pathname === '/materials')
-  )
+  const isChildActive = filteredItems.some((item) => checkIsItemActive(pathname, item.url))
 
   const [isOpen, setIsOpen] = useState(isChildActive)
 
@@ -161,7 +169,7 @@ function CollapsibleNavCategory({
         )}
       >
         <div className="flex items-center gap-2.5 min-w-0">
-          <IconComp className="size-4 text-slate-600 dark:text-slate-400 shrink-0" />
+          <IconComp className={cn('size-4 shrink-0', isChildActive ? 'text-slate-900 dark:text-white font-bold' : 'text-slate-600 dark:text-slate-400')} />
           <span className="truncate group-data-[collapsible=icon]:hidden">{category.title}</span>
         </div>
         <div className="flex items-center gap-1.5 group-data-[collapsible=icon]:hidden">
@@ -182,26 +190,31 @@ function CollapsibleNavCategory({
           {filteredItems.map((item) => {
             const ItemIcon = item.icon
             const targetUrl = getUrlWithScope(item.url)
-            const isActive =
-              pathname === item.url ||
-              (item.url === '/operations/overview' && pathname === '/overview') ||
-              (item.url === '/materials/overview' && pathname === '/materials')
+            const isActive = checkIsItemActive(pathname, item.url)
 
             return (
               <NavLink
                 key={item.title}
                 to={targetUrl}
-                className={({ isActive: isLinkActive }) =>
-                  cn(
+                className={({ isActive: isLinkActive }) => {
+                  const active = isLinkActive || isActive
+                  return cn(
                     'flex items-center gap-2 px-2 py-1.5 rounded-md text-xs font-medium transition-all duration-150',
-                    isLinkActive || isActive
-                      ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-semibold'
+                    active
+                      ? 'bg-blue-50 dark:bg-blue-950/70 text-blue-600 dark:text-blue-400 font-semibold border-l-2 border-blue-600 dark:border-blue-500 rounded-l-none pl-1.5'
                       : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100/70 dark:hover:bg-slate-800/50'
                   )
-                }
+                }}
               >
-                <ItemIcon className="size-3.5 shrink-0 text-slate-500 dark:text-slate-400" />
-                <span className="truncate">{item.title}</span>
+                {({ isActive: isLinkActive }) => {
+                  const active = isLinkActive || isActive
+                  return (
+                    <>
+                      <ItemIcon className={cn('size-3.5 shrink-0', active ? 'text-blue-600 dark:text-blue-400' : 'text-slate-500 dark:text-slate-400')} />
+                      <span className="truncate">{item.title}</span>
+                    </>
+                  )
+                }}
               </NavLink>
             )
           })}
@@ -239,6 +252,8 @@ export function AppSidebar() {
       (!item.requiredScope || allowed.includes(item.requiredScope)) &&
       (!item.requiredRole || me?.role === item.requiredRole)
   )
+
+  const isDashboardActive = checkIsItemActive(location.pathname, '/overview')
 
   return (
     <Sidebar collapsible="icon" className="border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950">
@@ -283,15 +298,18 @@ export function AppSidebar() {
                   <NavLink
                     to={getUrlWithScope('/overview')}
                     end
-                    className={({ isActive }) =>
-                      cn(
-                        'flex items-center justify-between w-full px-2 py-1.5 rounded-md text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/80 transition-colors',
-                        isActive && 'bg-slate-100 dark:bg-slate-800 font-semibold text-slate-900 dark:text-white'
+                    className={({ isActive: isLinkActive }) => {
+                      const active = isLinkActive || isDashboardActive
+                      return cn(
+                        'flex items-center justify-between w-full px-2 py-1.5 rounded-md text-xs font-medium transition-colors',
+                        active
+                          ? 'bg-blue-50 dark:bg-blue-950/70 text-blue-600 dark:text-blue-400 font-semibold border-l-2 border-blue-600 dark:border-blue-500 rounded-l-none pl-1.5'
+                          : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/80'
                       )
-                    }
+                    }}
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
-                      <LayoutDashboard className="size-4 text-slate-600 dark:text-slate-400 shrink-0" />
+                      <LayoutDashboard className={cn('size-4 shrink-0', isDashboardActive ? 'text-blue-600 dark:text-blue-400' : 'text-slate-600 dark:text-slate-400')} />
                       <span className="truncate">Dashboard</span>
                     </div>
                   </NavLink>
@@ -357,20 +375,24 @@ export function AppSidebar() {
               <SidebarMenu className="gap-0.5">
                 {visibleManagementItems.map((item) => {
                   const ItemIcon = item.icon
+                  const active = checkIsItemActive(location.pathname, item.url)
                   return (
                     <SidebarMenuItem key={item.title}>
                       <SidebarMenuButton asChild tooltip={item.title}>
                         <NavLink
                           to={getUrlWithScope(item.url)}
-                          className={({ isActive }) =>
-                            cn(
-                              'flex items-center justify-between w-full px-2 py-1.5 rounded-md text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/80 transition-colors',
-                              isActive && 'bg-slate-100 dark:bg-slate-800 font-semibold text-slate-900 dark:text-white'
+                          className={({ isActive: isLinkActive }) => {
+                            const isAct = isLinkActive || active
+                            return cn(
+                              'flex items-center justify-between w-full px-2 py-1.5 rounded-md text-xs font-medium transition-colors',
+                              isAct
+                                ? 'bg-blue-50 dark:bg-blue-950/70 text-blue-600 dark:text-blue-400 font-semibold border-l-2 border-blue-600 dark:border-blue-500 rounded-l-none pl-1.5'
+                                : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/80'
                             )
-                          }
+                          }}
                         >
                           <div className="flex items-center gap-2.5 min-w-0">
-                            <ItemIcon className="size-4 text-slate-600 dark:text-slate-400 shrink-0" />
+                            <ItemIcon className={cn('size-4 shrink-0', active ? 'text-blue-600 dark:text-blue-400' : 'text-slate-600 dark:text-slate-400')} />
                             <span className="truncate">{item.title}</span>
                           </div>
                         </NavLink>
