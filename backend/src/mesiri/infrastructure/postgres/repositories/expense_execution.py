@@ -104,7 +104,27 @@ class PostgresExpenseExecutionRepository(ExpenseExecutionRepository):
                 "the Handler must resolve this before calling persist_success"
             )
 
-        expense_id = uuid.uuid4()
+        # Compute next sequential expense number for this project & organization
+        seq_res = (
+            await conn.execute(
+                sa.text(
+                    """
+                    SELECT COALESCE(MAX(
+                        CAST(SUBSTRING(expense_number FROM 'EXP-([0-9]+)') AS INTEGER)
+                    ), 0) + 1 AS next_seq
+                    FROM expenses
+                    WHERE organization_id = :org_id AND project_id = :proj_id
+                    """
+                ),
+                {
+                    "org_id": uuid.UUID(cmd.organization_id),
+                    "proj_id": uuid.UUID(cmd.project_id),
+                },
+            )
+        ).mappings().first()
+        next_seq = seq_res["next_seq"] if seq_res else 1
+        expense_number = f"EXP-{next_seq:03d}"
+
         # 'reimbursable' means the payer covered it personally -- no ledger
         # entry yet (see commands.py docstring). Naming an account starts as
         # 'unpaid' too; record_payment below recomputes it to 'paid' once the
@@ -113,12 +133,12 @@ class PostgresExpenseExecutionRepository(ExpenseExecutionRepository):
         await conn.execute(
             sa.text(
                 "INSERT INTO expenses "
-                "(id, organization_id, project_id, site_id, category_id, vendor_id, amount, "
-                "currency, description, occurred_date, occurred_time, workflow_status, "
+                "(id, organization_id, project_id, site_id, category_id, vendor_id, expense_number, "
+                "amount, currency, description, occurred_date, occurred_time, workflow_status, "
                 "payment_status, source, source_message_id, correlation_id, created_by) "
                 "VALUES (:id, :organization_id, :project_id, :site_id, :category_id, :vendor_id, "
-                ":amount, :currency, :description, :occurred_date, :occurred_time, 'confirmed', "
-                ":payment_status, :source, :source_message_id, :correlation_id, :created_by)"
+                ":expense_number, :amount, :currency, :description, :occurred_date, :occurred_time, "
+                "'confirmed', :payment_status, :source, :source_message_id, :correlation_id, :created_by)"
             ),
             {
                 "id": expense_id,
@@ -127,6 +147,7 @@ class PostgresExpenseExecutionRepository(ExpenseExecutionRepository):
                 "site_id": _optional_uuid(cmd.site_id),
                 "category_id": uuid.UUID(cmd.category_id),
                 "vendor_id": _optional_uuid(cmd.vendor_id),
+                "expense_number": expense_number,
                 "amount": cmd.amount,
                 "currency": cmd.currency,
                 "description": cmd.description,
