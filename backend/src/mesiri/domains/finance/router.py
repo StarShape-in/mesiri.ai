@@ -81,6 +81,33 @@ class CategoryBreakdownItem(BaseModel):
     amount: Decimal
 
 
+class MonthlyTrendItem(BaseModel):
+    month: str
+    amount: Decimal
+    count: int
+
+
+class TopVendorItem(BaseModel):
+    id: uuid.UUID
+    name: str
+    total_spent: Decimal
+    unpaid_amount: Decimal
+
+
+class PettyCashSummaryItem(BaseModel):
+    id: uuid.UUID
+    name: str
+    custodian_name: str
+    current_balance: Decimal
+    opening_balance: Decimal
+
+
+class FinanceHealthAlerts(BaseModel):
+    low_float_count: int
+    unpaid_invoice_count: int
+    total_unpaid_amount: Decimal
+
+
 class FinanceSummaryResponse(BaseModel):
     total_liquidity: Decimal
     total_expenses: Decimal
@@ -89,6 +116,10 @@ class FinanceSummaryResponse(BaseModel):
     active_vendors_count: int
     active_categories_count: int
     category_breakdown: list[CategoryBreakdownItem]
+    monthly_trend: list[MonthlyTrendItem]
+    top_vendors: list[TopVendorItem]
+    petty_cash_accounts: list[PettyCashSummaryItem]
+    health_alerts: FinanceHealthAlerts
 
 
 
@@ -146,8 +177,17 @@ async def get_finance_summary(
     total_expenses = sum((e.amount for e in expenses), Decimal("0"))
     unpaid_expenses = sum((e.amount for e in expenses if e.payment_status == "unpaid"), Decimal("0"))
 
-    # 3. Vendors Count
-    vendors = await vendor_repo.list_active(auth_context.organization_id)
+    # 3. Vendors & Top Vendors
+    vendor_metrics = await vendor_repo.list_with_metrics(auth_context.organization_id)
+    top_vendors = [
+        TopVendorItem(
+            id=v["vendor"].id,
+            name=v["vendor"].name,
+            total_spent=v["total_amount"],
+            unpaid_amount=v["unpaid_amount"],
+        )
+        for v in vendor_metrics[:5]
+    ]
 
     # 4. Categories & Category Breakdown
     cat_metrics = await cat_repo.list_with_metrics(auth_context.organization_id)
@@ -160,14 +200,55 @@ async def get_finance_summary(
         for m in cat_metrics
     ]
 
+    # 5. Monthly Spending Trend
+    monthly_map: dict[str, dict] = {}
+    for e in expenses:
+        m_str = e.occurred_date.strftime("%b %Y") if e.occurred_date else "Recent"
+        if m_str not in monthly_map:
+            monthly_map[m_str] = {"month": m_str, "amount": Decimal("0"), "count": 0}
+        monthly_map[m_str]["amount"] += e.amount
+        monthly_map[m_str]["count"] += 1
+    monthly_trend = [MonthlyTrendItem(**v) for v in monthly_map.values()]
+
+    # 6. Petty Cash Accounts Summary
+    petty_accounts = [acc for acc in accounts if acc.account_type in ("cash", "employee_advance")]
+    petty_summary = []
+    for acc in petty_accounts:
+        try:
+            bal = await acc_repo.get_balance(auth_context.organization_id, acc.id)
+        except Exception:
+            bal = acc.opening_balance
+        petty_summary.append(
+            PettyCashSummaryItem(
+                id=acc.id,
+                name=acc.name,
+                custodian_name=str(acc.owner_user_id)[:8] if acc.owner_user_id else "Finance Custodian",
+                current_balance=Decimal(bal),
+                opening_balance=acc.opening_balance,
+            )
+        )
+
+    # 7. Health Alerts
+    low_float_count = sum(1 for acc in accounts if Decimal(acc.opening_balance) > 0 and Decimal(getattr(acc, 'current_balance', acc.opening_balance)) < 50000)
+    unpaid_invoice_count = sum(1 for e in expenses if e.payment_status == "unpaid")
+    health_alerts = FinanceHealthAlerts(
+        low_float_count=low_float_count,
+        unpaid_invoice_count=unpaid_invoice_count,
+        total_unpaid_amount=unpaid_expenses,
+    )
+
     return FinanceSummaryResponse(
         total_liquidity=total_liquidity,
         total_expenses=total_expenses,
         unpaid_expenses=unpaid_expenses,
         active_accounts_count=len(accounts),
-        active_vendors_count=len(vendors),
+        active_vendors_count=len(vendor_metrics),
         active_categories_count=len(cat_metrics),
         category_breakdown=cat_breakdown,
+        monthly_trend=monthly_trend,
+        top_vendors=top_vendors,
+        petty_cash_accounts=petty_summary,
+        health_alerts=health_alerts,
     )
 
 

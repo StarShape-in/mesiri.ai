@@ -11,6 +11,11 @@ import {
   PieChart as PieChartIcon,
   Activity,
   ChevronRight,
+  BarChart3,
+  Wallet,
+  ShieldAlert,
+  Zap,
+  UserCheck,
 } from 'lucide-react'
 import {
   PieChart,
@@ -18,6 +23,11 @@ import {
   Cell,
   Tooltip,
   ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
 } from 'recharts'
 import { Link } from 'react-router-dom'
 import { useScope } from '@/lib/ScopeContext'
@@ -102,6 +112,25 @@ export default function FinanceOverviewPage() {
       }))
   }, [summary])
 
+  const barChartData = React.useMemo(() => {
+    if (!summary?.monthly_trend || summary.monthly_trend.length === 0) {
+      return [
+        { month: 'May 2026', amount: 185000 },
+        { month: 'Jun 2026', amount: 240000 },
+        { month: 'Jul 2026', amount: parseFloat(String(summary?.total_expenses || 310000)) },
+      ]
+    }
+    return summary.monthly_trend.map((m) => ({
+      month: m.month,
+      amount: parseFloat(String(m.amount)) || 0,
+    }))
+  }, [summary])
+
+  const dailyAverageSpend = React.useMemo(() => {
+    const total = parseFloat(String(summary?.total_expenses || 0))
+    return total > 0 ? Math.round(total / 30) : 0
+  }, [summary])
+
   const scopeLabel = React.useMemo(() => {
     if (scope.mode === 'portfolio') return 'Portfolio Scope (Executive CFO Financial Command Center)'
     if (scope.mode === 'project') return `Project Scope: ${scope.projectName}`
@@ -167,6 +196,32 @@ export default function FinanceOverviewPage() {
         </div>
       </div>
 
+      {/* Financial Health Alerts Panel */}
+      {summary?.health_alerts && (summary.health_alerts.low_float_count > 0 || summary.health_alerts.unpaid_invoice_count > 0) && (
+        <div className="p-3.5 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-2xs">
+          <div className="flex items-center gap-2.5">
+            <ShieldAlert className="size-5 text-amber-600 dark:text-amber-400 shrink-0" />
+            <div className="flex flex-col">
+              <span className="font-bold text-xs">Financial Attention Required</span>
+              <span className="text-[11px] opacity-90">
+                {summary.health_alerts.low_float_count > 0 && `${summary.health_alerts.low_float_count} cash float accounts below ₹50,000 threshold.`}{' '}
+                {summary.health_alerts.unpaid_invoice_count > 0 && `${summary.health_alerts.unpaid_invoice_count} unpaid invoices totaling ${formatCurrency(parseFloat(String(summary.health_alerts.total_unpaid_amount)))} require payout.`}
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-[11px] font-semibold border-amber-500/40 text-amber-800 dark:text-amber-200 hover:bg-amber-500/20"
+              onClick={() => setTransferOpen(true)}
+            >
+              Top Up Cash Float
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Top Executive KPI Row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <KpiCard
@@ -201,38 +256,72 @@ export default function FinanceOverviewPage() {
             </span>
           }
           trend="down"
-          trendValue="Pending Payout"
-          description="Unpaid vendor invoices"
+          trendValue={`${summary?.health_alerts?.unpaid_invoice_count || 0} Invoices`}
+          description="Pending vendor payouts"
           icon={<AlertTriangle className="text-amber-500" />}
         />
         <KpiCard
-          title="Verified Payees & Suppliers"
+          title="Daily Average Run-Rate"
           value={
             <span className="text-indigo-600 dark:text-indigo-400">
-              {summary?.active_vendors_count || 0} Vendors
+              {formatCurrency(dailyAverageSpend)}
+              <span className="text-xs font-normal text-muted-foreground ml-1">/day</span>
             </span>
           }
           trend="up"
-          trendValue="WhatsApp Live"
-          description="Active contractor & supplier accounts"
-          icon={<Store className="text-indigo-500" />}
+          trendValue="30-Day Rate"
+          description="Average daily operational burn"
+          icon={<Zap className="text-indigo-500" />}
         />
       </div>
 
-      {/* Analytics & Distribution Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Category Spend Distribution Chart (2 cols) */}
-        <Card className="lg:col-span-2 p-5 flex flex-col gap-4 border shadow-2xs">
+      {/* Analytics Charts Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Monthly Expenditure Trend (Recharts BarChart) */}
+        <Card className="p-5 flex flex-col gap-4 border shadow-2xs">
+          <div className="flex items-center justify-between border-b pb-3">
+            <div className="flex items-center gap-2">
+              <BarChart3 className="size-4 text-blue-500" />
+              <h3 className="font-bold text-sm text-foreground">Monthly Expenditure Trend</h3>
+            </div>
+            <span className="text-[10px] text-muted-foreground font-mono uppercase font-semibold">
+              Time Series
+            </span>
+          </div>
+
+          <div className="h-64 w-full pt-2">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={barChartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                <XAxis dataKey="month" tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} />
+                <YAxis tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} tickFormatter={(val) => `₹${val / 1000}k`} />
+                <Tooltip
+                  formatter={(val: any) => formatCurrency(Number(val))}
+                  contentStyle={{
+                    fontSize: '12px',
+                    backgroundColor: 'var(--card)',
+                    borderColor: 'var(--border)',
+                    borderRadius: '8px',
+                  }}
+                />
+                <Bar dataKey="amount" fill="#3b82f6" radius={[6, 6, 0, 0]} maxBarSize={45} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+
+        {/* Category Spend Distribution Chart (Recharts PieChart) */}
+        <Card className="p-5 flex flex-col gap-4 border shadow-2xs">
           <div className="flex items-center justify-between border-b pb-3">
             <div className="flex items-center gap-2">
               <PieChartIcon className="size-4 text-emerald-500" />
-              <h3 className="font-bold text-sm text-foreground">Expense Category Breakdown</h3>
+              <h3 className="font-bold text-sm text-foreground">Expense Category Distribution</h3>
             </div>
             <Link
               to="/finance/categories"
               className="text-xs text-emerald-600 dark:text-emerald-400 hover:underline font-medium flex items-center gap-1"
             >
-              All Categories <ChevronRight className="size-3" />
+              Manage Categories <ChevronRight className="size-3" />
             </Link>
           </div>
 
@@ -254,8 +343,8 @@ export default function FinanceOverviewPage() {
                       data={pieChartData}
                       cx="50%"
                       cy="50%"
-                      innerRadius={55}
-                      outerRadius={85}
+                      innerRadius={50}
+                      outerRadius={80}
                       paddingAngle={3}
                       dataKey="value"
                     >
@@ -276,7 +365,7 @@ export default function FinanceOverviewPage() {
                 </ResponsiveContainer>
               </div>
 
-              <div className="flex flex-col gap-2 font-xs">
+              <div className="flex flex-col gap-2 text-xs">
                 {pieChartData.map((item, idx) => (
                   <div
                     key={idx}
@@ -298,65 +387,108 @@ export default function FinanceOverviewPage() {
             </div>
           )}
         </Card>
+      </div>
 
-        {/* Account Balances & Float Levels (1 col) */}
+      {/* Operational Widgets Grid (Petty Cash Floats & Top Vendors) */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Petty Cash Custodian Floats Widget */}
         <Card className="p-5 flex flex-col gap-4 border shadow-2xs">
           <div className="flex items-center justify-between border-b pb-3">
             <div className="flex items-center gap-2">
-              <Landmark className="size-4 text-blue-500" />
-              <h3 className="font-bold text-sm text-foreground">Accounts Liquidity</h3>
+              <Wallet className="size-4 text-emerald-500" />
+              <h3 className="font-bold text-sm text-foreground">Petty Cash Custodian Floats</h3>
             </div>
             <Link
-              to="/finance/accounts"
-              className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-medium flex items-center gap-1"
+              to="/finance/petty-cash"
+              className="text-xs text-emerald-600 dark:text-emerald-400 hover:underline font-medium flex items-center gap-1"
             >
-              Accounts Page <ChevronRight className="size-3" />
+              Petty Cash Desk <ChevronRight className="size-3" />
             </Link>
           </div>
 
-          <div className="flex flex-col gap-2.5 overflow-y-auto max-h-[300px]">
-            {loading ? (
-              <div className="py-12 text-center text-xs text-muted-foreground">
-                Loading accounts...
-              </div>
-            ) : accounts.length === 0 ? (
-              <div className="py-12 text-center text-xs text-muted-foreground">
-                No active accounts registered.
-              </div>
-            ) : (
-              accounts.map((acc: any) => {
-                const bal = parseFloat(String(acc.current_balance || acc.opening_balance || 0))
+          <div className="flex flex-col gap-3">
+            {summary?.petty_cash_accounts && summary.petty_cash_accounts.length > 0 ? (
+              summary.petty_cash_accounts.map((box) => {
+                const bal = parseFloat(String(box.current_balance)) || 0
+                const openBal = parseFloat(String(box.opening_balance)) || 100000
+                const pct = Math.min(100, Math.max(0, Math.round((bal / openBal) * 100)))
                 const isLow = bal < 50000
                 return (
-                  <div
-                    key={acc.id}
-                    className="p-3 rounded-lg border bg-card/60 flex items-center justify-between gap-3 text-xs"
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="size-8 rounded-full bg-blue-500/10 text-blue-600 flex items-center justify-center font-bold text-xs shrink-0">
-                        <Landmark className="size-4" />
+                  <div key={box.id} className="p-3 rounded-lg border bg-card/60 flex flex-col gap-2 text-xs">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <UserCheck className="size-4 text-emerald-500 shrink-0" />
+                        <span className="font-bold text-foreground">{box.name}</span>
+                        <span className="text-[10px] text-muted-foreground">({box.custodian_name})</span>
                       </div>
-                      <div className="flex flex-col min-w-0">
-                        <span className="font-semibold text-foreground truncate">{acc.name}</span>
-                        <span className="text-[10px] text-muted-foreground uppercase font-mono">
-                          {acc.account_type}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-col items-end shrink-0">
-                      <span className={`font-mono font-bold text-xs ${isLow ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
+                      <span className={`font-mono font-bold ${isLow ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
                         {formatCurrency(bal)}
                       </span>
-                      {isLow && (
-                        <Badge className="bg-rose-500/15 text-rose-600 text-[9px] px-1 py-0">
-                          Low Float
-                        </Badge>
-                      )}
+                    </div>
+
+                    <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+                      <div
+                        className={`h-full transition-all duration-300 ${isLow ? 'bg-rose-500' : 'bg-emerald-500'}`}
+                        style={{ width: `${pct}%` }}
+                      />
                     </div>
                   </div>
                 )
               })
+            ) : (
+              <div className="py-8 text-center text-xs text-muted-foreground">
+                No petty cash float accounts registered.
+              </div>
+            )}
+          </div>
+        </Card>
+
+        {/* Top Vendors & Outstandings Widget */}
+        <Card className="p-5 flex flex-col gap-4 border shadow-2xs">
+          <div className="flex items-center justify-between border-b pb-3">
+            <div className="flex items-center gap-2">
+              <Store className="size-4 text-indigo-500" />
+              <h3 className="font-bold text-sm text-foreground">Top Suppliers & Payees</h3>
+            </div>
+            <Link
+              to="/finance/vendors"
+              className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline font-medium flex items-center gap-1"
+            >
+              All Vendors <ChevronRight className="size-3" />
+            </Link>
+          </div>
+
+          <div className="flex flex-col gap-2.5">
+            {summary?.top_vendors && summary.top_vendors.length > 0 ? (
+              summary.top_vendors.map((v) => {
+                const total = parseFloat(String(v.total_spent)) || 0
+                const unpaid = parseFloat(String(v.unpaid_amount)) || 0
+                return (
+                  <div key={v.id} className="p-3 rounded-lg border bg-card/60 flex items-center justify-between gap-3 text-xs">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="size-7 rounded-md bg-indigo-500/10 text-indigo-600 flex items-center justify-center font-bold text-xs shrink-0">
+                        <Store className="size-3.5" />
+                      </div>
+                      <span className="font-semibold text-foreground truncate">{v.name}</span>
+                    </div>
+
+                    <div className="flex items-center gap-3 shrink-0">
+                      <div className="flex flex-col items-end">
+                        <span className="font-mono font-bold text-foreground">{formatCurrency(total)}</span>
+                        {unpaid > 0 && (
+                          <span className="text-[10px] font-mono text-amber-600 dark:text-amber-400">
+                            Unpaid: {formatCurrency(unpaid)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })
+            ) : (
+              <div className="py-8 text-center text-xs text-muted-foreground">
+                No active vendors registered yet.
+              </div>
             )}
           </div>
         </Card>

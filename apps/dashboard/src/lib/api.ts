@@ -683,6 +683,33 @@ export interface CategoryBreakdownItem {
   amount: number
 }
 
+export interface MonthlyTrendItem {
+  month: string
+  amount: number
+  count: number
+}
+
+export interface TopVendorItem {
+  id: string
+  name: string
+  total_spent: number
+  unpaid_amount: number
+}
+
+export interface PettyCashSummaryItem {
+  id: string
+  name: string
+  custodian_name: string
+  current_balance: number
+  opening_balance: number
+}
+
+export interface FinanceHealthAlerts {
+  low_float_count: number
+  unpaid_invoice_count: number
+  total_unpaid_amount: number
+}
+
 export interface FinanceSummaryItem {
   total_liquidity: number
   total_expenses: number
@@ -691,6 +718,10 @@ export interface FinanceSummaryItem {
   active_vendors_count: number
   active_categories_count: number
   category_breakdown: CategoryBreakdownItem[]
+  monthly_trend: MonthlyTrendItem[]
+  top_vendors: TopVendorItem[]
+  petty_cash_accounts: PettyCashSummaryItem[]
+  health_alerts: FinanceHealthAlerts
 }
 
 export async function fetchFinanceSummaryApi(): Promise<FinanceSummaryItem> {
