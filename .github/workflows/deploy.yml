@@ -159,6 +159,10 @@ jobs:
           cd "${REPO}/backend"
           ${VENV}/bin/alembic upgrade head
 
+          echo "→ Clearing stale Python bytecode cache..."
+          find "${REPO}/backend/src" -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
+          find "${REPO}/backend/src" -name '*.pyc' -delete 2>/dev/null || true
+
           echo "→ Restarting backend service..."
           systemctl restart mesiri
 
