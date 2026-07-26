@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from context.resolver import ContextResolver
     from interactions import InteractionHandler
     from mesiri.infrastructure.postgres.database import PostgresDatabase
+    from mesiri_contracts.common.storage import ObjectStoragePort
     from planner import Planner
     from runtime.expense_category_query import ExpenseCategoryQueryService
     from runtime.inventory_query import MaterialInventoryQueryService
@@ -89,6 +90,15 @@ class AppContainer:
     # Read-only expense category names for the extraction call's AI-side
     # category selection. Exposed for the same reason as catalog_query above.
     expense_category_query: ExpenseCategoryQueryService
+    # Resolves receipt/attachment object keys into presigned URLs for the
+    # dashboard's expense-attachment endpoints (backend/src/mesiri/
+    # infrastructure/objectstorage/dependency.py's get_object_storage falls
+    # back to `request.app.state.container.object_storage`, since this is
+    # the actual production app -- see runtime/lifecycle.py -- not
+    # backend/src/mesiri/http/app.py). Was already built here (used for
+    # build_pipeline/WhatsAppReceiver below) but never exposed on the
+    # container itself, so every attachment fetch 500'd with AttributeError.
+    object_storage: ObjectStoragePort
     # Owns the one headless-Chromium instance used to render post-confirmation
     # receipt images (see channel/receipt/). close() is called by the
     # lifespan handler, same lifecycle pattern as material_db/redis_client.
@@ -1119,6 +1129,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         catalog_query=catalog_query,
         org_settings_query=org_settings_query,
         expense_category_query=expense_category_query,
+        object_storage=object_storage,
         receipt_renderer=receipt_renderer,
         workflow_runtime=workflow_runtime,
         interaction_handler=interaction_handler,

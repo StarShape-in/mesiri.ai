@@ -412,6 +412,15 @@ async def test_build_container_wires_context_resolver(tmp_path):
     # not left running M7-only (which would silently skip domain execution).
     assert container.interaction_handler._dispatcher is not None
     assert container.material_db is not None
+    # object_storage was built locally in build_container (used for
+    # build_pipeline/WhatsAppReceiver) but never attached to the returned
+    # AppContainer -- backend/src/mesiri/infrastructure/objectstorage/
+    # dependency.py's get_object_storage() falls back to
+    # `request.app.state.container.object_storage` for the real production
+    # app (runtime/lifecycle.py), so a missing field here meant every
+    # expense-attachment/receipt fetch 500'd with AttributeError, in
+    # production, for every user, always.
+    assert container.object_storage is not None
 
 
 async def test_context_debug_logs_resolved_context(caplog):

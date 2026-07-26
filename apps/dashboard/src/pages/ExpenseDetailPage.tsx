@@ -36,7 +36,7 @@ import {
 } from '@/components/ui/table'
 import {
   fetchExpenseApi,
-  fetchAllExpenseAttachmentsApi,
+  fetchExpenseAttachmentsApi,
   reverseExpenseApi,
   fetchUsers,
   fetchMe,
@@ -216,9 +216,8 @@ export default function ExpenseDetailPage() {
     async function loadReceipt() {
       if (!id) return
       try {
-        const attachments = await fetchAllExpenseAttachmentsApi({ limit: 100 })
-        const match = attachments.find((a) => a.expense_id === id)
-        if (match) setReceiptUrl(match.url)
+        const attachments = await fetchExpenseAttachmentsApi(id)
+        if (attachments[0]) setReceiptUrl(attachments[0].url)
       } catch (err) {
         console.warn('Failed to load receipt attachment:', err)
       }
