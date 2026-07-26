@@ -44,8 +44,8 @@ def build_draft(state: WorkflowGraphState) -> dict:
     fields AI extraction was supposed to fill in are missing or the action
     itself wasn't recognized -- complete with a clarifying reply and no
     draft at all, mirroring reverse/nodes.py's own "nothing to reverse"
-    completeness check (see workflows/runtime.py's
-    _NO_DRAFT_ALLOWED_WORKFLOW_KEYS, which permits WorkflowKey.ACCOUNT_ADMIN
+    completeness check (see WorkflowDefinition.allows_completion_without_draft
+    in workflows/registry.py, which permits WorkflowKey.ACCOUNT_ADMIN
     to complete without a draft for exactly this case)."""
     fields = dict(state.get("collected_fields") or {})
     action = str(fields.get("action") or "").strip().lower()

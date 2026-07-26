@@ -24,56 +24,18 @@ from mesiri_contracts.common.ids import new_id
 from mesiri_contracts.context.enums import WorkflowPhase
 
 from .ports import LoadedWorkflowInstance, SingleActiveConflict, WorkflowInstanceRepository
-from .registry import WorkflowRegistry
+from .registry import WorkflowRegistry, allows_completion_without_draft, is_informational
 from .slots import SlotCandidate
 from .state import WorkflowGraphState
 
 logger = logging.getLogger(__name__)
 
-# Workflows that only answer a question and never produce a draft_action --
-# no business record to confirm, so they are exempt from the single-active
-# pending-confirmation gate (a balance/inventory question shouldn't be
-# blocked just because an unrelated expense confirmation is pending) and
-# complete without AWAITING_CONFIRMATION.
-_INFORMATIONAL_WORKFLOW_KEYS = frozenset(
-    {
-        WorkflowKey.WHO_AM_I,
-        WorkflowKey.MATERIAL_INVENTORY_QUERY,
-        WorkflowKey.ACCOUNT_BALANCE_QUERY,
-        WorkflowKey.EXPENSE_QUERY,
-    }
-)
-
-# WorkflowKey.REVERSE and WorkflowKey.EXPENSE_SUBMIT are mixed cases, NOT
-# purely informational -- unlike the keys above, they still write a business
-# record most of the time and must still respect the single-active
-# pending-confirmation gate (a user reversing one expense must not be able
-# to start a second reversal, or record a new expense, while one is already
-# awaiting confirmation). The only thing they share with an informational
-# workflow is that they can *sometimes* complete with no draft_action at
-# all: when runtime/inbound_journey.py's seeding step finds nothing to
-# reverse (no recent expense/transfer of the requested kind),
-# workflows/reverse/nodes.py omits draft_action and completes with a
-# "nothing to reverse" reply. Likewise, workflows/expense_capture/nodes.py's
-# `check_duplicate` (Finance Module Slice 8) omits draft_action when the
-# user answers "no" to a "looks like a duplicate, record anyway?" prompt.
-# When a target *is* found (or the duplicate answer is "yes"), the same
-# graph still produces a draft_action and the normal AWAITING_CONFIRMATION
-# path runs unaffected. So these keys must NOT be added to
-# _INFORMATIONAL_WORKFLOW_KEYS above (that would also exempt them from the
-# single-active gate, which is wrong) -- they get their own set, consulted
-# only where a missing draft_action is decided to be a legitimate no-op
-# rather than WorkflowRunStatus.FAILED.
-_NO_DRAFT_ALLOWED_WORKFLOW_KEYS = _INFORMATIONAL_WORKFLOW_KEYS | frozenset(
-    {WorkflowKey.REVERSE, WorkflowKey.EXPENSE_SUBMIT, WorkflowKey.ACCOUNT_ADMIN}
-)
-# ACCOUNT_ADMIN joined REVERSE/EXPENSE_SUBMIT here on 2026-07-26: now that it
-# can be reached via the AI-understood path (not just the deterministic
-# regex parser, which always has every field it needs by construction), an
-# extraction that resolved `action` but not the action-specific fields
-# (name / target_name+new_name / target_name) must be able to complete with
-# a clarifying reply and no draft, mirroring reverse/nodes.py's own
-# completeness check -- see workflows/account_admin/nodes.py's build_draft.
+# Per-workflow is_informational / allows_completion_without_draft flags live
+# on WorkflowDefinition (registry.py) -- this module only consumes them via
+# is_informational()/allows_completion_without_draft() below. See
+# WorkflowDefinition's field docstrings for what each flag means and why
+# (e.g. why REVERSE/EXPENSE_SUBMIT/ACCOUNT_ADMIN allow a missing draft
+# without being informational).
 
 
 def _to_slot_candidates(raw: list[dict[str, str]] | None) -> tuple[SlotCandidate, ...] | None:
@@ -303,12 +265,12 @@ class WorkflowRuntime:
         # workflow. If one is pending, block the new one and re-show its prompt
         # rather than piling up ambiguous confirmations. (The partial unique index
         # in Postgres is the hard guarantee; this is the friendly pre-check.)
-        # Informational workflows (see _INFORMATIONAL_WORKFLOW_KEYS) are exempt.
+        # Informational workflows (WorkflowDefinition.is_informational) are exempt.
         # A pending COLLECTING_FIELDS slot question (Finance Module Slice 1)
         # blocks the same way -- there is no DB-level guarantee for that phase
         # (see workflows/ports.py's get_awaiting_input docstring), so this
         # pre-check is the only thing enforcing it.
-        if workflow_key not in _INFORMATIONAL_WORKFLOW_KEYS:
+        if not is_informational(workflow_key):
             existing = await self._repo.get_awaiting_confirmation(event.user_id)
             if existing is not None and existing.state.pending_prompt:
                 logger.info(
@@ -427,7 +389,7 @@ class WorkflowRuntime:
             )
 
         if draft_action is None:
-            if workflow_key not in _NO_DRAFT_ALLOWED_WORKFLOW_KEYS:
+            if not allows_completion_without_draft(workflow_key):
                 logger.error(
                     "workflow.missing_draft_action workflow_key=%s workflow_instance_id=%s",
                     workflow_key.value,

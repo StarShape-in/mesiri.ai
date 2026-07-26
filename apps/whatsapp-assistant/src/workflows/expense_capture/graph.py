@@ -64,8 +64,9 @@ def build_expense_capture_graph() -> Any:
     ends there for this pass. `check_duplicate` only asks when the caller
     flagged a likely duplicate (Finance Module Slice 8); a "no" answer ends
     the workflow with no draft at all (see nodes.py's `check_duplicate` and
-    workflows/runtime.py's `_INFORMATIONAL_WORKFLOW_KEYS`, which allows
-    EXPENSE_SUBMIT to complete without a draft for exactly this case).
+    `WorkflowDefinition.allows_completion_without_draft` in
+    workflows/registry.py, which allows EXPENSE_SUBMIT to complete without a
+    draft for exactly this case).
     `resolve_vendor` only asks when the caller flagged the vendor name as
     unmatched; unlike check_duplicate, its "no" answer never ends the
     workflow -- it drops the vendor from the draft and continues to

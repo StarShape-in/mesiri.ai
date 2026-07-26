@@ -565,22 +565,34 @@ def test_workflow_registry_compiles_once_and_caches(monkeypatch: pytest.MonkeyPa
     assert build_calls["count"] == 1
 
 
-def test_definition_flags_match_the_runtime_key_sets() -> None:
-    """The registry's per-workflow flags must agree with the frozensets that
-    still drive runtime behaviour today.
+def test_informational_and_no_draft_keys_are_pinned() -> None:
+    """Pins which keys are informational / may complete without a draft.
 
-    These two sources of truth are deliberately duplicated for one step: the
-    flags land here first, this test pins them, and only then does runtime.py
-    switch to reading them. Delete this test in the same change that deletes
-    the frozensets."""
-    from workflows.registry import iter_definitions
-    from workflows.runtime import _INFORMATIONAL_WORKFLOW_KEYS, _NO_DRAFT_ALLOWED_WORKFLOW_KEYS
+    Regression guard for the WorkflowDefinition migration: runtime.py used to
+    hardcode these as two frozensets; it now reads WorkflowDefinition via
+    is_informational()/allows_completion_without_draft(). This test protects
+    against either set silently drifting when a workflow is added or a
+    definition is edited."""
+    from workflows.registry import (
+        allows_completion_without_draft,
+        is_informational,
+        iter_definitions,
+    )
 
-    informational = {d.key for d in iter_definitions() if d.is_informational}
-    no_draft = {d.key for d in iter_definitions() if d.allows_completion_without_draft}
+    informational = {d.key for d in iter_definitions() if is_informational(d.key)}
+    no_draft = {d.key for d in iter_definitions() if allows_completion_without_draft(d.key)}
 
-    assert informational == set(_INFORMATIONAL_WORKFLOW_KEYS)
-    assert no_draft == set(_NO_DRAFT_ALLOWED_WORKFLOW_KEYS)
+    assert informational == {
+        WorkflowKey.WHO_AM_I,
+        WorkflowKey.MATERIAL_INVENTORY_QUERY,
+        WorkflowKey.ACCOUNT_BALANCE_QUERY,
+        WorkflowKey.EXPENSE_QUERY,
+    }
+    assert no_draft == informational | {
+        WorkflowKey.REVERSE,
+        WorkflowKey.EXPENSE_SUBMIT,
+        WorkflowKey.ACCOUNT_ADMIN,
+    }
 
 
 def test_every_registered_workflow_has_a_category() -> None:

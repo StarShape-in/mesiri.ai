@@ -164,6 +164,21 @@ def iter_definitions() -> Iterator[WorkflowDefinition]:
     return iter(_DEFINITIONS.values())
 
 
+def is_informational(key: WorkflowKey) -> bool:
+    """True if ``key`` only answers a question and never produces a draft_action.
+
+    False (not raise) for an unregistered key, so callers can use this as a
+    plain predicate without checking is_implemented() first."""
+    definition = _DEFINITIONS.get(key)
+    return definition is not None and definition.is_informational
+
+
+def allows_completion_without_draft(key: WorkflowKey) -> bool:
+    """True if ``key`` may legitimately finish with no draft_action."""
+    definition = _DEFINITIONS.get(key)
+    return definition is not None and definition.allows_completion_without_draft
+
+
 class WorkflowRegistry:
     """Resolves a WorkflowKey to a compiled graph, compiling (and caching) on first use."""
 

@@ -60,7 +60,8 @@ def test_build_draft_create_missing_name_asks_instead_of_building_an_incomplete_
     """The gap AI extraction opened, that the deterministic parser never
     could: `action` resolved but the action-specific field didn't. No draft
     at all -- workflows/account_admin/graph.py routes this straight to END
-    (see workflows/runtime.py's _NO_DRAFT_ALLOWED_WORKFLOW_KEYS)."""
+    (see WorkflowDefinition.allows_completion_without_draft in
+    workflows/registry.py)."""
     state = _base_state({"action": "create"})
     update = build_draft(state)
     assert "draft_action" not in update

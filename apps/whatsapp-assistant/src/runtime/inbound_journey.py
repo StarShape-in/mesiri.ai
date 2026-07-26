@@ -674,8 +674,9 @@ async def _seed_reversal_target(
     above. Only ever runs for REVERSE; finding nothing simply leaves
     `expense_id`/`money_transaction_id` unset -- workflows/reverse/nodes.py's
     build_draft then completes with a "nothing to reverse" reply instead of
-    a draft (see that module's docstring and workflows/runtime.py's
-    `_INFORMATIONAL_WORKFLOW_KEYS`)."""
+    a draft (see that module's docstring and
+    `WorkflowDefinition.allows_completion_without_draft` in
+    workflows/registry.py)."""
     if reversal_query is None or actor is None or not actor.organization_id:
         return
     if decision.workflow_key is not WorkflowKey.REVERSE:

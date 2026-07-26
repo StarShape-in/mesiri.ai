@@ -11,8 +11,9 @@ deterministic parser resolves everything before its own graph runs.
 Unlike every other finance workflow, there is a genuine "nothing to
 reverse" outcome: when the seeding step found no matching record,
 `build_draft` deliberately omits `draft_action` and returns a friendly
-`pending_prompt` instead -- workflows/runtime.py's `_INFORMATIONAL_WORKFLOW_KEYS`
-allows `WorkflowKey.REVERSE` to complete without a draft for exactly this case.
+`pending_prompt` instead -- `WorkflowDefinition.allows_completion_without_draft`
+in workflows/registry.py allows `WorkflowKey.REVERSE` to complete without a
+draft for exactly this case.
 """
 
 from __future__ import annotations
