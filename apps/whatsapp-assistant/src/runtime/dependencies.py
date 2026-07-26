@@ -293,16 +293,23 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     # Routes a confirmed action to the dispatcher registered for its
     # action_type -- InteractionHandler only ever holds one ExecutionDispatcher.
     from interactions.execution_router import ActionTypeRoutingDispatcher
+
+    # Labour attendance (Phase 5): same in-process capability-boundary wiring
+    # as Materials above, reusing the same material_db transaction pool. No
+    # resolver, unlike Materials -- worker matching already happened in the
+    # workflow before confirmation (see application/labour/handlers.py).
+    from mesiri.application.labour.dispatcher import LabourExecutionDispatcher
+    from mesiri.application.labour.handlers import ExecuteConfirmedLabourAttendanceHandler
+    from mesiri.infrastructure.postgres.repositories.labour_execution import (
+        PostgresLabourExecutionRepository,
+    )
     from mesiri_contracts.assistant.draft_action import DraftActionType
 
-    # TEMPORARY: Labour is being built conversation-first, so attendance is
-    # logged rather than saved until Phase 5 adds the tables and repository.
-    # Registered anyway because the alternative is worse: with no dispatcher
-    # for this action type the router returns FAILED, and the user hits an
-    # error at the exact moment we are trying to observe -- confirmation.
-    # Swap this one line for the real LabourExecutionDispatcher when Phase 5
-    # lands, and delete runtime/labour_execution_stub.py.
-    from runtime.labour_execution_stub import StubLabourExecutionDispatcher
+    labour_execution_handler = ExecuteConfirmedLabourAttendanceHandler(
+        db=material_db,
+        repo=PostgresLabourExecutionRepository(),
+    )
+    labour_dispatcher = LabourExecutionDispatcher(labour_execution_handler)
 
     execution_dispatcher = ActionTypeRoutingDispatcher(
         {
@@ -312,7 +319,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             DraftActionType.MANAGE_MONEY_ACCOUNT: account_admin_dispatcher,
             DraftActionType.TRANSFER_MONEY: transfer_dispatcher,
             DraftActionType.REVERSE_TRANSACTION: reverse_dispatcher,
-            DraftActionType.RECORD_LABOUR_ATTENDANCE: StubLabourExecutionDispatcher(),
+            DraftActionType.RECORD_LABOUR_ATTENDANCE: labour_dispatcher,
         }
     )
     # Read-only inventory lookups for the material.inventory_query workflow --

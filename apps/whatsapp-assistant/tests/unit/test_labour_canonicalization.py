@@ -283,3 +283,34 @@ def test_a_transliterated_group_row_still_carries_its_english_trade():
     lines = _lines({"workers": [{"trade": "mason", "headcount": 6}]})
     assert lines[0]["trade"] == "mason"
     assert lines[0]["worker_name"] is None
+
+
+# --- recorded_via: how the report reached Mesiri --------------------------
+
+
+def test_a_text_report_is_recorded_via_whatsapp_text():
+    event = _event({"workers": [{"name": "Ravi", "trade": "mason"}]}, modality=InputModality.TEXT)
+    assert event.fields["recorded_via"] == "whatsapp_text"
+
+
+def test_a_voice_report_is_recorded_via_whatsapp_voice():
+    event = _event({"workers": [{"name": "Ravi", "trade": "mason"}]}, modality=InputModality.VOICE)
+    assert event.fields["recorded_via"] == "whatsapp_voice"
+
+
+def test_an_image_report_is_recorded_via_whatsapp_image():
+    event = _event({"workers": [{"name": "Ravi", "trade": "mason"}]}, modality=InputModality.IMAGE)
+    assert event.fields["recorded_via"] == "whatsapp_image"
+
+
+def test_a_tapped_interactive_reply_still_counts_as_whatsapp_text():
+    event = _event({"workers": [{"name": "Ravi", "trade": "mason"}]}, modality=InputModality.INTERACTIVE)
+    assert event.fields["recorded_via"] == "whatsapp_text"
+
+
+def test_recorded_via_reaches_the_command_mapper():
+    """Display suppression is workflows/labour_update/nodes.py's job (see
+    test_labour_update_nodes.py); this only pins that canonicalization
+    doesn't drop the value before the mapper ever sees it."""
+    event = _event({"workers": [{"name": "Ravi", "trade": "mason"}]}, modality=InputModality.VOICE)
+    assert event.fields["recorded_via"] == "whatsapp_voice"

@@ -373,9 +373,18 @@ def build_draft(state: WorkflowGraphState) -> dict:
 # --- Confirmation preview --------------------------------------------------
 
 #: Rendered by the summary block above, so they must not also appear as raw
-#: key:value lines below it.
+#: key:value lines below it. "recorded_via" is provenance (how the report
+#: arrived -- see canonicalization/builder.py) that the command needs but the
+#: supervisor confirming a headcount has no reason to see.
 _DISPLAY_HIDDEN_FIELD_KEYS = frozenset(
-    {"lines", "attachment_object_keys", "media_object_key", "project_name", "site_name"}
+    {
+        "lines",
+        "attachment_object_keys",
+        "media_object_key",
+        "project_name",
+        "site_name",
+        "recorded_via",
+    }
 )
 
 

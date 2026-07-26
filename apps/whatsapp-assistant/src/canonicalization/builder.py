@@ -10,7 +10,7 @@ from mesiri_contracts.assistant.canonical_event import (
     IntentCompleteness,
 )
 from mesiri_contracts.assistant.confidence import ConfidenceLevel
-from mesiri_contracts.assistant.enums import SemanticType
+from mesiri_contracts.assistant.enums import InputModality, SemanticType
 from mesiri_contracts.assistant.understanding_result import UnderstandingResult
 from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
 from mesiri_contracts.assistant.v2.resolved_context import ResolvedContextV2
@@ -160,7 +160,29 @@ def _labour_line(raw: dict) -> dict | None:
     return line
 
 
-def _normalize_labour_fields(fields: dict) -> dict:
+# How the report reached Mesiri, mapped from the real input modality of the
+# message that started the workflow (recorded once at canonicalization --
+# see _normalize_labour_fields below -- and never overwritten by a later
+# slot-filling reply in the same conversation, which is always TEXT/
+# INTERACTIVE regardless of how the original report arrived).
+#
+# DOCUMENT shares "whatsapp_image": both go through the vision path
+# (understanding/pipeline.py handles IMAGE and DOCUMENT identically), and
+# the labour_attendance_reports.recorded_via check constraint intentionally
+# has no separate bucket for a distinction the rest of the system doesn't
+# make either. UNKNOWN/anything unmapped falls back to the command
+# contract's own default ("whatsapp_text") rather than inventing a value
+# here -- the mapper is closer to that call and pins the exact string.
+_RECORDED_VIA_BY_MODALITY: dict[InputModality, str] = {
+    InputModality.TEXT: "whatsapp_text",
+    InputModality.INTERACTIVE: "whatsapp_text",
+    InputModality.VOICE: "whatsapp_voice",
+    InputModality.IMAGE: "whatsapp_image",
+    InputModality.DOCUMENT: "whatsapp_image",
+}
+
+
+def _normalize_labour_fields(fields: dict, *, input_modality: InputModality | None = None) -> dict:
     """Map whatever the provider returned onto the canonical ``lines`` shape.
 
     The workflow (workflows/labour_update) only ever reads ``lines``: a list
@@ -180,8 +202,16 @@ def _normalize_labour_fields(fields: dict) -> dict:
 
     Alias keys are popped, not copied: leaving both ``workers`` and ``lines``
     behind would show the same attendance twice in the confirmation text.
+
+    ``recorded_via`` is set here too, from ``input_modality``, when a mapping
+    exists -- simple provenance metadata (how the report arrived: text,
+    voice, image, or later dashboard), not something the workflow displays or
+    the domain rules act on. Left unset when unmapped so the command's own
+    default applies rather than this function inventing one.
     """
     out = dict(fields)
+    if input_modality in _RECORDED_VIA_BY_MODALITY:
+        out["recorded_via"] = _RECORDED_VIA_BY_MODALITY[input_modality]
     raw_lines = out.pop("workers", None) or out.pop("lines", None)
 
     lines: list[dict] = []
@@ -259,7 +289,7 @@ def build_canonical_event(
         fields["media_object_key"] = understanding.original_content_reference
 
     if understanding.semantic_type is SemanticType.LABOUR_UPDATE:
-        fields = _normalize_labour_fields(fields)
+        fields = _normalize_labour_fields(fields, input_modality=understanding.input_modality)
 
     if understanding.semantic_type is SemanticType.MATERIAL_UPDATE:
         fields = _normalize_material_fields(fields)

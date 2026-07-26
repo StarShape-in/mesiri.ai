@@ -141,6 +141,17 @@ class RecordLabourAttendanceCommand(BaseModel):
     occurred_date: date
     occurred_date_source: str = "inferred_at_confirmation"
 
+    #: How this report reached Mesiri: "whatsapp_text" | "whatsapp_voice" |
+    #: "whatsapp_image" | "dashboard". Simple provenance metadata — it plays
+    #: no part in matching, validation or the domain rules above — but
+    #: valuable later for debugging AI accuracy per input path and for
+    #: analytics, and it cannot be reconstructed once the report is saved.
+    #: Set from the real input modality at canonicalization
+    #: (canonicalization/builder.py, from UnderstandingResult.input_modality)
+    #: for the message that started the workflow; slot-filling replies later
+    #: in the same conversation never overwrite it.
+    recorded_via: str = "whatsapp_text"
+
     created_by: CanonicalUuid
 
     model_config = {"extra": "forbid"}

@@ -8,7 +8,9 @@ than fakes standing in for both.
 
 Uses the real compiled LangGraph via WorkflowRegistry, so it is skipped when
 langgraph isn't installed (optional `workflow` group), same as the sibling
-graph tests.
+graph tests. The execution side is the real Phase 5 Handler/Dispatcher
+(application/labour/), backed by FakeLabourExecutionRepository rather than a
+live database -- no stub anywhere in this file.
 """
 
 from __future__ import annotations
@@ -20,6 +22,12 @@ import pytest
 pytest.importorskip("langgraph")
 
 from interactions import InteractionHandler  # noqa: E402
+from mesiri.application.labour.dispatcher import LabourExecutionDispatcher  # noqa: E402
+from mesiri.application.labour.fakes import (  # noqa: E402
+    FakeDatabase,
+    FakeLabourExecutionRepository,
+)
+from mesiri.application.labour.handlers import ExecuteConfirmedLabourAttendanceHandler  # noqa: E402
 from mesiri_contracts.application.results.execution_result import ExecutionStatus  # noqa: E402
 from mesiri_contracts.assistant.canonical_event import (  # noqa: E402
     CanonicalEventType,
@@ -38,7 +46,6 @@ from mesiri_contracts.assistant.planner_decision import (  # noqa: E402
 from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2  # noqa: E402
 from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2  # noqa: E402
 from mesiri_contracts.context.enums import WorkflowPhase  # noqa: E402
-from runtime.labour_execution_stub import StubLabourExecutionDispatcher  # noqa: E402
 from workflows import WorkflowRunStatus, WorkflowRuntime  # noqa: E402
 from workflows.fakes import FakeWorkflowInstanceRepository  # noqa: E402
 from workflows.registry import WorkflowRegistry  # noqa: E402
@@ -55,11 +62,15 @@ LINES = [
 
 
 class _CountingDispatcher:
-    """Wraps the stub so the test can assert nothing was executed."""
+    """Wraps the real Phase 5 dispatcher (fakes-backed, no live DB) so the
+    test can assert nothing was executed until confirmation."""
 
     def __init__(self) -> None:
         self.calls = 0
-        self._inner = StubLabourExecutionDispatcher()
+        handler = ExecuteConfirmedLabourAttendanceHandler(
+            db=FakeDatabase(), repo=FakeLabourExecutionRepository()
+        )
+        self._inner = LabourExecutionDispatcher(handler)
 
     async def dispatch(self, confirmed):
         self.calls += 1

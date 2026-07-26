@@ -1,6 +1,9 @@
 # Labour Module — Master Implementation Plan
 
-**Status:** In progress — Phases 0–4 complete. **Next: Phase 5 (repositories + application layer).**
+**Status:** In progress — Phases 0–6 substantially complete (Phase 6's routing/
+extraction/canonicalization/attachment/wiring items are done; end-to-end
+verification against a live database is still outstanding). **Next: Phase 7
+(platform integration) or live-DB verification of Phases 4–6 — see §15.**
 **Owner:** Alan Raj
 **Started:** 2026-07-25
 **Last updated:** 2026-07-26
@@ -599,19 +602,45 @@ Migration 0371. See §14 for the full schema explanation and the two
 decisions the user approved before this was built (Attendance ID, `recorded_via`).
 
 ### Phase 5 — Repositories & application layer
-- [ ] Repository port + Postgres implementation
-- [ ] Mapper, handler, dispatcher, recovery
-- [ ] Idempotency
-- [ ] Fakes for testing
-- [ ] Tests
+- [x] Repository port + Postgres implementation
+      (`application/labour/repository.py`, `infrastructure/postgres/repositories/labour_execution.py`)
+- [x] Mapper, handler, dispatcher, recovery (`application/labour/`) —
+      dispatcher and recovery reuse the shared scaffolding
+      (`application/shared/execution.py`) added before Labour started, so
+      neither is new code, only two thin subclasses
+- [x] Domain validation (`domains/workforce/validation.py`, mirrors
+      `domains/materials/validation.py`)
+- [x] Idempotency — `idempotency_keys` shared table, identical claim pattern
+      to Material
+- [x] Fakes for testing (`application/labour/fakes.py`)
+- [x] Tests — mapper (17), domain validation (8), handler (6), e2e (6, real
+      dispatcher now — the temporary stub and its test were deleted)
+- [x] `runtime/dependencies.py` wired to the real `LabourExecutionDispatcher`
+      — **the stub is gone.** Confirming an attendance now actually writes
+      `labour_attendance_reports`/`_lines`/`_attachments`.
+- [x] Bonus, not originally scoped for this phase: **`recorded_via`** now
+      carries the real input modality (text/voice/image) end to end, from
+      `UnderstandingResult.input_modality` at canonicalization through to the
+      stored row — see §14.3. Needed doing now because the mapper needed
+      something to put in that column.
 
 ### Phase 6 — WhatsApp flow
-- [ ] Canonicalization mapping + required fields
-- [ ] Planner routing
-- [ ] Extraction prompt: named workers, not just headcount
-- [ ] Image attachment path
-- [ ] Runtime wiring (`dependencies.py`)
-- [ ] End-to-end tests
+- [x] Canonicalization mapping + required fields — done in the earlier
+      "read named workers" work (`canonicalization/builder.py`'s
+      `_normalize_labour_fields`) and extended this phase for `recorded_via`
+- [x] Planner routing — pre-existing (§2.1's reconnaissance finding, verified
+      still true: `planner/routing.py` already maps
+      `LABOUR_ATTENDANCE_REQUESTED` -> `WorkflowKey.LABOUR_ATTENDANCE`)
+- [x] Extraction prompt: named workers, not just headcount — done earlier
+- [x] Image attachment path — reuses the existing `IMAGE_PURPOSE_ROWS`
+      mechanism ("Attendance" row, done earlier) end to end through to
+      storage: photo -> `media_object_key` -> mapper's
+      `_attachment_object_keys` -> `labour_attendance_attachments` row
+- [x] Runtime wiring (`dependencies.py`) — the real `LabourExecutionDispatcher`
+      is registered; the temporary stub is deleted
+- [x] End-to-end tests (fakes-backed, no live DB — see Phase 4/5's same
+      caveat: **run against a real database before calling Phase 6 fully
+      verified**)
 
 ### Phase 7 — Platform integration
 - [ ] Timeline events
@@ -1020,3 +1049,107 @@ dispatcher, no wiring into `runtime/dependencies.py`. The codebase's own
 convention (confirmed by reading `material_execution.py`) is raw SQL via
 SQLAlchemy Core inside repositories, not an ORM layer — so there's nothing
 to add here beyond the migration. That's Phase 5.
+
+---
+
+## 15. Phase 5/6 — the application layer, and the stub's replacement
+
+### 15.1 What was built
+
+Mirrors `application/materials/` almost exactly — same file names, same
+responsibilities, same orchestration order in the Handler (map → validate →
+open the one transaction → check idempotency → persist). Two real
+differences from Material, both because Labour's shape is genuinely simpler
+at this layer:
+
+- **No resolver.** Material's Handler resolves `material_id`/`unit_id`
+  against a catalog *at execution time*, as defense-in-depth. Labour has
+  nothing equivalent to resolve: a line's `worker_id` was already decided by
+  `match_workers` in the workflow, before the user ever confirmed (P4), and
+  attendance never writes the register regardless (P1). There is nothing left
+  to look up.
+- **Two repository methods matter, a third writes many rows.** Where
+  Material inserts one row plus one `material_movements` ledger row,
+  `persist_success` here inserts one `labour_attendance_reports` row, then
+  loops the command's `lines` and `attachment_object_keys` — an attendance
+  report is naturally one-to-many, and the repository just reflects that.
+
+`recover_confirmed_instances` and the dispatcher's failure contract are
+**not new code** — both come from `application/shared/execution.py`, the
+scaffolding extracted *before* Labour started specifically so it wouldn't
+need to write its own (see §7.1). `LabourExecutionDispatcher` is a five-line
+subclass.
+
+### 15.2 The stub is gone
+
+`runtime/labour_execution_stub.py` and its test are deleted.
+`runtime/dependencies.py` now registers the real `LabourExecutionDispatcher`
+for `DraftActionType.RECORD_LABOUR_ATTENDANCE`. **Confirming an attendance on
+a deployed build now actually writes `labour_attendance_reports` /
+`_lines` / `_attachments`** rather than logging and returning a fake
+`stub-` id. The gap flagged as acceptable "only while behind an internal
+test flow" (§ the stub's own docstring) no longer exists.
+
+The e2e confirmation test (`test_labour_confirmation_e2e.py`) was rewritten
+in place to wire the real `LabourExecutionDispatcher` +
+`FakeLabourExecutionRepository` instead of the stub — same assertions
+(nothing executes before YES, exactly once after, a blocked second report
+neither executes nor overwrites), now proving the real Phase 5 code path
+rather than a placeholder.
+
+### 15.3 `recorded_via` — threaded through, not left as a TODO
+
+Building the mapper meant deciding what to put in the `recorded_via` column
+(§14.3's reservation). The honest options were: fabricate a value, leave the
+column unpopulated, or actually thread the real input modality through. The
+third one turned out to be nearly free.
+
+`UnderstandingResult.input_modality` already exists and is already populated
+correctly for every message (text/voice/image) by the time
+`build_canonical_event` runs — nothing new needed there. So
+`canonicalization/builder.py`'s `_normalize_labour_fields` gained one new
+parameter, mapped once via `_RECORDED_VIA_BY_MODALITY`
+(TEXT/INTERACTIVE → `whatsapp_text`, VOICE → `whatsapp_voice`,
+IMAGE/DOCUMENT → `whatsapp_image`), and it is set **once**, at the message
+that starts the workflow — a later slot-filling reply (always TEXT/
+INTERACTIVE) never overwrites it, since `provide_input()` never re-runs
+canonicalization.
+
+`workflows/labour_update/nodes.py`'s `_DISPLAY_HIDDEN_FIELD_KEYS` gained
+`"recorded_via"` so this provenance metadata never appears as a raw line in
+the confirmation text — the supervisor confirming a headcount has no reason
+to see it.
+
+`dashboard` is reserved in the check constraint and the mapping table for
+when a dashboard write path exists; nothing produces it yet.
+
+### 15.4 A near-miss worth recording
+
+The stub roster documented in `runtime/workforce_query.py`'s docstring used
+short example ids like `"w-ravi"`. Once the mapper existed and started
+building a real, typed `LabourAttendanceLine.worker_id: CanonicalUuid`, a
+value like that would fail pydantic validation the moment a line actually
+matched against it. Caught before it shipped and fixed by rewriting the
+docstring's example to real UUIDs, with a note explaining why: **this fails
+safely** (the whole command rejects, transaction rolls back, workflow stays
+CONFIRMED and recoverable — no corrupted data), but a copy-pasted example
+that can't actually be confirmed is still worth avoiding.
+
+### 15.5 What's still open
+
+- **Live-database verification.** Everything in Phases 4–6 has been tested
+  against fakes and, for the migration, against real rendered Postgres DDL
+  (§14.7) — but no code here has run against an actual live Postgres
+  instance yet, because none was available in this session. Before treating
+  Labour as production-ready: run the migration for real, confirm an
+  attendance end to end against it, and run
+  `test_organizations_cascade_delete_schema.py` (currently only verified by
+  inspection).
+- **Worker matching still reads a stub register** (§ Phase 3's "not started"
+  section, unchanged) — `StubWorkforceQueryService` defaults to empty unless
+  `MESIRI_LABOUR__STUB_WORKERS` is set. Phase 5 built the *save* path for
+  real; the *read* path for the register is still Phase 5's original
+  remaining item, now that persistence exists to promote a temporary worker
+  into.
+- **Q1 (photo extraction accuracy) is unchanged** — still blocked on real
+  attendance sheet photographs (`labour-attendance-photo-eval.md`).

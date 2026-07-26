@@ -28,12 +28,21 @@ default rather than a placeholder:
 
 To actually exercise matching before the tables land, set a roster explicitly
 via ``MESIRI_LABOUR__STUB_WORKERS`` (JSON). Opt-in, visible in config, and
-impossible to mistake for real data::
+impossible to mistake for real data.
+
+``worker_id`` must be a real UUID, not a short label like ``"w-ravi"`` --
+once a line matches, its worker_id flows into
+``LabourAttendanceLine.worker_id`` (application/labour/mapper.py), a
+``CanonicalUuid`` field, and a non-UUID value fails command validation
+(safely: the whole confirmation fails and stays recoverable, per
+OperationalExecutionDispatcher -- it does not corrupt data, but it does mean
+a copy-pasted example roster with fake ids cannot actually be confirmed)::
 
     MESIRI_LABOUR__STUB_WORKERS='[
-      {"worker_id": "w-ravi", "name": "Ravi Kumar", "trade": "mason",
-       "contractor": "Kumar Team", "seen_on_site": true},
-      {"worker_id": "w-arun", "name": "Arun", "trade": "painter"}
+      {"worker_id": "11111111-1111-4111-8111-111111111111", "name": "Ravi Kumar",
+       "trade": "mason", "contractor": "Kumar Team", "seen_on_site": true},
+      {"worker_id": "22222222-2222-4222-8222-222222222222", "name": "Arun",
+       "trade": "painter"}
     ]'
 
 Attendance must never write this register (principle P1) — note there is no

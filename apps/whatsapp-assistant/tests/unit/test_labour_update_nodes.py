@@ -541,3 +541,10 @@ def test_preview_does_not_repeat_a_latin_name():
     prompt = _preview({"lines": [_named("Ravi", "mason")]})
     assert "Ravi (Ravi)" not in prompt
     assert "Ravi" in prompt
+
+
+def test_preview_never_shows_recorded_via_as_a_raw_field():
+    """recorded_via is provenance for the command, not something a
+    supervisor confirming a headcount needs to see."""
+    prompt = _preview({"lines": [_group(4, "mason")], "recorded_via": "whatsapp_voice"})
+    assert "recorded_via" not in prompt
