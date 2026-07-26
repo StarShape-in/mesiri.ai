@@ -100,6 +100,33 @@ class DynamicAIProviderResolver:
         self._db = db
         self._redis = redis_client
         self._settings = settings
+        # Every call used to build a fresh GeminiProvider (-> fresh
+        # genai.Client -> fresh TCP+TLS handshake) even though the resolver
+        # itself is long-lived. Keyed by api_key too, not just
+        # (kind, model), so a rotated key in Redis/DB still gets picked up
+        # instead of silently reusing a stale client.
+        self._provider_cache: dict[tuple[str, str, str | None], Any] = {}
+
+    def _cached_gemini_provider(self, config: dict, model: str) -> Any:
+        api_key = config["secrets"].get("gemini", {}).get("api_key")
+        key = ("gemini", model, api_key)
+        if key not in self._provider_cache:
+            self._provider_cache[key] = _build_gemini_provider(config, model, self._settings)
+        return self._provider_cache[key]
+
+    def _cached_deepseek_provider(self, config: dict, model: str) -> Any:
+        api_key = config["secrets"].get("deepseek", {}).get("api_key")
+        key = ("deepseek", model, api_key)
+        if key not in self._provider_cache:
+            self._provider_cache[key] = _build_deepseek_provider(config, model, self._settings)
+        return self._provider_cache[key]
+
+    def _cached_sarvam_provider(self, config: dict) -> Any:
+        api_key = config["secrets"].get("sarvam", {}).get("api_key")
+        key = ("sarvam", "", api_key)
+        if key not in self._provider_cache:
+            self._provider_cache[key] = _build_sarvam_provider(config, self._settings)
+        return self._provider_cache[key]
 
     async def _resolve_config(self) -> dict[str, Any]:
         """Resolve active routing and credentials from Redis -> DB -> Env."""
@@ -232,12 +259,12 @@ class DynamicAIProviderResolver:
 
         async def _call_voice(pid: str, mdl: str) -> SpeechResult:
             if pid == "sarvam":
-                provider = _build_sarvam_provider(config, self._settings)
+                provider = self._cached_sarvam_provider(config)
                 return await provider.transcribe(
                     audio, language_hint=language_hint, correlation_id=correlation_id
                 )
             if pid == "gemini":
-                provider = _build_gemini_provider(config, mdl, self._settings)
+                provider = self._cached_gemini_provider(config, mdl)
                 return await provider.transcribe(
                     audio, language_hint=language_hint, correlation_id=correlation_id
                 )
@@ -278,7 +305,7 @@ class DynamicAIProviderResolver:
 
         async def _call_extract(pid: str, mdl: str) -> ExtractionResult:
             if pid == "gemini":
-                provider = _build_gemini_provider(config, mdl, self._settings)
+                provider = self._cached_gemini_provider(config, mdl)
                 return await provider.extract(
                     text,
                     semantic_hint=semantic_hint,
@@ -286,7 +313,7 @@ class DynamicAIProviderResolver:
                     correlation_id=correlation_id,
                 )
             if pid == "deepseek":
-                provider = _build_deepseek_provider(config, mdl, self._settings)
+                provider = self._cached_deepseek_provider(config, mdl)
                 return await provider.extract(
                     text,
                     semantic_hint=semantic_hint,
@@ -338,7 +365,7 @@ class DynamicAIProviderResolver:
             raise MesiriError.configuration(
                 "No Gemini-capable provider configured for JSON generation", code="CONFIG_MISSING"
             )
-        provider = _build_gemini_provider(config, model, self._settings)
+        provider = self._cached_gemini_provider(config, model)
         return await provider.generate_json(
             system_prompt, user_prompt, correlation_id=correlation_id
         )

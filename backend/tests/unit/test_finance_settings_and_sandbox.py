@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+
 from mesiri.domains.finance.router import (
     FinanceSettingsResponse,
     SandboxSimulateRequest,

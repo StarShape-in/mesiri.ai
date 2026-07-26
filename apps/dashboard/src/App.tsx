@@ -14,6 +14,7 @@ import ReceiptsPage from '@/pages/ReceiptsPage'
 import AccountsPage from '@/pages/AccountsPage'
 import WhatsAppFinancePage from '@/pages/WhatsAppFinancePage'
 import WhatsAppLabourPage from '@/pages/WhatsAppLabourPage'
+import AttendancePage from '@/pages/AttendancePage'
 import WhatsAppInboxPage from '@/pages/WhatsAppInboxPage'
 import WorkersPage from '@/pages/WorkersPage'
 import PettyCashPage from '@/pages/PettyCashPage'
@@ -83,7 +84,7 @@ export default function App() {
         {/* Labour & Workforce Section */}
         <Route path="labour" element={<Navigate to="/labour/attendance" replace />} />
         <Route path="labour/overview" element={<OperationalPlaceholder title="Labour Overview" />} />
-        <Route path="labour/attendance" element={<OperationalPlaceholder title="Labour Attendance" />} />
+        <Route path="labour/attendance" element={<AttendancePage />} />
         <Route path="labour/workers" element={<WorkersPage />} />
         <Route path="labour/whatsapp" element={<WhatsAppLabourPage />} />
         <Route path="whatsapp/labour" element={<WhatsAppLabourPage />} />

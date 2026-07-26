@@ -109,7 +109,9 @@ async def test_gemini_json_mode_sets_response_mime_type():
 async def test_gemini_transcribe_does_not_force_json_mode():
     """transcribe() returns a plain transcript, not JSON -- it must NOT set
     response_mime_type (that would make Gemini try to wrap plain speech
-    text in a JSON envelope it was never asked to produce)."""
+    text in a JSON envelope it was never asked to produce). It does set
+    thinking_budget=0 (transcription doesn't benefit from reasoning), so a
+    config object is present -- just without response_mime_type."""
     captured: dict = {}
 
     class _FakeModels:
@@ -125,7 +127,7 @@ async def test_gemini_transcribe_does_not_force_json_mode():
 
     await provider.transcribe(b"audio-bytes", correlation_id="cor_1")
 
-    assert captured["config"] is None
+    assert captured["config"].response_mime_type is None
 
 
 async def test_gemini_translate_raises_when_translated_text_missing():

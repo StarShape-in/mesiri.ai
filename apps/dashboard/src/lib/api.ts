@@ -922,3 +922,58 @@ export async function updateWorkerApi(
   const res = await api.patch(`/labour/workers/${workerId}`, payload)
   return res.data
 }
+
+export interface LabourAttendanceSummaryItem {
+  id: string
+  organization_id: string
+  project_id: string | null
+  site_id: string | null
+  occurred_date: string
+  recorded_via: string
+  notes: string | null
+  line_count: number
+  total_headcount: number
+  total_cost: number
+}
+
+export interface LabourAttendanceLineItem {
+  id: string
+  worker_id: string | null
+  worker_name: string | null
+  worker_name_original: string | null
+  trade: string | null
+  headcount: number
+  daily_wage: number | null
+  contractor: string | null
+  activity: string | null
+}
+
+export interface LabourAttendanceAttachmentItem {
+  id: string
+  attachment_type: string
+  url: string
+}
+
+export interface LabourAttendanceDetailItem extends LabourAttendanceSummaryItem {
+  lines: LabourAttendanceLineItem[]
+  attachments: LabourAttendanceAttachmentItem[]
+}
+
+export async function fetchAttendanceReportsApi(params?: {
+  project_id?: string
+  site_id?: string
+  date_from?: string
+  date_to?: string
+  limit?: number
+  offset?: number
+}): Promise<{ items: LabourAttendanceSummaryItem[]; total: number }> {
+  const res = await api.get('/labour/attendance', { params })
+  return res.data
+}
+
+export async function fetchAttendanceReportDetailApi(
+  reportId: string
+): Promise<LabourAttendanceDetailItem> {
+  const res = await api.get(`/labour/attendance/${reportId}`)
+  return res.data
+}

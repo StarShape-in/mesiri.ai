@@ -114,7 +114,12 @@ class GeminiSettings(_Section):
     api_key: SecretStr | None = None
     model: str = "gemini-2.5-flash"
     timeout_seconds: float = 15.0
-    max_retries: int = 2
+    # 2 retries = 3 attempts = up to 45s on a hung call before the user sees
+    # anything -- traced worst-case messages this week hit that ceiling
+    # (48.4s max on `understanding`, 73.2s wall-clock overall). 1 retry caps
+    # the same failure mode at 30s while still absorbing a single transient
+    # blip.
+    max_retries: int = 1
 
 
 class DeepSeekSettings(_Section):

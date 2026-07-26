@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+
 from mesiri.domains.workforce.router import (
     LabourSandboxSimulateRequest,
     LabourSettingsResponse,
