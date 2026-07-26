@@ -1,3 +1,4 @@
+import { useNavigate } from 'react-router-dom'
 import {
   Landmark,
   Wallet,
@@ -24,9 +25,8 @@ interface AccountDetailSheetProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   onDepositClick?: (account: any) => void
+  onTransferClick?: (account: any) => void
 }
-
-
 
 import * as React from 'react'
 import { fetchAccountTransactionsApi } from '@/lib/api'
@@ -37,27 +37,26 @@ export function AccountDetailSheet({
   onOpenChange,
   onDepositClick,
 }: AccountDetailSheetProps) {
+  const navigate = useNavigate()
   const [transactions, setTransactions] = React.useState<any[]>([])
   const [loading, setLoading] = React.useState(false)
 
   React.useEffect(() => {
-    if (!open || !account?.id) return
     let active = true
     async function loadTx() {
+      if (!account?.id) return
       setLoading(true)
       try {
-        const data = await fetchAccountTransactionsApi(account.id)
-        if (active && Array.isArray(data)) {
-          setTransactions(data)
-        }
+        const list = await fetchAccountTransactionsApi(account.id)
+        if (active && Array.isArray(list)) setTransactions(list)
       } catch (err) {
-        console.warn('Failed to load live account transactions:', err)
+        console.warn('Failed to load account transactions:', err)
         if (active) setTransactions([])
       } finally {
         if (active) setLoading(false)
       }
     }
-    loadTx()
+    if (open) loadTx()
     return () => {
       active = false
     }
@@ -194,8 +193,16 @@ export function AccountDetailSheet({
                 ) : (
                   transactions.map((tx) => {
                     const isInbound = tx.to_account_id === account.id || tx.transaction_type === 'fund_received'
+                    const targetExpenseId = tx.source_id || tx.id
                     return (
-                      <div key={tx.id} className="flex items-center justify-between p-2.5 rounded-lg border bg-card/60">
+                      <div
+                        key={tx.id}
+                        onClick={() => {
+                          onOpenChange(false)
+                          navigate(`/finance/expenses/${targetExpenseId}`)
+                        }}
+                        className="flex items-center justify-between p-2.5 rounded-lg border bg-card/60 hover:bg-muted/40 hover:border-emerald-500/50 cursor-pointer transition-all group"
+                      >
                         <div className="flex items-center gap-2.5">
                           <div
                             className={`size-7 rounded-full flex items-center justify-center shrink-0 ${
@@ -211,7 +218,7 @@ export function AccountDetailSheet({
                             )}
                           </div>
                           <div className="flex flex-col min-w-0">
-                            <span className="font-semibold text-foreground truncate">
+                            <span className="font-semibold text-foreground group-hover:text-emerald-600 transition-colors truncate">
                               {tx.description || `${tx.transaction_type.replace('_', ' ').toUpperCase()}`}
                             </span>
                             <span className="text-[10px] text-muted-foreground">

@@ -17,17 +17,16 @@ import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Separator } from '@/components/ui/separator'
 
+import { useNavigate } from 'react-router-dom'
+import * as React from 'react'
+import { fetchVouchersApi } from '@/lib/api'
+
 interface CashBoxDetailSheetProps {
   cashBox: any | null
   open: boolean
   onOpenChange: (open: boolean) => void
-  onReplenishClick?: (box: any) => void
+  onReplenishClick?: (cashBox: any) => void
 }
-
-
-
-import * as React from 'react'
-import { fetchVouchersApi } from '@/lib/api'
 
 export function CashBoxDetailSheet({
   cashBox,
@@ -35,6 +34,7 @@ export function CashBoxDetailSheet({
   onOpenChange,
   onReplenishClick,
 }: CashBoxDetailSheetProps) {
+  const navigate = useNavigate()
   const [vouchers, setVouchers] = React.useState<any[]>([])
   const [loading, setLoading] = React.useState(false)
 
@@ -161,8 +161,16 @@ export function CashBoxDetailSheet({
                 ) : (
                   vouchers.map((tx) => {
                     const isInflow = tx.to_account_id === cashBox.id || tx.transaction_type === 'fund_received'
+                    const targetExpenseId = tx.source_id || tx.id
                     return (
-                      <div key={tx.id} className="flex items-center justify-between p-2.5 rounded-lg border bg-card/60">
+                      <div
+                        key={tx.id}
+                        onClick={() => {
+                          onOpenChange(false)
+                          navigate(`/finance/expenses/${targetExpenseId}`)
+                        }}
+                        className="flex items-center justify-between p-2.5 rounded-lg border bg-card/60 hover:bg-muted/40 hover:border-emerald-500/50 cursor-pointer transition-all group"
+                      >
                         <div className="flex items-center gap-2.5">
                           <div
                             className={`size-7 rounded-full flex items-center justify-center shrink-0 ${
@@ -178,7 +186,7 @@ export function CashBoxDetailSheet({
                             )}
                           </div>
                           <div className="flex flex-col min-w-0">
-                            <span className="font-semibold text-foreground truncate">
+                            <span className="font-semibold text-foreground group-hover:text-emerald-600 transition-colors truncate">
                               {tx.description || tx.transaction_type.replace('_', ' ').toUpperCase()}
                             </span>
                             <span className="text-[10px] text-muted-foreground">
