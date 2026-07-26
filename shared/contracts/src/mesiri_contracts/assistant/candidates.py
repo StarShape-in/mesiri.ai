@@ -45,8 +45,11 @@ class Candidate(BaseModel):
 class ExpenseCandidate(Candidate):
     semantic_type: SemanticType = SemanticType.EXPENSE
     # Conventional keys (all optional): amount, currency, vendor, category,
-    # description, paid_to, occurred_on. Kept in `fields` so the schema stays
-    # forgiving while a stable shape emerges.
+    # description, paid_to, occurred_on, tax_rate, tax_amount,
+    # is_tax_inclusive (pure preservation of what a bill/receipt states --
+    # see backend's application/expenses/commands.py docstring, never
+    # computed or validated). Kept in `fields` so the schema stays forgiving
+    # while a stable shape emerges.
 
 
 class EquipmentUsageCandidate(Candidate):
