@@ -28,6 +28,8 @@ import {
   ChevronRight,
   ChevronDown,
   Bot,
+  Sun,
+  Moon,
 } from 'lucide-react'
 import { NavLink, Link, useLocation } from 'react-router-dom'
 import {
@@ -230,6 +232,27 @@ export function AppSidebar() {
   const { scope } = useScope()
   const location = useLocation()
 
+  const [isDark, setIsDark] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('theme')
+      if (saved) return saved === 'dark'
+      return document.documentElement.classList.contains('dark')
+    }
+    return false
+  })
+
+  useEffect(() => {
+    if (isDark) {
+      document.documentElement.classList.add('dark')
+      localStorage.setItem('theme', 'dark')
+    } else {
+      document.documentElement.classList.remove('dark')
+      localStorage.setItem('theme', 'light')
+    }
+  }, [isDark])
+
+  const toggleTheme = () => setIsDark((prev) => !prev)
+
   const getUrlWithScope = (baseUrl: string) => {
     const isOperational = !['/projects', '/users', '/company'].includes(baseUrl)
     if (!isOperational) return baseUrl
@@ -408,14 +431,26 @@ export function AppSidebar() {
 
       <SidebarFooter className="border-t border-slate-200 dark:border-slate-800 p-1.5">
         <SidebarMenu>
-          <SidebarMenuItem>
+          <SidebarMenuItem className="flex items-center gap-1">
             <SidebarMenuButton
               onClick={() => logout().then(() => window.location.assign('/login'))}
               tooltip="Log out"
-              className="hover:bg-red-50 dark:hover:bg-red-950/50 text-slate-700 dark:text-slate-300 hover:text-red-600 dark:hover:text-red-400 transition-colors rounded-md px-2 py-1.5 text-xs"
+              className="flex-1 hover:bg-red-50 dark:hover:bg-red-950/50 text-slate-700 dark:text-slate-300 hover:text-red-600 dark:hover:text-red-400 transition-colors rounded-md px-2 py-1.5 text-xs"
             >
               <LogOut className="size-4 text-slate-500 shrink-0" />
               <span className="font-medium">Log out</span>
+            </SidebarMenuButton>
+
+            <SidebarMenuButton
+              onClick={toggleTheme}
+              tooltip={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+              className="size-7 p-0 flex items-center justify-center hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition-colors rounded-md shrink-0"
+            >
+              {isDark ? (
+                <Sun className="size-3.5 text-amber-500 shrink-0" />
+              ) : (
+                <Moon className="size-3.5 text-slate-600 dark:text-slate-400 shrink-0" />
+              )}
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
