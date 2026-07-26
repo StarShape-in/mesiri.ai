@@ -156,11 +156,11 @@ export default function ExpenseDetailPage() {
           created_by_role: data.created_by_role || foundUser?.role || (userList.length > 0 ? userList[0].role : 'ADMIN'),
           created_by_email: data.created_by_email || foundUser?.email || (userList.length > 0 ? userList[0].email : 'admin@mesiri.ai'),
           created_at: data.created_at || `${data.occurred_date} 14:32 IST`,
-          project_name: data.project_name || foundProject?.name || (projectList.length > 0 ? projectList[0].name : 'Hyperion Commercial Towers'),
+          project_name: data.project_name || foundProject?.name || (projectList.length > 0 ? projectList[0].name : 'Main Operations Project'),
           project_code: data.project_code || foundProject?.code || (projectList.length > 0 ? projectList[0].code : 'PROJ-01'),
-          site_name: data.site_name || 'Tower 2 North Wing Site',
+          site_name: data.site_name || 'Project-Wide (All Sites)',
           category_name: data.category_name || foundCategory?.name || (categoryList.length > 0 ? categoryList[0].name : 'General Operations'),
-          vendor_name: data.vendor_name || foundVendor?.name || (vendorList.length > 0 ? vendorList[0].name : 'Direct Payee'),
+          vendor_name: data.vendor_name || (data.vendor_id ? foundVendor?.name : null),
           account_name: data.account_name || foundAccount?.name || (accountList.length > 0 ? accountList[0].name : 'Main Bank Account'),
           custodian_name: data.custodian_name || foundAccount?.custodian_name || (userList.length > 0 ? userList[0].full_name : 'Finance Custodian'),
           tax_rate: data.tax_rate,
@@ -172,9 +172,8 @@ export default function ExpenseDetailPage() {
       console.warn('Failed to fetch expense details from API:', err)
       const today = new Date().toISOString().split('T')[0]
       const fallbackUser = userList.length > 0 ? userList[0] : (meUser || { full_name: 'Authorized Staff', role: 'ADMIN', email: 'admin@mesiri.ai' })
-      const fallbackProject = projectList.length > 0 ? projectList[0] : { name: 'Hyperion Commercial Towers', code: 'PROJ-01' }
+      const fallbackProject = projectList.length > 0 ? projectList[0] : { name: 'Main Operations Project', code: 'PROJ-01' }
       const fallbackCategory = categoryList.length > 0 ? categoryList[0] : { name: 'General Operations' }
-      const fallbackVendor = vendorList.length > 0 ? vendorList[0] : { name: 'Direct Payee' }
       const fallbackAccount = accountList.length > 0 ? accountList[0] : { name: 'Main Bank Account' }
 
       setExpense({
@@ -185,7 +184,7 @@ export default function ExpenseDetailPage() {
         category_name: fallbackCategory.name,
         category_id: 'cat_gen',
         description: 'Food and beverages: Tea, Toast White',
-        vendor_name: fallbackVendor.name,
+        vendor_name: '',
         occurred_date: today,
         created_by_name: fallbackUser.full_name || fallbackUser.email,
         created_by_role: fallbackUser.role || 'ADMIN',
@@ -196,7 +195,7 @@ export default function ExpenseDetailPage() {
         source: 'whatsapp',
         project_name: fallbackProject.name,
         project_code: fallbackProject.code || 'PROJ-01',
-        site_name: 'Tower 2 North Wing Site',
+        site_name: 'Project-Wide (All Sites)',
         account_name: fallbackAccount.name,
         custodian_name: fallbackAccount.custodian_name || fallbackUser.full_name || 'Finance Custodian',
         payment_method: 'Bank Transfer',
@@ -477,7 +476,7 @@ export default function ExpenseDetailPage() {
                     <div className="min-w-0">
                       <span className="text-[9px] text-muted-foreground uppercase font-bold tracking-wider block">Vendor / Payee</span>
                       <span className="font-bold text-xs text-foreground group-hover:text-emerald-600 transition-colors truncate block">
-                        {expense.vendor_name || 'Direct Payee'}
+                        {expense.vendor_name || 'Direct Payee (No Vendor Attached)'}
                       </span>
                     </div>
                   </div>
