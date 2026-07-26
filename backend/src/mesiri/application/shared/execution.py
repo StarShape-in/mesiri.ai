@@ -33,7 +33,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 
-from backend.postgres.workflow_instance import list_confirmed_by_workflow_keys
+from mesiri.infrastructure.postgres.workflow_instance import list_confirmed_by_workflow_keys
 from mesiri_contracts.application.results.execution_result import ExecutionResult, ExecutionStatus
 from mesiri_contracts.assistant.planner_decision import WorkflowKey
 from mesiri_contracts.assistant.v2.confirmed_action import ConfirmedActionV2

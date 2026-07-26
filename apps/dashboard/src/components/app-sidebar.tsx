@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { flushSync } from 'react-dom'
 import {
   LayoutDashboard,
   Building2,
@@ -28,6 +29,8 @@ import {
   ChevronRight,
   ChevronDown,
   Bot,
+  Sun,
+  Moon,
 } from 'lucide-react'
 import { NavLink, Link, useLocation } from 'react-router-dom'
 import {
@@ -82,7 +85,6 @@ const FINANCE_CATEGORY: NavCategory = {
   items: [
     { title: 'Overview', url: '/finance/overview', icon: PieChart },
     { title: 'Expenses', url: '/finance/expenses', icon: DollarSign },
-    { title: 'Receipts', url: '/finance/receipts', icon: ImageIcon },
     { title: 'Accounts', url: '/finance/accounts', icon: Landmark },
     { title: 'WhatsApp Automations', url: '/finance/whatsapp', icon: Bot },
     { title: 'Transactions', url: '/finance/transactions', icon: ArrowLeftRight },
@@ -112,6 +114,16 @@ const ROOT_MANAGEMENT_ITEMS: NavItem[] = [
   { title: 'Company', url: '/company', icon: Building, requiredRole: 'ADMIN' },
 ]
 
+function checkIsItemActive(pathname: string, itemUrl: string): boolean {
+  if (pathname === itemUrl) return true
+  if (itemUrl === '/overview' && pathname === '/') return true
+  if (itemUrl === '/operations/overview' && (pathname === '/operations' || pathname === '/overview')) return true
+  if (itemUrl === '/finance/overview' && pathname === '/finance') return true
+  if (itemUrl === '/materials/overview' && pathname === '/materials') return true
+  if (itemUrl !== '/' && pathname.startsWith(itemUrl)) return true
+  return false
+}
+
 function CollapsibleNavCategory({
   category,
   getUrlWithScope,
@@ -134,9 +146,7 @@ function CollapsibleNavCategory({
       (!item.requiredRole || userRole === item.requiredRole)
   )
 
-  const isChildActive = filteredItems.some(
-    (item) => pathname === item.url || (item.url === '/materials/overview' && pathname === '/materials')
-  )
+  const isChildActive = filteredItems.some((item) => checkIsItemActive(pathname, item.url))
 
   const [isOpen, setIsOpen] = useState(isChildActive)
 
@@ -157,52 +167,57 @@ function CollapsibleNavCategory({
         onClick={() => setIsOpen((prev) => !prev)}
         tooltip={category.title}
         className={cn(
-          'w-full flex items-center justify-between font-medium text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/80 rounded-md px-2.5 py-2 transition-colors',
+          'w-full flex items-center justify-between font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/80 rounded-md px-2 py-1.5 text-xs transition-colors',
           isChildActive && 'bg-slate-100 dark:bg-slate-800 font-semibold text-slate-900 dark:text-white'
         )}
       >
-        <div className="flex items-center gap-3 min-w-0">
-          <IconComp className="size-4.5 text-slate-700 dark:text-slate-300 shrink-0" />
-          <span className="truncate group-data-[collapsible=icon]:hidden text-sm">{category.title}</span>
+        <div className="flex items-center gap-2.5 min-w-0">
+          <IconComp className={cn('size-4 shrink-0', isChildActive ? 'text-slate-900 dark:text-white font-bold' : 'text-slate-600 dark:text-slate-400')} />
+          <span className="truncate group-data-[collapsible=icon]:hidden">{category.title}</span>
         </div>
-        <div className="flex items-center gap-2 group-data-[collapsible=icon]:hidden">
-          <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200/60 dark:border-slate-700/60">
+        <div className="flex items-center gap-1.5 group-data-[collapsible=icon]:hidden">
+          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200/60 dark:border-slate-700/60">
             {filteredItems.length}
           </span>
           {isOpen ? (
-            <ChevronDown className="size-4 text-slate-400 transition-transform duration-200" />
+            <ChevronDown className="size-3.5 text-slate-400 transition-transform duration-200" />
           ) : (
-            <ChevronRight className="size-4 text-slate-400 transition-transform duration-200" />
+            <ChevronRight className="size-3.5 text-slate-400 transition-transform duration-200" />
           )}
         </div>
       </SidebarMenuButton>
 
       {/* Submenu Items */}
       {isOpen && !isCollapsedMode && (
-        <div className="ml-4 pl-3 border-l border-slate-200 dark:border-slate-800 my-1 flex flex-col gap-0.5 group-data-[collapsible=icon]:hidden">
+        <div className="ml-3 pl-2.5 border-l border-slate-200 dark:border-slate-800 my-0.5 flex flex-col gap-0.5 group-data-[collapsible=icon]:hidden">
           {filteredItems.map((item) => {
             const ItemIcon = item.icon
             const targetUrl = getUrlWithScope(item.url)
-            const isActive =
-              pathname === item.url ||
-              (item.url === '/operations/overview' && pathname === '/overview') ||
-              (item.url === '/materials/overview' && pathname === '/materials')
+            const isActive = checkIsItemActive(pathname, item.url)
 
             return (
               <NavLink
                 key={item.title}
                 to={targetUrl}
-                className={({ isActive: isLinkActive }) =>
-                  cn(
-                    'flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all duration-150',
-                    isLinkActive || isActive
-                      ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-semibold'
+                className={({ isActive: isLinkActive }) => {
+                  const active = isLinkActive || isActive
+                  return cn(
+                    'flex items-center gap-2 px-2 py-1.5 rounded-md text-xs font-medium transition-all duration-150',
+                    active
+                      ? 'bg-blue-50 dark:bg-blue-950/70 text-blue-600 dark:text-blue-400 font-semibold border-l-2 border-blue-600 dark:border-blue-500 rounded-l-none pl-1.5'
                       : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100/70 dark:hover:bg-slate-800/50'
                   )
-                }
+                }}
               >
-                <ItemIcon className="size-3.5 shrink-0 text-slate-500 dark:text-slate-400" />
-                <span className="truncate">{item.title}</span>
+                {({ isActive: isLinkActive }) => {
+                  const active = isLinkActive || isActive
+                  return (
+                    <>
+                      <ItemIcon className={cn('size-3.5 shrink-0', active ? 'text-blue-600 dark:text-blue-400' : 'text-slate-500 dark:text-slate-400')} />
+                      <span className="truncate">{item.title}</span>
+                    </>
+                  )
+                }}
               </NavLink>
             )
           })}
@@ -217,6 +232,73 @@ export function AppSidebar() {
   const allowed = useAllowedScopes()
   const { scope } = useScope()
   const location = useLocation()
+
+  const [isDark, setIsDark] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('theme')
+      if (saved) return saved === 'dark'
+      return document.documentElement.classList.contains('dark')
+    }
+    return false
+  })
+
+  useEffect(() => {
+    if (isDark) {
+      document.documentElement.classList.add('dark')
+      localStorage.setItem('theme', 'dark')
+    } else {
+      document.documentElement.classList.remove('dark')
+      localStorage.setItem('theme', 'light')
+    }
+  }, [isDark])
+
+  const toggleTheme = (event: React.MouseEvent<HTMLButtonElement>) => {
+    const isSupported = typeof document !== 'undefined' && 'startViewTransition' in document
+
+    if (!isSupported) {
+      setIsDark((prev) => !prev)
+      return
+    }
+
+    const x = event.clientX
+    const y = event.clientY
+    const endRadius = Math.hypot(
+      Math.max(x, window.innerWidth - x),
+      Math.max(y, window.innerHeight - y)
+    )
+
+    const transition = (document as Document & { startViewTransition?: (callback: () => void) => { ready: Promise<void> } }).startViewTransition!(() => {
+      flushSync(() => {
+        setIsDark((prev) => {
+          const next = !prev
+          if (next) {
+            document.documentElement.classList.add('dark')
+            localStorage.setItem('theme', 'dark')
+          } else {
+            document.documentElement.classList.remove('dark')
+            localStorage.setItem('theme', 'light')
+          }
+          return next
+        })
+      })
+    })
+
+    transition.ready.then(() => {
+      document.documentElement.animate(
+        {
+          clipPath: [
+            `circle(0px at ${x}px ${y}px)`,
+            `circle(${endRadius}px at ${x}px ${y}px)`,
+          ],
+        },
+        {
+          duration: 500,
+          easing: 'ease-in-out',
+          pseudoElement: '::view-transition-new(root)',
+        }
+      )
+    })
+  }
 
   const getUrlWithScope = (baseUrl: string) => {
     const isOperational = !['/projects', '/users', '/company'].includes(baseUrl)
@@ -241,19 +323,21 @@ export function AppSidebar() {
       (!item.requiredRole || me?.role === item.requiredRole)
   )
 
+  const isDashboardActive = checkIsItemActive(location.pathname, '/overview')
+
   return (
     <Sidebar collapsible="icon" className="border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950">
       <SidebarHeader>
-        <div className="flex items-center justify-between px-3 py-3 border-b border-slate-200/80 dark:border-slate-800/80">
-          <div className="flex items-center gap-2.5 overflow-hidden">
-            <div className="size-8 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold text-sm shadow-sm shrink-0">
+        <div className="flex items-center justify-between px-2.5 py-2 border-b border-slate-200/80 dark:border-slate-800/80">
+          <div className="flex items-center gap-2 overflow-hidden">
+            <div className="size-7 rounded-md bg-blue-600 text-white flex items-center justify-center font-bold text-xs shadow-xs shrink-0">
               M
             </div>
             <div className="flex flex-col min-w-0 group-data-[collapsible=icon]:hidden">
-              <span className="font-semibold text-sm truncate leading-tight text-slate-900 dark:text-slate-100">
+              <span className="font-semibold text-xs truncate leading-tight text-slate-900 dark:text-slate-100">
                 {me?.organization_name ?? 'Mesiri'}
               </span>
-              <span className="text-[10px] text-slate-500 dark:text-slate-400 uppercase tracking-wider font-medium">
+              <span className="text-[9px] text-slate-500 dark:text-slate-400 uppercase tracking-wider font-medium">
                 Enterprise App
               </span>
             </div>
@@ -261,20 +345,20 @@ export function AppSidebar() {
           {showBackButton && (
             <Link
               to={location.pathname.startsWith('/users/') ? '/users' : '/projects'}
-              className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors group-data-[collapsible=icon]:hidden size-7 flex items-center justify-center hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md"
+              className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors group-data-[collapsible=icon]:hidden size-6 flex items-center justify-center hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md"
               title="Back"
             >
-              <ArrowLeft className="size-4" />
+              <ArrowLeft className="size-3.5" />
             </Link>
           )}
         </div>
       </SidebarHeader>
 
-      <SidebarContent className="px-2 py-2 gap-4">
+      <SidebarContent className="px-1.5 py-1 gap-1">
         {/* Core Operations Section */}
-        <SidebarGroup>
-          <SidebarGroupLabel className="flex items-center gap-2 text-[11px] font-bold tracking-wider text-blue-600 dark:text-blue-400 uppercase px-2 mb-1">
-            <span className="size-2 rounded-full bg-blue-600 shrink-0" />
+        <SidebarGroup className="p-1 py-0.5">
+          <SidebarGroupLabel className="flex items-center gap-1.5 text-[10px] font-bold tracking-wider text-blue-600 dark:text-blue-400 uppercase whitespace-nowrap px-1.5 h-6">
+            <span className="size-1.5 rounded-full bg-blue-600 shrink-0" />
             <span>Core Operations</span>
           </SidebarGroupLabel>
           <SidebarGroupContent>
@@ -284,16 +368,19 @@ export function AppSidebar() {
                   <NavLink
                     to={getUrlWithScope('/overview')}
                     end
-                    className={({ isActive }) =>
-                      cn(
-                        'flex items-center justify-between w-full px-2.5 py-2 rounded-md font-medium text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/80 transition-colors',
-                        isActive && 'bg-slate-100 dark:bg-slate-800 font-semibold text-slate-900 dark:text-white'
+                    className={({ isActive: isLinkActive }) => {
+                      const active = isLinkActive || isDashboardActive
+                      return cn(
+                        'flex items-center justify-between w-full px-2 py-1.5 rounded-md text-xs font-medium transition-colors',
+                        active
+                          ? 'bg-blue-50 dark:bg-blue-950/70 text-blue-600 dark:text-blue-400 font-semibold border-l-2 border-blue-600 dark:border-blue-500 rounded-l-none pl-1.5'
+                          : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/80'
                       )
-                    }
+                    }}
                   >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <LayoutDashboard className="size-4.5 text-slate-700 dark:text-slate-300 shrink-0" />
-                      <span className="text-sm truncate">Dashboard</span>
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <LayoutDashboard className={cn('size-4 shrink-0', isDashboardActive ? 'text-blue-600 dark:text-blue-400' : 'text-slate-600 dark:text-slate-400')} />
+                      <span className="truncate">Dashboard</span>
                     </div>
                   </NavLink>
                 </SidebarMenuButton>
@@ -310,9 +397,9 @@ export function AppSidebar() {
         </SidebarGroup>
 
         {/* Financial Management Section */}
-        <SidebarGroup>
-          <SidebarGroupLabel className="flex items-center gap-2 text-[11px] font-bold tracking-wider text-emerald-600 dark:text-emerald-400 uppercase px-2 mb-1">
-            <span className="size-2 rounded-full bg-emerald-600 shrink-0" />
+        <SidebarGroup className="p-1 py-0.5">
+          <SidebarGroupLabel className="flex items-center gap-1.5 text-[10px] font-bold tracking-wider text-emerald-600 dark:text-emerald-400 uppercase whitespace-nowrap px-1.5 h-6">
+            <span className="size-1.5 rounded-full bg-emerald-600 shrink-0" />
             <span>Financial Management</span>
           </SidebarGroupLabel>
           <SidebarGroupContent>
@@ -329,9 +416,9 @@ export function AppSidebar() {
         </SidebarGroup>
 
         {/* Business & Materials Section */}
-        <SidebarGroup>
-          <SidebarGroupLabel className="flex items-center gap-2 text-[11px] font-bold tracking-wider text-purple-600 dark:text-purple-400 uppercase px-2 mb-1">
-            <span className="size-2 rounded-full bg-purple-600 shrink-0" />
+        <SidebarGroup className="p-1 py-0.5">
+          <SidebarGroupLabel className="flex items-center gap-1.5 text-[10px] font-bold tracking-wider text-purple-600 dark:text-purple-400 uppercase whitespace-nowrap px-1.5 h-6">
+            <span className="size-1.5 rounded-full bg-purple-600 shrink-0" />
             <span>Business Operations</span>
           </SidebarGroupLabel>
           <SidebarGroupContent>
@@ -349,30 +436,34 @@ export function AppSidebar() {
 
         {/* Management & Admin Section */}
         {visibleManagementItems.length > 0 && (
-          <SidebarGroup>
-            <SidebarGroupLabel className="flex items-center gap-2 text-[11px] font-bold tracking-wider text-cyan-600 dark:text-cyan-400 uppercase px-2 mb-1">
-              <span className="size-2 rounded-full bg-cyan-600 shrink-0" />
+          <SidebarGroup className="p-1 py-0.5">
+            <SidebarGroupLabel className="flex items-center gap-1.5 text-[10px] font-bold tracking-wider text-cyan-600 dark:text-cyan-400 uppercase whitespace-nowrap px-1.5 h-6">
+              <span className="size-1.5 rounded-full bg-cyan-600 shrink-0" />
               <span>Management & Admin</span>
             </SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu className="gap-0.5">
                 {visibleManagementItems.map((item) => {
                   const ItemIcon = item.icon
+                  const active = checkIsItemActive(location.pathname, item.url)
                   return (
                     <SidebarMenuItem key={item.title}>
                       <SidebarMenuButton asChild tooltip={item.title}>
                         <NavLink
                           to={getUrlWithScope(item.url)}
-                          className={({ isActive }) =>
-                            cn(
-                              'flex items-center justify-between w-full px-2.5 py-2 rounded-md font-medium text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/80 transition-colors',
-                              isActive && 'bg-slate-100 dark:bg-slate-800 font-semibold text-slate-900 dark:text-white'
+                          className={({ isActive: isLinkActive }) => {
+                            const isAct = isLinkActive || active
+                            return cn(
+                              'flex items-center justify-between w-full px-2 py-1.5 rounded-md text-xs font-medium transition-colors',
+                              isAct
+                                ? 'bg-blue-50 dark:bg-blue-950/70 text-blue-600 dark:text-blue-400 font-semibold border-l-2 border-blue-600 dark:border-blue-500 rounded-l-none pl-1.5'
+                                : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/80'
                             )
-                          }
+                          }}
                         >
-                          <div className="flex items-center gap-3 min-w-0">
-                            <ItemIcon className="size-4.5 text-slate-700 dark:text-slate-300 shrink-0" />
-                            <span className="text-sm truncate">{item.title}</span>
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <ItemIcon className={cn('size-4 shrink-0', active ? 'text-blue-600 dark:text-blue-400' : 'text-slate-600 dark:text-slate-400')} />
+                            <span className="truncate">{item.title}</span>
                           </div>
                         </NavLink>
                       </SidebarMenuButton>
@@ -385,16 +476,28 @@ export function AppSidebar() {
         )}
       </SidebarContent>
 
-      <SidebarFooter className="border-t border-slate-200 dark:border-slate-800 p-2">
+      <SidebarFooter className="border-t border-slate-200 dark:border-slate-800 p-1.5">
         <SidebarMenu>
-          <SidebarMenuItem>
+          <SidebarMenuItem className="flex items-center gap-1">
             <SidebarMenuButton
               onClick={() => logout().then(() => window.location.assign('/login'))}
               tooltip="Log out"
-              className="hover:bg-red-50 dark:hover:bg-red-950/50 text-slate-700 dark:text-slate-300 hover:text-red-600 dark:hover:text-red-400 transition-colors rounded-md px-2.5 py-2"
+              className="flex-1 hover:bg-red-50 dark:hover:bg-red-950/50 text-slate-700 dark:text-slate-300 hover:text-red-600 dark:hover:text-red-400 transition-colors rounded-md px-2 py-1.5 text-xs"
             >
               <LogOut className="size-4 text-slate-500 shrink-0" />
-              <span className="text-sm font-medium">Log out</span>
+              <span className="font-medium">Log out</span>
+            </SidebarMenuButton>
+
+            <SidebarMenuButton
+              onClick={toggleTheme}
+              tooltip={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+              className="size-7 p-0 flex items-center justify-center hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition-colors rounded-md shrink-0"
+            >
+              {isDark ? (
+                <Sun className="size-3.5 text-amber-500 shrink-0" />
+              ) : (
+                <Moon className="size-3.5 text-slate-600 dark:text-slate-400 shrink-0" />
+              )}
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

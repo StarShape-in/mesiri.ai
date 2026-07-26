@@ -51,6 +51,7 @@ def create_app(lifecycle: AppLifecycle | None = None) -> FastAPI:
         response.headers[CORRELATION_HEADER] = correlation_id
         return response
 
+    @app.get("/health")
     @app.get("/health/live")
     async def live() -> dict:
         return {"status": "alive", "service": lc.container.settings.service_name}
