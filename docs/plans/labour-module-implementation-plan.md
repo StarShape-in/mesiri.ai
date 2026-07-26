@@ -95,6 +95,31 @@ Where they disagree, prefer Material, and note the divergence here.
 | Domain layer shape | thin (`validation.py`, `posting.py`, `router.py`) | rich DDD (`entities.py`, `value_objects.py`, `policies.py`, `events.py`) |
 | Handler entry method | `handle()` | `handle_confirmed()` |
 
+### 2.4 Update — 2026-07-25, after merging 34 incoming commits
+
+A large batch of Finance work landed mid-design. Three parts of it directly
+affect Labour and **reduce** what must be built:
+
+1. **Image purpose picker already reserves a slot for attendance.**
+   `channel/replies.py`'s `IMAGE_PURPOSE_ROWS` sends a "what is this photo
+   for?" picker for every uncaptioned image, and its comment states the
+   intent explicitly: *"more purposes (attendance, etc.) get their own row
+   here later, not a different mechanism."* Labour adds one row — it does
+   **not** build its own image-intake path.
+
+2. **Duplicate detection precedent exists, but is field-based.**
+   `find_potential_duplicate` (expenses repository) matches on amount + date
+   + vendor/category and **warns rather than rejecting**. That confirms the
+   interaction pattern for Labour's duplicate handling, but it is not image
+   hashing — near-duplicate *image* detection (open question Q3) still has to
+   be built.
+
+3. **Attachment + gallery paths are now exercised by tests**
+   (`test_expense_attachment_gallery.py`), which strengthens ADR-L3: reusing
+   the attachment shape gets gallery integration essentially for free.
+
+Verified after merge: 1046 tests passing, lint clean.
+
 ---
 
 ## 3. Architectural principles (non-negotiable)
@@ -423,3 +448,4 @@ Update as work proceeds. `[x]` = done and pushed.
 | Date | Change |
 |---|---|
 | 2026-07-25 | Document created. Phase 0 complete: reconnaissance, ADR-L1 to L3, principles P1–P7, shared-abstraction proposal (§7) pending approval. |
+| 2026-07-25 | Merged 34 incoming Finance commits. Added §2.4: attendance already has a reserved slot in the image-purpose picker, duplicate-detection precedent is field-based (image hashing still to build), attachment/gallery paths now test-covered. 1046 tests passing. |
