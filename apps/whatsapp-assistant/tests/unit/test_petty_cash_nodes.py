@@ -128,6 +128,13 @@ def test_unmatched_answer_reasks():
 
 
 def test_build_draft_emits_transfer_money_and_excludes_plumbing_fields():
+    """account_candidates/recipient_name/recipient_account_id are pure
+    plumbing. direction and recipient_account_name are deliberately kept
+    (both already canonical, never an unresolved AI hint) so
+    channel/receipt/data.py's build_receipt_data can tell a petty cash
+    receipt apart from a plain transfer and show who it involved -- and
+    other_account_name is added, the org-side account's real name, for the
+    same reason transfer/nodes.py's build_draft now adds it."""
     state = _base_state(
         {
             "amount": 20000,
@@ -145,10 +152,11 @@ def test_build_draft_emits_transfer_money_and_excludes_plumbing_fields():
     assert "account_candidates" not in draft.fields
     assert "recipient_name" not in draft.fields
     assert "recipient_account_id" not in draft.fields
-    assert "recipient_account_name" not in draft.fields
-    assert "direction" not in draft.fields
     assert draft.fields["from_account_id"] == ACC_A
     assert draft.fields["to_account_id"] == RECIPIENT_ACC
+    assert draft.fields["direction"] == "issue"
+    assert draft.fields["recipient_account_name"] == "Alan — Petty Cash"
+    assert draft.fields["other_account_name"] == "Company Bank"
 
 
 def test_request_confirmation_issue_phrasing():

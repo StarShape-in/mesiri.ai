@@ -180,17 +180,26 @@ export default function ReceiptsPage() {
                 {selected.description && (
                   <p className="text-muted-foreground">{selected.description}</p>
                 )}
-                <div className="flex items-center gap-3 text-muted-foreground">
-                  {selected.vendor_name && (
-                    <span className="flex items-center gap-1">
-                      <Store className="size-3" /> {selected.vendor_name}
-                    </span>
-                  )}
-                  {selected.category_name && (
-                    <span className="flex items-center gap-1">
-                      <Tag className="size-3" /> {selected.category_name}
-                    </span>
-                  )}
+                <div className="flex items-center justify-between gap-3 text-muted-foreground pt-1 border-t">
+                  <div className="flex items-center gap-3">
+                    {selected.vendor_name && (
+                      <span className="flex items-center gap-1">
+                        <Store className="size-3" /> {selected.vendor_name}
+                      </span>
+                    )}
+                    {selected.category_name && (
+                      <span className="flex items-center gap-1">
+                        <Tag className="size-3" /> {selected.category_name}
+                      </span>
+                    )}
+                  </div>
+
+                  <a
+                    href={`/finance/expenses?id=${selected.expense_id}`}
+                    className="text-[11px] font-semibold text-emerald-600 hover:text-emerald-700 flex items-center gap-1"
+                  >
+                    View Expense #{selected.expense_id.slice(0, 8)} →
+                  </a>
                 </div>
               </div>
             </div>

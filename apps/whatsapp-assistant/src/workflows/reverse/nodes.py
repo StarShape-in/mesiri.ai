@@ -23,15 +23,17 @@ from mesiri_contracts.common.ids import new_id
 
 from ..state import WorkflowGraphState
 
-_INTERNAL_FIELD_KEYS = frozenset(
-    {
-        "reversal_amount",
-        "reversal_description",
-        "reversal_occurred_date",
-        "reversal_from_account_name",
-        "reversal_to_account_name",
-    }
-)
+_INTERNAL_FIELD_KEYS: frozenset[str] = frozenset()
+# reversal_amount/reversal_description/reversal_occurred_date/
+# reversal_from_account_name/reversal_to_account_name used to be excluded
+# here as "confirm-prompt-only plumbing," matching the pattern every other
+# finance workflow uses for its own display-only fields -- but unlike those,
+# these five are seeded straight from a real DB read (runtime/reversal_
+# query.py, via _seed_reversal_target), never an unresolved AI hint, so
+# there's nothing to re-resolve or risk being stale. Kept in draft.fields so
+# channel/receipt/data.py's build_receipt_data can show a real reversal
+# receipt (amount, description/date, or the two account names) instead of
+# only the bare expense_id/money_transaction_id it had before.
 
 _NOTHING_TO_REVERSE = {
     "expense": "You have no confirmed expenses to reverse.",

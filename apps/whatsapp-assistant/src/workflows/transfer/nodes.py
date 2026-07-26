@@ -125,12 +125,26 @@ def resolve_to_account(state: WorkflowGraphState) -> dict:
 
 def build_draft(state: WorkflowGraphState) -> dict:
     """Map collected fields into a DraftAction. Shape-mapping only — no
-    validation (that belongs to application/finance/transfer_validation.py)."""
+    validation (that belongs to application/finance/transfer_validation.py).
+
+    `from_account_name`/`to_account_name` at this point still hold whatever
+    raw AI-extracted hint text resolve_from_account/resolve_to_account
+    matched against candidates with (e.g. "company acc") -- not fit to show
+    on a receipt. Overwritten here with the real resolved account's name
+    from `account_candidates` (the same lookup request_confirmation already
+    does, just also persisted now instead of thrown away) so
+    channel/receipt/data.py's build_receipt_data can show real names
+    without any I/O of its own.
+    """
+    all_fields = state.get("collected_fields") or {}
+    names_by_id = {str(c["id"]): c["name"] for c in (all_fields.get("account_candidates") or [])}
     fields = {
-        key: value
-        for key, value in (state.get("collected_fields") or {}).items()
-        if key not in _INTERNAL_FIELD_KEYS
+        key: value for key, value in all_fields.items() if key not in _INTERNAL_FIELD_KEYS
     }
+    if fields.get(_FROM_SLOT) is not None:
+        fields["from_account_name"] = names_by_id.get(fields[_FROM_SLOT], fields[_FROM_SLOT])
+    if fields.get(_TO_SLOT) is not None:
+        fields["to_account_name"] = names_by_id.get(fields[_TO_SLOT], fields[_TO_SLOT])
     draft = DraftActionV2(
         draft_id=new_id("draft"),
         correlation_id=state["correlation_id"],

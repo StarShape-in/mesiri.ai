@@ -211,6 +211,14 @@ export default function ProjectDetails() {
             <Button size="sm" onClick={handleOpenProject} className="h-7 gap-1">
               Open Project
             </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => navigate(`/finance/expenses?project_id=${project.id}`)}
+              className="h-7 gap-1 text-emerald-600 border-emerald-500/40 hover:bg-emerald-500/10 font-semibold"
+            >
+              View Finance
+            </Button>
             <Button size="sm" variant="outline" onClick={() => setProjectDialogOpen(true)} className="h-7 gap-1">
               <Edit2 className="size-3" /> Edit Settings
             </Button>

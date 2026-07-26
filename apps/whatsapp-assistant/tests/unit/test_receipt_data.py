@@ -196,3 +196,131 @@ def test_labour_receipt_survives_an_empty_attendance():
 def test_labour_receipt_singular_worker_reads_naturally():
     data = _labour_receipt([{"worker_name": "Ravi", "trade": "mason", "headcount": 1}])
     assert data.subtitle == "1 worker recorded"
+
+
+def _finance_receipt(action_type: DraftActionType, fields: dict):
+    return build_receipt_data(
+        _draft(action_type, fields),
+        material_row_id="stub-9999abcd",
+        reporter_name="Mohammed",
+        projects=[],
+        sites=[],
+        confirmed_at=datetime(2026, 7, 26, 10, 57, tzinfo=UTC),
+    )
+
+
+def test_transfer_receipt_is_not_labelled_material():
+    """Same bug class as labour: before these branches existed, a confirmed
+    transfer/petty-cash/reversal/account-admin action fell through to the
+    `else` branch and came back as a bogus "Material usage" receipt with an
+    MU- record id and a "Used for" field that made no sense for money."""
+    data = _finance_receipt(
+        DraftActionType.TRANSFER_MONEY,
+        {
+            "amount": "5000",
+            "from_account_id": "acc-a",
+            "from_account_name": "Company Bank",
+            "to_account_id": "acc-b",
+            "to_account_name": "Site Cash",
+        },
+    )
+    assert data.category == "Transfer"
+    assert "Material" not in data.category
+    assert data.value == "5000"
+    assert data.subtitle == "Company Bank → Site Cash"
+    assert data.record_id.startswith("TR-")
+    assert any(f.label == "From" and f.value == "Company Bank" for s in data.sections for f in s)
+    assert any(f.label == "To" and f.value == "Site Cash" for s in data.sections for f in s)
+
+
+def test_petty_cash_issue_receipt_shows_recipient_not_transfer_wording():
+    data = _finance_receipt(
+        DraftActionType.TRANSFER_MONEY,
+        {
+            "amount": "1000",
+            "direction": "issue",
+            "recipient_account_name": "Alan — Petty Cash",
+            "other_account_name": "Site Cash",
+        },
+    )
+    assert data.category == "Petty cash"
+    assert data.subtitle == "Issued to Alan — Petty Cash"
+    assert data.record_id.startswith("PC-")
+    assert any(f.label == "Issued to" and f.value == "Alan — Petty Cash" for s in data.sections for f in s)
+    assert any(f.label == "From" and f.value == "Site Cash" for s in data.sections for f in s)
+
+
+def test_petty_cash_return_receipt_shows_return_wording():
+    data = _finance_receipt(
+        DraftActionType.TRANSFER_MONEY,
+        {
+            "amount": "300",
+            "direction": "return",
+            "recipient_account_name": "Alan — Petty Cash",
+            "other_account_name": "Site Cash",
+        },
+    )
+    assert data.subtitle == "Returned by Alan — Petty Cash"
+    assert any(f.label == "Returned by" for s in data.sections for f in s)
+    assert any(f.label == "Into" and f.value == "Site Cash" for s in data.sections for f in s)
+
+
+def test_reversal_of_expense_receipt():
+    data = _finance_receipt(
+        DraftActionType.REVERSE_TRANSACTION,
+        {
+            "target_kind": "expense",
+            "expense_id": "exp-1",
+            "reversal_amount": "700.00",
+            "reversal_description": "diesel refill",
+            "reversal_occurred_date": "2026-07-25",
+        },
+    )
+    assert data.category == "Reversal"
+    assert data.value == "700.00"
+    assert data.subtitle == "Expense reversed"
+    assert data.record_id.startswith("RV-")
+    assert any(f.label == "Description" and f.value == "diesel refill" for s in data.sections for f in s)
+
+
+def test_reversal_of_transfer_receipt():
+    data = _finance_receipt(
+        DraftActionType.REVERSE_TRANSACTION,
+        {
+            "target_kind": "transfer",
+            "money_transaction_id": "tx-1",
+            "reversal_amount": "5000.00",
+            "reversal_from_account_name": "Company Bank",
+            "reversal_to_account_name": "Site Cash",
+        },
+    )
+    assert data.subtitle == "Transfer reversed"
+    assert any(f.label == "From" and f.value == "Company Bank" for s in data.sections for f in s)
+    assert any(f.label == "To" and f.value == "Site Cash" for s in data.sections for f in s)
+
+
+def test_account_create_receipt():
+    data = _finance_receipt(
+        DraftActionType.MANAGE_MONEY_ACCOUNT, {"action": "create", "name": "Petrol Card"}
+    )
+    assert data.category == "Account"
+    assert data.value == "Created"
+    assert data.subtitle == "New account: Petrol Card"
+    assert data.record_id.startswith("AC-")
+
+
+def test_account_rename_receipt():
+    data = _finance_receipt(
+        DraftActionType.MANAGE_MONEY_ACCOUNT,
+        {"action": "rename", "target_name": "Petrol Card", "new_name": "Fuel Card"},
+    )
+    assert data.value == "Renamed"
+    assert data.subtitle == "Petrol Card → Fuel Card"
+
+
+def test_account_deactivate_receipt():
+    data = _finance_receipt(
+        DraftActionType.MANAGE_MONEY_ACCOUNT, {"action": "deactivate", "target_name": "Petrol Card"}
+    )
+    assert data.value == "Deactivated"
+    assert data.subtitle == "Petrol Card"

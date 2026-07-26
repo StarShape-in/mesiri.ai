@@ -1,211 +1,295 @@
 import {
-  DollarSign,
-  Calendar,
-  Tag,
-  Building2,
-  Laptop,
-  MessageSquare,
-  ShieldCheck,
-} from 'lucide-react'
-import {
   Sheet,
   SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
 } from '@/components/ui/sheet'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Separator } from '@/components/ui/separator'
+import { Badge } from '@/components/ui/badge'
+import { Card } from '@/components/ui/card'
+import {
+  Receipt,
+  User,
+  Tag,
+  Store,
+  Landmark,
+  MessageSquare,
+  ExternalLink,
+  ChevronLeft,
+  CheckCircle2,
+  AlertCircle,
+  XCircle,
+  Hash,
+} from 'lucide-react'
+
+export interface ExpenseDetailData {
+  id: string
+  amount: number
+  category_name?: string
+  category_id?: string
+  vendor_name?: string
+  vendor_id?: string
+  account_name?: string
+  account_id?: string
+  custodian_name?: string
+  custodian_user_id?: string
+  project_name?: string
+  site_name?: string
+  recorded_date?: string
+  payment_method?: string
+  status?: string
+  receipt_url?: string
+  description?: string
+  correlation_id?: string
+  whatsapp_sender?: string
+  raw_message_text?: string
+}
 
 interface ExpenseDetailSheetProps {
-  expense: any | null
   open: boolean
   onOpenChange: (open: boolean) => void
-  onRecordPayment?: (expenseId: string) => void
+  expense: ExpenseDetailData | null
+  onOpenAccount?: (accountId: string) => void
+  onOpenVendor?: (vendorId: string) => void
+  onOpenCategory?: (categoryId: string) => void
+  onOpenCustodian?: (custodianIdOrName: string) => void
+  onOpenWhatsAppTrace?: (correlationId: string) => void
+  onBack?: () => void
+  hasHistoryBack?: boolean
+}
+
+function formatCurrency(amount: number): string {
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 0,
+  }).format(amount)
 }
 
 export function ExpenseDetailSheet({
-  expense,
   open,
   onOpenChange,
-  onRecordPayment,
+  expense,
+  onOpenAccount,
+  onOpenVendor,
+  onOpenCategory,
+  onOpenCustodian,
+  onOpenWhatsAppTrace,
+  onBack,
+  hasHistoryBack,
 }: ExpenseDetailSheetProps) {
   if (!expense) return null
 
-  const isPaid = expense.payment_status === 'paid'
-  const isPartiallyPaid = expense.payment_status === 'partially_paid'
-
-  const formattedAmount = new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency: expense.currency || 'INR',
-    maximumFractionDigits: 2,
-  }).format(expense.amount || 0)
+  const isConfirmed = expense.status === 'confirmed' || expense.status === 'approved' || !expense.status
+  const isVoided = expense.status === 'voided' || expense.status === 'reversed'
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="sm:max-w-[480px] w-full p-0 flex flex-col gap-0 overflow-y-auto">
-        {/* Header Banner */}
-        <div className="p-5 border-b bg-muted/30 flex flex-col gap-3">
-          <div className="flex items-center justify-between">
+      <SheetContent className="sm:max-w-md w-full p-0 flex flex-col gap-0 bg-background overflow-hidden border-l">
+        {/* Drawer Header */}
+        <SheetHeader className="p-4 border-b bg-muted/30">
+          <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <Badge variant="outline" className="font-mono text-xs uppercase bg-background font-semibold">
-                {expense.expense_number}
-              </Badge>
-              {expense.source === 'whatsapp' ? (
-                <Badge className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20 gap-1 text-[11px]">
-                  <MessageSquare className="size-3" />
-                  WhatsApp Assistant
-                </Badge>
-              ) : (
-                <Badge className="bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 border-indigo-500/20 gap-1 text-[11px]">
-                  <Laptop className="size-3" />
-                  Web Dashboard
-                </Badge>
-              )}
-            </div>
-
-            <Badge
-              className={
-                isPaid
-                  ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-semibold'
-                  : isPartiallyPaid
-                  ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 font-semibold'
-                  : 'bg-rose-500/15 text-rose-700 dark:text-rose-300 font-semibold'
-              }
-            >
-              {isPaid ? 'Settled (Paid)' : isPartiallyPaid ? 'Partially Paid' : 'Unpaid Balance'}
-            </Badge>
-          </div>
-
-          <div>
-            <div className="text-2xl font-bold font-mono text-foreground tracking-tight">
-              {formattedAmount}
-            </div>
-            <p className="text-xs text-muted-foreground mt-0.5 font-medium">
-              {expense.description || expense.category_name}
-            </p>
-          </div>
-        </div>
-
-        {/* Main Details & Tabs */}
-        <div className="p-5 flex-1 flex flex-col gap-4">
-          <Tabs defaultValue="details" className="w-full">
-            <TabsList className="w-full grid grid-cols-2 h-9">
-              <TabsTrigger value="details" className="text-xs">
-                Overview & Scope
-              </TabsTrigger>
-              <TabsTrigger value="payment" className="text-xs">
-                Payment Breakdown
-              </TabsTrigger>
-            </TabsList>
-
-            {/* Overview Tab */}
-            <TabsContent value="details" className="pt-3 flex flex-col gap-3 text-xs">
-              <div className="grid grid-cols-2 gap-3 p-3 rounded-lg border bg-card/60">
-                <div>
-                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold block mb-0.5">
-                    Category
-                  </span>
-                  <div className="font-medium flex items-center gap-1.5 text-foreground">
-                    <Tag className="size-3.5 text-emerald-500" />
-                    {expense.category_name}
-                  </div>
-                </div>
-
-                <div>
-                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold block mb-0.5">
-                    Occurred Date
-                  </span>
-                  <div className="font-medium flex items-center gap-1.5 text-foreground">
-                    <Calendar className="size-3.5 text-blue-500" />
-                    {expense.occurred_date}
-                  </div>
-                </div>
-
-                <div>
-                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold block mb-0.5">
-                    Project Context
-                  </span>
-                  <div className="font-medium flex items-center gap-1.5 text-foreground truncate">
-                    <Building2 className="size-3.5 text-amber-500" />
-                    {expense.project_name || 'Organization Wide'}
-                  </div>
-                </div>
-
-                <div>
-                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold block mb-0.5">
-                    Site Location
-                  </span>
-                  <div className="font-medium flex items-center gap-1.5 text-foreground truncate">
-                    <Building2 className="size-3.5 text-indigo-500" />
-                    {expense.site_name || 'All Sites'}
-                  </div>
-                </div>
-              </div>
-
-              <Separator />
-
-              {/* Vendor & Audit Metadata */}
-              <div className="flex flex-col gap-2">
-                <h4 className="font-semibold text-foreground text-xs flex items-center gap-1.5">
-                  <ShieldCheck className="size-4 text-emerald-500" />
-                  Audit & Metadata
-                </h4>
-                <div className="flex flex-col gap-1.5 text-muted-foreground bg-muted/20 p-2.5 rounded border text-[11px]">
-                  <div className="flex justify-between">
-                    <span>Payee / Vendor:</span>
-                    <span className="font-semibold text-foreground">{expense.vendor_name || 'Direct'}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Workflow Status:</span>
-                    <span className="font-semibold text-foreground uppercase">{expense.workflow_status}</span>
-                  </div>
-                  {expense.payment_method && (
-                    <div className="flex justify-between">
-                      <span>Payment Method:</span>
-                      <span className="font-semibold text-foreground uppercase">{expense.payment_method}</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between">
-                    <span>Recorded By:</span>
-                    <span className="font-semibold text-foreground">{expense.recorded_by || 'Dashboard User'}</span>
-                  </div>
-                </div>
-              </div>
-            </TabsContent>
-
-            {/* Payment History Tab */}
-            <TabsContent value="payment" className="pt-3 flex flex-col gap-3 text-xs">
-              <div className="p-3 border rounded-lg bg-card/60 flex flex-col gap-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-foreground">Settlement Status</span>
-                  <Badge variant="outline" className="font-mono text-[10px]">
-                    {isPaid ? '100% Paid' : isPartiallyPaid ? 'Partial' : '0% Paid'}
-                  </Badge>
-                </div>
-                <div className="w-full h-2 rounded-full bg-muted overflow-hidden">
-                  <div
-                    className={`h-full ${isPaid ? 'bg-emerald-500' : isPartiallyPaid ? 'bg-amber-500' : 'bg-rose-500'}`}
-                    style={{ width: isPaid ? '100%' : isPartiallyPaid ? '50%' : '0%' }}
-                  />
-                </div>
-                <div className="flex justify-between text-[11px] text-muted-foreground pt-1">
-                  <span>Paid: {isPaid ? formattedAmount : '₹0.00'}</span>
-                  <span>Outstanding: {isPaid ? '₹0.00' : formattedAmount}</span>
-                </div>
-              </div>
-
-              {!isPaid && (
+              {hasHistoryBack && onBack && (
                 <Button
-                  size="sm"
-                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5 font-semibold"
-                  onClick={() => onRecordPayment?.(expense.id)}
+                  size="icon"
+                  variant="ghost"
+                  className="size-7 text-muted-foreground hover:text-foreground"
+                  onClick={onBack}
+                  title="Back to previous detail"
                 >
-                  <DollarSign className="size-4" />
-                  Record Settlement Payment
+                  <ChevronLeft className="size-4" />
                 </Button>
               )}
-            </TabsContent>
-          </Tabs>
+              <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                <Receipt className="size-4" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <SheetTitle className="text-sm font-bold text-foreground">
+                    Expense #{expense.id.slice(0, 8)}
+                  </SheetTitle>
+                  {isConfirmed ? (
+                    <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[10px]">
+                      <CheckCircle2 className="size-3 mr-1" />
+                      Confirmed
+                    </Badge>
+                  ) : isVoided ? (
+                    <Badge variant="destructive" className="text-[10px]">
+                      <XCircle className="size-3 mr-1" />
+                      Voided
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-[10px]">
+                      <AlertCircle className="size-3 mr-1" />
+                      {expense.status}
+                    </Badge>
+                  )}
+                </div>
+                <SheetDescription className="text-[11px] text-muted-foreground">
+                  Recorded on {expense.recorded_date || 'Today'}
+                </SheetDescription>
+              </div>
+            </div>
+          </div>
+        </SheetHeader>
+
+        {/* Amount Banner */}
+        <div className="px-5 py-4 bg-muted/20 border-b flex items-center justify-between">
+          <div>
+            <span className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground block">
+              Expense Amount
+            </span>
+            <span className="text-2xl font-black font-mono tracking-tight text-foreground">
+              {formatCurrency(expense.amount)}
+            </span>
+          </div>
+          <Badge variant="outline" className="font-mono text-xs capitalize bg-background">
+            {expense.payment_method || 'UPI / Bank'}
+          </Badge>
+        </div>
+
+        {/* Body Content */}
+        <div className="p-5 flex-1 overflow-y-auto flex flex-col gap-4 text-xs">
+          {/* Attached Receipt Image */}
+          <div className="space-y-1.5">
+            <span className="text-[11px] font-semibold text-muted-foreground flex items-center gap-1.5">
+              <Receipt className="size-3.5 text-emerald-500" />
+              Attached Receipt Document
+            </span>
+            {expense.receipt_url ? (
+              <div className="relative group rounded-lg overflow-hidden border bg-muted/40 max-h-48 flex items-center justify-center">
+                <img
+                  src={expense.receipt_url}
+                  alt="Expense Receipt"
+                  className="object-cover w-full h-full max-h-48 transition-transform group-hover:scale-105"
+                />
+                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                  <a
+                    href={expense.receipt_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="p-2 rounded-full bg-white text-black hover:bg-white/90 shadow-md"
+                  >
+                    <ExternalLink className="size-4" />
+                  </a>
+                </div>
+              </div>
+            ) : (
+              <Card className="p-4 border-dashed text-center text-muted-foreground flex flex-col items-center gap-1 bg-muted/10">
+                <Receipt className="size-6 text-muted-foreground/40" />
+                <span className="text-[11px] font-medium">No receipt photo attached</span>
+              </Card>
+            )}
+          </div>
+
+          {/* Connected Entities Links */}
+          <div className="grid grid-cols-2 gap-2.5">
+            {/* Category */}
+            <div className="p-2.5 rounded-lg border bg-card flex flex-col gap-1">
+              <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+                <Tag className="size-3 text-indigo-500" />
+                Category
+              </span>
+              <button
+                type="button"
+                onClick={() => expense.category_id && onOpenCategory?.(expense.category_id)}
+                className="font-bold text-xs text-foreground hover:text-indigo-600 text-left transition-colors truncate"
+              >
+                {expense.category_name || 'General Operations'}
+              </button>
+            </div>
+
+            {/* Vendor */}
+            <div className="p-2.5 rounded-lg border bg-card flex flex-col gap-1">
+              <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+                <Store className="size-3 text-emerald-500" />
+                Vendor / Payee
+              </span>
+              <button
+                type="button"
+                onClick={() => expense.vendor_id && onOpenVendor?.(expense.vendor_id)}
+                className="font-bold text-xs text-foreground hover:text-emerald-600 text-left transition-colors truncate"
+              >
+                {expense.vendor_name || 'Direct Disbursement'}
+              </button>
+            </div>
+
+            {/* Paid Account */}
+            <div className="p-2.5 rounded-lg border bg-card flex flex-col gap-1">
+              <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+                <Landmark className="size-3 text-blue-500" />
+                Paid Account
+              </span>
+              <button
+                type="button"
+                onClick={() => expense.account_id && onOpenAccount?.(expense.account_id)}
+                className="font-bold text-xs text-foreground hover:text-blue-600 text-left transition-colors truncate"
+              >
+                {expense.account_name || 'Main Bank Account'}
+              </button>
+            </div>
+
+            {/* Custodian */}
+            <div className="p-2.5 rounded-lg border bg-card flex flex-col gap-1">
+              <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+                <User className="size-3 text-amber-500" />
+                Custodian / User
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  (expense.custodian_user_id || expense.custodian_name) &&
+                  onOpenCustodian?.(expense.custodian_user_id || expense.custodian_name || '')
+                }
+                className="font-bold text-xs text-foreground hover:text-amber-600 text-left transition-colors truncate"
+              >
+                {expense.custodian_name || 'Finance Custodian'}
+              </button>
+            </div>
+          </div>
+
+          {/* Description */}
+          {expense.description && (
+            <div className="p-3 rounded-lg border bg-muted/20 space-y-1">
+              <span className="text-[10px] font-semibold text-muted-foreground block">Description / Notes</span>
+              <p className="text-xs text-foreground">{expense.description}</p>
+            </div>
+          )}
+
+          {/* WhatsApp Channel Audit Trace */}
+          {(expense.correlation_id || expense.whatsapp_sender) && (
+            <div className="p-3 rounded-lg border border-emerald-500/30 bg-emerald-500/5 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5">
+                  <MessageSquare className="size-3.5 text-emerald-500" />
+                  WhatsApp Origin Audit Trace
+                </span>
+                {expense.correlation_id && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 text-[10px] font-mono gap-1 text-emerald-600 hover:bg-emerald-500/10 px-2"
+                    onClick={() => onOpenWhatsAppTrace?.(expense.correlation_id!)}
+                  >
+                    <Hash className="size-3" />
+                    {expense.correlation_id.slice(0, 10)}...
+                  </Button>
+                )}
+              </div>
+              {expense.whatsapp_sender && (
+                <div className="text-[11px] text-muted-foreground">
+                  Sender Phone: <span className="font-mono font-semibold text-foreground">{expense.whatsapp_sender}</span>
+                </div>
+              )}
+              {expense.raw_message_text && (
+                <div className="p-2 rounded bg-background border text-[11px] italic font-mono text-muted-foreground">
+                  "{expense.raw_message_text}"
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </SheetContent>
     </Sheet>
