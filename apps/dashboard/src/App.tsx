@@ -15,6 +15,7 @@ import AccountsPage from '@/pages/AccountsPage'
 import WhatsAppFinancePage from '@/pages/WhatsAppFinancePage'
 import WhatsAppLabourPage from '@/pages/WhatsAppLabourPage'
 import LabourOverviewPage from '@/pages/LabourOverviewPage'
+import LabourReportsPage from '@/pages/LabourReportsPage'
 import AttendancePage from '@/pages/AttendancePage'
 import WhatsAppInboxPage from '@/pages/WhatsAppInboxPage'
 import WorkersPage from '@/pages/WorkersPage'
@@ -89,7 +90,7 @@ export default function App() {
         <Route path="labour/workers" element={<WorkersPage />} />
         <Route path="labour/whatsapp" element={<WhatsAppLabourPage />} />
         <Route path="whatsapp/labour" element={<WhatsAppLabourPage />} />
-        <Route path="labour/reports" element={<OperationalPlaceholder title="Labour Reports" />} />
+        <Route path="labour/reports" element={<LabourReportsPage />} />
         <Route path="labour/settings" element={<OperationalPlaceholder title="Labour Settings" />} />
 
         {/* Legacy operational routes fallbacks */}

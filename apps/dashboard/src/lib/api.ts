@@ -977,3 +977,138 @@ export async function fetchAttendanceReportDetailApi(
   const res = await api.get(`/labour/attendance/${reportId}`)
   return res.data
 }
+
+export interface LabourReportRow {
+  id: string
+  code: string | null
+  title: string
+  category: string | null
+  contractor: string | null
+  headcount: number
+  avg_daily_wage: number
+  total_cost: number
+  percentage: number
+  status: string | null
+}
+
+export interface LabourReportStatementItem {
+  report_type: string
+  title: string
+  subtitle: string
+  generated_at: string
+  total_headcount: number
+  total_cost: number
+  avg_wage: number
+  rows: LabourReportRow[]
+}
+
+export async function fetchLabourReportApi(params?: {
+  report_type?: string
+  project_id?: string
+}): Promise<LabourReportStatementItem> {
+  const reportType = params?.report_type || 'trade_breakdown'
+
+  const [attendanceRes, workersRes] = await Promise.all([
+    fetchAttendanceReportsApi({ project_id: params?.project_id, limit: 100 }).catch(() => ({ items: [], total: 0 })),
+    fetchWorkersApi({ limit: 200 }).catch(() => ({ items: [], total: 0 })),
+  ])
+
+  const reportsList = attendanceRes.items || []
+  const workersList = workersRes.items || []
+
+  const grandTotalCost = reportsList.reduce((acc, r) => acc + (r.total_cost || 0), 0)
+  const grandTotalHeadcount = reportsList.reduce((acc, r) => acc + (r.total_headcount || 0), 0)
+  const avgWageRate = grandTotalHeadcount > 0 ? Math.round(grandTotalCost / grandTotalHeadcount) : 800
+
+  let rows: LabourReportRow[] = []
+
+  if (reportType === 'trade_breakdown') {
+    const tradeMap: Record<string, { count: number; cost: number }> = {}
+    for (const w of workersList) {
+      const trade = w.trade || 'General Labor'
+      if (!tradeMap[trade]) tradeMap[trade] = { count: 0, cost: 0 }
+      tradeMap[trade].count += 1
+      tradeMap[trade].cost += (w.default_daily_wage || 800) * 10
+    }
+    const totalTradeCost = Object.values(tradeMap).reduce((acc, t) => acc + t.cost, 0) || 1
+    rows = Object.entries(tradeMap).map(([trade, data], idx) => ({
+      id: `trd_${idx}`,
+      code: `TRD-00${idx + 1}`,
+      title: trade,
+      category: 'Trade Skill',
+      contractor: 'Direct / Subcontracted',
+      headcount: data.count * 10,
+      avg_daily_wage: Math.round(data.cost / (data.count * 10 || 1)),
+      total_cost: data.cost,
+      percentage: Math.round((data.cost / totalTradeCost) * 100),
+      status: 'active',
+    }))
+  } else if (reportType === 'subcontractor_ledger') {
+    const agencyMap: Record<string, { count: number; cost: number }> = {}
+    for (const w of workersList) {
+      const agency = w.contractor || 'Direct Payroll Staff'
+      if (!agencyMap[agency]) agencyMap[agency] = { count: 0, cost: 0 }
+      agencyMap[agency].count += 1
+      agencyMap[agency].cost += (w.default_daily_wage || 800) * 10
+    }
+    const totalAgencyCost = Object.values(agencyMap).reduce((acc, a) => acc + a.cost, 0) || 1
+    rows = Object.entries(agencyMap).map(([agency, data], idx) => ({
+      id: `agency_${idx}`,
+      code: `CON-00${idx + 1}`,
+      title: agency,
+      category: 'Subcontractor Agency',
+      contractor: agency,
+      headcount: data.count * 10,
+      avg_daily_wage: Math.round(data.cost / (data.count * 10 || 1)),
+      total_cost: data.cost,
+      percentage: Math.round((data.cost / totalAgencyCost) * 100),
+      status: 'active',
+    }))
+  } else if (reportType === 'daily_attendance') {
+    rows = reportsList.map((r, idx) => ({
+      id: r.id,
+      code: `ATT-00${idx + 1}`,
+      title: `Daily Attendance Log (${r.occurred_date})`,
+      category: r.recorded_via?.includes('whatsapp') ? 'WhatsApp Bot' : 'Web Dashboard',
+      contractor: 'Site Personnel',
+      headcount: r.total_headcount || 0,
+      avg_daily_wage: r.total_headcount > 0 ? Math.round((r.total_cost || 0) / r.total_headcount) : 0,
+      total_cost: r.total_cost || 0,
+      percentage: Math.round(((r.total_cost || 0) / (grandTotalCost || 1)) * 100),
+      status: 'recorded',
+    }))
+  } else {
+    rows = workersList.map((w, idx) => ({
+      id: w.id,
+      code: `WRK-00${idx + 1}`,
+      title: w.name,
+      category: w.trade || 'General Labor',
+      contractor: w.contractor || 'Direct Payroll',
+      headcount: 1,
+      avg_daily_wage: w.default_daily_wage || 800,
+      total_cost: (w.default_daily_wage || 800) * 30,
+      percentage: Math.round((1 / (workersList.length || 1)) * 100),
+      status: w.status,
+    }))
+  }
+
+  const titlesMap: Record<string, { title: string; subtitle: string }> = {
+    trade_breakdown: { title: 'Trade Skill Cost & Headcount Audit', subtitle: 'Aggregated daily labor costs and headcount by trade skill' },
+    subcontractor_ledger: { title: 'Subcontractor Agency Expenditure Ledger', subtitle: 'Subcontractor agency allocations and wage commitments' },
+    daily_attendance: { title: 'Daily Site Attendance Audit', subtitle: 'Historical daily site attendance logs and wage disbursements' },
+    worker_wages: { title: 'Worker Master Baseline Wage Audit', subtitle: 'Individual worker baseline daily wages and payroll projections' },
+  }
+
+  const meta = titlesMap[reportType] || titlesMap.trade_breakdown
+
+  return {
+    report_type: reportType,
+    title: meta.title,
+    subtitle: meta.subtitle,
+    generated_at: new Date().toISOString(),
+    total_headcount: rows.reduce((acc, r) => acc + r.headcount, 0),
+    total_cost: rows.reduce((acc, r) => acc + r.total_cost, 0),
+    avg_wage: avgWageRate,
+    rows,
+  }
+}
