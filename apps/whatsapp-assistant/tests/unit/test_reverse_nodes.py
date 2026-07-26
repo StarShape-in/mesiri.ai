@@ -42,9 +42,12 @@ def test_expense_target_builds_a_draft():
     assert draft.fields["expense_id"] == EXPENSE_ID
     assert draft.fields["target_kind"] == "expense"
     assert draft.fields["created_by_role"] == "ADMIN"
-    # Display-only fields never reach the backend command.
-    assert "reversal_amount" not in draft.fields
-    assert "reversal_description" not in draft.fields
+    # Display-only, but kept (unlike other finance workflows' plumbing) --
+    # these come from a real DB read (runtime/reversal_query.py), never an
+    # unresolved AI hint, so channel/receipt/data.py's build_receipt_data
+    # can show a real reversal receipt with them.
+    assert draft.fields["reversal_amount"] == "700.00"
+    assert draft.fields["reversal_description"] == "diesel refill"
 
 
 def test_transfer_target_builds_a_draft():
@@ -62,7 +65,8 @@ def test_transfer_target_builds_a_draft():
     draft = update["draft_action"]
     assert draft.fields["money_transaction_id"] == TRANSACTION_ID
     assert draft.fields["target_kind"] == "transfer"
-    assert "reversal_from_account_name" not in draft.fields
+    assert draft.fields["reversal_from_account_name"] == "Company Bank"
+    assert draft.fields["reversal_to_account_name"] == "Site Cash"
 
 
 def test_no_expense_found_completes_without_a_draft():

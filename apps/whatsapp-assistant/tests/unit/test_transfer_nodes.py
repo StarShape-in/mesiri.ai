@@ -123,23 +123,29 @@ def test_resolve_to_account_ignores_an_answer_meant_for_the_from_slot():
 
 
 def test_build_draft_excludes_plumbing_fields():
+    """account_candidates is pure plumbing and must not survive. The raw
+    AI-extracted from_account_name/to_account_name hint text must not
+    survive either -- but the key is reused (not dropped) to carry the
+    real resolved account name instead, so channel/receipt/data.py's
+    build_receipt_data can show it without any I/O of its own."""
     state = _base_state(
         {
             "amount": 500,
             "from_account_id": ACC_A,
             "to_account_id": ACC_B,
-            "from_account_name": "Company Bank",
-            "to_account_name": "Site Cash",
+            "from_account_name": "company acc",  # raw AI hint, discarded
+            "to_account_name": "site cash pls",  # raw AI hint, discarded
             "account_candidates": _CANDIDATES,
         }
     )
     draft = build_draft(state)["draft_action"]
     assert draft.action_type is DraftActionType.TRANSFER_MONEY
     assert "account_candidates" not in draft.fields
-    assert "from_account_name" not in draft.fields
-    assert "to_account_name" not in draft.fields
     assert draft.fields["from_account_id"] == ACC_A
     assert draft.fields["to_account_id"] == ACC_B
+    # Overwritten with the real resolved names, not the raw hint text above.
+    assert draft.fields["from_account_name"] == "Company Bank"
+    assert draft.fields["to_account_name"] == "Site Cash"
 
 
 def test_request_confirmation_shows_account_names_not_ids():

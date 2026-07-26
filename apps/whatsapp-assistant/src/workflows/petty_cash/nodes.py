@@ -39,11 +39,21 @@ _INTERNAL_FIELD_KEYS = frozenset(
     {
         "account_candidates",
         "recipient_name",
+        # recipient_account_id is dropped, not recipient_account_name --
+        # its value is already duplicated onto from_account_id/to_account_id
+        # (see resolve_other_account's fields.setdefault), and the *name*
+        # (unlike direction below) needs to stay for the receipt/confirm
+        # prompt since nothing else carries it forward.
         "recipient_account_id",
-        "recipient_account_name",
-        "direction",
     }
 )
+# direction and recipient_account_name are deliberately NOT internal-only:
+# both are already-resolved, canonical values (direction is deterministic
+# from canonicalization; recipient_account_name comes straight from
+# runtime/petty_cash_query.py's real account row, never an AI hint) needed
+# by channel/receipt/data.py's build_receipt_data to tell a petty cash
+# receipt apart from a plain transfer and show who it was issued to /
+# returned by.
 
 
 def _other_slot_name(direction: str) -> str | None:
@@ -126,12 +136,19 @@ def resolve_other_account(state: WorkflowGraphState) -> dict:
 def build_draft(state: WorkflowGraphState) -> dict:
     """Map collected fields into a DraftAction -- DraftActionType.TRANSFER_MONEY,
     same as workflows/transfer/nodes.py's build_draft, so this reuses the
-    existing transfer dispatcher/handler unchanged (see module docstring)."""
-    fields = {
-        key: value
-        for key, value in (state.get("collected_fields") or {}).items()
-        if key not in _INTERNAL_FIELD_KEYS
-    }
+    existing transfer dispatcher/handler unchanged (see module docstring).
+
+    Also resolves the org-side ("other") account's real name from
+    account_candidates -- same lookup request_confirmation already does for
+    the prompt, persisted here too so channel/receipt/data.py's
+    build_receipt_data can show it without any I/O of its own."""
+    all_fields = state.get("collected_fields") or {}
+    direction = str(all_fields.get("direction", "")).strip().lower()
+    other_slot = _other_slot_name(direction)
+    names_by_id = {str(c["id"]): c["name"] for c in (all_fields.get("account_candidates") or [])}
+    fields = {key: value for key, value in all_fields.items() if key not in _INTERNAL_FIELD_KEYS}
+    if other_slot and fields.get(other_slot) is not None:
+        fields["other_account_name"] = names_by_id.get(fields[other_slot], fields[other_slot])
     draft = DraftActionV2(
         draft_id=new_id("draft"),
         correlation_id=state["correlation_id"],

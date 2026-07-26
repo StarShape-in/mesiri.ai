@@ -46,6 +46,10 @@ import { RecordExpenseDialog } from '@/components/expenses/record-expense-dialog
 import { TransferMoneyDialog } from '@/components/accounts/transfer-money-dialog'
 import { CreateCategoryDialog } from '@/components/categories/create-category-dialog'
 import { CreateVendorDialog } from '@/components/vendors/create-vendor-dialog'
+import { AccountDetailSheet } from '@/components/accounts/account-detail-sheet'
+import { VendorDetailSheet } from '@/components/vendors/vendor-detail-sheet'
+import { CategoryDetailSheet } from '@/components/categories/category-detail-sheet'
+import { ExpenseDetailSheet } from '@/components/expenses/expense-detail-sheet'
 
 function formatCurrency(amount: number): string {
   return new Intl.NumberFormat('en-IN', {
@@ -73,11 +77,16 @@ export default function FinanceOverviewPage() {
   const [recentTransactions, setRecentTransactions] = React.useState<MoneyTransactionItem[]>([])
   const [loading, setLoading] = React.useState(true)
 
-  // Dialog States
+  // Dialog & Sub-sheet States
   const [recordExpenseOpen, setRecordExpenseOpen] = React.useState(false)
   const [transferOpen, setTransferOpen] = React.useState(false)
   const [createCategoryOpen, setCreateCategoryOpen] = React.useState(false)
   const [createVendorOpen, setCreateVendorOpen] = React.useState(false)
+
+  const [accountSheetId, setAccountSheetId] = React.useState<string | null>(null)
+  const [vendorSheetId, setVendorSheetId] = React.useState<string | null>(null)
+  const [categorySheetId, setCategorySheetId] = React.useState<string | null>(null)
+  const [expenseSheetId, setExpenseSheetId] = React.useState<string | null>(null)
 
   const loadData = React.useCallback(async () => {
     setLoading(true)
@@ -576,6 +585,31 @@ export default function FinanceOverviewPage() {
         open={createVendorOpen}
         onOpenChange={setCreateVendorOpen}
         onSuccess={loadData}
+      />
+
+      {/* Detail Sub-sheets */}
+      <AccountDetailSheet
+        open={!!accountSheetId}
+        onOpenChange={(op) => !op && setAccountSheetId(null)}
+        account={accountSheetId ? { id: accountSheetId, name: 'Money Account', account_type: 'bank', currency: 'INR', opening_balance: 0, current_balance: 0, status: 'active', created_at: '' } : null}
+      />
+
+      <VendorDetailSheet
+        open={!!vendorSheetId}
+        onOpenChange={(op) => !op && setVendorSheetId(null)}
+        vendor={vendorSheetId ? { id: vendorSheetId, name: 'Vendor', status: 'active', expense_count: 0, total_amount_paid: 0 } : null}
+      />
+
+      <CategoryDetailSheet
+        open={!!categorySheetId}
+        onOpenChange={(op) => !op && setCategorySheetId(null)}
+        category={categorySheetId ? { id: categorySheetId, code: 'CAT', name: 'Expense Category', status: 'active', total_amount_spent: 0, expense_count: 0 } : null}
+      />
+
+      <ExpenseDetailSheet
+        open={!!expenseSheetId}
+        onOpenChange={(op) => !op && setExpenseSheetId(null)}
+        expense={expenseSheetId ? { id: expenseSheetId, amount: 0 } : null}
       />
     </div>
   )

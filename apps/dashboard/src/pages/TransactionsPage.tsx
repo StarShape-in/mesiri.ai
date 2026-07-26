@@ -35,6 +35,9 @@ import {
   fetchAccountsApi,
   type MoneyTransactionItem,
 } from '@/lib/api'
+import { AccountDetailSheet } from '@/components/accounts/account-detail-sheet'
+import { ExpenseDetailSheet } from '@/components/expenses/expense-detail-sheet'
+import { WhatsAppTraceModal } from '@/components/whatsapp/whatsapp-trace-modal'
 
 interface SimpleAccountItem {
   id: string
@@ -105,6 +108,11 @@ export default function TransactionsPage() {
   const [search, setSearch] = React.useState('')
   const [typeFilter, setTypeFilter] = React.useState('ALL')
   const [accountFilter, setAccountFilter] = React.useState('ALL')
+
+  // Sub-sheet States
+  const [accountSheetId, setAccountSheetId] = React.useState<string | null>(null)
+  const [expenseSheetId, setExpenseSheetId] = React.useState<string | null>(null)
+  const [whatsappTraceId, setWhatsappTraceId] = React.useState<string | null>(null)
 
   const loadData = React.useCallback(async () => {
     setLoading(true)
@@ -328,10 +336,14 @@ export default function TransactionsPage() {
 
                     <TableCell className="font-medium text-foreground">
                       {tx.from_account_name ? (
-                        <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => tx.from_account_id && setAccountSheetId(String(tx.from_account_id))}
+                          className="flex items-center gap-1.5 hover:text-blue-600 transition-colors text-left font-medium"
+                        >
                           <Building2 className="size-3.5 text-muted-foreground" />
                           <span>{tx.from_account_name}</span>
-                        </div>
+                        </button>
                       ) : (
                         <span className="text-muted-foreground italic">— External Source —</span>
                       )}
@@ -339,10 +351,14 @@ export default function TransactionsPage() {
 
                     <TableCell className="font-medium text-foreground">
                       {tx.to_account_name ? (
-                        <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => tx.to_account_id && setAccountSheetId(String(tx.to_account_id))}
+                          className="flex items-center gap-1.5 hover:text-blue-600 transition-colors text-left font-medium"
+                        >
                           <Building2 className="size-3.5 text-muted-foreground" />
                           <span>{tx.to_account_name}</span>
-                        </div>
+                        </button>
                       ) : (
                         <span className="text-muted-foreground italic">— External Payee —</span>
                       )}
@@ -351,9 +367,13 @@ export default function TransactionsPage() {
                     <TableCell className="max-w-[240px] truncate text-foreground font-medium">
                       <span>{tx.description || 'General Ledger Entry'}</span>
                       {tx.correlation_id && (
-                        <span className="text-[10px] font-mono text-muted-foreground block truncate">
+                        <button
+                          type="button"
+                          onClick={() => setWhatsappTraceId(tx.correlation_id || null)}
+                          className="text-[10px] font-mono text-muted-foreground hover:text-emerald-600 block truncate transition-colors text-left"
+                        >
                           Ref: {tx.correlation_id}
-                        </span>
+                        </button>
                       )}
                     </TableCell>
 
@@ -377,6 +397,25 @@ export default function TransactionsPage() {
           </Table>
         </div>
       )}
+
+      {/* Sub-sheets */}
+      <AccountDetailSheet
+        open={!!accountSheetId}
+        onOpenChange={(op) => !op && setAccountSheetId(null)}
+        account={accountSheetId ? { id: accountSheetId, name: 'Money Account', account_type: 'bank', currency: 'INR', opening_balance: 0, current_balance: 0, status: 'active', created_at: '' } : null}
+      />
+
+      <ExpenseDetailSheet
+        open={!!expenseSheetId}
+        onOpenChange={(op) => !op && setExpenseSheetId(null)}
+        expense={expenseSheetId ? { id: expenseSheetId, amount: 0 } : null}
+      />
+
+      <WhatsAppTraceModal
+        open={!!whatsappTraceId}
+        onOpenChange={(op) => !op && setWhatsappTraceId(null)}
+        correlationId={whatsappTraceId}
+      />
     </div>
   )
 }

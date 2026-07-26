@@ -181,6 +181,115 @@ def build_receipt_data(
             ],
         ]
         id_prefix = "LA"
+    elif draft.action_type is DraftActionType.TRANSFER_MONEY:
+        # Petty cash issue/return (Finance Slice 5) emits this same
+        # DraftActionType as a plain transfer -- `direction` (only ever set
+        # by petty cash's build_draft) is the one field that tells them
+        # apart. from_account_name/to_account_name/other_account_name/
+        # recipient_account_name are all real resolved names, not ids --
+        # see transfer/petty_cash nodes.py's build_draft docstrings.
+        direction = str(fields.get("direction", "")).strip().lower()
+        value = str(fields.get("amount", "")).strip() or "0"
+        if direction in ("issue", "return"):
+            category = "Petty cash"
+            recipient = str(fields.get("recipient_account_name") or "—")
+            other_name = str(fields.get("other_account_name") or "—")
+            if direction == "return":
+                subtitle = f"Returned by {recipient}"
+                sections = [
+                    [
+                        ReceiptField("user", "Returned by", recipient),
+                        ReceiptField("building", "Into", other_name),
+                    ]
+                ]
+            else:
+                subtitle = f"Issued to {recipient}"
+                sections = [
+                    [
+                        ReceiptField("user", "Issued to", recipient),
+                        ReceiptField("building", "From", other_name),
+                    ]
+                ]
+            id_prefix = "PC"
+        else:
+            category = "Transfer"
+            from_name = str(fields.get("from_account_name") or "—")
+            to_name = str(fields.get("to_account_name") or "—")
+            subtitle = f"{from_name} → {to_name}"
+            sections = [
+                [
+                    ReceiptField("building", "From", from_name),
+                    ReceiptField("building", "To", to_name),
+                ]
+            ]
+            id_prefix = "TR"
+        sections.append(
+            [
+                ReceiptField("user", "Reported by", reporter),
+                ReceiptField("whatsapp", "Source", "WhatsApp"),
+            ]
+        )
+    elif draft.action_type is DraftActionType.REVERSE_TRANSACTION:
+        # target_kind/reversal_* are seeded from a real DB read
+        # (runtime/reversal_query.py), never an AI hint -- see
+        # reverse/nodes.py's build_draft docstring.
+        target_kind = str(fields.get("target_kind", "")).strip().lower()
+        category = "Reversal"
+        value = str(fields.get("reversal_amount", "")).strip() or "0"
+        if target_kind == "transfer":
+            from_name = str(fields.get("reversal_from_account_name") or "—")
+            to_name = str(fields.get("reversal_to_account_name") or "—")
+            subtitle = "Transfer reversed"
+            sections = [
+                [
+                    ReceiptField("building", "From", from_name),
+                    ReceiptField("building", "To", to_name),
+                ]
+            ]
+        else:
+            description = str(fields.get("reversal_description") or "—")
+            occurred_date = str(fields.get("reversal_occurred_date") or "—")
+            subtitle = "Expense reversed"
+            sections = [
+                [
+                    ReceiptField("store", "Description", description),
+                    ReceiptField("calendar", "Original date", occurred_date),
+                ]
+            ]
+        sections.append(
+            [
+                ReceiptField("user", "Reported by", reporter),
+                ReceiptField("whatsapp", "Source", "WhatsApp"),
+            ]
+        )
+        id_prefix = "RV"
+    elif draft.action_type is DraftActionType.MANAGE_MONEY_ACCOUNT:
+        action = str(fields.get("action", "")).strip().lower()
+        category = "Account"
+        if action == "create":
+            value = "Created"
+            subtitle = f"New account: {fields.get('name', '—')}"
+            sections = [[ReceiptField("building", "Account", str(fields.get("name") or "—"))]]
+        elif action == "rename":
+            value = "Renamed"
+            subtitle = f"{fields.get('target_name', '—')} → {fields.get('new_name', '—')}"
+            sections = [
+                [
+                    ReceiptField("building", "From", str(fields.get("target_name") or "—")),
+                    ReceiptField("building", "To", str(fields.get("new_name") or "—")),
+                ]
+            ]
+        else:
+            value = "Deactivated"
+            subtitle = str(fields.get("target_name") or "—")
+            sections = [[ReceiptField("building", "Account", str(fields.get("target_name") or "—"))]]
+        sections.append(
+            [
+                ReceiptField("user", "Reported by", reporter),
+                ReceiptField("whatsapp", "Source", "WhatsApp"),
+            ]
+        )
+        id_prefix = "AC"
     else:
         category = "Material usage"
         value = _fmt_quantity(fields)

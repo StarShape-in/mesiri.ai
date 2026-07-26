@@ -48,9 +48,15 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
+import { useSearchParams } from 'react-router-dom'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { RecordExpenseDialog } from '@/components/expenses/record-expense-dialog'
 import { ExpenseDetailSheet } from '@/components/expenses/expense-detail-sheet'
+import { AccountDetailSheet } from '@/components/accounts/account-detail-sheet'
+import { VendorDetailSheet } from '@/components/vendors/vendor-detail-sheet'
+import { CategoryDetailSheet } from '@/components/categories/category-detail-sheet'
+import { CustodianProfileSheet } from '@/components/accounts/custodian-profile-sheet'
+import { WhatsAppTraceModal } from '@/components/whatsapp/whatsapp-trace-modal'
 import {
   Dialog,
   DialogContent,
@@ -168,10 +174,38 @@ export default function ExpensesPage() {
   const [pageSize, setPageSize] = React.useState(10)
 
   // Dialog & Sheet state
+  const [searchParams] = useSearchParams()
   const [recordDialogOpen, setRecordDialogOpen] = React.useState(false)
   const [selectedExpense, setSelectedExpense] = React.useState<ExpenseItem | null>(null)
   const [sheetOpen, setSheetOpen] = React.useState(false)
   const [previewReceiptUrl, setPreviewReceiptUrl] = React.useState<string | null>(null)
+
+  // Connected Sub-sheet States
+  const [accountSheetId, setAccountSheetId] = React.useState<string | null>(null)
+  const [vendorSheetId, setVendorSheetId] = React.useState<string | null>(null)
+  const [categorySheetId, setCategorySheetId] = React.useState<string | null>(null)
+  const [custodianSheetId, setCustodianSheetId] = React.useState<string | null>(null)
+  const [whatsappTraceId, setWhatsappTraceId] = React.useState<string | null>(null)
+
+  React.useEffect(() => {
+    const paramId = searchParams.get('id')
+    const paramCatId = searchParams.get('category_id')
+    const paramVendorId = searchParams.get('vendor_id')
+
+    if (paramCatId) {
+      setCategoryFilter(paramCatId)
+    }
+    if (paramVendorId) {
+      setSearch(paramVendorId)
+    }
+    if (paramId && expenses.length > 0) {
+      const match = expenses.find((e) => e.id === paramId || e.expense_number === paramId)
+      if (match) {
+        setSelectedExpense(match)
+        setSheetOpen(true)
+      }
+    }
+  }, [searchParams, expenses])
 
   const handleExpenseCreated = (newExpense: ExpenseItem) => {
     setExpenses((prev) => [newExpense, ...prev])
@@ -582,7 +616,14 @@ export default function ExpensesPage() {
                       {row.occurred_date}
                     </TableCell>
                     <TableCell className="text-xs font-medium">
-                      <Badge variant="outline" className="font-normal text-[11px] bg-background">
+                      <Badge
+                        variant="outline"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setCategorySheetId(row.category_id || row.category_name)
+                        }}
+                        className="font-normal text-[11px] bg-background hover:border-indigo-500/50 hover:text-indigo-600 transition-colors cursor-pointer"
+                      >
                         {row.category_name}
                       </Badge>
                     </TableCell>
@@ -603,9 +644,16 @@ export default function ExpensesPage() {
                           </button>
                         )}
                       </div>
-                      <div className="text-[11px] text-muted-foreground truncate">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setVendorSheetId(row.vendor_name)
+                        }}
+                        className="text-[11px] text-muted-foreground hover:text-emerald-600 truncate transition-colors font-medium text-left"
+                      >
                         {row.vendor_name}
-                      </div>
+                      </button>
                     </TableCell>
                     <TableCell className="text-xs">
                       {row.source === 'whatsapp' ? (
@@ -788,9 +836,60 @@ export default function ExpensesPage() {
       />
 
       <ExpenseDetailSheet
-        expense={selectedExpense}
+        expense={
+          selectedExpense
+            ? {
+                id: selectedExpense.id,
+                amount: selectedExpense.amount,
+                category_name: selectedExpense.category_name,
+                category_id: selectedExpense.category_id,
+                vendor_name: selectedExpense.vendor_name,
+                status: selectedExpense.workflow_status,
+                recorded_date: selectedExpense.occurred_date,
+                payment_method: selectedExpense.payment_method,
+                receipt_url: receiptUrlByExpenseId[selectedExpense.id],
+                description: selectedExpense.description,
+              }
+            : null
+        }
         open={sheetOpen}
         onOpenChange={setSheetOpen}
+        onOpenAccount={(accId) => setAccountSheetId(accId)}
+        onOpenVendor={(venId) => setVendorSheetId(venId)}
+        onOpenCategory={(catId) => setCategorySheetId(catId)}
+        onOpenCustodian={(custodian) => setCustodianSheetId(custodian)}
+        onOpenWhatsAppTrace={(traceId) => setWhatsappTraceId(traceId)}
+      />
+
+      <AccountDetailSheet
+        open={!!accountSheetId}
+        onOpenChange={(op) => !op && setAccountSheetId(null)}
+        account={accountSheetId ? { id: accountSheetId, name: 'Money Account', account_type: 'bank', currency: 'INR', opening_balance: 0, current_balance: 0, status: 'active', created_at: '' } : null}
+      />
+
+      <VendorDetailSheet
+        open={!!vendorSheetId}
+        onOpenChange={(op) => !op && setVendorSheetId(null)}
+        vendor={vendorSheetId ? { id: vendorSheetId, name: 'Vendor', status: 'active', expense_count: 0, total_amount_paid: 0 } : null}
+      />
+
+      <CategoryDetailSheet
+        open={!!categorySheetId}
+        onOpenChange={(op) => !op && setCategorySheetId(null)}
+        category={categorySheetId ? { id: categorySheetId, code: 'CAT', name: 'Expense Category', status: 'active', total_amount_spent: 0, expense_count: 0 } : null}
+      />
+
+      <CustodianProfileSheet
+        open={!!custodianSheetId}
+        onOpenChange={(op) => !op && setCustodianSheetId(null)}
+        custodianIdOrName={custodianSheetId}
+        onOpenAccount={(accId) => setAccountSheetId(accId)}
+      />
+
+      <WhatsAppTraceModal
+        open={!!whatsappTraceId}
+        onOpenChange={(op) => !op && setWhatsappTraceId(null)}
+        correlationId={whatsappTraceId}
       />
     </div>
   )
