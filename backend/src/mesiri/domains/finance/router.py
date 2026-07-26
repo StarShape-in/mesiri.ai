@@ -136,6 +136,11 @@ class FinanceSettingsResponse(BaseModel):
     duplicate_window_hours: int = 24
     default_tax_rate: Decimal = Decimal("18")
     enabled_payment_methods: list[str] = ["bank_transfer", "cash", "upi", "cheque", "card"]
+    low_balance_warning_enabled: bool = True
+    transfer_receipt_enabled: bool = True
+    expense_card_enabled: bool = True
+    weekly_digest_enabled: bool = True
+    weekly_digest_schedule: str = "weekly_monday"
 
 
 class UpdateFinanceSettingsRequest(BaseModel):
@@ -148,6 +153,11 @@ class UpdateFinanceSettingsRequest(BaseModel):
     duplicate_window_hours: int | None = None
     default_tax_rate: Decimal | None = None
     enabled_payment_methods: list[str] | None = None
+    low_balance_warning_enabled: bool | None = None
+    transfer_receipt_enabled: bool | None = None
+    expense_card_enabled: bool | None = None
+    weekly_digest_enabled: bool | None = None
+    weekly_digest_schedule: str | None = None
 
 
 class FinanceReportRow(BaseModel):

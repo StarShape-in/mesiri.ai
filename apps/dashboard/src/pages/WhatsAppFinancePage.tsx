@@ -20,45 +20,113 @@ import { PhoneMappingTable } from '@/components/whatsapp/phone-mapping-table'
 import { WhatsAppTraceLogs } from '@/components/whatsapp/whatsapp-trace-logs'
 import { WhatsAppSandboxDialog } from '@/components/whatsapp/whatsapp-sandbox-dialog'
 
-import { fetchCompanySummary, type CompanySummary } from '@/lib/api'
+import {
+  fetchCompanySummary,
+  type CompanySummary,
+  fetchFinanceSettingsApi,
+  updateFinanceSettingsApi,
+} from '@/lib/api'
 
 export default function WhatsAppFinancePage() {
   const { scope } = useScope()
   const [summary, setSummary] = React.useState<CompanySummary | null>(null)
 
+  // Rule Toggles & Values
+  const [lowBalanceEnabled, setLowBalanceEnabled] = React.useState(true)
+  const [lowBalanceThreshold, setLowBalanceThreshold] = React.useState(50000)
+  const [transferReceiptEnabled, setTransferReceiptEnabled] = React.useState(true)
+  const [expenseCardEnabled, setExpenseCardEnabled] = React.useState(true)
+  const [showVisualCard] = React.useState(true)
+  const [weeklyDigestEnabled, setWeeklyDigestEnabled] = React.useState(true)
+  const [weeklyDigestSchedule, setWeeklyDigestSchedule] = React.useState('weekly_monday')
+
   React.useEffect(() => {
     let active = true
-    async function loadSummary() {
+    async function loadData() {
       try {
-        const data = await fetchCompanySummary()
-        if (active) setSummary(data)
+        const [sum, settings] = await Promise.all([
+          fetchCompanySummary().catch(() => null),
+          fetchFinanceSettingsApi().catch(() => null),
+        ])
+        if (active) {
+          if (sum) setSummary(sum)
+          if (settings) {
+            if (settings.low_float_threshold) setLowBalanceThreshold(Number(settings.low_float_threshold))
+            if (settings.low_balance_warning_enabled !== undefined) setLowBalanceEnabled(settings.low_balance_warning_enabled)
+            if (settings.transfer_receipt_enabled !== undefined) setTransferReceiptEnabled(settings.transfer_receipt_enabled)
+            if (settings.expense_card_enabled !== undefined) setExpenseCardEnabled(settings.expense_card_enabled)
+            if (settings.weekly_digest_enabled !== undefined) setWeeklyDigestEnabled(settings.weekly_digest_enabled)
+            if (settings.weekly_digest_schedule) setWeeklyDigestSchedule(settings.weekly_digest_schedule)
+          }
+        }
       } catch (err) {
-        console.warn('Failed to load company summary for WhatsApp KPI cards:', err)
+        console.warn('Failed to load initial data for WhatsApp page:', err)
       }
     }
-    loadSummary()
+    loadData()
     return () => {
       active = false
     }
   }, [])
 
-  // Automation Rule States
+  // Automation Rule Tab state
   const [activeRuleTab, setActiveRuleTab] = React.useState('low_balance')
-
-  // Rule Toggles & Values
-  const [lowBalanceEnabled, setLowBalanceEnabled] = React.useState(true)
-  const [lowBalanceThreshold, setLowBalanceThreshold] = React.useState(50000)
-
-  const [transferReceiptEnabled, setTransferReceiptEnabled] = React.useState(true)
-
-  const [expenseCardEnabled, setExpenseCardEnabled] = React.useState(true)
-  const [showVisualCard] = React.useState(true)
-
-  const [weeklyDigestEnabled, setWeeklyDigestEnabled] = React.useState(true)
-  const [weeklyDigestSchedule, setWeeklyDigestSchedule] = React.useState('weekly_monday')
-
   // Sandbox Dialog State
   const [sandboxOpen, setSandboxOpen] = React.useState(false)
+
+  const handleToggleLowBalance = async (enabled: boolean) => {
+    setLowBalanceEnabled(enabled)
+    try {
+      await updateFinanceSettingsApi({ low_balance_warning_enabled: enabled })
+    } catch (err) {
+      console.warn('Failed to update low balance setting:', err)
+    }
+  }
+
+  const handleThresholdChange = async (val: number) => {
+    setLowBalanceThreshold(val)
+    try {
+      await updateFinanceSettingsApi({ low_float_threshold: val })
+    } catch (err) {
+      console.warn('Failed to update threshold:', err)
+    }
+  }
+
+  const handleToggleTransfer = async (enabled: boolean) => {
+    setTransferReceiptEnabled(enabled)
+    try {
+      await updateFinanceSettingsApi({ transfer_receipt_enabled: enabled })
+    } catch (err) {
+      console.warn('Failed to update transfer receipt setting:', err)
+    }
+  }
+
+  const handleToggleExpenseCard = async (enabled: boolean) => {
+    setExpenseCardEnabled(enabled)
+    try {
+      await updateFinanceSettingsApi({ expense_card_enabled: enabled })
+    } catch (err) {
+      console.warn('Failed to update expense card setting:', err)
+    }
+  }
+
+  const handleToggleWeeklyDigest = async (enabled: boolean) => {
+    setWeeklyDigestEnabled(enabled)
+    try {
+      await updateFinanceSettingsApi({ weekly_digest_enabled: enabled })
+    } catch (err) {
+      console.warn('Failed to update weekly digest setting:', err)
+    }
+  }
+
+  const handleWeeklyDigestScheduleChange = async (val: string) => {
+    setWeeklyDigestSchedule(val)
+    try {
+      await updateFinanceSettingsApi({ weekly_digest_schedule: val })
+    } catch (err) {
+      console.warn('Failed to update weekly digest schedule:', err)
+    }
+  }
 
   const scopeLabel = React.useMemo(() => {
     if (scope.mode === 'portfolio') return 'Portfolio Scope (All Organization WhatsApp Triggers)'
@@ -151,7 +219,7 @@ export default function WhatsAppFinancePage() {
           </TabsTrigger>
           <TabsTrigger value="logs" className="text-xs gap-1.5 font-semibold">
             <Terminal className="size-3.5 text-purple-500" />
-            Live Trace Stream
+            WhatsApp Activity Audit Log
           </TabsTrigger>
         </TabsList>
 
@@ -176,9 +244,9 @@ export default function WhatsAppFinancePage() {
                 badgeText="Treasury Alert"
                 active={activeRuleTab === 'low_balance'}
                 onSelect={() => setActiveRuleTab('low_balance')}
-                onToggle={setLowBalanceEnabled}
+                onToggle={handleToggleLowBalance}
                 thresholdValue={lowBalanceThreshold}
-                onThresholdChange={setLowBalanceThreshold}
+                onThresholdChange={handleThresholdChange}
               />
 
               <AutomationRuleCard
@@ -190,7 +258,7 @@ export default function WhatsAppFinancePage() {
                 badgeText="Transfer Receipt"
                 active={activeRuleTab === 'transfer_receipt'}
                 onSelect={() => setActiveRuleTab('transfer_receipt')}
-                onToggle={setTransferReceiptEnabled}
+                onToggle={handleToggleTransfer}
               />
 
               <AutomationRuleCard
@@ -202,7 +270,7 @@ export default function WhatsAppFinancePage() {
                 badgeText="Visual Card"
                 active={activeRuleTab === 'expense_card'}
                 onSelect={() => setActiveRuleTab('expense_card')}
-                onToggle={setExpenseCardEnabled}
+                onToggle={handleToggleExpenseCard}
               />
 
               <AutomationRuleCard
@@ -214,9 +282,9 @@ export default function WhatsAppFinancePage() {
                 badgeText="Scheduled Cron"
                 active={activeRuleTab === 'weekly_digest'}
                 onSelect={() => setActiveRuleTab('weekly_digest')}
-                onToggle={setWeeklyDigestEnabled}
+                onToggle={handleToggleWeeklyDigest}
                 scheduleValue={weeklyDigestSchedule}
-                onScheduleChange={setWeeklyDigestSchedule}
+                onScheduleChange={handleWeeklyDigestScheduleChange}
               />
             </div>
 

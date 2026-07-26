@@ -130,13 +130,13 @@ export function WhatsAppTraceLogs() {
 
         <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono">
           <Terminal className="size-3.5 text-emerald-500" />
-          <span>Real-time Ingress Stream • 24h TTL</span>
+          <span>WhatsApp Inbound & Outbound Message Activity Audit Log</span>
         </div>
       </div>
 
       <div className="border rounded-lg overflow-hidden bg-slate-950 text-slate-100 font-mono text-[11px] p-3 shadow-lg flex flex-col gap-2">
         <div className="flex items-center justify-between text-slate-400 border-b border-slate-800 pb-2 font-semibold">
-          <span>EVENT TRACE STREAM</span>
+          <span>WHATSAPP MESSAGE ACTIVITY AUDIT LOG</span>
           <span>LATENCY</span>
         </div>
 

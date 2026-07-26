@@ -53,12 +53,17 @@ export function WhatsAppSandboxDialog({
             <div className="p-1.5 rounded-md bg-emerald-500/10 border border-emerald-500/20">
               <Bot className="size-5" />
             </div>
-            <DialogTitle className="text-base font-bold">
-              WhatsApp AI Sandbox & Rule Simulator
-            </DialogTitle>
+            <div className="flex items-center gap-2">
+              <DialogTitle className="text-base font-bold">
+                WhatsApp AI Sandbox & Rule Simulator
+              </DialogTitle>
+              <Badge variant="outline" className="text-[10px] font-mono border-amber-500/30 text-amber-600 dark:text-amber-400 bg-amber-500/10">
+                Dry-Run Preview
+              </Badge>
+            </div>
           </div>
           <DialogDescription className="text-xs">
-            Test how the VPS WhatsApp AI Assistant parses incoming messages and triggers automations.
+            Test how the VPS WhatsApp AI Assistant parses incoming messages in dry-run mode without creating database records or consuming expense sequence numbers.
           </DialogDescription>
         </DialogHeader>
 
@@ -84,7 +89,7 @@ export function WhatsAppSandboxDialog({
             className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold gap-1.5 self-end"
           >
             <Sparkles className="size-3.5" />
-            {simulating ? 'Processing AI Pipeline...' : 'Run Simulation'}
+            {simulating ? 'Running AI Dry-Run...' : 'Run Dry-Run Preview'}
           </Button>
 
           {/* Simulation Output */}
@@ -93,10 +98,10 @@ export function WhatsAppSandboxDialog({
               <div className="flex items-center justify-between border-b pb-2">
                 <span className="font-bold text-foreground flex items-center gap-1.5">
                   <CheckCircle2 className="size-4 text-emerald-500" />
-                  AI Pipeline Output
+                  AI Pipeline Dry-Run Output
                 </span>
-                <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-semibold text-[10px]">
-                  {simulationResult.confidence}
+                <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-300 font-semibold text-[10px]">
+                  Dry-Run (No DB Row Created)
                 </Badge>
               </div>
 

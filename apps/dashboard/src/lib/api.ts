@@ -741,6 +741,11 @@ export interface FinanceSettingsItem {
   duplicate_window_hours: number
   default_tax_rate: number
   enabled_payment_methods: string[]
+  low_balance_warning_enabled?: boolean
+  transfer_receipt_enabled?: boolean
+  expense_card_enabled?: boolean
+  weekly_digest_enabled?: boolean
+  weekly_digest_schedule?: string
 }
 
 export async function fetchFinanceSettingsApi(): Promise<FinanceSettingsItem> {
