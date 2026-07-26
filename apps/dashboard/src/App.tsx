@@ -17,6 +17,7 @@ import PettyCashPage from '@/pages/PettyCashPage'
 import FinanceOverviewPage from '@/pages/FinanceOverviewPage'
 import FinanceReportsPage from '@/pages/FinanceReportsPage'
 import FinanceSettingsPage from '@/pages/FinanceSettingsPage'
+import ExpenseDetailPage from '@/pages/ExpenseDetailPage'
 import TransactionsPage from '@/pages/TransactionsPage'
 import VendorsPage from '@/pages/VendorsPage'
 import CategoriesPage from '@/pages/CategoriesPage'
@@ -55,6 +56,7 @@ export default function App() {
         <Route path="finance" element={<Navigate to="/finance/expenses" replace />} />
         <Route path="finance/overview" element={<FinanceOverviewPage />} />
         <Route path="finance/expenses" element={<ExpensesPage />} />
+        <Route path="finance/expenses/:id" element={<ExpenseDetailPage />} />
         <Route path="finance/receipts" element={<ReceiptsPage />} />
         <Route path="finance/accounts" element={<AccountsPage />} />
         <Route path="finance/whatsapp" element={<WhatsAppFinancePage />} />

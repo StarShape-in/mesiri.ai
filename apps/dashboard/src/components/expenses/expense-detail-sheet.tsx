@@ -1,3 +1,4 @@
+import { useNavigate } from 'react-router-dom'
 import {
   Sheet,
   SheetContent,
@@ -79,6 +80,7 @@ export function ExpenseDetailSheet({
   onBack,
   hasHistoryBack,
 }: ExpenseDetailSheetProps) {
+  const navigate = useNavigate()
   if (!expense) return null
 
   const isConfirmed = expense.status === 'confirmed' || expense.status === 'approved' || !expense.status
@@ -132,6 +134,18 @@ export function ExpenseDetailSheet({
                 </SheetDescription>
               </div>
             </div>
+
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-[11px] font-semibold gap-1 text-emerald-600 border-emerald-500/30 hover:bg-emerald-500/10"
+              onClick={() => {
+                onOpenChange(false)
+                navigate(`/finance/expenses/${expense.id}`)
+              }}
+            >
+              Open Page →
+            </Button>
           </div>
         </SheetHeader>
 
