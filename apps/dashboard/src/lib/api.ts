@@ -440,7 +440,34 @@ export async function fetchExpenseApi(expenseId: string) {
   return res.data
 }
 
-export async function fetchExpensesApi(params?: { project_id?: string; site_id?: string }) {
+export interface CategoryItem {
+  id: string
+  name: string
+  code: string | null
+  status: 'active' | 'inactive'
+  expense_count: number
+  total_amount_spent: number
+}
+
+export async function fetchCategoriesApi(): Promise<CategoryItem[]> {
+  const res = await api.get('/expenses/categories')
+  return res.data
+}
+
+export async function createCategoryApi(payload: { name: string; code?: string }): Promise<CategoryItem> {
+  const res = await api.post('/expenses/categories', payload)
+  return res.data
+}
+
+export async function updateCategoryApi(
+  categoryId: string,
+  payload: { name?: string; code?: string; status?: 'active' | 'inactive' }
+): Promise<CategoryItem> {
+  const res = await api.patch(`/expenses/categories/${categoryId}`, payload)
+  return res.data
+}
+
+export async function fetchExpensesApi(params?: { project_id?: string; site_id?: string; category_id?: string }) {
   const res = await api.get('/expenses', { params })
   return res.data
 }

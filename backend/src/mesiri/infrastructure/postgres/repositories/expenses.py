@@ -236,6 +236,93 @@ class PostgresExpenseCategoryRepository:
         assert category is not None
         return category
 
+    async def list_with_metrics(self, organization_id: uuid.UUID) -> list[dict]:
+        """List categories for org along with expense count and total spend."""
+        exp_count = sa.func.count(_expenses.c.id).label("expense_count")
+        exp_sum = sa.func.coalesce(sa.func.sum(_expenses.c.amount), 0).label("total_amount")
+
+        stmt = (
+            sa.select(
+                _expense_categories,
+                exp_count,
+                exp_sum,
+            )
+            .select_from(
+                _expense_categories.outerjoin(
+                    _expenses,
+                    sa.and_(
+                        _expenses.c.category_id == _expense_categories.c.id,
+                        _expenses.c.workflow_status == "confirmed",
+                    ),
+                )
+            )
+            .where(_expense_categories.c.organization_id == organization_id)
+            .group_by(_expense_categories.c.id)
+            .order_by(_expense_categories.c.name)
+        )
+        res = await self.conn.execute(stmt)
+        results = []
+        for row in res.mappings().all():
+            cat = _row_to_category(row)
+            results.append({
+                "category": cat,
+                "expense_count": row.expense_count,
+                "total_amount": Decimal(row.total_amount),
+            })
+        return results
+
+    async def create(
+        self,
+        organization_id: uuid.UUID,
+        name: str,
+        *,
+        code: str | None = None,
+        parent_category_id: uuid.UUID | None = None,
+        created_by: uuid.UUID,
+    ) -> ExpenseCategory:
+        new_id = uuid.uuid4()
+        await self.conn.execute(
+            sa.insert(_expense_categories).values(
+                id=new_id,
+                organization_id=organization_id,
+                name=name.strip(),
+                code=code.strip().upper() if code else None,
+                parent_category_id=parent_category_id,
+                status="active",
+                created_by=created_by,
+            )
+        )
+        return await self.get_by_id(organization_id, new_id)  # type: ignore[return-value]
+
+    async def update(
+        self,
+        organization_id: uuid.UUID,
+        category_id: uuid.UUID,
+        *,
+        name: str | None = None,
+        code: str | None = None,
+        status: str | None = None,
+        updated_by: uuid.UUID,
+    ) -> ExpenseCategory | None:
+        values: dict = {"updated_by": updated_by, "updated_at": sa.func.now()}
+        if name is not None:
+            values["name"] = name.strip()
+        if code is not None:
+            values["code"] = code.strip().upper() if code else None
+        if status is not None:
+            values["status"] = status.strip().lower()
+
+        await self.conn.execute(
+            sa.update(_expense_categories)
+            .where(
+                _expense_categories.c.id == category_id,
+                _expense_categories.c.organization_id == organization_id,
+            )
+            .values(**values)
+        )
+        return await self.get_by_id(organization_id, category_id)
+
+
 
 class PostgresExpenseRepository:
     def __init__(self, conn: AsyncConnection):
