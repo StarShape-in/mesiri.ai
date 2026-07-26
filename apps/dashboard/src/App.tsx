@@ -15,6 +15,7 @@ import AccountsPage from '@/pages/AccountsPage'
 import WhatsAppFinancePage from '@/pages/WhatsAppFinancePage'
 import PettyCashPage from '@/pages/PettyCashPage'
 import FinanceOverviewPage from '@/pages/FinanceOverviewPage'
+import FinanceReportsPage from '@/pages/FinanceReportsPage'
 import FinanceSettingsPage from '@/pages/FinanceSettingsPage'
 import TransactionsPage from '@/pages/TransactionsPage'
 import VendorsPage from '@/pages/VendorsPage'
@@ -62,7 +63,7 @@ export default function App() {
         <Route path="finance/petty-cash" element={<PettyCashPage />} />
         <Route path="finance/vendors" element={<VendorsPage />} />
         <Route path="finance/categories" element={<CategoriesPage />} />
-        <Route path="finance/reports" element={<OperationalPlaceholder title="Finance Reports" />} />
+        <Route path="finance/reports" element={<FinanceReportsPage />} />
         <Route path="finance/settings" element={<FinanceSettingsPage />} />
 
         {/* Materials Section */}

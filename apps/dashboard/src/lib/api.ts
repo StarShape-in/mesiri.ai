@@ -753,5 +753,35 @@ export async function updateFinanceSettingsApi(
   return res.data
 }
 
+export interface FinanceReportRow {
+  id: string
+  code: string | null
+  title: string
+  category: string | null
+  account_name: string | null
+  amount: number
+  percentage: number | null
+  status: string | null
+  notes: string | null
+}
+
+export interface FinanceReportStatementItem {
+  report_type: string
+  title: string
+  subtitle: string
+  generated_at: string
+  total_inflows: number
+  total_outflows: number
+  net_margin: number
+  rows: FinanceReportRow[]
+}
+
+export async function fetchFinanceReportApi(params?: {
+  report_type?: string
+}): Promise<FinanceReportStatementItem> {
+  const res = await api.get('/finance/reports/statement', { params })
+  return res.data
+}
+
 
 

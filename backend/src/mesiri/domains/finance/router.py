@@ -146,6 +146,29 @@ class UpdateFinanceSettingsRequest(BaseModel):
     enabled_payment_methods: list[str] | None = None
 
 
+class FinanceReportRow(BaseModel):
+    id: str
+    code: str | None = None
+    title: str
+    category: str | None = None
+    account_name: str | None = None
+    amount: Decimal
+    percentage: Decimal | None = None
+    status: str | None = None
+    notes: str | None = None
+
+
+class FinanceReportStatementResponse(BaseModel):
+    report_type: str
+    title: str
+    subtitle: str
+    generated_at: str
+    total_inflows: Decimal
+    total_outflows: Decimal
+    net_margin: Decimal
+    rows: list[FinanceReportRow]
+
+
 
 # ---------------------------------------------------------------------------
 # Request schema
@@ -308,6 +331,133 @@ async def update_finance_settings(
     updated = FinanceSettingsResponse(**updated_dict)
     _FINANCE_SETTINGS_STORE[org_id] = updated
     return updated
+
+
+@router.get("/reports/statement", response_model=FinanceReportStatementResponse)
+async def generate_financial_report_statement(
+    report_type: str = "pnl",
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Generate executive financial statement report with calculated line items."""
+    exp_repo = PostgresExpenseRepository(conn)
+    acc_repo = PostgresMoneyAccountRepository(conn)
+    cat_repo = PostgresExpenseCategoryRepository(conn)
+    vendor_repo = PostgresVendorRepository(conn)
+
+    expenses = await exp_repo.list_confirmed(auth_context.organization_id)
+    accounts = await acc_repo.list_accounts(auth_context.organization_id)
+    cat_metrics = await cat_repo.list_with_metrics(auth_context.organization_id)
+    vendor_metrics = await vendor_repo.list_with_metrics(auth_context.organization_id)
+
+    total_outflows = sum((e.amount for e in expenses), Decimal("0"))
+    total_inflows = Decimal("0")
+    net_margin = total_inflows - total_outflows
+
+    rows: list[FinanceReportRow] = []
+
+    if report_type == "pnl":
+        title = "Income & Operational Expense Statement (P&L)"
+        subtitle = "Cumulative summary of revenues and operational expenditure"
+        for m in cat_metrics:
+            pct = (m["total_amount"] / total_outflows * 100) if total_outflows > 0 else Decimal("0")
+            rows.append(
+                FinanceReportRow(
+                    id=str(m["category"].id),
+                    code=m["category"].code,
+                    title=m["category"].name,
+                    category="Expense Category",
+                    amount=m["total_amount"],
+                    percentage=pct.round(2),
+                    status=m["category"].status,
+                    notes=f"{m['expense_count']} records logged",
+                )
+            )
+
+    elif report_type == "category_breakdown":
+        title = "Category Expenditure Audit Statement"
+        subtitle = "Detailed audit line items per expense classification"
+        for m in cat_metrics:
+            pct = (m["total_amount"] / total_outflows * 100) if total_outflows > 0 else Decimal("0")
+            rows.append(
+                FinanceReportRow(
+                    id=str(m["category"].id),
+                    code=m["category"].code,
+                    title=m["category"].name,
+                    category="Disbursement",
+                    amount=m["total_amount"],
+                    percentage=pct.round(2),
+                    status=m["category"].status,
+                )
+            )
+
+    elif report_type == "cashflow":
+        title = "Cash Flow & Money Account Movement Statement"
+        subtitle = "Liquidity statement across bank accounts and cash floats"
+        for acc in accounts:
+            try:
+                bal = await acc_repo.get_balance(auth_context.organization_id, acc.id)
+            except Exception:
+                bal = acc.opening_balance
+            rows.append(
+                FinanceReportRow(
+                    id=str(acc.id),
+                    code=acc.account_type.upper(),
+                    title=acc.name,
+                    account_name=acc.name,
+                    amount=Decimal(bal),
+                    status=acc.status,
+                    notes=f"Opening: ₹{acc.opening_balance}",
+                )
+            )
+
+    elif report_type == "vendor_ledger":
+        title = "Vendor Outstandings & Supplier Payable Statement"
+        subtitle = "Audit statement of total vendor payouts and unpaid liabilities"
+        for v in vendor_metrics:
+            rows.append(
+                FinanceReportRow(
+                    id=str(v["vendor"].id),
+                    code=v["vendor"].tax_id,
+                    title=v["vendor"].name,
+                    category="Supplier / Payee",
+                    amount=v["total_amount"],
+                    status=v["vendor"].status,
+                    notes=f"Unpaid: ₹{v['unpaid_amount']}",
+                )
+            )
+
+    else:
+        title = "Petty Cash Reconciliation Statement"
+        subtitle = "Custodian cash float allocation and utilization report"
+        petty_accs = [a for a in accounts if a.account_type in ("cash", "employee_advance")]
+        for acc in petty_accs:
+            try:
+                bal = await acc_repo.get_balance(auth_context.organization_id, acc.id)
+            except Exception:
+                bal = acc.opening_balance
+            rows.append(
+                FinanceReportRow(
+                    id=str(acc.id),
+                    code="PETTY_FLOAT",
+                    title=acc.name,
+                    account_name=acc.name,
+                    amount=Decimal(bal),
+                    status=acc.status,
+                    notes=f"Allocation: ₹{acc.opening_balance}",
+                )
+            )
+
+    return FinanceReportStatementResponse(
+        report_type=report_type,
+        title=title,
+        subtitle=subtitle,
+        generated_at=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        total_inflows=total_inflows,
+        total_outflows=total_outflows,
+        net_margin=net_margin,
+        rows=rows,
+    )
 
 
 @router.get("/accounts", response_model=list[MoneyAccountResponse])
