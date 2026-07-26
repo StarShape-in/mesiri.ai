@@ -57,3 +57,19 @@ def test_maps_deactivate_fields():
 def test_missing_account_type_defaults_to_cash():
     cmd = build_command(_confirmed({"action": "create", "name": "Site Cash"}))
     assert cmd.account_type == "cash"
+
+
+def test_maps_created_by_role():
+    """Seeded by runtime/inbound_journey.py, validated in
+    application/finance/validation.py -- defense-in-depth for the role gate
+    that already blocks a disallowed role earlier (see
+    runtime/inbound_journey.py and runtime/account_admin_journey.py)."""
+    cmd = build_command(
+        _confirmed({"action": "create", "name": "Site Cash", "created_by_role": "FINANCE"})
+    )
+    assert cmd.created_by_role == "FINANCE"
+
+
+def test_missing_created_by_role_defaults_to_none():
+    cmd = build_command(_confirmed({"action": "create", "name": "Site Cash"}))
+    assert cmd.created_by_role is None

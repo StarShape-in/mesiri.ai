@@ -80,6 +80,7 @@ def _command(scenario: dict, **overrides) -> ManageMoneyAccountCommand:
         idempotency_key=f"acct-{uuid.uuid4()}",
         organization_id=str(scenario["org_id"]),
         created_by=str(scenario["user_id"]),
+        created_by_role="ADMIN",
         action="create",
         name="Site Cash",
     )

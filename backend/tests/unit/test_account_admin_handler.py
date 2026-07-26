@@ -22,7 +22,14 @@ USR = "22222222-2222-4222-8222-222222222222"
 
 
 def _command(**overrides) -> ManageMoneyAccountCommand:
-    base = dict(idempotency_key="idem_1", organization_id=ORG, created_by=USR, action="create", name="Site Cash")
+    base = dict(
+        idempotency_key="idem_1",
+        organization_id=ORG,
+        created_by=USR,
+        created_by_role="ADMIN",
+        action="create",
+        name="Site Cash",
+    )
     base.update(overrides)
     return ManageMoneyAccountCommand(**base)
 
@@ -107,6 +114,8 @@ async def test_create_with_duplicate_name_is_rejected_by_resolver():
 
 
 def _confirmed(fields: dict) -> ConfirmedActionV2:
+    f = {"created_by_role": "ADMIN"}
+    f.update(fields)
     draft = DraftActionV2(
         draft_id="draft_1",
         correlation_id="cor_1",
@@ -114,7 +123,7 @@ def _confirmed(fields: dict) -> ConfirmedActionV2:
         action_type=DraftActionType.MANAGE_MONEY_ACCOUNT,
         organization_id=ORG,
         user_id=USR,
-        fields=fields,
+        fields=f,
     )
     return ConfirmedActionV2(
         confirmed_action_id="conf_1",

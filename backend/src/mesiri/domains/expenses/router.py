@@ -382,12 +382,55 @@ async def get_expense(
     expense = await repo.get_by_id(auth_context.organization_id, expense_id)
     if expense is None:
         raise HTTPException(status_code=404, detail="Expense not found")
+
+    cat_name = None
+    if expense.category_id:
+        cat_repo = PostgresExpenseCategoryRepository(conn)
+        cat = await cat_repo.get_by_id(auth_context.organization_id, expense.category_id)
+        if cat:
+            cat_name = cat.name
+
+    vendor_name = None
+    if getattr(expense, "vendor_id", None):
+        v_repo = PostgresVendorRepository(conn)
+        v = await v_repo.get_by_id(auth_context.organization_id, expense.vendor_id)
+        if v:
+            vendor_name = v.name
+
+    proj_name = None
+    if expense.project_id:
+        from sqlalchemy import text
+        res = await conn.execute(
+            text("SELECT name FROM projects WHERE id = :pid AND organization_id = :org_id"),
+            {"pid": str(expense.project_id), "org_id": str(auth_context.organization_id)},
+        )
+        prow = res.mappings().first()
+        if prow:
+            proj_name = prow["name"]
+
+    user_name, user_email, user_role = None, None, None
+    if expense.created_by:
+        from sqlalchemy import text
+        ures = await conn.execute(
+            text("SELECT full_name, email, role FROM users WHERE id = :uid"),
+            {"uid": str(expense.created_by)},
+        )
+        user_row = ures.mappings().first()
+        if user_row:
+            user_name = user_row["full_name"]
+            user_email = user_row["email"]
+            user_role = user_row["role"]
+
     return ExpenseResponse(
         id=expense.id,
         organization_id=expense.organization_id,
         project_id=expense.project_id,
+        project_name=proj_name,
         site_id=expense.site_id,
         category_id=expense.category_id,
+        category_name=cat_name,
+        vendor_id=getattr(expense, "vendor_id", None),
+        vendor_name=vendor_name,
         amount=expense.amount,
         currency=expense.currency,
         description=expense.description,
@@ -399,6 +442,10 @@ async def get_expense(
         source_message_id=expense.source_message_id,
         correlation_id=expense.correlation_id,
         created_by=expense.created_by,
+        created_by_name=user_name,
+        created_by_email=user_email,
+        created_by_role=user_role,
+        created_at=getattr(expense, "created_at", None),
     )
 
 

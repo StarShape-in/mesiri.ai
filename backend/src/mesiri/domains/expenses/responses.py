@@ -11,9 +11,13 @@ class ExpenseResponse(BaseModel):
     id: uuid.UUID
     organization_id: uuid.UUID
     project_id: uuid.UUID
-    site_id: uuid.UUID | None
+    project_name: str | None = None
+    site_id: uuid.UUID | None = None
+    site_name: str | None = None
     category_id: uuid.UUID
     category_name: str | None = None
+    vendor_id: uuid.UUID | None = None
+    vendor_name: str | None = None
     amount: Decimal
     currency: str
     description: str | None
@@ -25,6 +29,10 @@ class ExpenseResponse(BaseModel):
     source_message_id: str | None
     correlation_id: str | None
     created_by: uuid.UUID
+    created_by_name: str | None = None
+    created_by_email: str | None = None
+    created_by_role: str | None = None
+    created_at: datetime.datetime | str | None = None
 
 
 class RecordExpenseResponse(BaseModel):

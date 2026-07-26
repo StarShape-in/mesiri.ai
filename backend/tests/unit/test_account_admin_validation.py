@@ -10,9 +10,35 @@ USR = "22222222-2222-4222-8222-222222222222"
 
 
 def _command(**overrides) -> ManageMoneyAccountCommand:
-    base = dict(idempotency_key="idem_1", organization_id=ORG, created_by=USR, action="create")
+    base = dict(
+        idempotency_key="idem_1",
+        organization_id=ORG,
+        created_by=USR,
+        created_by_role="ADMIN",
+        action="create",
+    )
     base.update(overrides)
     return ManageMoneyAccountCommand(**base)
+
+
+def test_finance_role_has_no_role_reason():
+    assert validate(_command(created_by_role="FINANCE", name="Site Cash")) == []
+
+
+def test_site_engineer_role_is_rejected():
+    reasons = validate(_command(created_by_role="SITE_ENGINEER", name="Site Cash"))
+    assert "only an admin or finance user can manage accounts" in reasons
+
+
+def test_missing_role_is_rejected():
+    """A None/blank role must fail closed, not be treated as allowed."""
+    assert "only an admin or finance user can manage accounts" in validate(
+        _command(created_by_role=None, name="Site Cash")
+    )
+
+
+def test_role_check_is_case_insensitive():
+    assert validate(_command(created_by_role="admin", name="Site Cash")) == []
 
 
 def test_create_with_name_has_no_reasons():

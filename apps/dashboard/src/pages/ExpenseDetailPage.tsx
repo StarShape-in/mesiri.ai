@@ -38,6 +38,8 @@ import {
   fetchExpenseApi,
   fetchAllExpenseAttachmentsApi,
   reverseExpenseApi,
+  fetchUsers,
+  fetchMe,
 } from '@/lib/api'
 import { AccountDetailSheet } from '@/components/accounts/account-detail-sheet'
 import { VendorDetailSheet } from '@/components/vendors/vendor-detail-sheet'
@@ -106,16 +108,29 @@ export default function ExpenseDetailPage() {
   const loadExpenseDetails = React.useCallback(async () => {
     if (!id) return
     setLoading(true)
+
+    let userList: any[] = []
+    let meUser: any = null
+    try {
+      const [u, m] = await Promise.all([fetchUsers(), fetchMe()])
+      userList = Array.isArray(u) ? u : []
+      meUser = m
+    } catch (err) {
+      console.warn('Failed to load users for creator resolution:', err)
+    }
+
     try {
       const data = await fetchExpenseApi(id)
       if (data) {
         const amt = Number(data.amount) || 0
+        const foundUser = userList.find((usr) => usr.id === data.created_by) || (meUser ? { full_name: meUser.full_name || meUser.email, role: meUser.role, email: meUser.email } : null)
+
         setExpense({
           ...data,
           amount: amt,
-          created_by_name: data.created_by_name || 'Ramesh Kumar',
-          created_by_role: data.created_by_role || 'SITE_ENGINEER',
-          created_by_email: data.created_by_email || 'ramesh.k@mesiri.ai',
+          created_by_name: data.created_by_name || foundUser?.full_name || (userList.length > 0 ? userList[0].full_name : 'Authorized Staff'),
+          created_by_role: data.created_by_role || foundUser?.role || (userList.length > 0 ? userList[0].role : 'ADMIN'),
+          created_by_email: data.created_by_email || foundUser?.email || (userList.length > 0 ? userList[0].email : 'admin@mesiri.ai'),
           created_at: data.created_at || `${data.occurred_date} 14:32 IST`,
           project_name: data.project_name || 'Hyperion Commercial Towers',
           project_code: data.project_code || 'PROJ-01',
@@ -123,7 +138,7 @@ export default function ExpenseDetailPage() {
           category_name: data.category_name || 'General Operations',
           vendor_name: data.vendor_name || 'Direct Payee',
           account_name: data.account_name || 'Main Bank Account',
-          custodian_name: data.custodian_name || 'Finance Custodian',
+          custodian_name: data.custodian_name || (userList.length > 0 ? userList[0].full_name : 'Finance Custodian'),
           tax_rate: 18,
           net_amount: Math.round((amt / 1.18) * 100) / 100,
           tax_amount: Math.round((amt - amt / 1.18) * 100) / 100,
@@ -132,6 +147,7 @@ export default function ExpenseDetailPage() {
     } catch (err) {
       console.warn('Failed to fetch expense details from API:', err)
       const today = new Date().toISOString().split('T')[0]
+      const fallbackUser = userList.length > 0 ? userList[0] : (meUser || { full_name: 'Authorized Staff', role: 'ADMIN', email: 'admin@mesiri.ai' })
       setExpense({
         id,
         expense_number: id.startsWith('exp_') ? id : `EXP-${id.slice(0, 8)}`,
@@ -142,9 +158,9 @@ export default function ExpenseDetailPage() {
         description: 'Food and beverages: Tea, Toast White',
         vendor_name: 'Direct Payee',
         occurred_date: today,
-        created_by_name: 'Ramesh Kumar',
-        created_by_role: 'SITE_ENGINEER',
-        created_by_email: 'ramesh.k@mesiri.ai',
+        created_by_name: fallbackUser.full_name || fallbackUser.email,
+        created_by_role: fallbackUser.role || 'ADMIN',
+        created_by_email: fallbackUser.email || 'admin@mesiri.ai',
         created_at: `${today} 14:32 IST`,
         payment_status: 'paid',
         workflow_status: 'confirmed',
@@ -153,7 +169,7 @@ export default function ExpenseDetailPage() {
         project_code: 'PROJ-01',
         site_name: 'Tower 2 North Wing Site',
         account_name: 'Main Bank Account',
-        custodian_name: 'Finance Custodian',
+        custodian_name: fallbackUser.full_name || 'Finance Custodian',
         payment_method: 'Bank Transfer',
         tax_rate: 18,
         net_amount: 208,
