@@ -1137,24 +1137,41 @@ async def seed_organization_finance(
         payload = FinanceSeedRequest()
 
     engine = get_engine()
-    async with engine.begin() as conn:
-        result = await conn.execute(
-            sa.select(organizations_table.c.id).where(organizations_table.c.id == org_id)
-        )
-        if result.first() is None:
-            raise HTTPException(status_code=404, detail="Organization not found")
+    try:
+        async with engine.begin() as conn:
+            result = await conn.execute(
+                sa.select(organizations_table.c.id).where(organizations_table.c.id == org_id)
+            )
+            if result.first() is None:
+                raise HTTPException(status_code=404, detail="Organization not found")
 
-        admin_user_id = uuid.uuid4()
-        if admin.get("sub"):
-            try:
-                admin_user_id = uuid.UUID(admin["sub"])
-            except (ValueError, TypeError):
-                pass
+            admin_user_id = uuid.uuid4()
+            if admin.get("sub"):
+                try:
+                    admin_user_id = uuid.UUID(admin["sub"])
+                except (ValueError, TypeError):
+                    pass
 
-        seeder = AdminFinanceSeedingService(conn)
-        stats = await seeder.seed_organization(
-            organization_id=org_id,
-            created_by=admin_user_id,
-            include_demo_transactions=payload.include_demo_transactions,
+            seeder = AdminFinanceSeedingService(conn)
+            stats = await seeder.seed_organization(
+                organization_id=org_id,
+                created_by=admin_user_id,
+                include_demo_transactions=payload.include_demo_transactions,
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # Surface the real DB error (constraint name, missing column, etc.)
+        # in both the response and journalctl instead of a bare 500 -- the
+        # seeder has already hit several distinct constraint violations that
+        # were each indistinguishable from the client's point of view.
+        import logging
+
+        logging.getLogger(__name__).exception(
+            "seed_organization_finance failed for org_id=%s", org_id
         )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Finance seeding failed: {type(exc).__name__}: {exc}",
+        ) from exc
     return FinanceSeedResponse(organization_id=org_id, **stats)
