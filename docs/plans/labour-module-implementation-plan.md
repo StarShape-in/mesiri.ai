@@ -1,6 +1,6 @@
 # Labour Module — Master Implementation Plan
 
-**Status:** In progress — Phases 0, 1, 2 complete. **Next: Phase 3 (workflow).**
+**Status:** In progress — Phases 0–3 complete. **Next: Phase 4 (persistence).**
 **Owner:** Alan Raj
 **Started:** 2026-07-25
 **Last updated:** 2026-07-26
@@ -570,12 +570,15 @@ Update as work proceeds. `[x]` = done and pushed.
 - [x] Contract tests (20)
 
 ### Phase 3 — Workflow
-- [ ] `workflows/labour_update/` graph + nodes
-- [ ] Worker-matching node (asks on low confidence — P4)
-- [ ] Temporary-worker handling (P3)
-- [ ] Preview / confirmation node (P2)
-- [ ] Register in `workflows/registry.py`
-- [ ] Unit tests
+- [x] `workflows/labour_update/` graph + nodes
+- [x] Worker-matching node (asks on low confidence — P4)
+- [x] Temporary-worker handling (P3)
+- [x] Preview / confirmation node (P2)
+- [x] Register in `workflows/registry.py`
+- [x] Unit tests (35) + LangGraph integration tests (5)
+
+See §13 for the one structurally new thing Phase 3 introduced (a re-entrant,
+variable-length slot loop) and why it was done that way.
 
 ### Phase 4 — Persistence
 - [ ] Migration: workforce register
@@ -650,6 +653,7 @@ data for a future dashboard — so that building the UI later requires
 | 2026-07-25 | Merged 34 incoming Finance commits. Added §2.4: attendance already has a reserved slot in the image-purpose picker, duplicate-detection precedent is field-based (image hashing still to build), attachment/gallery paths now test-covered. 1046 tests passing. |
 | 2026-07-26 | **Phase 1 (domain) and Phase 2 (contracts) complete.** Workforce vocabulary + worker matching with confidence scoring; `RecordLabourAttendanceCommand` with lines that are either a named worker or a headcount group. Four decisions taken: shared abstraction approved, Q5 resolved (support both, mixed — now P10), Q2 resolved (contractor free text), and P4 amended so a trade mismatch lowers confidence rather than proving a different person. 1091 tests passing. |
 | 2026-07-26 | Shared execution scaffolding extracted (§7.1) as an isolated commit before Labour: dispatcher failure contract + recovery sweep. Corrected the earlier wrong claim that `ResolutionResult` was duplicated — it is not, and was left alone. 124 lines removed, 1046 tests passing. |
+| 2026-07-26 | **Phase 3 (workflow) complete.** `workflows/labour_update/` graph + nodes, registered under `WorkflowKey.LABOUR_ATTENDANCE`. Introduced the module's one structurally new pattern: a re-entrant matching node that asks about one worker per pass, since Labour is the first workflow whose number of questions depends on the message (§13). 35 unit tests + 5 LangGraph integration tests. Lint clean. |
 | 2026-07-26 | Product-clarity pass following design review. Added §3A **Definition of Done** (the finish line, 10 criteria), **P8 Future integration readiness** with expected-consumer table, **P9 Optimize for speed of recording** including its acknowledged tension with P4, strengthened **P7** to name Activity as the connective tissue between all operational modules, expanded **P2** to the full Module→Action→Project→Site→Capture→AI→Preview→Confirm→Save pattern, added **Q5** (headcount-only attendance — flagged decide-early as it affects the domain model), and made the dashboard deferral explicit. No architectural changes; scope unchanged. |
 
 ---
@@ -658,7 +662,7 @@ data for a future dashboard — so that building the UI later requires
 
 **Read this first if you are picking this up in a new session.**
 
-### Done and on `origin/main`
+### Done
 
 | Phase | What landed | Commit |
 |---|---|---|
@@ -666,45 +670,66 @@ data for a future dashboard — so that building the UI later requires
 | — | Shared execution scaffolding (§7.1) — extracted *before* Labour so it adds no scaffolding of its own | `ddb20dd` |
 | 1 | `domains/workforce/workers.py` + `matching.py`, 29 tests | `08e3cee` |
 | 2 | `DraftActionType.RECORD_LABOUR_ATTENDANCE`, `RecordLabourAttendanceCommand`, 20 tests | `2f78ca9` |
+| 3 | `workflows/labour_update/` graph + nodes, registered; 35 unit + 5 integration tests | _(local commit — not yet pushed)_ |
 
-**1098 tests passing, lint clean** at the last verified point.
+**Verified locally after Phase 3: 1072 passing, lint clean across the repo.**
+
+Two caveats about that number, so a future session doesn't chase ghosts:
+
+- **9 failures and 15 collection errors are pre-existing** and unrelated to
+  Labour (`test_adapter_conversion.py`, `test_replies.py`,
+  `test_admin_user_access_api.py`, plus modules that import `passlib`).
+  Verified by stashing all Labour work and re-running: byte-identical
+  failure set. They are local-environment gaps, not regressions.
+- **1072 < the 1098 previously recorded** for the same reason: several test
+  modules fail to *collect* locally because optional dependencies
+  (`passlib`, `langgraph`) aren't installed on this machine. CI installs
+  them and sees the higher number. Compare like with like before concluding
+  anything has regressed.
+
+### What Phase 3 built
+
+`apps/whatsapp-assistant/src/workflows/labour_update/`:
+
+- **`nodes.py`** — `match_workers`, `build_draft`, `request_confirmation`.
+- **`graph.py`** — `START -> match_workers -> (ask_slot -> END | continue)
+  -> build_draft -> request_confirmation -> END`.
+- Registered in `workflows/registry.py` under `WorkflowKey.LABOUR_ATTENDANCE`
+  (the key already existed; until now it resolved to `None` and the user got
+  "not supported yet").
+
+The design and its one genuinely novel element are documented in §13 — read
+that before changing `match_workers`.
 
 ### Not started
 
-**Phase 3 (workflow) onwards.** Nothing exists yet in
-`apps/whatsapp-assistant/src/workflows/labour_update/` beyond an empty
-`__init__.py`.
-
-### What Phase 3 has to do
-
-Build the LangGraph workflow, mirroring `workflows/material/` for shape and
-`workflows/expense_capture/` for slot-filling.
-
-1. `graph.py` + `nodes.py` in `workflows/labour_update/`.
-2. A **worker-matching node**. Candidates are seeded into `collected_fields`
-   by the caller — a node must never query a repository itself (see
-   `workflows/runtime.py`). Call `domains/workforce/matching.match_worker`
-   and, on `ASK_USER`, use `workflows/slots.py` to ask. When
-   `ScoredCandidate.trade_changed` is set, word the question as *"same worker
-   with an updated trade, or a different Ravi?"* — not a bare "which of
-   these?".
-3. **Temporary workers** — an unmatched name is recorded on the attendance
-   line with `worker_id=None`. It must **not** be written to the register
-   (principle P1). Promotion is a separate explicit act, offered after
-   confirmation.
-4. **Preview + confirmation node** — same shape as material's
-   `request_confirmation`. Must show project, site, date, the lines
-   (named and headcount together), and estimated cost.
-5. Register the graph in `workflows/registry.py` under
-   `WorkflowKey.LABOUR_ATTENDANCE` (the key already exists).
-
-### Then
+**Phase 4 onwards.**
 
 Phase 4 persistence (migration — **do not touch 0120's tables**, see ADR-L1),
 Phase 5 repositories + application layer, Phase 6 WhatsApp wiring
 (canonicalization mapping, planner routing, extraction prompt rewritten for
 named workers *and* headcount, image attachment via the existing
 `IMAGE_PURPOSE_ROWS` mechanism), Phase 7 platform readiness.
+
+### What Phase 3 leaves for its callers (mostly Phase 6)
+
+The graph is complete and correct but is not yet *fed* by anything. Three
+seeding obligations, none of which the graph can do for itself because a node
+must never query a repository (`workflows/runtime.py`):
+
+1. **`collected_fields['lines']`** — AI extraction must produce the list-of-
+   lines shape (§13.1). Today the Gemini adapter's `labour_update` slot
+   extracts flat `headcount, trade, hours, contractor, project_name`, which
+   cannot express named workers at all. **This is the single biggest
+   remaining piece of Labour**, and it is where open question Q1 gets
+   answered.
+2. **`collected_fields['worker_candidates']`** — register candidates for the
+   project/site, read by the caller and seeded, exactly as
+   `_seed_duplicate_check` does for expenses. Needs Phase 5's repository.
+   Until then the graph behaves correctly with none seeded: every named
+   worker becomes a temporary worker and nothing is asked.
+3. **`collected_fields['project_name']` / `['site_name']`** — optional, for
+   the confirmation preview. Omitted rather than showing a raw UUID.
 
 ### Working agreements in force
 
@@ -728,3 +753,112 @@ named workers *and* headcount, image attachment via the existing
   precedent (`find_potential_duplicate`) is field-based, not image-based.
 - **Q4** — wage per line vs inherited. Current design stores the value used
   on the line so history cannot drift; flagged to Alan, not yet confirmed.
+
+---
+
+## 13. Phase 3 design — the worker-matching loop
+
+Recorded here rather than only in code comments because it is the one place
+Labour departs from an established platform pattern, and a future session
+that doesn't understand *why* will very reasonably try to "fix" it back into
+the shape every other workflow uses.
+
+### 13.1 The input shape
+
+`collected_fields['lines']` is a list of dicts, each **either** a named person
+**or** a headcount group (P10), freely mixed in one attendance:
+
+```python
+{"worker_name": "Ravi", "trade": "mason",  "headcount": 1,  "daily_wage": 800}
+{"worker_name": None,   "trade": "helper", "headcount": 12, "daily_wage": 600}
+```
+
+The node adds two keys as it works: `worker_id` (the resolved register entry,
+or `None` for a temporary worker) and `worker_match_resolved` (bookkeeping,
+stripped in `build_draft` so it never reaches the `extra: forbid` command).
+
+### 13.2 The problem: a variable number of questions
+
+Every other v1 workflow asks a **fixed** number of questions.
+`expense_capture` has exactly two slots — `account_id` and
+`duplicate_confirm` — each its own node with its own conditional edge, each
+keyed on a constant slot name.
+
+Labour cannot work that way. One attendance may name seven workers, of whom
+any number between zero and seven are ambiguous, and **the graph is compiled
+once and cached** (`registry.py` — "a WhatsApp message must never trigger a
+graph recompilation"). The shape of the graph therefore cannot depend on the
+message.
+
+Compounding it: the graph is compiled **without a checkpointer** and is
+re-invoked from scratch on every inbound message. The only thing that
+survives between the question and the answer is `collected_fields`, persisted
+as `WorkflowState.v1`.
+
+### 13.3 The resolution: one re-entrant node, one question per pass
+
+`match_workers` is a single node that, on each pass:
+
+1. Applies the answer to the previous question, if one is pending.
+2. Scans the lines **in order**, resolving everything it can silently —
+   `AUTO_MATCHED` stamps the `worker_id`, `NO_MATCH` marks a temporary worker.
+3. Stops at the first `ASK_USER` line, emits the question, and ends the pass.
+
+The line being asked about is encoded **in the slot name** —
+`worker_match:2` — because `awaiting_slot` is the only routing signal both
+the graph and the runtime can see. The graph's conditional edge therefore
+**prefix-matches** rather than comparing a constant, which is what lets one
+edge serve every line. It is still slot-*specific* (a stale `account_id`
+slot does not trigger it), which is the bug expense_capture's
+`_route_after_account_resolution` documents.
+
+**Why resolve-then-ask, rather than asking about each line as it is reached:**
+this is P9 made concrete. A ten-worker report with nine confident matches
+asks exactly one question. Asking per line as encountered would be simpler to
+write and unusable on site.
+
+**Why it terminates:** every pass either records a decision on at least one
+line or asks about one. There is no state in which it does neither.
+
+**Why the option list is recomputed on resume rather than persisted:**
+`match_worker` is pure and the candidate list is unchanged between passes, so
+re-scoring reproduces exactly the list the user was shown. Persisting it
+would be a second source of truth that could drift.
+
+### 13.4 Two rules the node enforces that are easy to break later
+
+- **"Someone new" is always the last option.** Without it the user cannot say
+  "none of these", and a temporary worker becomes unrecordable rather than
+  first-class (P3). Choosing it sets `worker_id = None` and writes **nothing**
+  to the register (P1).
+- **Option labels are bare names.** A WhatsApp list row title over 24
+  characters makes the send side drop the entire list back to plain text
+  (`runtime/inbound_journey.py`'s `_render_reply`). Match *reasons* therefore
+  go in the prompt body, never the label. Two candidates sharing a name are
+  disambiguated by trade — the one case where a bare name genuinely cannot
+  identify the choice.
+
+### 13.5 The one architectural exception, stated plainly
+
+`nodes.py` imports `mesiri.domains.workforce.matching` — **the first workflow
+node to import backend domain code.** The rule nodes obey is "no I/O, no SQL,
+no repository access"; `match_worker` is a pure scoring function over
+candidates the *caller* seeded, so it breaks none of that. The alternative
+considered and rejected was having the runtime pre-compute match results and
+seed those too, which would split one loop across two layers for no gain in
+purity.
+
+### 13.6 A calibration finding worth knowing
+
+Phase 1's scoring means **a trade mismatch does not always produce a
+question.** "Ravi, carpenter" against a registered "Ravi Kumar, mason" scores
+below the ask threshold entirely (partial name 0.30, mismatch −0.15,
+seen-on-site +0.15 = 0.30 < ASK 0.35) and resolves to a **temporary worker**.
+
+That is the safe outcome — it keeps two histories separate, which a later
+promotion can still merge, whereas a wrong merge cannot be undone — but it
+is easy to misread P4 as "a trade mismatch always asks". It does not; the
+mismatch *lowers confidence*, and only an otherwise-strong match lands in the
+ask band. Both behaviours are pinned by tests
+(`test_trade_change_question_names_both_trades` and
+`test_partial_name_with_changed_trade_is_a_new_worker`).

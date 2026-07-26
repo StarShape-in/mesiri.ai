@@ -17,6 +17,7 @@ from .account_admin.graph import build_account_admin_graph
 from .account_balance_query.graph import build_account_balance_query_graph
 from .expense_capture.graph import build_expense_capture_graph
 from .expense_query.graph import build_expense_query_graph
+from .labour_update.graph import build_labour_attendance_graph
 from .material import build_material_graph
 from .material_inventory_query.graph import build_material_inventory_query_graph
 from .petty_cash.graph import build_petty_cash_graph
@@ -36,6 +37,7 @@ _BUILDERS: dict[WorkflowKey, Callable[[], Any]] = {
     WorkflowKey.TRANSFER: build_transfer_graph,
     WorkflowKey.PETTY_CASH: build_petty_cash_graph,
     WorkflowKey.REVERSE: build_reverse_graph,
+    WorkflowKey.LABOUR_ATTENDANCE: build_labour_attendance_graph,
 }
 
 
