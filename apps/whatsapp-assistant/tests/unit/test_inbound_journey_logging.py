@@ -20,7 +20,6 @@ from mesiri_ai import fixtures
 from mesiri_ai.fakes import (
     FakeExtractionProvider,
     FakeSpeechProvider,
-    FakeTranslationProvider,
     FakeVisionProvider,
 )
 from mesiri_contracts.assistant.enums import InputModality
@@ -52,7 +51,6 @@ def _pipeline() -> UnderstandingPipeline:
         speech=FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
         vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
         extraction=FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION),
-        translation=FakeTranslationProvider(),
         object_storage=FakeObjectStorage(),
     )
 
@@ -275,7 +273,6 @@ async def test_voice_message_transcription_logging(anyio_backend: str) -> None: 
         speech=FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
         vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
         extraction=FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION),
-        translation=FakeTranslationProvider(),
         object_storage=storage,
     )
 
@@ -345,7 +342,6 @@ async def test_voice_whoami_is_answered_without_extraction():
         ),
         vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
         extraction=extraction,
-        translation=FakeTranslationProvider(),
         object_storage=storage,
     )
     message = _message(

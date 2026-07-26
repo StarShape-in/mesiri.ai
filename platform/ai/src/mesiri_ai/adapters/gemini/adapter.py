@@ -59,11 +59,17 @@ _VISION_PROMPT = (
 )
 
 _EXTRACTION_PROMPT = (
-    "Extract structured construction data from the text. Return strict JSON with "
-    'keys: "semantic_type" (expense|equipment_usage|material_update|labour_update|'
+    "The text may be in any language (Malayalam, Hindi, Tamil, Bengali, English, "
+    "or code-mixed) -- read it directly, do not wait for a translation. Extract "
+    'structured construction data from the text. Return strict JSON with keys: '
+    '"detected_language" (the source language\'s common English name, e.g. '
+    '"Malayalam", "English"), '
+    '"semantic_type" (expense|equipment_usage|material_update|labour_update|'
     "general_site_update|general_question|whoami_question|inventory_query|"
     "finance_query|transfer|petty_cash|reversal|account_admin|unknown), "
-    '"fields" (object), "missing_fields" (array), '
+    '"fields" (object, values in English except proper nouns/names -- see '
+    "per-type rules below for how to handle names), "
+    '"missing_fields" (array), '
     '"field_confidences" (object of field->0..1). '
     "Never invent values. quantity is always a plain number: strip approximation "
     'words like "almost", "about", "around", "roughly", "nearly" and extract the '
@@ -409,6 +415,7 @@ class GeminiProvider:
             field_confidences={
                 k: float(v) for k, v in (data.get("field_confidences", {}) or {}).items()
             },
+            detected_language=data.get("detected_language"),
             provider=self.provider,
             model=self._settings.model,
             latency_ms=latency_ms,

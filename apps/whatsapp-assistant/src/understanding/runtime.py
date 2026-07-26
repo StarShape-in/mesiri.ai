@@ -29,7 +29,6 @@ def build_pipeline(
         speech=resolver,  # type: ignore[arg-type]
         vision=resolver,  # type: ignore[arg-type]
         extraction=resolver,  # type: ignore[arg-type]
-        translation=resolver,  # type: ignore[arg-type]
         object_storage=object_storage,
         confidence_policy=ConfidencePolicy(),
     )

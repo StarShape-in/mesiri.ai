@@ -65,6 +65,11 @@ class ExtractionResult(BaseModel):
     missing_fields: list[str] = Field(default_factory=list)
     field_confidences: dict[str, float] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
+    # Populated when extract() is called directly on non-English text (the
+    # text path no longer runs a separate translate_to_english() hop -- see
+    # understanding/pipeline.py's _handle_text) so nothing downstream needs
+    # translation to exist to know what language the sender used.
+    detected_language: str | None = None
     provider: str | None = None
     model: str | None = None
     latency_ms: float | None = None

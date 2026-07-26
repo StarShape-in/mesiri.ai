@@ -102,7 +102,6 @@ async def _run_image(pipeline_module_vision, extraction, *, hint):
         speech=AsyncMock(),
         vision=pipeline_module_vision,
         extraction=extraction,
-        translation=AsyncMock(),
         object_storage=storage,
     )
     message = NormalizedMessage(

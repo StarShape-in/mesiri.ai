@@ -30,7 +30,6 @@ from mesiri_ai import fixtures
 from mesiri_ai.fakes import (
     FakeExtractionProvider,
     FakeSpeechProvider,
-    FakeTranslationProvider,
     FakeVisionProvider,
 )
 from mesiri_ai.models import ExtractionResult
@@ -77,7 +76,6 @@ def _pipeline() -> UnderstandingPipeline:
         speech=FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
         vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
         extraction=FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION),
-        translation=FakeTranslationProvider(),
         object_storage=FakeObjectStorage(),
     )
 
@@ -240,7 +238,6 @@ async def test_inbound_journey_starts_workflow_and_replies_with_confirmation_pro
                 latency_ms=180.0,
             )
         ),
-        translation=FakeTranslationProvider(),
         object_storage=FakeObjectStorage(),
     )
     context_resolver = _resolver()
@@ -318,7 +315,6 @@ def _material_pipeline() -> UnderstandingPipeline:
                 latency_ms=180.0,
             )
         ),
-        translation=FakeTranslationProvider(),
         object_storage=FakeObjectStorage(),
     )
 
@@ -569,7 +565,6 @@ async def test_voice_reply_gets_the_same_reply_a_text_message_would():
         speech=FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
         vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
         extraction=FakeExtractionProvider(fixtures.JCB_EQUIPMENT_EXTRACTION),
-        translation=FakeTranslationProvider(),
         object_storage=storage,
     )
     sent_texts: list[tuple[str, str]] = []
@@ -608,7 +603,6 @@ async def test_inventory_query_answer_sets_a_material_hint_for_the_next_message(
                 latency_ms=90.0,
             )
         ),
-        translation=FakeTranslationProvider(),
         object_storage=FakeObjectStorage(),
     )
     graph = FakeCompiledGraph({"draft_action": None, "pending_prompt": "cement: 30 bags"})

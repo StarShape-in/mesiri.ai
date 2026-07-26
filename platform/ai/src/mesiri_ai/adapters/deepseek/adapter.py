@@ -47,12 +47,16 @@ def _looks_untranslated(translated_text: str) -> bool:
     return (non_latin / len(letters)) > 0.3
 
 _EXTRACTION_PROMPT = (
-    "You extract structured construction-site data from a worker's message. "
-    "Return STRICT JSON only, with keys: "
+    "The message may be in any language (Malayalam, Hindi, Tamil, Bengali, "
+    "English, or code-mixed) -- read it directly, do not wait for a "
+    "translation. You extract structured construction-site data from a "
+    "worker's message. Return STRICT JSON only, with keys: "
+    '"detected_language" (the source language\'s common English name, e.g. '
+    '"Malayalam", "English"), '
     '"semantic_type" (one of: expense, equipment_usage, material_update, '
     "labour_update, general_site_update, general_question, inventory_query, "
     "finance_query, transfer, petty_cash, reversal, account_admin, unknown), "
-    '"fields" (object of extracted values), '
+    '"fields" (object of extracted values, in English except proper nouns/names), '
     '"missing_fields" (array of expected-but-absent keys), '
     '"field_confidences" (object mapping each field to 0..1). '
     "Never invent values; if unsure, omit or list under missing_fields. quantity is "
@@ -234,6 +238,7 @@ class DeepSeekExtractionProvider:
             field_confidences={
                 k: float(v) for k, v in (data.get("field_confidences", {}) or {}).items()
             },
+            detected_language=data.get("detected_language"),
             provider=self.provider,
             model=self._s.model,
             latency_ms=latency_ms,

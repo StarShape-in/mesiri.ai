@@ -25,7 +25,6 @@ from mesiri_ai.greeting_classifier import is_greeting_trigger
 from mesiri_ai.models import ExtractionResult
 from mesiri_ai.ports.extraction import StructuredExtractionProvider
 from mesiri_ai.ports.speech import SpeechUnderstandingProvider
-from mesiri_ai.ports.translation import TranslationProvider
 from mesiri_ai.ports.vision import VisionUnderstandingProvider
 from mesiri_ai.whoami_classifier import is_whoami_trigger
 from mesiri_contracts.assistant.candidates import CANDIDATE_TYPES, Candidate, FieldConfidence
@@ -92,14 +91,12 @@ class UnderstandingPipeline:
         speech: SpeechUnderstandingProvider,
         vision: VisionUnderstandingProvider,
         extraction: StructuredExtractionProvider,
-        translation: TranslationProvider,
         object_storage: ObjectStoragePort,
         confidence_policy: ConfidencePolicy | None = None,
     ) -> None:
         self._speech = speech
         self._vision = vision
         self._extraction = extraction
-        self._translation = translation
         self._storage = object_storage
         self._confidence = confidence_policy or ConfidencePolicy()
 
@@ -194,40 +191,30 @@ class UnderstandingPipeline:
             self._apply_deterministic_shortcut(result, SemanticType.WHOAMI_QUESTION)
             return
 
-        translation = await self._translation.translate_to_english(
-            text, correlation_id=result.correlation_id
-        )
-        result.translated_text = translation.translated_text
-        result.detected_language = translation.detected_language
-        result.normalized_text = translation.translated_text or text
-
-        result.provider_executions.append(
-            ProviderExecution(
-                provider=translation.provider or getattr(self._translation, "provider", "unknown"),
-                operation="translate",
-                model=translation.model,
-                latency_ms=translation.latency_ms,
-            )
-        )
-
-        # The is_whoami_trigger check above (before translation) only ever
-        # catches English phrasing -- a non-English text message ("എന്റെ
-        # റോൾ എന്താണ്?") never matches the English phrase list until *after*
-        # translation. _handle_voice already re-checks post-translation for
-        # exactly this reason (STT bakes translation into one call); text was
-        # missing the equivalent second check, so a non-English whoami
-        # question fell through to extraction and came back misclassified as
-        # a GENERAL_QUESTION_ASKED instead of WHOAMI_QUESTION.
-        if is_whoami_trigger(result.normalized_text):
-            self._apply_deterministic_shortcut(result, SemanticType.WHOAMI_QUESTION)
-            return
+        # No separate translate_to_english() hop: extract() now reads the
+        # original-language text directly and returns detected_language
+        # itself (see _EXTRACTION_PROMPT), removing a whole sequential
+        # provider round trip from every text message -- previously ~1.9s
+        # per message, and the source of three separate silent-failure
+        # production bugs (see the Gemini/DeepSeek adapters' git history).
+        #
+        # Known tradeoff: the is_whoami_trigger phrase list is English-only,
+        # and used to get a second, post-translation check here for exactly
+        # that reason ("എന്റെ റോൾ എന്താണ്?" never matches until translated).
+        # That free shortcut for a non-English whoami question is gone --
+        # it now costs one extract() call instead of zero, but is still
+        # answered correctly: extract()'s own schema includes
+        # "whoami_question" as a semantic_type, so _apply_extraction below
+        # classifies it the same way this shortcut would have.
+        result.normalized_text = text
 
         extraction = await self._extraction.extract(
-            result.normalized_text,
+            text,
             semantic_hint=semantic_hint,
             expense_categories=expense_categories,
             correlation_id=result.correlation_id,
         )
+        result.detected_language = extraction.detected_language
         self._apply_extraction(result, extraction, is_empty=False)
 
     async def _handle_voice(

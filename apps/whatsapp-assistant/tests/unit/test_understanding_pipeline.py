@@ -13,7 +13,6 @@ from mesiri_ai import fixtures
 from mesiri_ai.fakes import (
     FakeExtractionProvider,
     FakeSpeechProvider,
-    FakeTranslationProvider,
     FakeVisionProvider,
 )
 from mesiri_contracts.assistant import MediaReference, NormalizedMessage
@@ -35,13 +34,12 @@ def _msg(**kwargs) -> NormalizedMessage:
 
 
 async def _build(
-    *, speech=None, vision=None, extraction=None, translation=None, storage=None
+    *, speech=None, vision=None, extraction=None, storage=None
 ) -> UnderstandingPipeline:
     return UnderstandingPipeline(
         speech=speech or FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
         vision=vision or FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
         extraction=extraction or FakeExtractionProvider(fixtures.JCB_EQUIPMENT_EXTRACTION),
-        translation=translation or FakeTranslationProvider(),
         object_storage=storage or FakeObjectStorage(),
     )
 
@@ -236,19 +234,17 @@ async def test_understanding_result_is_schema_valid_and_serializable():
     assert dumped["correlation_id"] == "cor_pipeline"
 
 
-async def test_text_greeting_skips_translation_and_extraction():
+async def test_text_greeting_skips_extraction():
     """A deterministic "hi" must never depend on an AI provider correctly
     finding no fields -- and should cost nothing while it's at it."""
-    translation = FakeTranslationProvider()
     extraction = FakeExtractionProvider()
-    pipeline = await _build(translation=translation, extraction=extraction)
+    pipeline = await _build(extraction=extraction)
 
     result = await pipeline.understand(_msg(text="hi"))
 
     assert result.semantic_type == SemanticType.UNKNOWN
     assert result.overall_confidence == ConfidenceLevel.HIGH
     assert result.candidates == []
-    assert translation.calls == 0
     assert extraction.calls == 0
 
 

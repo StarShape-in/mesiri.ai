@@ -11,7 +11,6 @@ from mesiri_ai import fixtures
 from mesiri_ai.fakes import (
     FakeExtractionProvider,
     FakeSpeechProvider,
-    FakeTranslationProvider,
     FakeVisionProvider,
 )
 from mesiri_contracts.assistant.enums import InputModality
@@ -28,7 +27,6 @@ def _pipeline(storage: FakeObjectStorage) -> UnderstandingPipeline:
         speech=FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
         vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
         extraction=FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION),
-        translation=FakeTranslationProvider(),
         object_storage=storage,
     )
 
