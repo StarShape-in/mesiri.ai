@@ -251,7 +251,44 @@ export function AppSidebar() {
     }
   }, [isDark])
 
-  const toggleTheme = () => setIsDark((prev) => !prev)
+  const toggleTheme = (event: React.MouseEvent<HTMLButtonElement>) => {
+    const isSupported = typeof document !== 'undefined' && 'startViewTransition' in document
+
+    if (!isSupported) {
+      setIsDark((prev) => !prev)
+      return
+    }
+
+    const x = event.clientX
+    const y = event.clientY
+    const endRadius = Math.hypot(
+      Math.max(x, window.innerWidth - x),
+      Math.max(y, window.innerHeight - y)
+    )
+
+    const transition = (document as Document & { startViewTransition?: (callback: () => void) => { ready: Promise<void> } }).startViewTransition!(() => {
+      setIsDark((prev) => !prev)
+    })
+
+    transition.ready.then(() => {
+      const clipPath = [
+        `circle(0px at ${x}px ${y}px)`,
+        `circle(${endRadius}px at ${x}px ${y}px)`,
+      ]
+      document.documentElement.animate(
+        {
+          clipPath: isDark ? clipPath : [...clipPath].reverse(),
+        },
+        {
+          duration: 450,
+          easing: 'ease-in-out',
+          pseudoElement: isDark
+            ? '::view-transition-old(root)'
+            : '::view-transition-new(root)',
+        }
+      )
+    })
+  }
 
   const getUrlWithScope = (baseUrl: string) => {
     const isOperational = !['/projects', '/users', '/company'].includes(baseUrl)
