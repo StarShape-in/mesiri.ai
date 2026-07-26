@@ -68,3 +68,18 @@ def test_completed_informational_reply_has_no_buttons():
     reply = _render_reply(result, None, None, None)
     assert reply is not None
     assert reply.buttons is None
+
+
+def test_awaiting_input_reply_has_no_buttons():
+    """Mid-workflow slot question ("which account?") renders prompt without Yes/No buttons."""
+    result = WorkflowRunResult.awaiting_input(
+        workflow_key=WorkflowKey.EXPENSE_SUBMIT,
+        correlation_id="cor_1",
+        workflow_instance_id="wf_1",
+        pending_prompt="Which account would you like to pay from?\n1. Site Cash\n2. Own Pocket",
+    )
+    reply = _render_reply(result, None, None, None)
+    assert reply is not None
+    assert reply.text == "Which account would you like to pay from?\n1. Site Cash\n2. Own Pocket"
+    assert reply.buttons is None
+

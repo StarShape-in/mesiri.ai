@@ -148,6 +148,30 @@ async def test_partial_receipt_keeps_missing_fields_and_lowers_confidence():
     assert result.overall_confidence in (ConfidenceLevel.MEDIUM, ConfidenceLevel.LOW)
 
 
+async def test_receipt_raw_fields_reach_extraction_when_description_omits_them():
+    """Real bug: Gemini's vision description is a short prose summary that
+    does not always restate every field in words (e.g. a receipt described
+    as "Restaurant bill for tea and toast" never mentions the total), so
+    extraction must still see raw_fields (amount, vendor, ...) through the
+    text it's given, or the amount is silently lost between the vision call
+    and the extraction call and the user gets asked for it again."""
+    storage = FakeObjectStorage()
+    await storage.put_object("img/4.jpg", b"<image>")
+    extraction = FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION)
+    pipeline = await _build(
+        vision=FakeVisionProvider(fixtures.RECEIPT_WITHOUT_AMOUNT_IN_DESCRIPTION_VISION),
+        extraction=extraction,
+        storage=storage,
+    )
+    msg = _msg(modality=InputModality.IMAGE, media=MediaReference(object_key="img/4.jpg"))
+
+    await pipeline.understand(msg)
+
+    assert "amount: 180" in extraction.last_text
+    assert "vendor: Restaurant" in extraction.last_text
+    assert "Restaurant bill for tea and toast." in extraction.last_text
+
+
 async def test_unreadable_image_is_unusable():
     storage = FakeObjectStorage()
     await storage.put_object("img/3.jpg", b"<image>")

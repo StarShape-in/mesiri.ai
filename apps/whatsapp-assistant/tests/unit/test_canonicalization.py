@@ -8,9 +8,13 @@ from canonicalization import build_canonical_event
 from mesiri_contracts.assistant.candidates import (
     Candidate,
     ExpenseCandidate,
+    FinanceQueryCandidate,
     GeneralQuestionCandidate,
     InventoryQueryCandidate,
     MaterialUpdateCandidate,
+    PettyCashCandidate,
+    ReversalCandidate,
+    TransferCandidate,
 )
 from mesiri_contracts.assistant.canonical_event import CanonicalEventType, IntentCompleteness
 from mesiri_contracts.assistant.confidence import ConfidenceLevel
@@ -30,6 +34,7 @@ def _understanding(
     semantic_type: SemanticType,
     candidates: list[Candidate] | None = None,
     overall_confidence: ConfidenceLevel = ConfidenceLevel.HIGH,
+    original_content_reference: str | None = None,
 ) -> UnderstandingResult:
     return UnderstandingResult(
         source_message_id="msg_1",
@@ -38,6 +43,7 @@ def _understanding(
         semantic_type=semantic_type,
         candidates=candidates or [],
         overall_confidence=overall_confidence,
+        original_content_reference=original_content_reference,
     )
 
 
@@ -254,6 +260,210 @@ def test_inventory_query_without_material_name_is_still_actionable():
     assert event.event_type is CanonicalEventType.INVENTORY_QUERY_ASKED
     assert event.completeness is IntentCompleteness.ACTIONABLE
     assert event.missing_fields == []
+
+
+def test_finance_query_balance_maps_to_account_balance_query_asked():
+    understanding = _understanding(
+        semantic_type=SemanticType.FINANCE_QUERY,
+        candidates=[FinanceQueryCandidate(fields={"query_kind": "balance", "account_name": "Site Cash"})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.ACCOUNT_BALANCE_QUERY_ASKED
+    assert event.completeness is IntentCompleteness.ACTIONABLE
+    assert event.fields["account_name"] == "Site Cash"
+
+
+def test_finance_query_balance_without_account_name_is_still_actionable():
+    """account_name is optional -- absent means "all accounts", not incomplete."""
+    understanding = _understanding(
+        semantic_type=SemanticType.FINANCE_QUERY,
+        candidates=[FinanceQueryCandidate(fields={"query_kind": "balance"})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.ACCOUNT_BALANCE_QUERY_ASKED
+    assert event.completeness is IntentCompleteness.ACTIONABLE
+    assert event.missing_fields == []
+
+
+def test_finance_query_expenses_maps_to_expense_query_asked():
+    understanding = _understanding(
+        semantic_type=SemanticType.FINANCE_QUERY,
+        candidates=[
+            FinanceQueryCandidate(
+                fields={"query_kind": "expenses", "category_name": "diesel", "date_range": "today"}
+            )
+        ],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.EXPENSE_QUERY_ASKED
+    assert event.completeness is IntentCompleteness.ACTIONABLE
+    assert event.fields["category_name"] == "diesel"
+    assert event.fields["date_range"] == "today"
+
+
+def test_finance_query_missing_receipts_flag_is_carried_onto_the_event():
+    """Finance Module Slice 6's missing-receipt nudge: the extraction-side
+    `missing_receipts` boolean flows through untouched, same generic
+    fields-passthrough as any other finance_query field."""
+    understanding = _understanding(
+        semantic_type=SemanticType.FINANCE_QUERY,
+        candidates=[FinanceQueryCandidate(fields={"query_kind": "expenses", "missing_receipts": True})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.EXPENSE_QUERY_ASKED
+    assert event.fields["missing_receipts"] is True
+
+
+def test_finance_query_missing_query_kind_is_unrecognized():
+    understanding = _understanding(
+        semantic_type=SemanticType.FINANCE_QUERY,
+        candidates=[FinanceQueryCandidate(fields={})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.UNRECOGNIZED
+
+
+def test_transfer_maps_to_transfer_requested_actionable():
+    understanding = _understanding(
+        semantic_type=SemanticType.TRANSFER,
+        candidates=[
+            TransferCandidate(
+                fields={"amount": 50000, "from_account_name": "Company Account", "to_account_name": "Site Cash"}
+            )
+        ],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.TRANSFER_REQUESTED
+    assert event.completeness is IntentCompleteness.ACTIONABLE
+    assert event.fields["from_account_name"] == "Company Account"
+    assert event.fields["to_account_name"] == "Site Cash"
+
+
+def test_transfer_missing_amount_needs_clarification():
+    understanding = _understanding(
+        semantic_type=SemanticType.TRANSFER,
+        candidates=[TransferCandidate(fields={"from_account_name": "Company Account"})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.completeness is IntentCompleteness.NEEDS_CLARIFICATION
+    assert "amount" in event.missing_fields
+
+
+def test_transfer_without_account_names_is_still_actionable():
+    """Account names are optional -- absent means the transfer workflow's
+    slot-fill will ask (Finance Module Slice 3)."""
+    understanding = _understanding(
+        semantic_type=SemanticType.TRANSFER,
+        candidates=[TransferCandidate(fields={"amount": 50000})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.TRANSFER_REQUESTED
+    assert event.completeness is IntentCompleteness.ACTIONABLE
+
+
+def test_petty_cash_issue_maps_to_petty_cash_issue_requested():
+    understanding = _understanding(
+        semantic_type=SemanticType.PETTY_CASH,
+        candidates=[
+            PettyCashCandidate(fields={"amount": 20000, "recipient_name": "Alan", "direction": "issue"})
+        ],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.PETTY_CASH_ISSUE_REQUESTED
+    assert event.completeness is IntentCompleteness.ACTIONABLE
+    assert event.fields["recipient_name"] == "Alan"
+
+
+def test_petty_cash_return_maps_to_petty_cash_return_requested():
+    understanding = _understanding(
+        semantic_type=SemanticType.PETTY_CASH,
+        candidates=[
+            PettyCashCandidate(fields={"amount": 3000, "recipient_name": "Alan", "direction": "return"})
+        ],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.PETTY_CASH_RETURN_REQUESTED
+    assert event.completeness is IntentCompleteness.ACTIONABLE
+
+
+def test_petty_cash_missing_amount_needs_clarification():
+    understanding = _understanding(
+        semantic_type=SemanticType.PETTY_CASH,
+        candidates=[PettyCashCandidate(fields={"recipient_name": "Alan", "direction": "issue"})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.completeness is IntentCompleteness.NEEDS_CLARIFICATION
+    assert "amount" in event.missing_fields
+
+
+def test_petty_cash_missing_recipient_name_needs_clarification():
+    understanding = _understanding(
+        semantic_type=SemanticType.PETTY_CASH,
+        candidates=[PettyCashCandidate(fields={"amount": 20000, "direction": "issue"})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.completeness is IntentCompleteness.NEEDS_CLARIFICATION
+    assert "recipient_name" in event.missing_fields
+
+
+def test_petty_cash_missing_direction_is_unrecognized():
+    understanding = _understanding(
+        semantic_type=SemanticType.PETTY_CASH,
+        candidates=[PettyCashCandidate(fields={"amount": 20000, "recipient_name": "Alan"})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.UNRECOGNIZED
+
+
+def test_reversal_expense_maps_to_expense_reversal_requested():
+    understanding = _understanding(
+        semantic_type=SemanticType.REVERSAL,
+        candidates=[ReversalCandidate(fields={"target_kind": "expense"})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.EXPENSE_REVERSAL_REQUESTED
+    assert event.completeness is IntentCompleteness.ACTIONABLE
+
+
+def test_reversal_transfer_maps_to_transfer_reversal_requested():
+    understanding = _understanding(
+        semantic_type=SemanticType.REVERSAL,
+        candidates=[ReversalCandidate(fields={"target_kind": "transfer"})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.TRANSFER_REVERSAL_REQUESTED
+    assert event.completeness is IntentCompleteness.ACTIONABLE
+
+
+def test_reversal_missing_target_kind_is_unrecognized():
+    understanding = _understanding(
+        semantic_type=SemanticType.REVERSAL,
+        candidates=[ReversalCandidate(fields={})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.UNRECOGNIZED
+
+
+def test_media_object_key_is_carried_onto_the_event_fields_when_present():
+    """Generic across every event type -- not expense-specific -- so a
+    confirmed workflow execution can save it as evidence later (see
+    RecordExpenseCommand.media_object_key)."""
+    understanding = _understanding(
+        semantic_type=SemanticType.EXPENSE,
+        candidates=[ExpenseCandidate(fields={"amount": 350, "category": "diesel"})],
+        original_content_reference="media/wamid.1/abc123",
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.fields["media_object_key"] == "media/wamid.1/abc123"
+
+
+def test_media_object_key_is_absent_when_not_an_image():
+    understanding = _understanding(
+        semantic_type=SemanticType.EXPENSE,
+        candidates=[ExpenseCandidate(fields={"amount": 350})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert "media_object_key" not in event.fields
 
 
 def test_general_question_is_not_actionable():

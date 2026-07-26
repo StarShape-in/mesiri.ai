@@ -1,3 +1,4 @@
+import os
 from datetime import UTC, datetime, timedelta
 
 import jwt
@@ -5,7 +6,7 @@ from passlib.context import CryptContext
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-SECRET_KEY = "mesiri-temp-secret-key-change-in-production"
+SECRET_KEY = os.environ.get("MESIRI_JWT_SECRET", "mesiri-temp-secret-key-change-in-production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 1 week
 

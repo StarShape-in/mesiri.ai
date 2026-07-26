@@ -17,7 +17,10 @@ jobs:
         ${{ github.workspace }}/shared/contracts/src:${{ github.workspace }}/platform/ai/src:${{ github.workspace }}/backend/src:${{ github.workspace }}/apps/whatsapp-assistant/src:${{ github.workspace }}/apps/whatsapp-assistant
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.11'
+          enable-cache: true
       - name: Set up Python
         run: uv venv --python 3.11
       - name: Install (runtime + dev + infra + providers)
@@ -72,7 +75,10 @@ jobs:
           --health-timeout 3s --health-retries 10
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.11'
+          enable-cache: true
       - run: uv venv --python 3.11
       - name: Install (with infra SDKs)
         run: uv pip install -e ".[dev,infra,providers]"

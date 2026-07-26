@@ -34,7 +34,8 @@ _VISION_PROMPT = (
 _EXTRACTION_PROMPT = (
     "Extract structured construction data from the text. Return strict JSON with "
     'keys: "semantic_type" (expense|equipment_usage|material_update|labour_update|'
-    "general_site_update|general_question|whoami_question|inventory_query|unknown), "
+    "general_site_update|general_question|whoami_question|inventory_query|"
+    "finance_query|transfer|petty_cash|reversal|unknown), "
     '"fields" (object), "missing_fields" (array), '
     '"field_confidences" (object of field->0..1). '
     "Never invent values. quantity is always a plain number: strip approximation "
@@ -62,7 +63,56 @@ _EXTRACTION_PROMPT = (
     'materials, e.g. "show inventory"). Use this type for questions about how '
     'much of a material is currently in stock (e.g. "how much cement is left?", '
     '"current stock of steel") or its movement history '
-    '(e.g. "show today\'s cement history"). This is a question, never an update.'
+    '(e.g. "show today\'s cement history"). This is a question, never an update.\n'
+    "- finance_query: query_kind, account_name, category_name, date_range, missing_receipts, "
+    "project_name. "
+    'query_kind MUST be exactly "balance" or "expenses" -- never any other word. '
+    'Use "balance" for questions about how much money/cash is in an account '
+    '(e.g. "how much cash do I have?", "balance of Site Cash", "how much money is left?"). '
+    'account_name is the specific account asked about, if any (omit if asking about all '
+    'accounts, e.g. "how much cash do I have"). '
+    'Use "expenses" for questions about past spending '
+    '(e.g. "show my expenses today", "how much did we spend on diesel?", '
+    '"what did we spend this week?"). category_name is the expense category asked about, '
+    'if any (e.g. "diesel", "fuel") -- omit if asking about all expenses. date_range is '
+    'exactly one of "today", "this_week", "this_month" if a time period is stated or implied; '
+    "omit if no time period is mentioned. missing_receipts is `true` when query_kind is "
+    '"expenses" and the question is specifically about which expenses have no receipt/bill '
+    'attached (e.g. "which expenses are missing receipts?", "show expenses without a bill", '
+    '"who hasn\'t uploaded a receipt yet") -- omit entirely otherwise, never set it to false. '
+    "This is always a question, never an update -- "
+    "never confuse with expense (which records a NEW expense being reported).\n"
+    "- transfer: amount, from_account_name, to_account_name, description, project_name. "
+    "Use this type for moving money between two of the organization's own accounts "
+    '(e.g. "transfer ₹50,000 from Company Account to Site Cash", "move 10000 from '
+    'the bank to petty cash"). from_account_name/to_account_name are the account '
+    "names as stated -- extract them even if you're not sure they're real account "
+    "names, they will be matched against the organization's actual accounts "
+    "afterwards. Omit either name if not stated (the user will be asked to clarify). "
+    "Never confuse with expense (paying someone/something outside the organization) "
+    "or finance_query (a question, not a movement of money).\n"
+    "- petty_cash: amount, recipient_name, direction, description, project_name. "
+    "Use this type when money is given to or returned by a specific PERSON "
+    '(not one of the organization\'s own accounts) as petty cash/advance '
+    '(e.g. "give ₹20,000 petty cash to Alan", "issue 5000 cash advance to '
+    'Priya", "Alan returns ₹3,000 petty cash", "Priya returned the remaining '
+    '2000"). recipient_name is the person\'s name as stated -- extract it '
+    "even if you're not sure it's a real user, it will be matched against "
+    'the organization\'s users afterwards. direction MUST be exactly "issue" '
+    '(money going out to the person) or "return" (money coming back from '
+    'the person) -- never any other word. Never confuse with transfer '
+    "(which moves money between the organization's own accounts, not to/from "
+    "a person) or expense (paying an outside vendor/bill, not handing cash "
+    "to a colleague).\n"
+    "- reversal: target_kind. Use this type when the user wants to undo, "
+    "reverse, cancel, or void their most recently recorded expense or "
+    'transfer (e.g. "reverse my last expense", "cancel that transfer", '
+    '"undo the diesel expense I just added", "void my last transaction"). '
+    'target_kind MUST be exactly "expense" or "transfer" -- never any other '
+    'word; infer it from what the user refers to, defaulting to "expense" '
+    "if genuinely ambiguous, since that is the more common case. This "
+    "always targets the single most recent record of that kind -- never "
+    "extract an amount, date, or description for it."
 )
 
 

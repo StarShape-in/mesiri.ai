@@ -19,6 +19,7 @@ _SIMPLE_EVENT_TYPE: dict[SemanticType, CanonicalEventType] = {
     SemanticType.GENERAL_QUESTION: CanonicalEventType.GENERAL_QUESTION_ASKED,
     SemanticType.WHOAMI_QUESTION: CanonicalEventType.IDENTITY_LOOKUP_REQUESTED,
     SemanticType.INVENTORY_QUERY: CanonicalEventType.INVENTORY_QUERY_ASKED,
+    SemanticType.TRANSFER: CanonicalEventType.TRANSFER_REQUESTED,
 }
 
 # MATERIAL_UPDATE is the one semantic type that splits by the candidate's
@@ -26,6 +27,31 @@ _SIMPLE_EVENT_TYPE: dict[SemanticType, CanonicalEventType] = {
 _MATERIAL_DIRECTION_EVENT_TYPE: dict[str, CanonicalEventType] = {
     "received": CanonicalEventType.MATERIAL_RECEIPT_REQUESTED,
     "used": CanonicalEventType.MATERIAL_USAGE_REQUESTED,
+}
+
+# FINANCE_QUERY is the other semantic type that splits by a candidate field
+# -- `query_kind` ("balance" -> account balance, "expenses" -> expense
+# list/sum), same pattern as MATERIAL_UPDATE/direction above.
+_FINANCE_QUERY_KIND_EVENT_TYPE: dict[str, CanonicalEventType] = {
+    "balance": CanonicalEventType.ACCOUNT_BALANCE_QUERY_ASKED,
+    "expenses": CanonicalEventType.EXPENSE_QUERY_ASKED,
+}
+
+# PETTY_CASH is the third semantic type that splits by a candidate field --
+# `direction` ("issue" -> petty cash paid out to someone, "return" -> petty
+# cash paid back in), same pattern as MATERIAL_UPDATE/direction above.
+_PETTY_CASH_DIRECTION_EVENT_TYPE: dict[str, CanonicalEventType] = {
+    "issue": CanonicalEventType.PETTY_CASH_ISSUE_REQUESTED,
+    "return": CanonicalEventType.PETTY_CASH_RETURN_REQUESTED,
+}
+
+# REVERSAL is the fourth semantic type that splits by a candidate field --
+# `target_kind` ("expense" -> void an expense + reverse its payment,
+# "transfer" -> reverse a transfer's ledger row directly), same pattern as
+# MATERIAL_UPDATE/direction above.
+_REVERSAL_TARGET_EVENT_TYPE: dict[str, CanonicalEventType] = {
+    "expense": CanonicalEventType.EXPENSE_REVERSAL_REQUESTED,
+    "transfer": CanonicalEventType.TRANSFER_REVERSAL_REQUESTED,
 }
 
 # Business fields required for an event of this type to be ACTIONABLE.
@@ -40,6 +66,16 @@ REQUIRED_FIELDS: dict[CanonicalEventType, tuple[str, ...]] = {
     CanonicalEventType.GENERAL_QUESTION_ASKED: (),
     CanonicalEventType.IDENTITY_LOOKUP_REQUESTED: (),
     CanonicalEventType.INVENTORY_QUERY_ASKED: (),
+    CanonicalEventType.ACCOUNT_BALANCE_QUERY_ASKED: (),
+    CanonicalEventType.EXPENSE_QUERY_ASKED: (),
+    CanonicalEventType.TRANSFER_REQUESTED: ("amount",),
+    CanonicalEventType.PETTY_CASH_ISSUE_REQUESTED: ("amount", "recipient_name"),
+    CanonicalEventType.PETTY_CASH_RETURN_REQUESTED: ("amount", "recipient_name"),
+    # No required fields -- the target is always "the most recent one of
+    # this kind", resolved by seeding (runtime/inbound_journey.py), not
+    # stated by the user.
+    CanonicalEventType.EXPENSE_REVERSAL_REQUESTED: (),
+    CanonicalEventType.TRANSFER_REVERSAL_REQUESTED: (),
     CanonicalEventType.CLARIFICATION_REQUIRED: (),
     CanonicalEventType.UNRECOGNIZED: (),
 }
@@ -48,10 +84,20 @@ REQUIRED_FIELDS: dict[CanonicalEventType, tuple[str, ...]] = {
 def resolve_event_type(semantic_type: SemanticType, fields: dict) -> CanonicalEventType:
     """Map a semantic type (+ its candidate fields) to a CanonicalEventType.
 
-    MATERIAL_UPDATE is direction-dependent; an unrecognized or missing direction
-    falls back to UNRECOGNIZED rather than guessing.
+    MATERIAL_UPDATE is direction-dependent and FINANCE_QUERY is
+    query_kind-dependent; an unrecognized or missing split field falls back
+    to UNRECOGNIZED rather than guessing.
     """
     if semantic_type is SemanticType.MATERIAL_UPDATE:
         direction = str(fields.get("direction", "")).strip().lower()
         return _MATERIAL_DIRECTION_EVENT_TYPE.get(direction, CanonicalEventType.UNRECOGNIZED)
+    if semantic_type is SemanticType.FINANCE_QUERY:
+        query_kind = str(fields.get("query_kind", "")).strip().lower()
+        return _FINANCE_QUERY_KIND_EVENT_TYPE.get(query_kind, CanonicalEventType.UNRECOGNIZED)
+    if semantic_type is SemanticType.PETTY_CASH:
+        direction = str(fields.get("direction", "")).strip().lower()
+        return _PETTY_CASH_DIRECTION_EVENT_TYPE.get(direction, CanonicalEventType.UNRECOGNIZED)
+    if semantic_type is SemanticType.REVERSAL:
+        target_kind = str(fields.get("target_kind", "")).strip().lower()
+        return _REVERSAL_TARGET_EVENT_TYPE.get(target_kind, CanonicalEventType.UNRECOGNIZED)
     return _SIMPLE_EVENT_TYPE.get(semantic_type, CanonicalEventType.UNRECOGNIZED)

@@ -18,6 +18,19 @@ means the payer covered it personally (payment_status='reimbursable', no
 ledger entry yet — see infrastructure/postgres/repositories/expense_execution.py);
 leaving both unset means payment_status stays 'unpaid'. Mutually exclusive —
 enforced in validation.py.
+
+`media_object_key` is the receipt/bill photo's object-storage key, when the
+expense was reported from a WhatsApp image tapped as "Expense" in the
+image-purpose picker (see canonicalization/builder.py's generic
+`media_object_key` field carry-through and interactions/image_purpose.py).
+Optional — most expenses are still typed/spoken with no image at all.
+
+`vendor_id`/`vendor_text` follow the same split as category_id/category_text
+above -- the WhatsApp path only has free-text vendor input ("paid ABC
+Hardware ₹500"), resolved into vendor_id by
+application/vendors/resolution.py before persistence. Unlike category, an
+absent vendor_text is left unresolved (vendor_id stays None) rather than
+falling back to a default -- see that module's docstring.
 """
 
 from __future__ import annotations
@@ -39,8 +52,11 @@ class RecordExpenseCommand(BaseModel):
 
     category_id: str | None = None
     category_text: str | None = None
+    vendor_id: str | None = None
+    vendor_text: str | None = None
     account_id: str | None = None
     paid_from_own_pocket: bool = False
+    media_object_key: str | None = None
     site_id: str | None = None
     currency: str = "INR"
     description: str | None = None

@@ -83,6 +83,7 @@ class FakeExtractionProvider:
         self.calls = 0
         self.last_semantic_hint: str | None = None
         self.last_expense_categories: list[str] | None = None
+        self.last_text: str | None = None
 
     async def extract(
         self,
@@ -95,6 +96,7 @@ class FakeExtractionProvider:
         self.calls += 1
         self.last_semantic_hint = semantic_hint
         self.last_expense_categories = expense_categories
+        self.last_text = text
         if self._delay:
             await asyncio.sleep(self._delay)
         if self._error is not None:

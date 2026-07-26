@@ -116,6 +116,45 @@ CATEGORY_SEMANTIC_HINT: dict[str, str] = {
     "cat_expense": "expense",
 }
 
+# A photo's purpose is never assumed from the AI's own guess at what the
+# image shows -- every genuinely new image (not a tap resuming this very
+# picker) is held (see interactions/pending_media.py) and this list is sent
+# first, since a bare photo often arrives with no caption at all. Deliberately
+# narrow for now (Expense, Site Update) -- more purposes (attendance, etc.)
+# get their own row here later, not a different mechanism.
+IMAGE_PURPOSE_ROWS: tuple[ListRow, ...] = (
+    ListRow("img_expense", "Expense", "Receipt or bill"),
+    ListRow("img_site_update", "Site Update", "Progress photo"),
+)
+
+# The semantic_type an image-purpose tap hints extraction toward for the
+# HELD image being re-processed (see interactions/image_purpose.py). Same
+# nudge-not-authority principle as CATEGORY_SEMANTIC_HINT above.
+IMAGE_PURPOSE_SEMANTIC_HINT: dict[str, str] = {
+    "img_expense": "expense",
+    "img_site_update": "general_site_update",
+}
+
+
+def render_image_purpose_picker() -> ReplySpec:
+    return ReplySpec(
+        text="📷 What is this photo for?",
+        list_button_label="Choose one",
+        list_rows=IMAGE_PURPOSE_ROWS,
+    )
+
+
+def render_image_purpose_coming_soon(row_id: str) -> str | None:
+    """Site Update photos aren't processed yet -- an honest reply instead of
+    a silent NO_GRAPH failure (WorkflowKey.SITE_UPDATE has no compiled graph
+    today; that's separate, unrelated follow-up work, not an image gap).
+    None for anything this function doesn't own (the caller only calls this
+    for a row_id that isn't "img_expense")."""
+    if row_id == "img_site_update":
+        return "📷 Got it — site update photos aren't processed yet, but that's coming soon."
+    return None
+
+
 # Field names as a site worker would say them, not as the schema spells them.
 _FIELD_LABELS: dict[str, str] = {
     "material_name": "which material",

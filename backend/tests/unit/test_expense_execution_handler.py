@@ -12,6 +12,7 @@ from mesiri.application.expenses.fakes import (
     FakeDatabase,
     FakeExpenseCategoryResolver,
     FakeExpenseExecutionRepository,
+    FakeVendorResolver,
     PersistSuccessRaisesRepository,
     RejectingExpenseCategoryResolver,
 )
@@ -161,6 +162,47 @@ async def test_resolver_is_not_consulted_when_category_id_already_set():
     )
 
     result = await handler.handle(None, _command())
+
+    assert result.status == ExecutionStatus.SUCCEEDED
+
+
+@pytest.mark.asyncio
+async def test_vendor_text_is_resolved_when_vendor_id_absent():
+    repo = FakeExpenseExecutionRepository()
+    handler = RecordExpenseHandler(repo, vendor_resolver=FakeVendorResolver())
+
+    result = await handler.handle(None, _command(vendor_text="ABC Hardware"))
+
+    assert result.status == ExecutionStatus.SUCCEEDED
+    assert repo.expense_rows[0]["command"].vendor_id is not None
+
+
+@pytest.mark.asyncio
+async def test_no_vendor_at_all_leaves_vendor_id_null():
+    """Unlike category, an absent vendor must not be defaulted — it's a
+    genuinely optional field, so vendor_id simply stays None."""
+    repo = FakeExpenseExecutionRepository()
+    handler = RecordExpenseHandler(repo, vendor_resolver=FakeVendorResolver())
+
+    result = await handler.handle(None, _command())
+
+    assert result.status == ExecutionStatus.SUCCEEDED
+    assert repo.expense_rows[0]["command"].vendor_id is None
+
+
+@pytest.mark.asyncio
+async def test_vendor_resolver_is_not_consulted_when_vendor_id_already_set():
+    repo = FakeExpenseExecutionRepository()
+
+    class ExplodingVendorResolver(FakeVendorResolver):
+        async def resolve(self, conn, cmd):  # type: ignore[override]
+            raise AssertionError("should never be consulted")
+
+    handler = RecordExpenseHandler(repo, vendor_resolver=ExplodingVendorResolver())
+
+    result = await handler.handle(
+        None, _command(vendor_id="55555555-5555-4555-8555-555555555555")
+    )
 
     assert result.status == ExecutionStatus.SUCCEEDED
 

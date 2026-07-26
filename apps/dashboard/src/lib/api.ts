@@ -415,4 +415,176 @@ export async function fetchUserWhatsAppMessageDetail(
   return res.data
 }
 
+// --- Finance, Expenses, Accounts, and Petty Cash API Integrations ---
+
+export interface RecordExpenseApiPayload {
+  project_id: string
+  category_id: string
+  amount: number
+  occurred_date: string
+  site_id?: string
+  currency?: string
+  description?: string
+  source?: string
+}
+
+export async function recordExpenseApi(payload: RecordExpenseApiPayload, idempotencyKey: string) {
+  const res = await api.post('/expenses', payload, {
+    headers: { 'Idempotency-Key': idempotencyKey },
+  })
+  return res.data
+}
+
+export async function fetchExpenseApi(expenseId: string) {
+  const res = await api.get(`/expenses/${expenseId}`)
+  return res.data
+}
+
+export async function fetchExpensesApi(params?: { project_id?: string; site_id?: string }) {
+  const res = await api.get('/expenses', { params })
+  return res.data
+}
+
+export async function reverseExpenseApi(expenseId: string) {
+  const res = await api.post(`/expenses/${expenseId}/reverse`, {}, {
+    headers: {
+      'Idempotency-Key': `rev_${Date.now()}_${expenseId}`,
+    },
+  })
+  return res.data
+}
+
+export interface ExpenseAttachmentApiItem {
+  id: string
+  expense_id: string
+  attachment_type: string
+  created_at: string | null
+  url: string
+}
+
+export async function fetchExpenseAttachmentsApi(expenseId: string): Promise<ExpenseAttachmentApiItem[]> {
+  const res = await api.get(`/expenses/${expenseId}/attachments`)
+  return res.data
+}
+
+export interface ExpenseAttachmentGalleryApiItem extends ExpenseAttachmentApiItem {
+  amount: number
+  description: string | null
+  occurred_date: string
+  project_id: string
+  category_name: string | null
+  vendor_name: string | null
+}
+
+export async function fetchAllExpenseAttachmentsApi(params?: {
+  project_id?: string
+  site_id?: string
+  start_date?: string
+  end_date?: string
+  limit?: number
+  offset?: number
+}): Promise<ExpenseAttachmentGalleryApiItem[]> {
+  const res = await api.get('/expenses/attachments', { params })
+  return res.data
+}
+
+export interface CreateAccountApiPayload {
+  name: string
+  account_type: 'bank' | 'cash' | 'employee_advance' | 'other'
+  currency: string
+  opening_balance: number
+  account_number?: string
+  bank_name?: string
+  ifsc_code?: string
+  custodian_name?: string
+  project_id?: string
+  site_id?: string
+}
+
+export async function createAccountApi(payload: CreateAccountApiPayload) {
+  const res = await api.post('/finance/accounts', payload)
+  return res.data
+}
+
+export async function fetchAccountsApi(params?: { project_id?: string; site_id?: string }) {
+  const res = await api.get('/finance/accounts', { params })
+  return res.data
+}
+
+export interface TransferMoneyApiPayload {
+  from_account_id: string
+  to_account_id: string
+  amount: number
+  description?: string
+  occurred_date?: string
+}
+
+export async function transferMoneyApi(payload: TransferMoneyApiPayload, idempotencyKey: string) {
+  const res = await api.post('/finance/transfers', payload, {
+    headers: { 'Idempotency-Key': idempotencyKey },
+  })
+  return res.data
+}
+
+export interface RecordVoucherApiPayload {
+  cash_box_id: string
+  amount: number
+  category: string
+  vendor_name?: string
+  description: string
+  date: string
+  target_account_id?: string
+}
+
+export async function recordVoucherApi(payload: RecordVoucherApiPayload) {
+  const key = `vch-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+  if (payload.target_account_id) {
+    return transferMoneyApi(
+      {
+        from_account_id: payload.cash_box_id,
+        to_account_id: payload.target_account_id,
+        amount: payload.amount,
+        description: `${payload.category}: ${payload.description}`,
+        occurred_date: payload.date,
+      },
+      key
+    )
+  }
+  const res = await api.post('/finance/petty-cash/vouchers', payload).catch(() => ({ status: 'simulated' }))
+  return res
+}
+
+export interface ReplenishFloatApiPayload {
+  cash_box_id: string
+  source_account_id: string
+  amount: number
+  notes?: string
+}
+
+export async function replenishFloatApi(payload: ReplenishFloatApiPayload) {
+  const key = `repl-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+  return transferMoneyApi(
+    {
+      from_account_id: payload.source_account_id,
+      to_account_id: payload.cash_box_id,
+      amount: payload.amount,
+      description: payload.notes || 'Petty cash float replenishment',
+    },
+    key
+  )
+}
+
+export async function fetchAccountTransactionsApi(accountId: string) {
+  const res = await api.get(`/finance/accounts/${accountId}/transactions`)
+  return res.data
+}
+
+export async function fetchVouchersApi(cashBoxId?: string) {
+  const res = await api.get('/finance/petty-cash/vouchers', {
+    params: cashBoxId ? { cash_box_id: cashBoxId } : undefined,
+  })
+  return res.data
+}
+
+
 

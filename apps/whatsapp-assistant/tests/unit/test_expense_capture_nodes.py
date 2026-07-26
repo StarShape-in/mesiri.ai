@@ -7,6 +7,7 @@ from mesiri_contracts.assistant.planner_decision import WorkflowKey
 from workflows.expense_capture.nodes import (
     OWN_POCKET_SENTINEL,
     build_draft,
+    check_duplicate,
     request_confirmation,
     resolve_account,
 )
@@ -141,3 +142,87 @@ def test_resolve_account_unmatched_answer_reasks_with_different_wording():
 
 def test_own_pocket_sentinel_is_not_a_real_uuid_shaped_value():
     assert OWN_POCKET_SENTINEL == "own_pocket"
+
+
+def test_build_draft_keeps_media_object_key_for_the_backend():
+    """Unlike account_candidates, media_object_key is real data the backend
+    needs (RecordExpenseCommand.media_object_key writes an
+    expense_attachments row) -- it must survive into draft.fields."""
+    state = _base_state({"amount": 250, "media_object_key": "media/wamid.1/abc123"})
+    draft = build_draft(state)["draft_action"]
+    assert draft.fields["media_object_key"] == "media/wamid.1/abc123"
+
+
+def test_request_confirmation_hides_the_raw_key_but_notes_a_receipt():
+    state = _base_state({"amount": 250, "media_object_key": "media/wamid.1/abc123"})
+    state.update(build_draft(state))
+    prompt = request_confirmation(state)["pending_prompt"]
+    assert "media_object_key" not in prompt
+    assert "media/wamid.1/abc123" not in prompt
+    assert "Receipt attached" in prompt
+
+
+def test_request_confirmation_has_no_receipt_note_without_an_image():
+    state = _base_state({"amount": 250})
+    state.update(build_draft(state))
+    prompt = request_confirmation(state)["pending_prompt"]
+    assert "Receipt attached" not in prompt
+
+
+def test_check_duplicate_not_flagged_is_a_no_op():
+    state = _base_state({"amount": 250})
+    assert check_duplicate(state) == {}
+
+
+def test_check_duplicate_flagged_asks_yes_no():
+    state = _base_state({"amount": 250, "is_potential_duplicate": True})
+    update = check_duplicate(state)
+    assert update["awaiting_slot"] == "duplicate_confirm"
+    assert "duplicate" in update["pending_prompt"]
+    assert "1." in update["pending_prompt"] and "2." in update["pending_prompt"]
+
+
+def test_check_duplicate_yes_answer_proceeds():
+    state = _base_state(
+        {"amount": 250, "is_potential_duplicate": True, "_slot_answer_text": "yes"}
+    )
+    state["awaiting_slot"] = "duplicate_confirm"
+    update = check_duplicate(state)
+    assert update["collected_fields"]["duplicate_confirmed"] == "yes"
+    assert update["awaiting_slot"] is None
+    assert "_slot_answer_text" not in update["collected_fields"]
+
+
+def test_check_duplicate_no_answer_cancels_with_no_draft():
+    state = _base_state(
+        {"amount": 250, "is_potential_duplicate": True, "_slot_answer_text": "no"}
+    )
+    state["awaiting_slot"] = "duplicate_confirm"
+    update = check_duplicate(state)
+    assert update["collected_fields"]["duplicate_confirmed"] == "no"
+    assert update["awaiting_slot"] is None
+    assert "won't record" in update["pending_prompt"]
+
+
+def test_check_duplicate_unmatched_answer_reasks():
+    state = _base_state(
+        {"amount": 250, "is_potential_duplicate": True, "_slot_answer_text": "maybe idk"}
+    )
+    state["awaiting_slot"] = "duplicate_confirm"
+    update = check_duplicate(state)
+    assert update["awaiting_slot"] == "duplicate_confirm"
+    assert "didn't catch" in update["pending_prompt"]
+
+
+def test_check_duplicate_already_answered_is_a_no_op():
+    state = _base_state({"amount": 250, "is_potential_duplicate": True, "duplicate_confirmed": "yes"})
+    assert check_duplicate(state) == {}
+
+
+def test_build_draft_excludes_duplicate_plumbing_fields():
+    state = _base_state(
+        {"amount": 250, "is_potential_duplicate": True, "duplicate_confirmed": "yes"}
+    )
+    draft = build_draft(state)["draft_action"]
+    assert "is_potential_duplicate" not in draft.fields
+    assert "duplicate_confirmed" not in draft.fields

@@ -128,6 +128,16 @@ def build_canonical_event(
         fields = {**candidate.fields, **candidate.unknown_fields}
         warnings = list(candidate.warnings)
 
+    if understanding.original_content_reference:
+        # The media (image/voice/document) this event was extracted from --
+        # carried through fields, generic across every event type, so a
+        # confirmed workflow execution can save it as evidence later (e.g.
+        # expense_capture's build_draft keeps this field, and
+        # RecordExpenseCommand.media_object_key writes an expense_attachments
+        # row). Not expense-specific: any future domain that wants to attach
+        # the source media gets this for free.
+        fields["media_object_key"] = understanding.original_content_reference
+
     if understanding.semantic_type is SemanticType.MATERIAL_UPDATE:
         fields = _normalize_material_fields(fields)
         if fields.get("direction") not in ("received", "used") and direction_hint in (

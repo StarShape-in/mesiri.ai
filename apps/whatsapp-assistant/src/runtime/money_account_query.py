@@ -79,3 +79,40 @@ class MoneyAccountQueryService:
         async with self._db.transaction() as conn:
             repo = PostgresMoneyAccountRepository(conn)
             return await repo.get_balance(uuid.UUID(organization_id), uuid.UUID(account_id))
+
+    async def find_matching_accounts(
+        self, *, organization_id: str, created_by: str, account_name: str | None
+    ) -> list[MoneyAccount]:
+        """Finance Module Slice 2: resolve a balance query's optional
+        `account_name` against the org's accounts. No name -> every account
+        (e.g. "how much cash do I have?"); a name -> whichever single
+        account matches (reuses workflows.slots' numbered/free-text matcher
+        so "site cash" matches "Site Cash" the same way an expense-capture
+        slot answer would -- one matching rule for the whole finance module,
+        not two)."""
+        accounts = await self.list_accounts(organization_id=organization_id, created_by=created_by)
+        if not account_name:
+            return accounts
+
+        from workflows.slots import SlotCandidate, match_slot_answer
+
+        candidates = [SlotCandidate(value=str(account.id), label=account.name) for account in accounts]
+        matched_id = match_slot_answer(account_name, candidates)
+        if matched_id is None:
+            return []
+        return [account for account in accounts if str(account.id) == matched_id]
+
+    async def get_balances(
+        self, *, organization_id: str, accounts: list[MoneyAccount]
+    ) -> dict[uuid.UUID, Decimal]:
+        """Balance for each given account, in one transaction. Callers pass
+        the accounts they already resolved (find_matching_accounts/
+        list_accounts) rather than this method re-listing them."""
+        from mesiri.infrastructure.postgres.repositories.finance import (
+            PostgresMoneyAccountRepository,
+        )
+
+        org_id = uuid.UUID(organization_id)
+        async with self._db.transaction() as conn:
+            repo = PostgresMoneyAccountRepository(conn)
+            return {account.id: await repo.get_balance(org_id, account.id) for account in accounts}

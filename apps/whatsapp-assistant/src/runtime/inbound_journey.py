@@ -52,14 +52,18 @@ from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
 from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
 from mesiri_contracts.assistant.v2.resolved_context import ResolvedContextV2
 from planner import Planner, log_planner_decision
+from runtime.duplicate_expense_query import DuplicateExpenseQueryService
 from runtime.expense_category_query import ExpenseCategoryQueryService
+from runtime.expense_query_service import ExpenseQueryService, resolve_date_range
 from runtime.inventory_query import MaterialInventoryQueryService
 from runtime.logging_ports import MessageLogger, TraceLogger
 from runtime.material_catalog_query import MaterialCatalogQueryService
 from runtime.money_account_query import MoneyAccountQueryService
 from runtime.noop_loggers import NoopMessageLogger, NoopTraceLogger
 from runtime.org_settings_query import OrganizationSettingsQueryService
+from runtime.petty_cash_query import PettyCashRecipientQueryService
 from runtime.reply_dispatch import send_reply_spec
+from runtime.reversal_query import ReversalTargetQueryService
 from understanding.pipeline import UnderstandingPipeline
 from workflows import (
     WorkflowResumeResult,
@@ -150,7 +154,10 @@ def _render_reply(
             buttons=CONFIRM_BUTTONS,
         )
 
-    if workflow_run is not None and workflow_run.status is WorkflowRunStatus.COMPLETED:
+    if workflow_run is not None and workflow_run.status in (
+        WorkflowRunStatus.COMPLETED,
+        WorkflowRunStatus.AWAITING_INPUT,
+    ):
         return ReplySpec(
             text=render_workflow_run_reply(workflow_run, pending_prompt=workflow_run.pending_prompt)
         )
@@ -537,16 +544,27 @@ async def _seed_account_candidates(
     actor: ActorIdentity | None,
 ) -> None:
     """Feed the org's eligible money accounts into the event's fields so
-    expense_capture's resolve_account node (Finance Module Slice 1) can
+    expense_capture's resolve_account node (Finance Module Slice 1) and
+    transfer's resolve_from_account/resolve_to_account nodes (Slice 3) can
     decide whether to auto-fill, ask "which account?", or proceed unset --
     a node must never query a repository itself (see workflows/runtime.py's
     docstring), so this is the seeding point, same principle as
-    _inject_inventory_context above. Only ever runs for EXPENSE_SUBMIT;
-    every other workflow key's fields are left untouched.
+    _inject_inventory_context above. Only ever runs for EXPENSE_SUBMIT and
+    TRANSFER; every other workflow key's fields are left untouched.
+
+    TRANSFER additionally gets `created_by_role` seeded here -- it travels
+    through the draft the same way amount/from/to do, so
+    application/finance/transfer_validation.py can enforce who may transfer
+    money without threading actor identity through the ExecutionDispatcher
+    protocol for every domain (see transfer_commands.py's docstring).
     """
     if money_account_query is None or actor is None or not actor.organization_id:
         return
-    if decision.workflow_key is not WorkflowKey.EXPENSE_SUBMIT:
+    if decision.workflow_key not in (
+        WorkflowKey.EXPENSE_SUBMIT,
+        WorkflowKey.TRANSFER,
+        WorkflowKey.PETTY_CASH,
+    ):
         return
     accounts = await money_account_query.list_accounts(
         organization_id=actor.organization_id, created_by=actor.user_id
@@ -554,6 +572,175 @@ async def _seed_account_candidates(
     event.fields["account_candidates"] = [
         {"id": str(account.id), "name": account.name} for account in accounts
     ]
+    if decision.workflow_key in (WorkflowKey.TRANSFER, WorkflowKey.PETTY_CASH):
+        event.fields["created_by_role"] = actor.role
+
+
+async def _seed_petty_cash_recipient(
+    event: CanonicalEventV2,
+    decision: PlannerDecisionV2,
+    petty_cash_query: PettyCashRecipientQueryService | None,
+    actor: ActorIdentity | None,
+) -> None:
+    """Resolve `recipient_name` (e.g. "Alan") into their employee-advance
+    money account, auto-created on first issuance -- Finance Module Slice 5.
+    A node must never query a repository itself, so this is the seeding
+    point, same principle as _seed_account_candidates above. Only ever runs
+    for PETTY_CASH; an unresolved recipient (no matching active user) simply
+    leaves `recipient_account_id` unset -- workflows/petty_cash/nodes.py's
+    build_draft then produces a draft missing that leg of the transfer,
+    which the existing transfer_validation.py rejects rather than this
+    seeding step guessing who was meant."""
+    if petty_cash_query is None or actor is None or not actor.organization_id:
+        return
+    if decision.workflow_key is not WorkflowKey.PETTY_CASH:
+        return
+    recipient_name = event.fields.get("recipient_name")
+    if not recipient_name:
+        return
+    account = await petty_cash_query.resolve_or_create_advance_account(
+        organization_id=actor.organization_id,
+        recipient_name=str(recipient_name),
+        created_by=actor.user_id,
+    )
+    if account is not None:
+        event.fields["recipient_account_id"] = str(account.id)
+        event.fields["recipient_account_name"] = account.name
+
+
+async def _seed_reversal_target(
+    event: CanonicalEventV2,
+    decision: PlannerDecisionV2,
+    reversal_query: ReversalTargetQueryService | None,
+    actor: ActorIdentity | None,
+) -> None:
+    """Resolve "the most recent expense/transfer" into a concrete id --
+    Finance Module Slice 7. A node must never query a repository itself, so
+    this is the seeding point, same principle as _seed_account_candidates
+    above. Only ever runs for REVERSE; finding nothing simply leaves
+    `expense_id`/`money_transaction_id` unset -- workflows/reverse/nodes.py's
+    build_draft then completes with a "nothing to reverse" reply instead of
+    a draft (see that module's docstring and workflows/runtime.py's
+    `_INFORMATIONAL_WORKFLOW_KEYS`)."""
+    if reversal_query is None or actor is None or not actor.organization_id:
+        return
+    if decision.workflow_key is not WorkflowKey.REVERSE:
+        return
+    event.fields["created_by_role"] = actor.role
+    target_kind = str(event.fields.get("target_kind", "")).strip().lower()
+
+    if target_kind == "transfer":
+        transfer = await reversal_query.find_latest_transfer(organization_id=actor.organization_id)
+        if transfer is not None:
+            event.fields["money_transaction_id"] = transfer["money_transaction_id"]
+            event.fields["reversal_amount"] = transfer["amount"]
+            event.fields["reversal_from_account_name"] = transfer["from_account_name"]
+            event.fields["reversal_to_account_name"] = transfer["to_account_name"]
+        return
+
+    expense = await reversal_query.find_latest_expense(
+        organization_id=actor.organization_id, project_id=event.project_id, site_id=event.site_id
+    )
+    if expense is not None:
+        event.fields["expense_id"] = expense["expense_id"]
+        event.fields["reversal_amount"] = expense["amount"]
+        event.fields["reversal_description"] = expense["description"]
+        event.fields["reversal_occurred_date"] = expense["occurred_date"]
+
+
+async def _seed_duplicate_check(
+    event: CanonicalEventV2,
+    decision: PlannerDecisionV2,
+    duplicate_expense_query: DuplicateExpenseQueryService | None,
+    actor: ActorIdentity | None,
+) -> None:
+    """Finance Module Slice 8: flag a likely-duplicate expense before the
+    graph runs (a node must never query a repository itself, same principle
+    as _seed_account_candidates above). Only ever runs for EXPENSE_SUBMIT.
+    No signal beyond amount+date alone is strong enough, so this is skipped
+    entirely when neither vendor nor category was extracted -- see
+    runtime/duplicate_expense_query.py."""
+    if duplicate_expense_query is None or actor is None or not actor.organization_id:
+        return
+    if decision.workflow_key is not WorkflowKey.EXPENSE_SUBMIT:
+        return
+    amount = event.fields.get("amount")
+    vendor_name = event.fields.get("vendor")
+    category_name = event.fields.get("category")
+    if amount is None or not (vendor_name or category_name):
+        return
+    is_duplicate = await duplicate_expense_query.find_potential_duplicate(
+        organization_id=actor.organization_id,
+        project_id=event.project_id,
+        amount=amount,
+        vendor_name=vendor_name,
+        category_name=category_name,
+    )
+    if is_duplicate:
+        event.fields["is_potential_duplicate"] = True
+
+
+async def _seed_finance_query_context(
+    event: CanonicalEventV2,
+    decision: PlannerDecisionV2,
+    money_account_query: MoneyAccountQueryService | None,
+    expense_query_service: ExpenseQueryService | None,
+    actor: ActorIdentity | None,
+) -> None:
+    """Feed resolved balance/expense data into the event's fields for
+    Finance Module Slice 2's read-only query workflows -- same principle as
+    _seed_account_candidates above: a node must never query a repository
+    itself, so this is the seeding point. Runs only for
+    ACCOUNT_BALANCE_QUERY / EXPENSE_QUERY; every other workflow key's
+    fields are left untouched."""
+    if actor is None or not actor.organization_id:
+        return
+
+    if decision.workflow_key is WorkflowKey.ACCOUNT_BALANCE_QUERY:
+        if money_account_query is None:
+            return
+        account_name = event.fields.get("account_name")
+        accounts = await money_account_query.find_matching_accounts(
+            organization_id=actor.organization_id,
+            created_by=actor.user_id,
+            account_name=account_name,
+        )
+        balances = await money_account_query.get_balances(
+            organization_id=actor.organization_id, accounts=accounts
+        )
+        event.fields["balance_results"] = [
+            {"name": account.name, "balance": str(balances[account.id])} for account in accounts
+        ]
+        return
+
+    if decision.workflow_key is WorkflowKey.EXPENSE_QUERY:
+        if expense_query_service is None:
+            return
+        category_name = event.fields.get("category_name")
+        missing_receipts_only = bool(event.fields.get("missing_receipts"))
+        start_date, end_date, date_range_label = resolve_date_range(event.fields.get("date_range"))
+        expenses = await expense_query_service.list_expenses(
+            organization_id=actor.organization_id,
+            project_id=event.project_id,
+            site_id=event.site_id,
+            start_date=start_date,
+            end_date=end_date,
+            category_name=category_name,
+            missing_receipts_only=missing_receipts_only,
+        )
+        event.fields["expense_results"] = {
+            "total": str(ExpenseQueryService.total(expenses)),
+            "count": len(expenses),
+            "date_range_label": date_range_label,
+            "items": [
+                {
+                    "amount": str(expense.amount),
+                    "description": expense.description,
+                    "occurred_date": expense.occurred_date.isoformat(),
+                }
+                for expense in expenses
+            ],
+        }
 
 
 async def _plan_and_run(
@@ -612,6 +799,10 @@ async def process_inbound_message(
     org_settings_query: OrganizationSettingsQueryService | None = None,
     expense_category_query: ExpenseCategoryQueryService | None = None,
     money_account_query: MoneyAccountQueryService | None = None,
+    petty_cash_query: PettyCashRecipientQueryService | None = None,
+    reversal_query: ReversalTargetQueryService | None = None,
+    duplicate_expense_query: DuplicateExpenseQueryService | None = None,
+    expense_query_service: ExpenseQueryService | None = None,
     semantic_hint: str | None = None,
     direction_hint: str | None = None,
     pending_report_store: PendingReportStore | None = None,
@@ -968,6 +1159,22 @@ async def process_inbound_message(
                 try:
                     await _seed_account_candidates(
                         canonical_event, planner_decision, money_account_query, actor
+                    )
+                    await _seed_petty_cash_recipient(
+                        canonical_event, planner_decision, petty_cash_query, actor
+                    )
+                    await _seed_reversal_target(
+                        canonical_event, planner_decision, reversal_query, actor
+                    )
+                    await _seed_duplicate_check(
+                        canonical_event, planner_decision, duplicate_expense_query, actor
+                    )
+                    await _seed_finance_query_context(
+                        canonical_event,
+                        planner_decision,
+                        money_account_query,
+                        expense_query_service,
+                        actor,
                     )
                     workflow_run = await workflow_runtime.start(planner_decision, canonical_event)
                     if context_debug:

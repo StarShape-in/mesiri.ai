@@ -357,6 +357,122 @@ async def test_provide_input_rejects_when_phase_is_not_collecting_fields():
     assert result.status is WorkflowRunStatus.FAILED
 
 
+async def test_informational_workflow_completes_without_confirmation():
+    """Finance Module Slice 2: a query workflow (no draft_action, ever) must
+    complete straight away -- never persisted, never AWAITING_CONFIRMATION,
+    and exempt from the single-active pending-confirmation block."""
+    graph = _FakeGraph(result={"pending_prompt": "💰 Site Cash: ₹3800"})
+    registry = _FakeRegistry({WorkflowKey.ACCOUNT_BALANCE_QUERY: graph})
+    repo = FakeWorkflowInstanceRepository()
+    runtime = WorkflowRuntime(registry=registry, repo=repo)
+
+    decision = _decision(
+        decision_type=PlannerDecisionType.START_WORKFLOW,
+        workflow_key=WorkflowKey.ACCOUNT_BALANCE_QUERY,
+    )
+    result = await runtime.start(decision, _event())
+
+    assert result.status is WorkflowRunStatus.COMPLETED
+    assert result.pending_prompt == "💰 Site Cash: ₹3800"
+    assert result.workflow_instance_id is None
+    assert repo.saved == []
+
+
+async def test_informational_workflow_is_exempt_from_pending_confirmation_block():
+    repo = FakeWorkflowInstanceRepository()
+    existing = WorkflowStateV2(
+        workflow_instance_id="wf_existing",
+        workflow_key=WorkflowKey.MATERIAL_RECEIPT,
+        correlation_id="cor_0",
+        organization_id=ORG,
+        user_id=USR,
+        phase=WorkflowPhase.AWAITING_CONFIRMATION,
+        draft_action=_draft(),
+        pending_prompt="Confirm the pending receipt?",
+    )
+    repo.seed(existing)
+    graph = _FakeGraph(result={"pending_prompt": "💰 Site Cash: ₹3800"})
+    registry = _FakeRegistry({WorkflowKey.ACCOUNT_BALANCE_QUERY: graph})
+    runtime = WorkflowRuntime(registry=registry, repo=repo)
+
+    decision = _decision(
+        decision_type=PlannerDecisionType.START_WORKFLOW,
+        workflow_key=WorkflowKey.ACCOUNT_BALANCE_QUERY,
+    )
+    result = await runtime.start(decision, _event())
+
+    assert result.status is WorkflowRunStatus.COMPLETED
+
+
+async def test_reverse_completes_without_a_draft_when_nothing_to_reverse():
+    """Finance Module Slice 7: WorkflowKey.REVERSE is a *mixed* case -- it
+    can complete with no draft_action (nothing found to reverse), unlike a
+    pure query workflow, but this must not accidentally exempt it from the
+    single-active pending-confirmation gate (see the next test)."""
+    graph = _FakeGraph(result={"pending_prompt": "You have no confirmed expenses to reverse."})
+    registry = _FakeRegistry({WorkflowKey.REVERSE: graph})
+    repo = FakeWorkflowInstanceRepository()
+    runtime = WorkflowRuntime(registry=registry, repo=repo)
+
+    decision = _decision(decision_type=PlannerDecisionType.START_WORKFLOW, workflow_key=WorkflowKey.REVERSE)
+    result = await runtime.start(decision, _event())
+
+    assert result.status is WorkflowRunStatus.COMPLETED
+    assert result.pending_prompt == "You have no confirmed expenses to reverse."
+    assert repo.saved == []
+
+
+async def test_reverse_still_blocks_when_a_confirmation_is_already_pending():
+    """Real regression: WorkflowKey.REVERSE being allowed to complete
+    without a draft must not make it exempt from the single-active
+    pending-confirmation block the way a true informational workflow is --
+    a user must not be able to start a reversal while an unrelated
+    confirmation (or slot question) is already pending. The graph here
+    would happily produce a "nothing to reverse" reply if invoked; proving
+    it's never invoked is the point."""
+    repo = FakeWorkflowInstanceRepository()
+    existing = WorkflowStateV2(
+        workflow_instance_id="wf_existing",
+        workflow_key=WorkflowKey.TRANSFER,
+        correlation_id="cor_0",
+        organization_id=ORG,
+        user_id=USR,
+        phase=WorkflowPhase.AWAITING_CONFIRMATION,
+        draft_action=_draft(),
+        pending_prompt="Confirm the pending transfer?",
+    )
+    repo.seed(existing)
+    graph = _FakeGraph(result={"pending_prompt": "You have no confirmed expenses to reverse."})
+    registry = _FakeRegistry({WorkflowKey.REVERSE: graph})
+    runtime = WorkflowRuntime(registry=registry, repo=repo)
+
+    decision = _decision(decision_type=PlannerDecisionType.START_WORKFLOW, workflow_key=WorkflowKey.REVERSE)
+    result = await runtime.start(decision, _event())
+
+    assert result.status is WorkflowRunStatus.BLOCKED_PENDING_CONFIRMATION
+    assert result.pending_prompt == "Confirm the pending transfer?"
+    assert graph.invocations == 0
+
+
+async def test_expense_submit_completes_without_a_draft_when_duplicate_declined():
+    """Finance Module Slice 8: expense_capture's check_duplicate node can
+    also complete with no draft_action (the user said "no" to "record
+    anyway?")."""
+    graph = _FakeGraph(result={"pending_prompt": "Ok, I won't record that expense."})
+    registry = _FakeRegistry({WorkflowKey.EXPENSE_SUBMIT: graph})
+    repo = FakeWorkflowInstanceRepository()
+    runtime = WorkflowRuntime(registry=registry, repo=repo)
+
+    decision = _decision(
+        decision_type=PlannerDecisionType.START_WORKFLOW, workflow_key=WorkflowKey.EXPENSE_SUBMIT
+    )
+    result = await runtime.start(decision, _event())
+
+    assert result.status is WorkflowRunStatus.COMPLETED
+    assert result.pending_prompt == "Ok, I won't record that expense."
+    assert repo.saved == []
+
+
 def test_workflow_registry_compiles_once_and_caches(monkeypatch: pytest.MonkeyPatch) -> None:
     """The real WorkflowRegistry must compile a graph exactly once per key."""
     import workflows.registry as registry_module

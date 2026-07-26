@@ -13,6 +13,7 @@ class ExpenseResponse(BaseModel):
     project_id: uuid.UUID
     site_id: uuid.UUID | None
     category_id: uuid.UUID
+    category_name: str | None = None
     amount: Decimal
     currency: str
     description: str | None

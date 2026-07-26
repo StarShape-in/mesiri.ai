@@ -74,144 +74,85 @@ interface ExpenseItem {
   project_name: string
   site_name: string
   payment_method?: string
-  receipt_url?: string
 }
-
-const INITIAL_EXPENSES: ExpenseItem[] = [
-  {
-    id: 'exp_01',
-    expense_number: 'EXP-1048',
-    amount: 45000,
-    currency: 'INR',
-    category_name: 'Fuel & Transportation',
-    category_id: 'fuel',
-    description: 'Diesel for Site Excavator JCB-3DX',
-    vendor_name: 'Indian Oil Bunk #4',
-    occurred_date: '2026-07-24',
-    payment_status: 'paid',
-    workflow_status: 'confirmed',
-    source: 'whatsapp',
-    project_name: 'Riverside Commercial Center',
-    site_name: 'Tower A Excavation',
-    payment_method: 'bank_transfer',
-    receipt_url: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=600&auto=format&fit=crop&q=60',
-  },
-  {
-    id: 'exp_02',
-    expense_number: 'EXP-1049',
-    amount: 125000,
-    currency: 'INR',
-    category_name: 'Equipment & Machinery',
-    category_id: 'equipment',
-    description: 'Concrete Pump Hire (2 Days)',
-    vendor_name: 'UltraTech Rental Services',
-    occurred_date: '2026-07-23',
-    payment_status: 'unpaid',
-    workflow_status: 'confirmed',
-    source: 'web',
-    project_name: 'Riverside Commercial Center',
-    site_name: 'Basement Slab',
-    receipt_url: 'https://images.unsplash.com/photo-1554224154-26032ffc0d07?w=600&auto=format&fit=crop&q=60',
-  },
-  {
-    id: 'exp_03',
-    expense_number: 'EXP-1050',
-    amount: 32000,
-    currency: 'INR',
-    category_name: 'Labor & Daily Wages',
-    category_id: 'labor',
-    description: 'Overtime Wages for Steel Fixers',
-    vendor_name: 'Sub-contractor Skilled Crew',
-    occurred_date: '2026-07-22',
-    payment_status: 'paid',
-    workflow_status: 'confirmed',
-    source: 'whatsapp',
-    project_name: 'Green Valley Housing',
-    site_name: 'Phase 1 Structural',
-    payment_method: 'petty_cash',
-  },
-  {
-    id: 'exp_04',
-    expense_number: 'EXP-1051',
-    amount: 85000,
-    currency: 'INR',
-    category_name: 'Raw Materials & Supplies',
-    category_id: 'materials',
-    description: 'Scaffolding Clamps & Safety Nets',
-    vendor_name: 'Apex Construction Hardware',
-    occurred_date: '2026-07-21',
-    payment_status: 'partially_paid',
-    workflow_status: 'confirmed',
-    source: 'web',
-    project_name: 'Riverside Commercial Center',
-    site_name: 'Tower A Structural',
-    payment_method: 'upi',
-    receipt_url: 'https://images.unsplash.com/photo-1554224155-6726b3ff858f?w=600&auto=format&fit=crop&q=60',
-  },
-  {
-    id: 'exp_05',
-    expense_number: 'EXP-1052',
-    amount: 18500,
-    currency: 'INR',
-    category_name: 'Site Maintenance & Repairs',
-    category_id: 'maintenance',
-    description: 'Temporary Site Power Distribution Repair',
-    vendor_name: 'City Electric Works',
-    occurred_date: '2026-07-20',
-    payment_status: 'paid',
-    workflow_status: 'confirmed',
-    source: 'whatsapp',
-    project_name: 'Green Valley Housing',
-    site_name: 'Site Infrastructure',
-    payment_method: 'cash',
-  },
-  {
-    id: 'exp_06',
-    expense_number: 'EXP-1053',
-    amount: 64000,
-    currency: 'INR',
-    category_name: 'Fuel & Transportation',
-    category_id: 'fuel',
-    description: 'Crushed Stone Transport Trucking Charge',
-    vendor_name: 'Shree Logistics',
-    occurred_date: '2026-07-19',
-    payment_status: 'unpaid',
-    workflow_status: 'confirmed',
-    source: 'web',
-    project_name: 'Riverside Commercial Center',
-    site_name: 'Tower B Ground',
-  },
-  {
-    id: 'exp_07',
-    expense_number: 'EXP-1054',
-    amount: 92000,
-    currency: 'INR',
-    category_name: 'Equipment & Machinery',
-    category_id: 'equipment',
-    description: 'Tower Crane Monthly Operator Fee',
-    vendor_name: 'Mega Heavy Lift',
-    occurred_date: '2026-07-18',
-    payment_status: 'paid',
-    workflow_status: 'confirmed',
-    source: 'whatsapp',
-    project_name: 'Riverside Commercial Center',
-    site_name: 'Tower A Structural',
-    payment_method: 'bank_transfer',
-  },
-]
 
 type SortField = 'date' | 'amount' | 'number' | 'category'
 type SortOrder = 'asc' | 'desc'
 
+import { fetchExpensesApi, reverseExpenseApi, fetchAllExpenseAttachmentsApi } from '@/lib/api'
+
 export default function ExpensesPage() {
   const { scope } = useScope()
 
-  const [expenses, setExpenses] = React.useState<ExpenseItem[]>(INITIAL_EXPENSES)
+  const [expenses, setExpenses] = React.useState<ExpenseItem[]>([])
   const [search, setSearch] = React.useState('')
   const [categoryFilter, setCategoryFilter] = React.useState('ALL')
   const [paymentStatusFilter, setPaymentStatusFilter] = React.useState('ALL')
   const [sourceFilter, setSourceFilter] = React.useState('ALL')
   const [datePreset, setDatePreset] = React.useState('ALL')
+  // expense_id -> first receipt's presigned URL. Fetched once alongside the
+  // expenses list (one batched call, not one per row) -- see
+  // GET /expenses/attachments in backend/src/mesiri/domains/expenses/router.py.
+  const [receiptUrlByExpenseId, setReceiptUrlByExpenseId] = React.useState<Record<string, string>>({})
+
+  React.useEffect(() => {
+    let active = true
+    async function loadBackendExpenses() {
+      try {
+        const rawData = await fetchExpensesApi({
+          project_id: scope.mode !== 'portfolio' ? scope.projectId : undefined,
+          site_id: scope.mode === 'site' ? scope.siteId : undefined,
+        })
+        if (active && Array.isArray(rawData)) {
+          const mapped: ExpenseItem[] = rawData.map((item: any, idx: number) => ({
+            id: String(item.id) || `exp_real_${idx}`,
+            expense_number: `EXP-${String(item.id || '').slice(0, 4).toUpperCase() || String(1000 + idx)}`,
+            amount: parseFloat(item.amount) || 0,
+            currency: item.currency || 'INR',
+            category_name: item.category_name || item.category_id || 'General Expense',
+            category_id: String(item.category_id || 'general'),
+            description: item.description || 'Recorded Expense',
+            vendor_name: 'Direct Payee',
+            occurred_date: item.occurred_date || new Date().toISOString().split('T')[0],
+            payment_status: item.payment_status === 'paid' ? 'paid' : item.payment_status === 'partially_paid' ? 'partially_paid' : 'unpaid',
+            workflow_status: item.workflow_status === 'reversed' ? 'reversed' : item.workflow_status === 'pending' ? 'pending' : 'confirmed',
+            source: item.source === 'whatsapp' ? 'whatsapp' : 'web',
+            project_name: scope.mode === 'portfolio' ? 'Org Wide' : scope.projectName,
+            site_name: scope.mode === 'site' ? scope.siteName : 'All Sites',
+          }))
+          setExpenses(mapped)
+        }
+      } catch (err) {
+        console.warn('Live backend expenses fetch error:', err)
+        if (active) setExpenses([])
+      }
+    }
+    async function loadReceiptUrls() {
+      try {
+        const attachments = await fetchAllExpenseAttachmentsApi({
+          project_id: scope.mode !== 'portfolio' ? scope.projectId : undefined,
+          site_id: scope.mode === 'site' ? scope.siteId : undefined,
+          limit: 200,
+        })
+        if (!active) return
+        const byExpenseId: Record<string, string> = {}
+        for (const a of attachments) {
+          // First attachment wins when an expense has more than one -- the
+          // lightbox only shows one image today.
+          if (!byExpenseId[a.expense_id]) byExpenseId[a.expense_id] = a.url
+        }
+        setReceiptUrlByExpenseId(byExpenseId)
+      } catch (err) {
+        console.warn('Live backend receipt attachments fetch error:', err)
+        if (active) setReceiptUrlByExpenseId({})
+      }
+    }
+    loadBackendExpenses()
+    loadReceiptUrls()
+    return () => {
+      active = false
+    }
+  }, [scope])
 
   // Selection & Bulk Action state
   const [selectedIds, setSelectedIds] = React.useState<string[]>([])
@@ -341,10 +282,33 @@ export default function ExpensesPage() {
     setSelectedIds([])
   }
 
-  const handleBulkVoid = () => {
-    if (confirm(`Are you sure you want to void ${selectedIds.length} selected expenses?`)) {
-      setExpenses((prev) => prev.filter((item) => !selectedIds.includes(item.id)))
-      setSelectedIds([])
+  const handleVoidExpense = async (id: string, expenseNumber: string) => {
+    if (!confirm(`Void expense ${expenseNumber}? This will reverse any associated payment entries in the ledger.`)) return
+    try {
+      await reverseExpenseApi(id)
+      setExpenses((prev) =>
+        prev.map((e) => (e.id === id ? { ...e, workflow_status: 'reversed' as const } : e))
+      )
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail
+      const msg = Array.isArray(detail) ? detail.join(', ') : detail || err.message || 'Server error'
+      alert(`Failed to void expense: ${msg}`)
+    }
+  }
+
+  const handleBulkVoid = async () => {
+    if (!confirm(`Are you sure you want to void ${selectedIds.length} selected expenses?`)) return
+    const idsToVoid = [...selectedIds]
+    setSelectedIds([])
+    for (const id of idsToVoid) {
+      try {
+        await reverseExpenseApi(id)
+        setExpenses((prev) =>
+          prev.map((e) => (e.id === id ? { ...e, workflow_status: 'reversed' as const } : e))
+        )
+      } catch (err: any) {
+        console.warn(`Failed to void expense ${id}:`, err)
+      }
     }
   }
 
@@ -617,12 +581,12 @@ export default function ExpensesPage() {
                     <TableCell className="text-xs">
                       <div className="font-medium text-foreground truncate max-w-[200px] flex items-center gap-1.5">
                         {row.description}
-                        {row.receipt_url && (
+                        {receiptUrlByExpenseId[row.id] && (
                           <button
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation()
-                              setPreviewReceiptUrl(row.receipt_url || null)
+                              setPreviewReceiptUrl(receiptUrlByExpenseId[row.id])
                             }}
                             className="text-muted-foreground hover:text-emerald-600"
                             title="View Receipt"
@@ -697,11 +661,7 @@ export default function ExpensesPage() {
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
                             className="text-rose-600"
-                            onClick={() => {
-                              if (confirm(`Void expense ${row.expense_number}?`)) {
-                                setExpenses((prev) => prev.filter((e) => e.id !== row.id))
-                              }
-                            }}
+                            onClick={() => handleVoidExpense(row.id, row.expense_number)}
                           >
                             <Trash2 className="size-3.5 mr-1.5" /> Void Expense
                           </DropdownMenuItem>

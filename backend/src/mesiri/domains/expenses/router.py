@@ -1,12 +1,21 @@
-"""Narrow REST API for expenses (M9 scope): RecordExpense + read-back only.
+"""Narrow REST API for expenses (M9 scope): RecordExpense + read-back,
+plus read-only receipt attachment access.
 
-No WhatsApp/Planner, no budgets, no payments/attachments endpoints yet —
-those are separate, later work (see application/expenses/commands.py's
-docstring on why RecordExpenseCommand is local rather than a shared
-contract). RecordExpense is idempotent via a client-supplied `Idempotency-Key`
-header, backed by the same `idempotency_keys` table Materials' CQRS path uses
-(see application/expenses/repository.py's docstring for how the transaction-
+No WhatsApp/Planner, no budgets/payments endpoints yet — those are
+separate, later work (see application/expenses/commands.py's docstring on
+why RecordExpenseCommand is local rather than a shared contract).
+RecordExpense is idempotent via a client-supplied `Idempotency-Key` header,
+backed by the same `idempotency_keys` table Materials' CQRS path uses (see
+application/expenses/repository.py's docstring for how the transaction-
 ownership model differs from that path).
+
+Attachment reads (`/attachments`, `/{expense_id}/attachments`) serve
+receipt photos captured via the WhatsApp image-purpose picker (Finance
+Module Slice 6b) — write access stays WhatsApp-only, the dashboard never
+uploads a receipt itself, only views ones already captured. `media_object_key`
+is never returned as-is; every attachment is resolved to a short-lived
+presigned URL via `ObjectStoragePort.generate_presigned_url()` so the
+dashboard never needs to know about R2/bucket keys directly.
 """
 
 from __future__ import annotations
@@ -22,17 +31,58 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from mesiri.application.expenses.commands import RecordExpenseCommand
 from mesiri.application.expenses.handlers import RecordExpenseHandler
+from mesiri.application.finance.reverse_commands import ReverseTransactionCommand
+from mesiri.application.finance.reverse_handler import ReverseTransactionHandler
+from mesiri.application.finance.reverse_resolution import PostgresReverseTargetResolver
 from mesiri.authorization.context import AuthorizationContext
 from mesiri.domains.expenses.responses import ExpenseResponse, RecordExpenseResponse
 from mesiri.domains.projects.router import get_auth_context
+from mesiri.infrastructure.objectstorage.dependency import get_object_storage
 from mesiri.infrastructure.postgres.dependency import get_db_conn
 from mesiri.infrastructure.postgres.repositories.expense_execution import (
     PostgresExpenseExecutionRepository,
 )
-from mesiri.infrastructure.postgres.repositories.expenses import PostgresExpenseRepository
+from mesiri.infrastructure.postgres.repositories.expenses import (
+    PostgresExpenseAttachmentRepository,
+    PostgresExpenseCategoryRepository,
+    PostgresExpenseRepository,
+)
+from mesiri.infrastructure.postgres.repositories.reverse_execution import (
+    PostgresReverseExecutionRepository,
+)
+from mesiri.infrastructure.postgres.repositories.vendors import PostgresVendorRepository
 from mesiri_contracts.application.results.execution_result import ExecutionStatus
+from mesiri_contracts.common.storage import ObjectStoragePort
 
 router = APIRouter(prefix="/expenses", tags=["expenses"])
+
+# Presigned URLs are short-lived by design (they must be re-fetched, never
+# cached across sessions) -- 10 minutes is long enough to load a lightbox or
+# a gallery grid without expiring mid-view, short enough that a leaked URL
+# isn't a standing liability.
+_ATTACHMENT_URL_TTL_SECONDS = 600
+
+
+class ExpenseAttachmentResponse(BaseModel):
+    id: uuid.UUID
+    expense_id: uuid.UUID
+    attachment_type: str
+    created_at: datetime.datetime | None = None
+    url: str
+
+
+class ExpenseAttachmentGalleryItem(BaseModel):
+    id: uuid.UUID
+    expense_id: uuid.UUID
+    attachment_type: str
+    created_at: datetime.datetime | None = None
+    url: str
+    amount: Decimal
+    description: str | None = None
+    occurred_date: datetime.date
+    project_id: uuid.UUID
+    category_name: str | None = None
+    vendor_name: str | None = None
 
 
 class RecordExpenseRequest(BaseModel):
@@ -102,6 +152,127 @@ async def record_expense(
     )
 
 
+@router.get("/categories")
+async def list_expense_categories(
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Return all active expense categories for the org — used by dashboard dropdowns."""
+    cat_repo = PostgresExpenseCategoryRepository(conn)
+    cats = await cat_repo.list_active(auth_context.organization_id)
+    return [{"id": str(c.id), "name": c.name} for c in cats]
+
+
+@router.get("", response_model=list[ExpenseResponse])
+async def list_expenses(
+    project_id: uuid.UUID | None = None,
+    site_id: uuid.UUID | None = None,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    repo = PostgresExpenseRepository(conn)
+    cat_repo = PostgresExpenseCategoryRepository(conn)
+
+    items = await repo.list_confirmed(
+        auth_context.organization_id,
+        project_id=project_id,
+        site_id=site_id,
+    )
+
+    # Build a category name lookup in one pass (avoids N queries)
+    cat_ids = {item.category_id for item in items if item.category_id}
+    cat_names: dict[uuid.UUID, str] = {}
+    for cid in cat_ids:
+        cat = await cat_repo.get_by_id(auth_context.organization_id, cid)
+        if cat:
+            cat_names[cid] = cat.name
+
+    return [
+        ExpenseResponse(
+            id=item.id,
+            organization_id=item.organization_id,
+            project_id=item.project_id,
+            site_id=item.site_id,
+            category_id=item.category_id,
+            category_name=cat_names.get(item.category_id),
+            amount=item.amount,
+            currency=item.currency,
+            description=item.description,
+            occurred_date=item.occurred_date,
+            occurred_time=item.occurred_time,
+            workflow_status=item.workflow_status,
+            payment_status=item.payment_status,
+            source=item.source,
+            source_message_id=item.source_message_id,
+            correlation_id=item.correlation_id,
+            created_by=item.created_by,
+        )
+        for item in items
+    ]
+
+
+@router.get("/attachments", response_model=list[ExpenseAttachmentGalleryItem])
+async def list_all_attachments(
+    project_id: uuid.UUID | None = None,
+    site_id: uuid.UUID | None = None,
+    start_date: datetime.date | None = None,
+    end_date: datetime.date | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+    object_storage: ObjectStoragePort = Depends(get_object_storage),
+):
+    """Every receipt across the org, newest first -- the "see all receipts
+    together" gallery view. Declared before `/{expense_id}` so "attachments"
+    is never matched as an expense id."""
+    attachment_repo = PostgresExpenseAttachmentRepository(conn)
+    rows = await attachment_repo.list_for_organization(
+        auth_context.organization_id,
+        project_id=project_id,
+        site_id=site_id,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+        offset=offset,
+    )
+
+    # Batch-resolve category/vendor names in one pass each, same convention
+    # list_expenses already uses below -- avoids N queries per row.
+    cat_repo = PostgresExpenseCategoryRepository(conn)
+    vendor_repo = PostgresVendorRepository(conn)
+    cat_names: dict[uuid.UUID, str] = {}
+    vendor_names: dict[uuid.UUID, str] = {}
+    for row in rows:
+        if row.category_id is not None and row.category_id not in cat_names:
+            cat = await cat_repo.get_by_id(auth_context.organization_id, row.category_id)
+            if cat:
+                cat_names[row.category_id] = cat.name
+        if row.vendor_id is not None and row.vendor_id not in vendor_names:
+            vendor = await vendor_repo.get_by_id(auth_context.organization_id, row.vendor_id)
+            if vendor:
+                vendor_names[row.vendor_id] = vendor.name
+
+    return [
+        ExpenseAttachmentGalleryItem(
+            id=row.id,
+            expense_id=row.expense_id,
+            attachment_type=row.attachment_type,
+            created_at=row.created_at,
+            url=await object_storage.generate_presigned_url(
+                row.media_object_key, expires_in_seconds=_ATTACHMENT_URL_TTL_SECONDS
+            ),
+            amount=row.amount,
+            description=row.description,
+            occurred_date=row.occurred_date,
+            project_id=row.project_id,
+            category_name=cat_names.get(row.category_id) if row.category_id else None,
+            vendor_name=vendor_names.get(row.vendor_id) if row.vendor_id else None,
+        )
+        for row in rows
+    ]
+
+
 @router.get("/{expense_id}", response_model=ExpenseResponse)
 async def get_expense(
     expense_id: uuid.UUID,
@@ -130,3 +301,68 @@ async def get_expense(
         correlation_id=expense.correlation_id,
         created_by=expense.created_by,
     )
+
+
+@router.get("/{expense_id}/attachments", response_model=list[ExpenseAttachmentResponse])
+async def list_expense_attachments(
+    expense_id: uuid.UUID,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+    object_storage: ObjectStoragePort = Depends(get_object_storage),
+):
+    """Receipt(s) attached to one expense -- what the Expenses page's
+    per-row lightbox needs."""
+    repo = PostgresExpenseRepository(conn)
+    expense = await repo.get_by_id(auth_context.organization_id, expense_id)
+    if expense is None:
+        raise HTTPException(status_code=404, detail="Expense not found")
+
+    attachment_repo = PostgresExpenseAttachmentRepository(conn)
+    attachments = await attachment_repo.list_for_expense(auth_context.organization_id, expense_id)
+    return [
+        ExpenseAttachmentResponse(
+            id=a.id,
+            expense_id=a.expense_id,
+            attachment_type=a.attachment_type,
+            url=await object_storage.generate_presigned_url(
+                a.media_object_key, expires_in_seconds=_ATTACHMENT_URL_TTL_SECONDS
+            ),
+        )
+        for a in attachments
+    ]
+
+
+@router.post("/{expense_id}/reverse")
+async def reverse_expense(
+    expense_id: uuid.UUID,
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Reverse / void a confirmed expense, including reversing any ledger payments."""
+    if auth_context.role not in ("ADMIN", "FINANCE"):
+        raise HTTPException(
+            status_code=403, detail="Only ADMIN or FINANCE roles are authorized to void expenses"
+        )
+
+    ikey = idempotency_key or f"rev_rest_{expense_id}_{uuid.uuid4().hex[:8]}"
+    cmd = ReverseTransactionCommand(
+        idempotency_key=ikey,
+        organization_id=str(auth_context.organization_id),
+        created_by=str(auth_context.user_id),
+        created_by_role=auth_context.role,
+        target_kind="expense",
+        expense_id=str(expense_id),
+    )
+
+    handler = ReverseTransactionHandler(
+        repo=PostgresReverseExecutionRepository(),
+        resolver=PostgresReverseTargetResolver(),
+    )
+    result = await handler.handle(conn, cmd)
+
+    if result.status == ExecutionStatus.REJECTED:
+        raise HTTPException(status_code=422, detail=result.rejection_reasons)
+
+    return {"id": str(expense_id), "status": "voided"}
+

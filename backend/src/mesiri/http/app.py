@@ -140,4 +140,11 @@ def create_app(lifecycle: AppLifecycle | None = None) -> FastAPI:
     except Exception as exc:  # noqa: BLE001
         _log.exception("organizations router not loaded: %s", exc)
 
+    try:
+        from mesiri.domains.finance.router import router as finance_router
+
+        app.include_router(finance_router)
+    except Exception as exc:  # noqa: BLE001
+        _log.exception("finance router not loaded: %s", exc)
+
     return app

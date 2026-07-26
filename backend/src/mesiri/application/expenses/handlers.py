@@ -12,7 +12,8 @@ delegates to `handle()` so both entry points share the exact same
 idempotency/resolution/persistence orchestration.
 
 Orchestration order: pure validate -> check idempotency -> resolve
-category_text (only when category_id wasn't already supplied) -> persist
+category_text (only when category_id wasn't already supplied) -> resolve
+vendor_text (only when vendor_id wasn't already supplied) -> persist
 success or rejection.
 """
 
@@ -20,6 +21,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from mesiri.application.vendors.resolution import VendorResolver
 from mesiri_contracts.application.results.execution_result import ExecutionResult, as_replay
 
 from .commands import RecordExpenseCommand
@@ -41,10 +43,12 @@ class RecordExpenseHandler:
         repo: ExpenseExecutionRepository,
         db: PostgresDatabase | None = None,
         resolver: ExpenseCategoryResolver | None = None,
+        vendor_resolver: VendorResolver | None = None,
     ) -> None:
         self._repo = repo
         self._db = db
         self._resolver = resolver
+        self._vendor_resolver = vendor_resolver
 
     async def handle(self, conn: AsyncConnection, cmd: RecordExpenseCommand) -> ExecutionResult:
         reasons = validate(cmd)
@@ -58,6 +62,11 @@ class RecordExpenseHandler:
             reasons = resolved.reasons
             if not reasons:
                 cmd = cmd.model_copy(update={"category_id": str(resolved.category_id)})
+
+        if not reasons and cmd.vendor_id is None and self._vendor_resolver is not None:
+            vendor_resolved = await self._vendor_resolver.resolve(conn, cmd)
+            if vendor_resolved.vendor_id is not None:
+                cmd = cmd.model_copy(update={"vendor_id": str(vendor_resolved.vendor_id)})
 
         if reasons:
             return await self._repo.persist_rejection(conn, cmd, reasons)

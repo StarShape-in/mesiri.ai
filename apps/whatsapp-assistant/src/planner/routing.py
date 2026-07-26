@@ -21,4 +21,11 @@ WORKFLOW_KEY_BY_EVENT: dict[CanonicalEventType, WorkflowKey] = {
     CanonicalEventType.IDENTITY_LOOKUP_REQUESTED: WorkflowKey.WHO_AM_I,
     CanonicalEventType.INVENTORY_QUERY_ASKED: WorkflowKey.MATERIAL_INVENTORY_QUERY,
     CanonicalEventType.ACCOUNT_ADMIN_REQUESTED: WorkflowKey.ACCOUNT_ADMIN,
+    CanonicalEventType.ACCOUNT_BALANCE_QUERY_ASKED: WorkflowKey.ACCOUNT_BALANCE_QUERY,
+    CanonicalEventType.EXPENSE_QUERY_ASKED: WorkflowKey.EXPENSE_QUERY,
+    CanonicalEventType.TRANSFER_REQUESTED: WorkflowKey.TRANSFER,
+    CanonicalEventType.PETTY_CASH_ISSUE_REQUESTED: WorkflowKey.PETTY_CASH,
+    CanonicalEventType.PETTY_CASH_RETURN_REQUESTED: WorkflowKey.PETTY_CASH,
+    CanonicalEventType.EXPENSE_REVERSAL_REQUESTED: WorkflowKey.REVERSE,
+    CanonicalEventType.TRANSFER_REVERSAL_REQUESTED: WorkflowKey.REVERSE,
 }

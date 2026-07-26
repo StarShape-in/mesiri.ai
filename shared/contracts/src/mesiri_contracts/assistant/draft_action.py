@@ -26,6 +26,8 @@ class DraftActionType(str, Enum):
     RECORD_MATERIAL_USAGE = "record_material_usage"
     RECORD_EXPENSE = "record_expense"
     MANAGE_MONEY_ACCOUNT = "manage_money_account"
+    TRANSFER_MONEY = "transfer_money"
+    REVERSE_TRANSACTION = "reverse_transaction"
     # Future v1 domains: record_equipment_usage, record_labour_attendance
 
 

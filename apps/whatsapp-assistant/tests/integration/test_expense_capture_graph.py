@@ -88,3 +88,56 @@ async def test_answering_the_slot_resumes_to_a_confirmable_draft():
     assert second_pass.get("awaiting_slot") is None
     assert second_pass["draft_action"].fields["account_id"] == "a2"
     assert "Confirm this record" in second_pass["pending_prompt"]
+
+
+async def test_no_duplicate_flag_skips_straight_to_a_confirmable_draft():
+    """Finance Module Slice 8: the common case -- no likely duplicate --
+    must not add an extra round trip."""
+    graph = build_expense_capture_graph()
+
+    result = await graph.ainvoke(_base_state({"amount": 250, "category": "fuel"}))
+
+    assert result["draft_action"].action_type is DraftActionType.RECORD_EXPENSE
+    assert result.get("awaiting_slot") is None
+    assert "Confirm this record" in result["pending_prompt"]
+
+
+async def test_duplicate_flagged_asks_then_yes_builds_the_draft():
+    graph = build_expense_capture_graph()
+
+    first_pass = await graph.ainvoke(
+        _base_state({"amount": 250, "category": "fuel", "is_potential_duplicate": True})
+    )
+    assert first_pass.get("draft_action") is None
+    assert first_pass["awaiting_slot"] == "duplicate_confirm"
+    assert "duplicate" in first_pass["pending_prompt"]
+
+    second_state = _base_state(dict(first_pass["collected_fields"]))
+    second_state["awaiting_slot"] = "duplicate_confirm"
+    second_state["collected_fields"]["_slot_answer_text"] = "yes"
+    second_pass = await graph.ainvoke(second_state)
+
+    assert second_pass["draft_action"].action_type is DraftActionType.RECORD_EXPENSE
+    assert second_pass.get("awaiting_slot") is None
+    assert "Confirm this record" in second_pass["pending_prompt"]
+    # The plumbing flags never leak into the draft or the confirmation text.
+    assert "is_potential_duplicate" not in second_pass["draft_action"].fields
+    assert "duplicate_confirmed" not in second_pass["draft_action"].fields
+
+
+async def test_duplicate_flagged_asks_then_no_cancels_with_no_draft():
+    graph = build_expense_capture_graph()
+
+    first_pass = await graph.ainvoke(
+        _base_state({"amount": 250, "category": "fuel", "is_potential_duplicate": True})
+    )
+    assert first_pass["awaiting_slot"] == "duplicate_confirm"
+
+    second_state = _base_state(dict(first_pass["collected_fields"]))
+    second_state["awaiting_slot"] = "duplicate_confirm"
+    second_state["collected_fields"]["_slot_answer_text"] = "no"
+    second_pass = await graph.ainvoke(second_state)
+
+    assert second_pass.get("draft_action") is None
+    assert second_pass.get("awaiting_slot") is None
+    assert "won't record" in second_pass["pending_prompt"]

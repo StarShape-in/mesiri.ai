@@ -80,6 +80,38 @@ class InventoryQueryCandidate(Candidate):
     # Conventional keys: material_name (optional -- absent means "all materials").
 
 
+class FinanceQueryCandidate(Candidate):
+    semantic_type: SemanticType = SemanticType.FINANCE_QUERY
+    # Conventional keys: query_kind (balance/expenses, required to route --
+    # see canonicalization/mapping.py), account_name, category_name,
+    # date_range (today/this_week/this_month).
+
+
+class TransferCandidate(Candidate):
+    semantic_type: SemanticType = SemanticType.TRANSFER
+    # Conventional keys: amount, from_account_name, to_account_name,
+    # description. Account names are best-effort hints -- resolved against
+    # the org's real accounts by workflows/transfer/nodes.py, which asks
+    # when a name doesn't resolve (see workflows/slots.py).
+
+
+class PettyCashCandidate(Candidate):
+    semantic_type: SemanticType = SemanticType.PETTY_CASH
+    # Conventional keys: amount, recipient_name, direction (issue/return),
+    # description. recipient_name is a best-effort hint -- resolved against
+    # the org's real users by runtime/petty_cash_query.py, which auto-
+    # creates the recipient's employee-advance account on first issuance
+    # (see workflows/petty_cash/nodes.py).
+
+
+class ReversalCandidate(Candidate):
+    semantic_type: SemanticType = SemanticType.REVERSAL
+    # Conventional keys: target_kind (expense/transfer, required to route --
+    # see canonicalization/mapping.py). No amount/reference fields -- the
+    # target is always "the most recent one of this kind", resolved by
+    # runtime/reversal_query.py, not stated by the user.
+
+
 # Registry so callers can build the right candidate from a semantic type.
 CANDIDATE_TYPES: dict[SemanticType, type[Candidate]] = {
     SemanticType.EXPENSE: ExpenseCandidate,
@@ -89,4 +121,8 @@ CANDIDATE_TYPES: dict[SemanticType, type[Candidate]] = {
     SemanticType.GENERAL_SITE_UPDATE: GeneralSiteUpdateCandidate,
     SemanticType.GENERAL_QUESTION: GeneralQuestionCandidate,
     SemanticType.INVENTORY_QUERY: InventoryQueryCandidate,
+    SemanticType.FINANCE_QUERY: FinanceQueryCandidate,
+    SemanticType.TRANSFER: TransferCandidate,
+    SemanticType.PETTY_CASH: PettyCashCandidate,
+    SemanticType.REVERSAL: ReversalCandidate,
 }

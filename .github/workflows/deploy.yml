@@ -24,7 +24,10 @@ jobs:
         ${{ github.workspace }}/shared/contracts/src:${{ github.workspace }}/platform/ai/src:${{ github.workspace }}/backend/src:${{ github.workspace }}/apps/whatsapp-assistant/src:${{ github.workspace }}/apps/whatsapp-assistant
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.11'
+          enable-cache: true
       - run: uv venv --python 3.11
       - run: uv pip install -e ".[dev,infra,providers]"
       - name: Lint
@@ -53,15 +56,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v3
+      - uses: pnpm/action-setup@v4
         with:
-          version: 8
+          version: 8.15.9
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'pnpm'
       - run: pnpm install
-      - run: pnpm --filter control-panel build
+      - run: pnpm --filter @mesiri/control-panel build
       - uses: actions/upload-artifact@v4
         with:
           name: control-panel-dist
@@ -74,9 +77,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v3
+      - uses: pnpm/action-setup@v4
         with:
-          version: 8
+          version: 8.15.9
       - uses: actions/setup-node@v4
         with:
           node-version: '20'

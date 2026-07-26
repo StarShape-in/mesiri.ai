@@ -46,4 +46,34 @@ class SemanticType(str, Enum):
     # MATERIAL_UPDATE the same way WHOAMI_QUESTION is distinct from a report:
     # it carries no business record to save, only a query to answer.
     INVENTORY_QUERY = "inventory_query"
+    # A question about cash/account balances or past expenses (e.g. "how much
+    # cash do I have?", "balance of Site Cash", "how much did we spend on
+    # diesel?") -- read-only, never an update. Splits into two
+    # CanonicalEventTypes by the extracted `query_kind` field ("balance" or
+    # "expenses"), the same way MATERIAL_UPDATE splits by `direction` (see
+    # canonicalization/mapping.py).
+    FINANCE_QUERY = "finance_query"
+    # Moving money between two of the org's own accounts (e.g. "transfer
+    # ₹50,000 from Company Account to Site Cash") -- a business-affecting
+    # write, unlike FINANCE_QUERY, so it still goes through draft/confirm.
+    TRANSFER = "transfer"
+    # Petty cash issued to or returned by a person (e.g. "give ₹20,000
+    # petty cash to Alan", "Alan returns ₹3,000") -- built as a convenience
+    # shape over TRANSFER (Finance Module Slice 5, see
+    # workflows/petty_cash/nodes.py): the recipient's employee-advance
+    # account is one leg of the transfer, auto-created on first issuance.
+    # Splits into two CanonicalEventTypes by the extracted `direction` field
+    # ("issue" or "return"), the same way MATERIAL_UPDATE splits by
+    # `direction` (see canonicalization/mapping.py).
+    PETTY_CASH = "petty_cash"
+    # Undo the user's most recently recorded expense or transfer (e.g.
+    # "reverse my last expense", "cancel that transfer") -- Finance Module
+    # Slice 7. Splits into two CanonicalEventTypes by the extracted
+    # `target_kind` field ("expense" or "transfer"), the same way
+    # MATERIAL_UPDATE/PETTY_CASH split by their own field (see
+    # canonicalization/mapping.py). Deliberately targets only the *most
+    # recent* record of that kind -- no slot-fill/disambiguation UI for
+    # picking among several, per the V1 scope in
+    # docs/execution/FINANCE_MODULE_PLAN.md.
+    REVERSAL = "reversal"
     UNKNOWN = "unknown"

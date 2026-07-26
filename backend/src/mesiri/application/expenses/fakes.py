@@ -9,6 +9,7 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
+from mesiri.application.vendors.resolution import VendorResolutionResult, VendorResolver
 from mesiri_contracts.application.results.execution_result import (
     ExecutionResult,
     ExecutionStatus,
@@ -134,3 +135,15 @@ class RejectingExpenseCategoryResolver(ExpenseCategoryResolver):
 
     async def resolve(self, conn: Any, cmd: RecordExpenseCommand) -> ResolutionResult:
         return ResolutionResult(category_id=None, reasons=self._reasons)
+
+
+class FakeVendorResolver(VendorResolver):
+    """Resolves to a deterministic vendor_id derived from cmd.vendor_text
+    (None stays None) -- never rejects, mirrors FakeExpenseCategoryResolver's
+    style. No catalog/DB involved."""
+
+    async def resolve(self, conn: Any, cmd: RecordExpenseCommand) -> VendorResolutionResult:
+        if not cmd.vendor_text:
+            return VendorResolutionResult(vendor_id=None)
+        vendor_id = uuid.uuid5(uuid.NAMESPACE_DNS, f"vendor:{cmd.vendor_text.strip().lower()}")
+        return VendorResolutionResult(vendor_id=vendor_id)

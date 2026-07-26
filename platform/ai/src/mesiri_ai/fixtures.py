@@ -81,6 +81,17 @@ PARTIAL_RECEIPT_EXTRACTION = ExtractionResult(
     latency_ms=205.0,
 )
 
+# A receipt whose short prose description never restates the total -- the
+# real-world bug this guards: amount only lives in raw_fields, so it must
+# reach extraction through the source text, not be dropped alongside it.
+RECEIPT_WITHOUT_AMOUNT_IN_DESCRIPTION_VISION = VisionResult(
+    document_classification="receipt",
+    description="Restaurant bill for tea and toast.",
+    raw_fields={"amount": 180, "currency": "INR", "vendor": "Restaurant"},
+    model="fake-gemini",
+    latency_ms=340.0,
+)
+
 UNREADABLE_IMAGE_VISION = VisionResult(
     document_classification="unknown",
     description="Image too blurry to interpret",

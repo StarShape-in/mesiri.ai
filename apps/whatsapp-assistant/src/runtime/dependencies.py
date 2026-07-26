@@ -15,6 +15,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from ingress.deduplication import InMemoryDeduplicationStore
 from ingress.media_ingestion import MetaMediaDownloader
 from ingress.receiver import InMemoryNormalizedMessageStore, WhatsAppReceiver
+from interactions.image_purpose import try_hold_new_image_for_purpose_picker
 from runtime.account_admin_journey import try_handle_account_admin_command
 from runtime.logging_ports import MessageLogger, TraceLogger
 
@@ -188,6 +189,12 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     # and runtime/inbound_journey.py's project-selection gate) -- same
     # redis_client, same never-authoritative principle.
     pending_report_store = PendingReportStore(redis_client)
+    # Holds a genuinely new image awaiting "what is this photo for?" (see
+    # interactions/pending_media.py and interactions/image_purpose.py) --
+    # same redis_client, same never-authoritative principle.
+    from interactions.pending_media import PendingMediaStore
+
+    pending_media_store = PendingMediaStore(redis_client)
 
     # M8: the one transaction Material command execution runs in. connect()/
     # disconnect() happen in the lifespan handler (runtime/lifecycle.py), same
@@ -217,6 +224,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from mesiri.application.expenses.dispatcher import ExpenseExecutionDispatcher
     from mesiri.application.expenses.handlers import RecordExpenseHandler
     from mesiri.application.expenses.resolution import PostgresExpenseCategoryResolver
+    from mesiri.application.vendors.resolution import PostgresVendorResolver
     from mesiri.infrastructure.postgres.repositories.expense_execution import (
         PostgresExpenseExecutionRepository,
     )
@@ -225,6 +233,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         PostgresExpenseExecutionRepository(),
         db=material_db,
         resolver=PostgresExpenseCategoryResolver(),
+        vendor_resolver=PostgresVendorResolver(),
     )
     expense_dispatcher = ExpenseExecutionDispatcher(expense_execution_handler)
     # Account admin (Finance Module Slice 6, account-admin scope): same
@@ -244,6 +253,43 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         resolver=PostgresAccountLookupResolver(),
     )
     account_admin_dispatcher = AccountAdminExecutionDispatcher(account_admin_execution_handler)
+    # Transfers (Finance Module Slice 3): same in-process capability-boundary
+    # wiring as account admin above. The resolver re-verifies both accounts
+    # are still active at confirm time -- the WhatsApp workflow already
+    # resolved from/to to real account ids during slot-fill, so this is
+    # defense-in-depth, not name resolution.
+    from mesiri.application.finance.transfer_dispatcher import TransferExecutionDispatcher
+    from mesiri.application.finance.transfer_handler import TransferMoneyHandler
+    from mesiri.application.finance.transfer_resolution import PostgresTransferAccountResolver
+    from mesiri.infrastructure.postgres.repositories.transfer_execution import (
+        PostgresTransferExecutionRepository,
+    )
+
+    transfer_execution_handler = TransferMoneyHandler(
+        PostgresTransferExecutionRepository(),
+        db=material_db,
+        resolver=PostgresTransferAccountResolver(),
+    )
+    transfer_dispatcher = TransferExecutionDispatcher(transfer_execution_handler)
+    # Reversal (Finance Module Slice 7): same in-process capability-boundary
+    # wiring as transfer above. The resolver re-verifies the target still
+    # exists and hasn't already been reversed/voided at confirm time -- the
+    # WhatsApp workflow already resolved "the most recent expense/transfer"
+    # into a concrete id during seeding (runtime/inbound_journey.py), so this
+    # is defense-in-depth, not name resolution.
+    from mesiri.application.finance.reverse_dispatcher import ReverseExecutionDispatcher
+    from mesiri.application.finance.reverse_handler import ReverseTransactionHandler
+    from mesiri.application.finance.reverse_resolution import PostgresReverseTargetResolver
+    from mesiri.infrastructure.postgres.repositories.reverse_execution import (
+        PostgresReverseExecutionRepository,
+    )
+
+    reverse_execution_handler = ReverseTransactionHandler(
+        PostgresReverseExecutionRepository(),
+        db=material_db,
+        resolver=PostgresReverseTargetResolver(),
+    )
+    reverse_dispatcher = ReverseExecutionDispatcher(reverse_execution_handler)
     # Routes a confirmed action to the dispatcher registered for its
     # action_type -- InteractionHandler only ever holds one ExecutionDispatcher.
     from interactions.execution_router import ActionTypeRoutingDispatcher
@@ -255,6 +301,8 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             DraftActionType.RECORD_MATERIAL_USAGE: material_dispatcher,
             DraftActionType.RECORD_EXPENSE: expense_dispatcher,
             DraftActionType.MANAGE_MONEY_ACCOUNT: account_admin_dispatcher,
+            DraftActionType.TRANSFER_MONEY: transfer_dispatcher,
+            DraftActionType.REVERSE_TRANSACTION: reverse_dispatcher,
         }
     )
     # Read-only inventory lookups for the material.inventory_query workflow --
@@ -288,6 +336,32 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from runtime.money_account_query import MoneyAccountQueryService
 
     money_account_query = MoneyAccountQueryService(material_db)
+    # Resolves a petty cash recipient's name into their employee-advance
+    # account (auto-created on first issuance), fed into the petty-cash
+    # workflow's "other account" slot (Finance Module Slice 5) -- same
+    # reasoning and same material_db as catalog_query above. See
+    # runtime/petty_cash_query.py.
+    from runtime.petty_cash_query import PettyCashRecipientQueryService
+
+    petty_cash_query = PettyCashRecipientQueryService(material_db)
+    # Resolves "the most recent expense/transfer" for the reverse workflow's
+    # target (Finance Module Slice 7) -- same reasoning and same material_db
+    # as catalog_query above. See runtime/reversal_query.py.
+    from runtime.reversal_query import ReversalTargetQueryService
+
+    reversal_query = ReversalTargetQueryService(material_db)
+    # Flags a likely-duplicate expense before expense_capture's graph runs
+    # (Finance Module Slice 8) -- same reasoning and same material_db as
+    # catalog_query above. See runtime/duplicate_expense_query.py.
+    from runtime.duplicate_expense_query import DuplicateExpenseQueryService
+
+    duplicate_expense_query = DuplicateExpenseQueryService(material_db)
+    # Read-only expense list/sum lookups for the expense-query workflow
+    # (Finance Module Slice 2) -- same reasoning and same material_db as
+    # money_account_query above. See runtime/expense_query_service.py.
+    from runtime.expense_query_service import ExpenseQueryService
+
+    expense_query_service = ExpenseQueryService(material_db)
     # Slow-path interaction classifier: while a confirmation is pending, a
     # message that isn't a plain "yes"/"no" (e.g. "40 bags of cement" instead
     # of the drafted 50) needs an LLM to recognize it as a CORRECTION rather
@@ -585,6 +659,70 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             await message_logger.mark_completed(correlation_id=message.correlation_id)
             return
 
+        # A tap on the "what is this photo for?" list (see
+        # interactions/image_purpose.py and channel/replies.IMAGE_PURPOSE_ROWS)
+        # -- resumes the HELD image (not this tap message) with the chosen
+        # purpose as a semantic_hint, or replies that Site Update photos
+        # aren't processed yet. Deterministic tap detection, same principle
+        # as the two fast paths above.
+        image_purpose_row_id = interaction_handler.handle_image_purpose_tap(message)
+        if image_purpose_row_id is not None:
+            from channel.replies import (
+                IMAGE_PURPOSE_SEMANTIC_HINT,
+                render_image_purpose_coming_soon,
+            )
+
+            held_message = await pending_media_store.pop_pending(user_id=ctx.user_id)
+            if held_message is None:
+                expired_reply = "That photo has expired — please resend it."
+                await sender.send_text(wa_id, expired_reply)
+                await message_logger.log_reply(
+                    correlation_id=message.correlation_id, reply=expired_reply
+                )
+                await message_logger.mark_completed(correlation_id=message.correlation_id)
+                return
+
+            coming_soon_reply = render_image_purpose_coming_soon(image_purpose_row_id)
+            if coming_soon_reply is not None:
+                await sender.send_text(wa_id, coming_soon_reply)
+                await message_logger.log_reply(
+                    correlation_id=message.correlation_id, reply=coming_soon_reply
+                )
+                await message_logger.mark_completed(correlation_id=message.correlation_id)
+                return
+
+            await process_inbound_message(
+                held_message,
+                actor_user_id=ctx.user_id,
+                actor=ctx,
+                semantic_hint=IMAGE_PURPOSE_SEMANTIC_HINT[image_purpose_row_id],
+                category_hint_store=category_hint_store,
+                pipeline=pipeline,
+                context_resolver=context_resolver,
+                planner=planner,
+                workflow_runtime=workflow_runtime,
+                interaction_handler=interaction_handler,
+                send_text=sender.send_text,
+                send_list=sender.send_list,
+                send_button=sender.send_button,
+                send_image=sender.send_image,
+                context_debug=settings.context_debug,
+                message_logger=message_logger,
+                trace_logger=trace_logger,
+                inventory_query=inventory_query,
+                catalog_query=catalog_query,
+                org_settings_query=org_settings_query,
+                expense_category_query=expense_category_query,
+                money_account_query=money_account_query,
+                petty_cash_query=petty_cash_query,
+                reversal_query=reversal_query,
+                duplicate_expense_query=duplicate_expense_query,
+                expense_query_service=expense_query_service,
+                pending_report_store=pending_report_store,
+            )
+            await message_logger.mark_completed(correlation_id=message.correlation_id)
+            return
+
         # Bare "hi"/"menu"/"help"/etc (see greeting_phrases.json): the AI
         # pipeline is never touched, same principle as the two fast paths
         # above. Text only -- voice can't be checked until Sarvam
@@ -816,6 +954,28 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             )
             return
 
+        # A genuinely new image (not a tap answering the picker above) is
+        # held while we ask "what is this photo for?" instead of running
+        # understanding/vision straight away -- a bare photo often arrives
+        # with no caption saying what it's for. See
+        # interactions/image_purpose.py.
+        image_purpose_reply = await try_hold_new_image_for_purpose_picker(
+            message, user_id=ctx.user_id, pending_media_store=pending_media_store
+        )
+        if image_purpose_reply is not None:
+            await send_reply_spec(
+                image_purpose_reply,
+                wa_id,
+                send_text=sender.send_text,
+                send_list=sender.send_list,
+                send_button=sender.send_button,
+            )
+            await message_logger.log_reply(
+                correlation_id=message.correlation_id, reply=image_purpose_reply.text
+            )
+            await message_logger.mark_completed(correlation_id=message.correlation_id)
+            return
+
         category_hint = await category_hint_store.pop_hint(user_id=ctx.user_id)
         await process_inbound_message(
             message,
@@ -841,6 +1001,10 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             org_settings_query=org_settings_query,
             expense_category_query=expense_category_query,
             money_account_query=money_account_query,
+            petty_cash_query=petty_cash_query,
+            reversal_query=reversal_query,
+            duplicate_expense_query=duplicate_expense_query,
+            expense_query_service=expense_query_service,
             pending_report_store=pending_report_store,
         )
 
