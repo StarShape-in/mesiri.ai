@@ -15,6 +15,7 @@ import {
   ChevronLeft,
   ChevronRight,
   AlertTriangle,
+  Trash2,
 } from 'lucide-react'
 import { useScope } from '@/lib/ScopeContext'
 import { KpiCard } from '@/components/ui/kpi-card'
@@ -69,10 +70,12 @@ export interface MoneyAccountItem {
 type SortField = 'name' | 'balance' | 'type'
 type SortOrder = 'asc' | 'desc'
 
-import { fetchAccountsApi } from '@/lib/api'
+import { fetchAccountsApi, deleteAccountApi } from '@/lib/api'
+import { useToast } from '@/components/ui/toast-notification'
 
 export default function AccountsPage() {
   const { scope } = useScope()
+  const toast = useToast()
 
   const [accounts, setAccounts] = React.useState<MoneyAccountItem[]>([])
   const [search, setSearch] = React.useState('')
@@ -126,6 +129,18 @@ export default function AccountsPage() {
       active = false
     }
   }, [scope])
+
+  const handleDeactivateAccount = async (acc: MoneyAccountItem) => {
+    if (!confirm(`Are you sure you want to deactivate/archive account "${acc.name}"? Historical ledger entries will be preserved.`)) return
+    try {
+      await deleteAccountApi(acc.id)
+      setAccounts((prev) => prev.filter((a) => a.id !== acc.id))
+      toast.success(`Account "${acc.name}" deactivated`, 'Archived from active money accounts')
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail || err.message || 'Failed to deactivate account'
+      toast.error('Deactivation failed', msg)
+    }
+  }
 
   // Selection state
   const [selectedIds, setSelectedIds] = React.useState<string[]>([])
@@ -604,6 +619,9 @@ export default function AccountsPage() {
                             </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => setTransferDialogOpen(true)}>
                               <ArrowLeftRight className="size-3.5 mr-1.5 text-cyan-500" /> Transfer Funds
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleDeactivateAccount(acc)} className="text-rose-600 focus:text-rose-600">
+                              <Trash2 className="size-3.5 mr-1.5" /> Deactivate Account
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>

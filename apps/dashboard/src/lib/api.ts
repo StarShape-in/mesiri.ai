@@ -564,6 +564,11 @@ export async function createAccountApi(payload: CreateAccountApiPayload) {
   return res.data
 }
 
+export async function deleteAccountApi(accountId: string) {
+  const res = await api.delete(`/finance/accounts/${accountId}`)
+  return res.data
+}
+
 export async function fetchAccountsApi(params?: { project_id?: string; site_id?: string }) {
   const res = await api.get('/finance/accounts', { params })
   return res.data

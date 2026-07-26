@@ -352,3 +352,23 @@ async def transfer_money(
     return {"id": result.material_row_id, "status": "succeeded"}
 
 
+@router.delete("/accounts/{account_id}")
+async def deactivate_account(
+    account_id: uuid.UUID,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Deactivate / archive a money account.
+
+    Historical money_transactions rows referencing this account stay queryable
+    and keep counting in get_balance().
+    """
+    repo = PostgresMoneyAccountRepository(conn)
+    acc = await repo.get_by_id(auth_context.organization_id, account_id)
+    if acc is None:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    await repo.deactivate(auth_context.organization_id, account_id, updated_by=auth_context.user_id)
+    return {"id": str(account_id), "status": "inactive"}
+
+
