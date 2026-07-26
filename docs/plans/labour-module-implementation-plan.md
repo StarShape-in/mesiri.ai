@@ -450,8 +450,52 @@ inconsistency disappears.
 coverage, and by doing it as a separate, isolated commit *before* Labour is
 built on top.
 
-**Status:** ⏸ Proposed, not implemented. Per instruction, shared abstractions
-are proposed before implementing. Requires explicit approval.
+**Status:** ✅ **Implemented** 2026-07-26 as an isolated commit before Labour.
+
+### 7.1 What was actually extracted — and what wasn't
+
+**Correction to the original proposal.** It claimed `ResolutionResult` was
+"defined twice, identically". That was wrong: reading only the class name and
+assuming. The three are genuinely different and share only `reasons`:
+
+| Module | Payload |
+|---|---|
+| materials | `material_id`, `unit_id`, `reasons` |
+| expenses | `category_id`, `reasons` |
+| finance | `target_account_id`, `reasons` |
+
+A base class for one common field would be ceremony, not reuse. **Not
+extracted.**
+
+**Extracted** into `backend/src/mesiri/application/shared/execution.py`:
+
+1. `OperationalExecutionDispatcher` — the dispatcher failure contract. This is
+   load-bearing: by the time an exception reaches the dispatcher the Handler's
+   transaction has already rolled back, so reporting `FAILED` rather than
+   raising is what leaves the workflow at `CONFIRMED` and recoverable. Having
+   that right in one module and subtly wrong in another stays invisible until
+   a crash.
+2. `recover_confirmed_instances` — the replay sweep, whose bodies were
+   byte-identical across modules.
+
+**Also not extracted:** the execution repository ports. Same three method
+names, but each typed to its own command; a generic port would need a TypeVar
+and would document the duplication rather than remove it.
+
+**Design note.** Per-module dispatchers remain as thin subclasses declaring a
+log label and how to invoke their handler. That indirection exists because the
+handlers genuinely disagree — Material exposes `handle()`, Expense and Finance
+expose `handle_confirmed()`. Renaming one would ripple through handlers,
+recovery and tests in a module the refactor otherwise leaves alone; one line
+per module keeps the blast radius at zero.
+
+**Result:** 124 lines removed, 67 added across five files. 1046 tests passing,
+behaviour unchanged. **Labour adds no execution scaffolding of its own.**
+
+Merged with an incoming change from Ilan (`e4f6cf5`) that moved
+`list_confirmed_by_workflow_keys` from the assistant package into
+`mesiri.infrastructure.postgres` to fix a `ModuleNotFoundError`; the shared
+module adopts that new path.
 
 ---
 
@@ -466,8 +510,8 @@ Update as work proceeds. `[x]` = done and pushed.
 - [x] Identify 0120 incompatibilities
 - [x] Identify shared-abstraction opportunities (§7)
 - [x] Master implementation plan (this document)
-- [ ] Dashboard plan document (`labour-dashboard-plan.md`)
-- [ ] Shared-abstraction proposal approved / rejected
+- [x] Dashboard plan document (`labour-dashboard-plan.md`)
+- [x] Shared-abstraction proposal approved and implemented (§7.1)
 
 ### Phase 1 — Business & domain model
 - [ ] Worker types, trades, statuses as domain enums
@@ -561,4 +605,5 @@ data for a future dashboard — so that building the UI later requires
 |---|---|
 | 2026-07-25 | Document created. Phase 0 complete: reconnaissance, ADR-L1 to L3, principles P1–P7, shared-abstraction proposal (§7) pending approval. |
 | 2026-07-25 | Merged 34 incoming Finance commits. Added §2.4: attendance already has a reserved slot in the image-purpose picker, duplicate-detection precedent is field-based (image hashing still to build), attachment/gallery paths now test-covered. 1046 tests passing. |
+| 2026-07-26 | Shared execution scaffolding extracted (§7.1) as an isolated commit before Labour: dispatcher failure contract + recovery sweep. Corrected the earlier wrong claim that `ResolutionResult` was duplicated — it is not, and was left alone. 124 lines removed, 1046 tests passing. |
 | 2026-07-26 | Product-clarity pass following design review. Added §3A **Definition of Done** (the finish line, 10 criteria), **P8 Future integration readiness** with expected-consumer table, **P9 Optimize for speed of recording** including its acknowledged tension with P4, strengthened **P7** to name Activity as the connective tissue between all operational modules, expanded **P2** to the full Module→Action→Project→Site→Capture→AI→Preview→Confirm→Save pattern, added **Q5** (headcount-only attendance — flagged decide-early as it affects the domain model), and made the dashboard deferral explicit. No architectural changes; scope unchanged. |
