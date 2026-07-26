@@ -28,7 +28,8 @@ class DraftActionType(str, Enum):
     MANAGE_MONEY_ACCOUNT = "manage_money_account"
     TRANSFER_MONEY = "transfer_money"
     REVERSE_TRANSACTION = "reverse_transaction"
-    # Future v1 domains: record_equipment_usage, record_labour_attendance
+    RECORD_LABOUR_ATTENDANCE = "record_labour_attendance"
+    # Future v1 domains: record_equipment_usage
 
 
 class DraftAction(BaseModel):

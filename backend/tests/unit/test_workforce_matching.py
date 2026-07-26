@@ -57,14 +57,70 @@ def test_name_only_confidence_stays_below_the_auto_accept_threshold():
     assert scored.confidence < AUTO_ACCEPT
 
 
-def test_same_name_different_trade_is_a_different_person():
-    """`Ravi (Mason)` != `Ravi (Painter)` — the canonical example from the
-    spec. Must not even be offered as a plausible candidate."""
+def test_same_name_different_trade_asks_rather_than_deciding():
+    """`Ravi (Mason)` vs `Ravi (Painter)` — the canonical ambiguous case.
+
+    Both readings are plausible: a different Ravi, or the same Ravi who has
+    changed trade. Guessing either way is harmful — assume "different" and
+    one worker's history splits in two; assume "same" and two people merge.
+    So it always asks.
+    """
     reported = ReportedWorker(name="Ravi", trade="Painter")
     result = match_worker(reported, _candidates(WorkerCandidate("w1", "Ravi", trade="mason")))
 
-    assert result.outcome is MatchOutcome.NO_MATCH
+    assert result.outcome is MatchOutcome.ASK_USER
     assert result.matched_worker_id is None
+    assert result.candidates[0].trade_changed is True
+
+
+def test_a_worker_who_changed_trade_is_still_offered_as_a_candidate():
+    """Trades genuinely change on site: a helper is promoted to mason,
+    someone lays brick one day and does carpentry the next. Treating a
+    mismatch as disqualifying would quietly create a second register entry
+    for the same person and split their history."""
+    result = match_worker(
+        ReportedWorker(name="Ravi", trade="Mason"),
+        _candidates(WorkerCandidate("w1", "Ravi", trade="helper", seen_on_site=True)),
+    )
+    assert result.outcome is MatchOutcome.ASK_USER
+    assert [c.worker_id for c in result.candidates] == ["w1"]
+
+
+def test_a_trade_change_never_auto_matches_however_strong_the_rest():
+    """Even with the same contractor and prior history on this very site, a
+    changed trade is confirmed rather than assumed — the ceiling holds."""
+    result = match_worker(
+        ReportedWorker(name="Ravi", trade="Mason", contractor="ABC Labour"),
+        _candidates(
+            WorkerCandidate(
+                "w1", "Ravi", trade="helper", contractor="ABC Labour", seen_on_site=True
+            )
+        ),
+    )
+    assert result.outcome is MatchOutcome.ASK_USER
+    assert result.candidates[0].trade_changed is True
+
+
+def test_trade_change_reason_names_both_trades():
+    """The prompt has to be able to say "register says mason, report says
+    carpenter" — a bare "which of these?" doesn't tell the user what decision
+    they are actually making."""
+    scored = score_candidate(
+        ReportedWorker(name="Ravi", trade="Carpenter"),
+        WorkerCandidate("w1", "Ravi", trade="mason"),
+    )
+    joined = " ".join(scored.reasons).lower()
+    assert "mason" in joined and "carpenter" in joined
+
+
+def test_trade_mismatch_alone_does_not_lift_a_name_only_match():
+    """A disagreeing trade is not corroboration — it must not be what pushes
+    a bare name match over the ask threshold."""
+    scored = score_candidate(
+        ReportedWorker(name="Ravi", trade="Painter"),
+        WorkerCandidate("w1", "Ravi", trade="mason"),
+    )
+    assert scored.confidence < AUTO_ACCEPT
 
 
 def test_trade_alone_never_identifies_a_person():

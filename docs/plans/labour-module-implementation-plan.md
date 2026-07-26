@@ -188,7 +188,19 @@ name + trade + contractor + previous attendance + project + site → confidence
 
 Low confidence → **ask the user**. Never guess, never auto-merge.
 
-`Ravi (Mason)` and `Ravi (Painter)` are different people.
+**A trade mismatch lowers confidence; it does not prove a different person.**
+Trades genuinely change on site — a helper is promoted to mason, someone lays
+brick one day and does carpentry the next. Treating a mismatch as
+disqualifying would quietly create a second register entry for the same
+person and split their history in two. Treating it as the same person is
+equally wrong. So a changed trade *always* asks, however much else
+corroborates it, and the question names both trades: *"the register says
+mason, today's report says carpenter — same worker with an updated trade, or
+a different Ravi?"*
+
+The goal is to **ask fewer questions, not better ones.** If supervisors are
+being asked on most reports, the fix is stronger corroborating signals — never
+a lower threshold.
 
 ### P5 — Attendance is immutable
 
@@ -226,6 +238,32 @@ be reconstructed afterwards.
 **Model the relationship now; do not build the features on top of it now.**
 Capturing an activity must stay optional and must never slow down recording
 (see P9).
+
+### P10 — Accept the detail the user can give today
+
+**Mesiri accepts the level of detail the user can provide today, rather than
+forcing a single reporting style.**
+
+One supervisor sends names::
+
+    Ravi - Mason
+    Arun - Helper
+
+Another sends counts::
+
+    12 Helpers
+    4 Masons
+
+A third sends both in one message. All are valid. Requiring names would push
+away everyone who doesn't have them to hand; accepting only counts would
+throw away worker history that other sites *can* provide.
+
+So a line is **either** a named person **or** a headcount group, and one
+attendance may freely mix them. There is no "mode" to choose and no second
+workflow — the difference is data, not flow.
+
+This principle is not Labour-specific. It is how every Mesiri module should
+treat partial information.
 
 ### P8 — Future integration readiness
 
@@ -514,17 +552,17 @@ Update as work proceeds. `[x]` = done and pushed.
 - [x] Shared-abstraction proposal approved and implemented (§7.1)
 
 ### Phase 1 — Business & domain model
-- [ ] Worker types, trades, statuses as domain enums
+- [x] Worker types, trades, statuses as domain enums
 - [ ] Workforce entity + invariants
 - [ ] Attendance entity + line items + invariants
-- [ ] Worker-matching confidence model (P4)
+- [x] Worker-matching confidence model (P4), incl. trade-change handling
 - [ ] Domain validation rules
-- [ ] Unit tests
+- [x] Unit tests (29)
 
 ### Phase 2 — Contracts
-- [ ] `DraftActionType.RECORD_LABOUR_ATTENDANCE`
-- [ ] `RecordLabourAttendanceCommand`
-- [ ] Contract tests
+- [x] `DraftActionType.RECORD_LABOUR_ATTENDANCE`
+- [x] `RecordLabourAttendanceCommand` + `LabourAttendanceLine`
+- [x] Contract tests (20)
 
 ### Phase 3 — Workflow
 - [ ] `workflows/labour_update/` graph + nodes
@@ -580,10 +618,10 @@ data for a future dashboard — so that building the UI later requires
 | # | Question | Status |
 |---|---|---|
 | Q1 | Should the AI extract named workers from a photographed attendance sheet, or is headcount + trade sufficient for V1? The spec implies named workers, which is the least predictable part of this build. **Recommend testing with a real site attendance sheet early.** | Open |
-| Q2 | Is `contractor` free text or a proper entity? Free text ships faster; an entity is needed if contractor-level cost reporting is wanted later. | Open |
+| Q2 | Is `contractor` free text or a proper entity? | **Resolved 2026-07-26: free text in V1.** Site vocabulary is inconsistent ("Kumar Team", "ABC Contractors", "Local Labour", "Self"), and normalizing it now adds complexity without operational gain. Converting free text into a Contractor entity later is straightforward; the reverse is not. |
 | Q3 | Should duplicate-image detection be exact-hash only (cheap, reliable) or perceptual/near-duplicate (catches re-photographs, more false positives)? Spec says "nearly identical", implying perceptual. | Open |
 | Q4 | Is a daily wage recorded per attendance line, or always inherited from the register? Recording it per line preserves history correctly (P5) but allows drift. **Recommend: inherit as default, store the value used.** | Open |
-| Q5 | Should V1 support **headcount-only attendance** when individual names aren't available — e.g. "10 helpers, 4 masons, 2 painters"? Many sites genuinely work this way, especially with contractor-supplied labour. This is also the fastest possible capture (P9), and notably it is exactly what the *existing* 0120 table and the current AI extraction prompt already assume. Supporting both named and headcount-only reports in one model is a real data-model decision, not a UI one — a line item would need to represent either a person or a count. **Worth resolving before Phase 1 finalises the domain model.** | Open — **decide early** |
+| ~~Q5~~ | **Resolved 2026-07-26: support both, mixed in one report.** See P10. A line is either a named worker or a headcount group; `headcount=1` plus a name is one person, `headcount=12` without a name is a group. ~~Should V1 support headcount-only attendance when individual names aren't available — e.g. "10 helpers, 4 masons, 2 painters"? Many sites genuinely work this way, especially with contractor-supplied labour. This is also the fastest possible capture (P9), and notably it is exactly what the *existing* 0120 table and the current AI extraction prompt already assume. Supporting both named and headcount-only reports in one model is a real data-model decision, not a UI one — a line item would need to represent either a person or a count. ~~ | ✅ Resolved |
 
 ---
 
@@ -605,5 +643,6 @@ data for a future dashboard — so that building the UI later requires
 |---|---|
 | 2026-07-25 | Document created. Phase 0 complete: reconnaissance, ADR-L1 to L3, principles P1–P7, shared-abstraction proposal (§7) pending approval. |
 | 2026-07-25 | Merged 34 incoming Finance commits. Added §2.4: attendance already has a reserved slot in the image-purpose picker, duplicate-detection precedent is field-based (image hashing still to build), attachment/gallery paths now test-covered. 1046 tests passing. |
+| 2026-07-26 | **Phase 1 (domain) and Phase 2 (contracts) complete.** Workforce vocabulary + worker matching with confidence scoring; `RecordLabourAttendanceCommand` with lines that are either a named worker or a headcount group. Four decisions taken: shared abstraction approved, Q5 resolved (support both, mixed — now P10), Q2 resolved (contractor free text), and P4 amended so a trade mismatch lowers confidence rather than proving a different person. 1091 tests passing. |
 | 2026-07-26 | Shared execution scaffolding extracted (§7.1) as an isolated commit before Labour: dispatcher failure contract + recovery sweep. Corrected the earlier wrong claim that `ResolutionResult` was duplicated — it is not, and was left alone. 124 lines removed, 1046 tests passing. |
 | 2026-07-26 | Product-clarity pass following design review. Added §3A **Definition of Done** (the finish line, 10 criteria), **P8 Future integration readiness** with expected-consumer table, **P9 Optimize for speed of recording** including its acknowledged tension with P4, strengthened **P7** to name Activity as the connective tissue between all operational modules, expanded **P2** to the full Module→Action→Project→Site→Capture→AI→Preview→Confirm→Save pattern, added **Q5** (headcount-only attendance — flagged decide-early as it affects the domain model), and made the dashboard deferral explicit. No architectural changes; scope unchanged. |

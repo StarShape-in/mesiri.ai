@@ -37,10 +37,22 @@ _W_CONTRACTOR = 0.20
 _W_SEEN_ON_SITE = 0.15
 _W_SEEN_ON_PROJECT = 0.10
 
+#: Penalty when both sides state a trade and they disagree. A reduction, not
+#: an elimination -- see _TRADE_MISMATCH_CEILING.
+_W_TRADE_MISMATCH = 0.15
+
 #: A name match with nothing corroborating it can never exceed this, however
 #: perfect the spelling. Kept strictly below AUTO_ACCEPT so "same name" alone
 #: always asks.
 _NAME_ONLY_CEILING = 0.55
+
+#: A trade mismatch can never auto-accept, however much else corroborates it.
+#: People genuinely change trade -- a helper becomes a mason, someone works
+#: mason one day and carpenter the next -- so a mismatch must not be treated
+#: as proof of a different person. But it must always be confirmed, because
+#: the alternative reading (a different Ravi) is equally plausible and
+#: guessing wrong either fragments one worker's history or merges two.
+_TRADE_MISMATCH_CEILING = 0.70
 
 #: At or above this, accept the match without asking.
 AUTO_ACCEPT = 0.75
@@ -86,6 +98,10 @@ class ScoredCandidate:
     #: Human-readable signals that contributed, for showing in the prompt and
     #: for debugging why a match did or didn't happen.
     reasons: tuple[str, ...] = ()
+    #: True when both sides stated a trade and they disagree. The caller uses
+    #: this to word the question as "same worker, updated trade?" rather than
+    #: a bare "which of these?" -- the two readings need different answers.
+    trade_changed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,20 +172,28 @@ def score_candidate(reported: ReportedWorker, candidate: WorkerCandidate) -> Sco
 
     reported_trade = normalize_trade(reported.trade)
     candidate_trade = normalize_trade(candidate.trade)
+    trade_changed = False
     if reported_trade and candidate_trade:
         if reported_trade == candidate_trade:
             score += _W_TRADE
             reasons.append(f"same trade ({candidate_trade.replace('_', ' ')})")
         else:
-            # A stated, *different* trade is strong evidence of a different
-            # person -- this is the Ravi-the-Mason vs Ravi-the-Painter case.
-            # Zero it out rather than merely not adding: a same-name,
-            # different-trade pair must never be offered as a likely match.
-            return ScoredCandidate(
-                candidate.worker_id,
-                candidate.name,
-                0.0,
-                ("different trade — treated as a different person",),
+            # A different trade lowers confidence but does NOT prove a
+            # different person. Trades genuinely change on site: a helper is
+            # promoted to mason, someone lays brick one day and does
+            # carpentry the next. Treating a mismatch as disqualifying would
+            # quietly create a second register entry for the same person and
+            # split their history in two.
+            #
+            # It is equally wrong to assume it *is* the same person, so this
+            # always lands in the ask band (see _TRADE_MISMATCH_CEILING) and
+            # the user resolves it: same worker with an updated trade, or a
+            # different worker who shares a name?
+            trade_changed = True
+            score -= _W_TRADE_MISMATCH
+            reasons.append(
+                f"different trade (register says {candidate_trade.replace('_', ' ')}, "
+                f"report says {reported_trade.replace('_', ' ')})"
             )
 
     if reported.contractor and candidate.contractor:
@@ -186,11 +210,23 @@ def score_candidate(reported: ReportedWorker, candidate: WorkerCandidate) -> Sco
 
     # The P4 guarantee, enforced structurally: with no corroboration beyond
     # the name itself, confidence cannot reach AUTO_ACCEPT no matter how
-    # exact the spelling.
-    if len(reasons) <= 1:
+    # exact the spelling. A trade mismatch is not corroboration, so it does
+    # not lift the name out of this ceiling on its own.
+    corroborating = [r for r in reasons if not r.startswith("different trade")]
+    if len(corroborating) <= 1:
         score = min(score, _NAME_ONLY_CEILING)
 
-    return ScoredCandidate(candidate.worker_id, candidate.name, round(min(score, 1.0), 4), tuple(reasons))
+    # A changed trade always gets confirmed, however strong the rest.
+    if trade_changed:
+        score = min(score, _TRADE_MISMATCH_CEILING)
+
+    return ScoredCandidate(
+        candidate.worker_id,
+        candidate.name,
+        round(max(min(score, 1.0), 0.0), 4),
+        tuple(reasons),
+        trade_changed=trade_changed,
+    )
 
 
 def match_worker(
