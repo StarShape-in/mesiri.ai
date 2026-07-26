@@ -459,12 +459,12 @@ export interface CreateAccountApiPayload {
 }
 
 export async function createAccountApi(payload: CreateAccountApiPayload) {
-  const res = await api.post('/company/finance/accounts', payload)
+  const res = await api.post('/finance/accounts', payload)
   return res.data
 }
 
 export async function fetchAccountsApi(params?: { project_id?: string; site_id?: string }) {
-  const res = await api.get('/company/finance/accounts', { params })
+  const res = await api.get('/finance/accounts', { params })
   return res.data
 }
 
@@ -477,7 +477,7 @@ export interface TransferMoneyApiPayload {
 }
 
 export async function transferMoneyApi(payload: TransferMoneyApiPayload, idempotencyKey: string) {
-  const res = await api.post('/company/finance/transfers', payload, {
+  const res = await api.post('/finance/transfers', payload, {
     headers: { 'Idempotency-Key': idempotencyKey },
   })
   return res.data
@@ -493,7 +493,7 @@ export interface RecordVoucherApiPayload {
 }
 
 export async function recordVoucherApi(payload: RecordVoucherApiPayload) {
-  const res = await api.post('/company/finance/petty-cash/vouchers', payload)
+  const res = await api.post('/finance/petty-cash/vouchers', payload)
   return res.data
 }
 
@@ -505,7 +505,7 @@ export interface ReplenishFloatApiPayload {
 }
 
 export async function replenishFloatApi(payload: ReplenishFloatApiPayload) {
-  const res = await api.post('/company/finance/petty-cash/replenish', payload)
+  const res = await api.post('/finance/petty-cash/replenish', payload)
   return res.data
 }
 

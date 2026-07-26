@@ -159,13 +159,37 @@ export default function AccountsPage() {
     let active = true
     async function loadBackendAccounts() {
       try {
-        const data = await fetchAccountsApi({
-          project_id: scope.mode !== 'portfolio' ? scope.projectId || undefined : undefined,
-          site_id: scope.mode === 'site' ? scope.siteId || undefined : undefined,
-        })
-        if (active && Array.isArray(data)) {
-          const existingIds = new Set(data.map((a: any) => a.id))
-          const combined = [...data, ...INITIAL_ACCOUNTS.filter((init) => !existingIds.has(init.id))]
+        const data = await fetchAccountsApi()
+        if (active && Array.isArray(data) && data.length > 0) {
+          // Map backend account_type (bank/cash/employee_advance/other) → UI type labels
+          const typeMap: Record<string, MoneyAccountItem['account_type']> = {
+            bank: 'bank_account',
+            cash: 'petty_cash',
+            employee_advance: 'petty_cash',
+            other: 'bank_account',
+            bank_account: 'bank_account',
+            petty_cash: 'petty_cash',
+            corporate_card: 'corporate_card',
+            digital_wallet: 'digital_wallet',
+          }
+          const mapped: MoneyAccountItem[] = data.map((a: any) => ({
+            id: String(a.id),
+            name: a.name,
+            account_type: typeMap[a.account_type] ?? 'bank_account',
+            currency: a.currency || 'INR',
+            opening_balance: parseFloat(a.opening_balance) || 0,
+            current_balance: parseFloat(a.current_balance) || parseFloat(a.opening_balance) || 0,
+            custodian_name: a.owner_user_id ? String(a.owner_user_id).slice(0, 8) : 'Finance Admin',
+            project_id: a.project_id ? String(a.project_id) : undefined,
+            project_name: 'Org Wide',
+            site_id: a.site_id ? String(a.site_id) : undefined,
+            scope_level: a.project_id ? (a.site_id ? 'site' : 'project') : 'portfolio',
+            status: (a.status === 'active' || a.status === 'inactive') ? a.status : 'active',
+            created_at: a.opening_balance_date || new Date().toISOString().split('T')[0],
+          }))
+          // Real backend accounts shown first; INITIAL_ACCOUNTS fill only if not already present
+          const existingIds = new Set(mapped.map((m) => m.id))
+          const combined = [...mapped, ...INITIAL_ACCOUNTS.filter((init) => !existingIds.has(init.id))]
           setAccounts(combined)
         }
       } catch (err) {
