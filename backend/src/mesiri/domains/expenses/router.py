@@ -91,6 +91,7 @@ class RecordExpenseRequest(BaseModel):
     amount: Decimal
     occurred_date: datetime.date
     site_id: uuid.UUID | None = None
+    vendor_id: uuid.UUID | None = None
     currency: str = "INR"
     description: str | None = None
     occurred_time: datetime.time | None = None
@@ -128,6 +129,7 @@ async def record_expense(
         project_id=str(body.project_id),
         site_id=str(body.site_id) if body.site_id else None,
         category_id=str(body.category_id),
+        vendor_id=str(body.vendor_id) if body.vendor_id else None,
         amount=body.amount,
         currency=body.currency,
         description=body.description,

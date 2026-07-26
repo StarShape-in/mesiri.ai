@@ -423,6 +423,7 @@ export interface RecordExpenseApiPayload {
   amount: number
   occurred_date: string
   site_id?: string
+  vendor_id?: string
   currency?: string
   description?: string
   source?: string
