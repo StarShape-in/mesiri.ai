@@ -39,13 +39,13 @@ def test_direct_reply_types_have_no_workflow() -> None:
 
 def test_built_vs_unbuilt_matches_the_registry() -> None:
     infos = _by_type()
-    # Built today (in workflows.registry._BUILDERS).
+    # Built today (registered in workflows.registry).
     assert infos["expense"].implemented is True
     assert infos["inventory_query"].implemented is True
     assert infos["whoami_question"].implemented is True
     # labour_update joined this list when the Labour attendance graph was
     # registered (Labour plan Phase 3) -- the System Graph derives
-    # `implemented` live from _BUILDERS, so it now shows labour.attendance as
+    # `implemented` live from the registry, so it now shows labour.attendance as
     # built rather than "not built yet".
     assert infos["labour_update"].implemented is True
     # Routed but not built yet.

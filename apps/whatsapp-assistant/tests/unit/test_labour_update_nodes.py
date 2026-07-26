@@ -384,9 +384,12 @@ def test_route_ignores_another_workflows_slot():
 def test_registry_maps_the_labour_attendance_key():
     """Pinned without compiling, so the core suite checks the wiring even
     though it runs without LangGraph installed."""
-    from workflows.registry import _BUILDERS
+    from workflows.registry import WorkflowCategory, get_definition, is_implemented
 
-    assert WorkflowKey.LABOUR_ATTENDANCE in _BUILDERS
+    assert is_implemented(WorkflowKey.LABOUR_ATTENDANCE)
+    definition = get_definition(WorkflowKey.LABOUR_ATTENDANCE)
+    assert definition is not None
+    assert definition.category is WorkflowCategory.LABOUR
 
 
 # --- build_draft -----------------------------------------------------------

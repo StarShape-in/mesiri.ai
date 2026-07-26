@@ -755,7 +755,7 @@ signal here.
 
 Registering the graph also flipped `labour_update` to **implemented** in the
 admin System Graph, which derives that flag live from
-`workflows.registry._BUILDERS` (`admin/system_graph_router.py`). The
+`workflows.registry.is_implemented()` (`admin/system_graph_router.py`). The
 `labour.attendance` node now renders as built rather than "not built yet",
 and `test_system_graph_semantic_types.py` was updated to match. Equipment and
 general-site-update remain the only routed-but-unbuilt workflows.

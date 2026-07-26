@@ -117,7 +117,8 @@ class SemanticTypeInfo(BaseModel):
     # Workflow(s) this routes to; empty when it's answered by a direct reply
     # (GENERAL_QUESTION / UNKNOWN never start a workflow).
     workflow_keys: list[str] = []
-    # True when at least one mapped workflow is actually built (in _BUILDERS).
+    # True when at least one mapped workflow is actually built (registered in
+    # workflows.registry).
     implemented: bool = False
     # Short note for the types that never reach a workflow.
     routes_to_reply: str | None = None
@@ -746,7 +747,7 @@ def _build_pipeline_mermaid() -> str:
     from mesiri_contracts.assistant.canonical_event import CanonicalEventType
     from mesiri_contracts.assistant.enums import SemanticType
     from planner.routing import WORKFLOW_KEY_BY_EVENT
-    from workflows.registry import _BUILDERS
+    from workflows.registry import is_implemented
 
     lines: list[str] = ["flowchart LR"]
 
@@ -796,7 +797,7 @@ def _build_pipeline_mermaid() -> str:
 
     lines.append('  subgraph Workflows["4 · Workflows (LangGraph)"]')
     for key in sorted({k for k in WORKFLOW_KEY_BY_EVENT.values()}, key=lambda k: k.value):
-        implemented = key in _BUILDERS
+        implemented = is_implemented(key)
         label = key.value if implemented else f"{key.value} · not built yet"
         shape = f'[["{label}"]]' if implemented else f'["{label}"]'
         lines.append(f"    wf_{_node_id(key.value)}{shape}")
@@ -806,7 +807,7 @@ def _build_pipeline_mermaid() -> str:
         lines.append(f"  {_node_id(event.name)} --> wf_{_node_id(key.value)}")
 
     for key in WORKFLOW_KEY_BY_EVENT.values():
-        target = "reply" if key in _BUILDERS else "unsupported"
+        target = "reply" if is_implemented(key) else "unsupported"
         lines.append(f"  wf_{_node_id(key.value)} --> {target}")
     lines.append("  unsupported([\"'Not supported yet' reply\"])")
 
@@ -859,7 +860,7 @@ def _semantic_type_infos() -> list[SemanticTypeInfo]:
     from mesiri_contracts.assistant.canonical_event import CanonicalEventType
     from mesiri_contracts.assistant.enums import SemanticType
     from planner.routing import WORKFLOW_KEY_BY_EVENT
-    from workflows.registry import _BUILDERS
+    from workflows.registry import is_implemented
 
     examples = _example_messages_by_workflow()
 
@@ -890,7 +891,7 @@ def _semantic_type_infos() -> list[SemanticTypeInfo]:
             key = WORKFLOW_KEY_BY_EVENT.get(event)
             if key is not None and key.value not in workflow_keys:
                 workflow_keys.append(key.value)
-                if key in _BUILDERS:
+                if is_implemented(key):
                     implemented = True
 
         # Example messages: gathered from the mapped workflows (verbatim copy).
@@ -928,7 +929,7 @@ def _workflow_infos() -> list[WorkflowGraphInfo]:
     from mesiri_contracts.assistant.enums import SemanticType
     from mesiri_contracts.assistant.planner_decision import WorkflowKey
     from planner.routing import WORKFLOW_KEY_BY_EVENT
-    from workflows.registry import _BUILDERS, WorkflowRegistry
+    from workflows.registry import WorkflowRegistry, is_implemented
 
     # Reverse the routing table: workflow key -> canonical event.
     event_by_key = {key: event for event, key in WORKFLOW_KEY_BY_EVENT.items()}
@@ -944,7 +945,7 @@ def _workflow_infos() -> list[WorkflowGraphInfo]:
 
     infos: list[WorkflowGraphInfo] = []
     for key in WorkflowKey:
-        implemented = key in _BUILDERS
+        implemented = is_implemented(key)
         event = event_by_key.get(key)
         semantic = semantic_by_event.get(event) if event else None
         req = list(REQUIRED_FIELDS.get(event, ())) if event else []

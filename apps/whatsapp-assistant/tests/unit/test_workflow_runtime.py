@@ -547,7 +547,15 @@ def test_workflow_registry_compiles_once_and_caches(monkeypatch: pytest.MonkeyPa
         build_calls["count"] += 1
         return object()
 
-    monkeypatch.setitem(registry_module._BUILDERS, WorkflowKey.MATERIAL_RECEIPT, _fake_builder)
+    monkeypatch.setitem(
+        registry_module._DEFINITIONS,
+        WorkflowKey.MATERIAL_RECEIPT,
+        registry_module.WorkflowDefinition(
+            key=WorkflowKey.MATERIAL_RECEIPT,
+            builder=_fake_builder,
+            category=registry_module.WorkflowCategory.MATERIAL,
+        ),
+    )
 
     registry = registry_module.WorkflowRegistry()
     first = registry.get_graph(WorkflowKey.MATERIAL_RECEIPT)
@@ -555,3 +563,29 @@ def test_workflow_registry_compiles_once_and_caches(monkeypatch: pytest.MonkeyPa
 
     assert first is second
     assert build_calls["count"] == 1
+
+
+def test_definition_flags_match_the_runtime_key_sets() -> None:
+    """The registry's per-workflow flags must agree with the frozensets that
+    still drive runtime behaviour today.
+
+    These two sources of truth are deliberately duplicated for one step: the
+    flags land here first, this test pins them, and only then does runtime.py
+    switch to reading them. Delete this test in the same change that deletes
+    the frozensets."""
+    from workflows.registry import iter_definitions
+    from workflows.runtime import _INFORMATIONAL_WORKFLOW_KEYS, _NO_DRAFT_ALLOWED_WORKFLOW_KEYS
+
+    informational = {d.key for d in iter_definitions() if d.is_informational}
+    no_draft = {d.key for d in iter_definitions() if d.allows_completion_without_draft}
+
+    assert informational == set(_INFORMATIONAL_WORKFLOW_KEYS)
+    assert no_draft == set(_NO_DRAFT_ALLOWED_WORKFLOW_KEYS)
+
+
+def test_every_registered_workflow_has_a_category() -> None:
+    """Category is metadata-only today, so nothing else would catch a gap."""
+    from workflows.registry import WorkflowCategory, iter_definitions
+
+    for definition in iter_definitions():
+        assert isinstance(definition.category, WorkflowCategory), definition.key

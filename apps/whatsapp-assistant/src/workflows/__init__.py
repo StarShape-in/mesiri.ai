@@ -8,7 +8,14 @@ domain rules (architecture rule #11).
 from __future__ import annotations
 
 from .ports import LoadedWorkflowInstance, SingleActiveConflict, WorkflowInstanceRepository
-from .registry import WorkflowRegistry
+from .registry import (
+    WorkflowCategory,
+    WorkflowDefinition,
+    WorkflowRegistry,
+    get_definition,
+    is_implemented,
+    iter_definitions,
+)
 from .runtime import (
     ResumeAction,
     WorkflowResumeResult,
@@ -21,6 +28,11 @@ from .runtime import (
 
 __all__ = [
     "WorkflowRegistry",
+    "WorkflowDefinition",
+    "WorkflowCategory",
+    "get_definition",
+    "is_implemented",
+    "iter_definitions",
     "WorkflowRuntime",
     "WorkflowRunResult",
     "WorkflowRunStatus",
