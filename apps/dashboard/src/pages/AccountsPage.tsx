@@ -157,9 +157,11 @@ export default function AccountsPage() {
 
   React.useEffect(() => {
     let active = true
+    let backendResponded = false
     async function loadBackendAccounts() {
       try {
         const data = await fetchAccountsApi()
+        backendResponded = true
         if (active && Array.isArray(data) && data.length > 0) {
           // Map backend account_type (bank/cash/employee_advance/other) → UI type labels
           const typeMap: Record<string, MoneyAccountItem['account_type']> = {
@@ -187,13 +189,16 @@ export default function AccountsPage() {
             status: (a.status === 'active' || a.status === 'inactive') ? a.status : 'active',
             created_at: a.opening_balance_date || new Date().toISOString().split('T')[0],
           }))
-          // Real backend accounts shown first; INITIAL_ACCOUNTS fill only if not already present
-          const existingIds = new Set(mapped.map((m) => m.id))
-          const combined = [...mapped, ...INITIAL_ACCOUNTS.filter((init) => !existingIds.has(init.id))]
-          setAccounts(combined)
+          setAccounts(mapped)
+        } else if (active && backendResponded) {
+          // Backend returned empty — don't show mock data, show empty state
+          setAccounts([])
         }
       } catch (err) {
-        console.warn('Live backend accounts fetch unavailable, fallback data active:', err)
+        if (!backendResponded) {
+          console.warn('Live backend accounts fetch unavailable, showing sample data:', err)
+          setAccounts(INITIAL_ACCOUNTS)
+        }
       }
     }
     loadBackendAccounts()

@@ -275,6 +275,44 @@ class PostgresExpenseRepository:
         row = (await self.conn.execute(stmt)).mappings().first()
         return _row_to_expense(row) if row else None
 
+    async def find_potential_duplicate(
+        self,
+        organization_id: uuid.UUID,
+        *,
+        amount: Decimal,
+        occurred_date: datetime.date,
+        project_id: uuid.UUID | None = None,
+        vendor_id: uuid.UUID | None = None,
+        category_id: uuid.UUID | None = None,
+    ) -> Expense | None:
+        """Finance Module Slice 8: a confirmed expense already recorded for
+        the same amount and date, matched additionally by vendor (preferred,
+        Slice 4) or category (fallback) -- whichever signal the caller
+        resolved. Neither given means there is no signal beyond amount+date
+        alone, too weak on its own, so this returns None without querying."""
+        if vendor_id is None and category_id is None:
+            return None
+        where_clauses = [
+            _expenses.c.organization_id == organization_id,
+            _expenses.c.workflow_status == "confirmed",
+            _expenses.c.amount == amount,
+            _expenses.c.occurred_date == occurred_date,
+        ]
+        if project_id is not None:
+            where_clauses.append(_expenses.c.project_id == project_id)
+        if vendor_id is not None:
+            where_clauses.append(_expenses.c.vendor_id == vendor_id)
+        else:
+            where_clauses.append(_expenses.c.category_id == category_id)
+        stmt = (
+            sa.select(_expenses)
+            .where(*where_clauses)
+            .order_by(_expenses.c.created_at.desc())
+            .limit(1)
+        )
+        row = (await self.conn.execute(stmt)).mappings().first()
+        return _row_to_expense(row) if row else None
+
     async def list_confirmed(
         self,
         organization_id: uuid.UUID,

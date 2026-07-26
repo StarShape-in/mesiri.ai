@@ -71,10 +71,10 @@ type NavCategory = {
 const OPERATIONS_CATEGORY: NavCategory = {
   title: 'Operations',
   icon: Activity,
-  color: 'text-amber-500 dark:text-amber-400',
-  bgColor: 'bg-amber-500/10 dark:bg-amber-500/20',
-  activeBg: 'bg-amber-500/15 dark:bg-amber-500/25',
-  activeText: 'text-amber-700 dark:text-amber-300 font-semibold',
+  color: 'text-amber-600 dark:text-amber-400',
+  bgColor: 'bg-amber-100 dark:bg-amber-900',
+  activeBg: 'bg-amber-100 dark:bg-amber-950',
+  activeText: 'text-amber-800 dark:text-amber-200 font-semibold',
   items: [
     { title: 'Overview', url: '/operations/overview', icon: LayoutDashboard },
     { title: 'Timeline', url: '/operations/timeline', icon: History },
@@ -87,10 +87,10 @@ const OPERATIONS_CATEGORY: NavCategory = {
 const FINANCE_CATEGORY: NavCategory = {
   title: 'Finance',
   icon: Landmark,
-  color: 'text-emerald-500 dark:text-emerald-400',
-  bgColor: 'bg-emerald-500/10 dark:bg-emerald-500/20',
-  activeBg: 'bg-emerald-500/15 dark:bg-emerald-500/25',
-  activeText: 'text-emerald-700 dark:text-emerald-300 font-semibold',
+  color: 'text-emerald-600 dark:text-emerald-400',
+  bgColor: 'bg-emerald-100 dark:bg-emerald-900',
+  activeBg: 'bg-emerald-100 dark:bg-emerald-950',
+  activeText: 'text-emerald-800 dark:text-emerald-200 font-semibold',
   items: [
     { title: 'Overview', url: '/finance/overview', icon: PieChart },
     { title: 'Expenses', url: '/finance/expenses', icon: DollarSign },
@@ -108,10 +108,10 @@ const FINANCE_CATEGORY: NavCategory = {
 const MATERIALS_CATEGORY: NavCategory = {
   title: 'Materials',
   icon: Boxes,
-  color: 'text-indigo-500 dark:text-indigo-400',
-  bgColor: 'bg-indigo-500/10 dark:bg-indigo-500/20',
-  activeBg: 'bg-indigo-500/15 dark:bg-indigo-500/25',
-  activeText: 'text-indigo-700 dark:text-indigo-300 font-semibold',
+  color: 'text-indigo-600 dark:text-indigo-400',
+  bgColor: 'bg-indigo-100 dark:bg-indigo-900',
+  activeBg: 'bg-indigo-100 dark:bg-indigo-950',
+  activeText: 'text-indigo-800 dark:text-indigo-200 font-semibold',
   items: [
     { title: 'Overview', url: '/materials/overview', icon: Boxes },
     { title: 'Inventory', url: '/materials/inventory', icon: Warehouse },
@@ -173,7 +173,7 @@ function CollapsibleNavCategory({
         tooltip={category.title}
         className={cn(
           'w-full flex items-center justify-between group/cat-btn font-medium transition-colors',
-          isChildActive && 'bg-accent/40 font-semibold'
+          isChildActive && 'bg-sidebar-accent font-semibold'
         )}
       >
         <div className="flex items-center gap-2 min-w-0">
@@ -214,11 +214,11 @@ function CollapsibleNavCategory({
                     'flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs transition-all duration-150',
                     isLinkActive || isActive
                       ? cn(category.activeBg, category.activeText, 'shadow-2xs')
-                      : 'text-sidebar-foreground/80 hover:text-sidebar-foreground hover:bg-sidebar-accent/60'
+                      : 'text-sidebar-foreground hover:text-foreground hover:bg-sidebar-accent'
                   )
                 }
               >
-                <ItemIcon className={cn('size-3.5 shrink-0 opacity-80', (isActive || pathname === item.url) && category.color)} />
+                <ItemIcon className={cn('size-3.5 shrink-0 text-muted-foreground', (isActive || pathname === item.url) && category.color)} />
                 <span className="truncate">{item.title}</span>
               </NavLink>
             )
@@ -303,11 +303,11 @@ export function AppSidebar() {
                     className={({ isActive }) =>
                       cn(
                         'flex items-center gap-2 w-full font-medium transition-colors',
-                        isActive && 'bg-blue-500/15 text-blue-700 dark:text-blue-300 font-semibold'
+                        isActive && 'bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-200 font-semibold'
                       )
                     }
                   >
-                    <div className="p-1 rounded-md bg-blue-500/10 dark:bg-blue-500/20 text-blue-500 shrink-0">
+                    <div className="p-1 rounded-md bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400 shrink-0">
                       <LayoutDashboard className="size-4" />
                     </div>
                     <span>Dashboard</span>
@@ -368,11 +368,11 @@ export function AppSidebar() {
                           className={({ isActive }) =>
                             cn(
                               'flex items-center gap-2 w-full transition-colors',
-                              isActive && 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 font-semibold'
+                              isActive && 'bg-cyan-100 dark:bg-cyan-950 text-cyan-800 dark:text-cyan-200 font-semibold'
                             )
                           }
                         >
-                          <div className="p-1 rounded-md bg-cyan-500/10 dark:bg-cyan-500/20 text-cyan-500 shrink-0">
+                          <div className="p-1 rounded-md bg-cyan-100 dark:bg-cyan-900 text-cyan-600 dark:text-cyan-400 shrink-0">
                             <ItemIcon className="size-4" />
                           </div>
                           <span>{item.title}</span>
@@ -393,9 +393,9 @@ export function AppSidebar() {
             <SidebarMenuButton
               onClick={() => logout().then(() => window.location.assign('/login'))}
               tooltip="Log out"
-              className="hover:bg-destructive/10 hover:text-destructive transition-colors"
+              className="hover:bg-red-100 dark:hover:bg-red-950 hover:text-red-700 dark:hover:text-red-300 transition-colors"
             >
-              <LogOut className="size-4 text-muted-foreground group-hover:text-destructive" />
+              <LogOut className="size-4 text-muted-foreground" />
               <span>Log out</span>
             </SidebarMenuButton>
           </SidebarMenuItem>

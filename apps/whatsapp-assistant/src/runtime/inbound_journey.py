@@ -52,6 +52,7 @@ from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
 from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
 from mesiri_contracts.assistant.v2.resolved_context import ResolvedContextV2
 from planner import Planner, log_planner_decision
+from runtime.duplicate_expense_query import DuplicateExpenseQueryService
 from runtime.expense_category_query import ExpenseCategoryQueryService
 from runtime.expense_query_service import ExpenseQueryService, resolve_date_range
 from runtime.inventory_query import MaterialInventoryQueryService
@@ -647,6 +648,38 @@ async def _seed_reversal_target(
         event.fields["reversal_occurred_date"] = expense["occurred_date"]
 
 
+async def _seed_duplicate_check(
+    event: CanonicalEventV2,
+    decision: PlannerDecisionV2,
+    duplicate_expense_query: DuplicateExpenseQueryService | None,
+    actor: ActorIdentity | None,
+) -> None:
+    """Finance Module Slice 8: flag a likely-duplicate expense before the
+    graph runs (a node must never query a repository itself, same principle
+    as _seed_account_candidates above). Only ever runs for EXPENSE_SUBMIT.
+    No signal beyond amount+date alone is strong enough, so this is skipped
+    entirely when neither vendor nor category was extracted -- see
+    runtime/duplicate_expense_query.py."""
+    if duplicate_expense_query is None or actor is None or not actor.organization_id:
+        return
+    if decision.workflow_key is not WorkflowKey.EXPENSE_SUBMIT:
+        return
+    amount = event.fields.get("amount")
+    vendor_name = event.fields.get("vendor")
+    category_name = event.fields.get("category")
+    if amount is None or not (vendor_name or category_name):
+        return
+    is_duplicate = await duplicate_expense_query.find_potential_duplicate(
+        organization_id=actor.organization_id,
+        project_id=event.project_id,
+        amount=amount,
+        vendor_name=vendor_name,
+        category_name=category_name,
+    )
+    if is_duplicate:
+        event.fields["is_potential_duplicate"] = True
+
+
 async def _seed_finance_query_context(
     event: CanonicalEventV2,
     decision: PlannerDecisionV2,
@@ -768,6 +801,7 @@ async def process_inbound_message(
     money_account_query: MoneyAccountQueryService | None = None,
     petty_cash_query: PettyCashRecipientQueryService | None = None,
     reversal_query: ReversalTargetQueryService | None = None,
+    duplicate_expense_query: DuplicateExpenseQueryService | None = None,
     expense_query_service: ExpenseQueryService | None = None,
     semantic_hint: str | None = None,
     direction_hint: str | None = None,
@@ -1131,6 +1165,9 @@ async def process_inbound_message(
                     )
                     await _seed_reversal_target(
                         canonical_event, planner_decision, reversal_query, actor
+                    )
+                    await _seed_duplicate_check(
+                        canonical_event, planner_decision, duplicate_expense_query, actor
                     )
                     await _seed_finance_query_context(
                         canonical_event,

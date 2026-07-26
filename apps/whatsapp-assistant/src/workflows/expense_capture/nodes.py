@@ -13,6 +13,16 @@ runtime/money_account_query.py and workflows/runtime.py's docstring), and
 "my own pocket (reimburse me later)" is always appended as an extra choice
 so paying personally is a first-class answer, not merely an omitted account.
 See docs/execution/FINANCE_MODULE_PLAN.md's Slice 1.
+
+`check_duplicate` is Finance Module Slice 8's "looks like a duplicate,
+record anyway?" gate: whether a likely-duplicate confirmed expense already
+exists is decided by the caller (runtime/inbound_journey.py's
+`_seed_duplicate_check`, same "a node must never query a repository itself"
+rule) and seeded as `collected_fields['is_potential_duplicate']`. This node
+only asks the yes/no question -- reusing the same single-choice slot
+machinery as resolve_account, since a genuine yes/no is just an N=2 choice --
+and, uniquely among this graph's nodes, can end the whole workflow with no
+draft at all when the answer is "no" (see graph.py's routing).
 """
 
 from __future__ import annotations
@@ -95,7 +105,67 @@ def resolve_account(state: WorkflowGraphState) -> dict:
     }
 
 
-_INTERNAL_FIELD_KEYS = frozenset({"account_candidates"})
+_DUPLICATE_SLOT_NAME = "duplicate_confirm"
+_DUPLICATE_PROMPT_TITLE = (
+    "⚠️ This looks like a duplicate of an expense you already recorded today. Record it anyway?"
+)
+_DUPLICATE_CANDIDATES = [
+    SlotCandidate(value="yes", label="Yes, record it anyway"),
+    SlotCandidate(value="no", label="No, cancel"),
+]
+_NOT_RECORDED_REPLY = "Ok, I won't record that expense."
+
+
+def check_duplicate(state: WorkflowGraphState) -> dict:
+    """Ask "record anyway?" only when the caller flagged a likely duplicate
+    and it hasn't been answered yet. Not a duplicate (or already answered)
+    -> no-op, straight through to build_draft. `resolve_single_choice_slot`
+    with exactly 2 candidates always asks (never auto-fills) -- there is no
+    scenario where a genuine yes/no question should be skipped."""
+    fields = dict(state.get("collected_fields") or {})
+    if fields.get("duplicate_confirmed") is not None or not fields.get("is_potential_duplicate"):
+        return {}
+
+    is_awaiting_this_slot = state.get("awaiting_slot") == _DUPLICATE_SLOT_NAME
+    if is_awaiting_this_slot:
+        answer_text = fields.pop("_slot_answer_text", None)
+        if answer_text is not None:
+            matched = match_slot_answer(answer_text, _DUPLICATE_CANDIDATES)
+            if matched is not None:
+                if matched == "no":
+                    return {
+                        "collected_fields": {**fields, "duplicate_confirmed": "no"},
+                        "awaiting_slot": None,
+                        "pending_prompt": _NOT_RECORDED_REPLY,
+                    }
+                return {
+                    "collected_fields": {**fields, "duplicate_confirmed": "yes"},
+                    "awaiting_slot": None,
+                }
+            resolution = resolve_single_choice_slot(
+                slot_name=_DUPLICATE_SLOT_NAME,
+                prompt_title=f"Sorry, I didn't catch that. {_DUPLICATE_PROMPT_TITLE}",
+                candidates=_DUPLICATE_CANDIDATES,
+            )
+            return {
+                "collected_fields": fields,
+                "awaiting_slot": resolution.awaiting_slot,
+                "pending_prompt": resolution.slot_prompt,
+            }
+
+    resolution = resolve_single_choice_slot(
+        slot_name=_DUPLICATE_SLOT_NAME,
+        prompt_title=_DUPLICATE_PROMPT_TITLE,
+        candidates=_DUPLICATE_CANDIDATES,
+    )
+    return {
+        "collected_fields": fields,
+        "awaiting_slot": resolution.awaiting_slot,
+        "pending_prompt": resolution.slot_prompt,
+    }
+
+
+_INTERNAL_FIELD_KEYS = frozenset({"account_candidates", "is_potential_duplicate", "duplicate_confirmed"})
 
 
 def build_draft(state: WorkflowGraphState) -> dict:

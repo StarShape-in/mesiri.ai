@@ -200,33 +200,40 @@ export default function PettyCashPage() {
 
   React.useEffect(() => {
     let active = true
+    let backendResponded = false
     async function loadBackendPettyCash() {
       try {
-        const data = await fetchAccountsApi({
-          project_id: scope.mode !== 'portfolio' ? scope.projectId : undefined,
-          site_id: scope.mode === 'site' ? scope.siteId : undefined,
-        })
+        const data = await fetchAccountsApi()
+        backendResponded = true
         if (active && Array.isArray(data)) {
-          const pettyBoxes = data.filter((a: any) => a.account_type === 'petty_cash')
-          const mappedBoxes: SiteCashBoxItem[] = pettyBoxes.map((b: any, idx: number) => ({
-            id: b.id || `cb_real_${idx}`,
-            name: b.name || 'Site Float',
-            opening_balance: parseFloat(b.opening_balance) || 100000,
-            current_balance: parseFloat(b.current_balance) || 50000,
-            disbursed_month: 25000,
-            custodian_name: b.custodian_name || 'Site Supervisor',
-            project_id: b.project_id,
-            project_name: b.project_name || 'Project Site',
-            site_id: b.site_id,
-            site_name: b.site_name,
-            status: 'active',
-          }))
-          const existingIds = new Set(mappedBoxes.map((m) => m.id))
-          const combined = [...mappedBoxes, ...INITIAL_CASH_BOXES.filter((init) => !existingIds.has(init.id))]
-          setCashBoxes(combined)
+          // Filter to petty_cash type accounts from the backend
+          // Backend uses 'cash' as the type value
+          const pettyBoxes = data.filter((a: any) => a.account_type === 'petty_cash' || a.account_type === 'cash')
+          if (pettyBoxes.length > 0) {
+            const mappedBoxes: SiteCashBoxItem[] = pettyBoxes.map((b: any, idx: number) => ({
+              id: String(b.id) || `cb_real_${idx}`,
+              name: b.name || 'Site Float',
+              opening_balance: parseFloat(b.opening_balance) || 0,
+              current_balance: parseFloat(b.current_balance) || parseFloat(b.opening_balance) || 0,
+              disbursed_month: 0,
+              custodian_name: b.custodian_name || 'Site Supervisor',
+              project_id: b.project_id ? String(b.project_id) : undefined,
+              project_name: 'Project Site',
+              site_id: b.site_id ? String(b.site_id) : undefined,
+              site_name: b.site_name,
+              status: 'active',
+            }))
+            setCashBoxes(mappedBoxes)
+          } else {
+            // Backend responded but no petty cash accounts — show empty
+            setCashBoxes([])
+          }
         }
       } catch (err) {
-        console.warn('Live backend petty cash fetch unavailable, fallback mock data active:', err)
+        if (!backendResponded) {
+          console.warn('Live backend petty cash fetch unavailable, showing sample data:', err)
+          setCashBoxes(INITIAL_CASH_BOXES)
+        }
       }
     }
     loadBackendPettyCash()

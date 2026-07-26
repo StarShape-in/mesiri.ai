@@ -29,7 +29,10 @@ from mesiri.infrastructure.postgres.dependency import get_db_conn
 from mesiri.infrastructure.postgres.repositories.expense_execution import (
     PostgresExpenseExecutionRepository,
 )
-from mesiri.infrastructure.postgres.repositories.expenses import PostgresExpenseRepository
+from mesiri.infrastructure.postgres.repositories.expenses import (
+    PostgresExpenseCategoryRepository,
+    PostgresExpenseRepository,
+)
 from mesiri_contracts.application.results.execution_result import ExecutionStatus
 
 router = APIRouter(prefix="/expenses", tags=["expenses"])
@@ -102,6 +105,17 @@ async def record_expense(
     )
 
 
+@router.get("/categories")
+async def list_expense_categories(
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Return all active expense categories for the org — used by dashboard dropdowns."""
+    cat_repo = PostgresExpenseCategoryRepository(conn)
+    cats = await cat_repo.list_active(auth_context.organization_id)
+    return [{"id": str(c.id), "name": c.name} for c in cats]
+
+
 @router.get("", response_model=list[ExpenseResponse])
 async def list_expenses(
     project_id: uuid.UUID | None = None,
@@ -110,11 +124,22 @@ async def list_expenses(
     conn: AsyncConnection = Depends(get_db_conn),
 ):
     repo = PostgresExpenseRepository(conn)
+    cat_repo = PostgresExpenseCategoryRepository(conn)
+
     items = await repo.list_confirmed(
         auth_context.organization_id,
         project_id=project_id,
         site_id=site_id,
     )
+
+    # Build a category name lookup in one pass (avoids N queries)
+    cat_ids = {item.category_id for item in items if item.category_id}
+    cat_names: dict[uuid.UUID, str] = {}
+    for cid in cat_ids:
+        cat = await cat_repo.get_by_id(auth_context.organization_id, cid)
+        if cat:
+            cat_names[cid] = cat.name
+
     return [
         ExpenseResponse(
             id=item.id,
@@ -122,6 +147,7 @@ async def list_expenses(
             project_id=item.project_id,
             site_id=item.site_id,
             category_id=item.category_id,
+            category_name=cat_names.get(item.category_id),
             amount=item.amount,
             currency=item.currency,
             description=item.description,

@@ -33,14 +33,18 @@ logger = logging.getLogger(__name__)
 # no business record to confirm, so they are exempt from the single-active
 # pending-confirmation gate and complete without AWAITING_CONFIRMATION.
 #
-# WorkflowKey.REVERSE is a mixed case, not purely informational: when
-# runtime/inbound_journey.py's seeding step finds nothing to reverse (no
-# recent expense/transfer of the requested kind), workflows/reverse/nodes.py
-# omits draft_action and completes with a "nothing to reverse" reply --
-# exactly the same no-draft outcome as a real informational workflow. When a
-# target *is* found, the same graph still produces a draft_action and the
-# normal AWAITING_CONFIRMATION path below runs unaffected (this set is only
-# consulted when draft_action is None).
+# WorkflowKey.REVERSE and WorkflowKey.EXPENSE_SUBMIT are mixed cases, not
+# purely informational: when runtime/inbound_journey.py's seeding step finds
+# nothing to reverse (no recent expense/transfer of the requested kind),
+# workflows/reverse/nodes.py omits draft_action and completes with a
+# "nothing to reverse" reply -- exactly the same no-draft outcome as a real
+# informational workflow. Likewise, workflows/expense_capture/nodes.py's
+# `check_duplicate` (Finance Module Slice 8) omits draft_action when the
+# user answers "no" to a "looks like a duplicate, record anyway?" prompt.
+# When a target *is* found (or the duplicate answer is "yes"), the same
+# graph still produces a draft_action and the normal AWAITING_CONFIRMATION
+# path below runs unaffected (this set is only consulted when draft_action
+# is None).
 _INFORMATIONAL_WORKFLOW_KEYS = frozenset(
     {
         WorkflowKey.WHO_AM_I,
@@ -48,6 +52,7 @@ _INFORMATIONAL_WORKFLOW_KEYS = frozenset(
         WorkflowKey.ACCOUNT_BALANCE_QUERY,
         WorkflowKey.EXPENSE_QUERY,
         WorkflowKey.REVERSE,
+        WorkflowKey.EXPENSE_SUBMIT,
     }
 )
 

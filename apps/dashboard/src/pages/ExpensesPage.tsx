@@ -217,20 +217,27 @@ export default function ExpensesPage() {
 
   React.useEffect(() => {
     let active = true
+    let backendResponded = false
     async function loadBackendExpenses() {
       try {
         const rawData = await fetchExpensesApi({
           project_id: scope.mode !== 'portfolio' ? scope.projectId : undefined,
           site_id: scope.mode === 'site' ? scope.siteId : undefined,
         })
+        backendResponded = true
         if (active && Array.isArray(rawData)) {
+          if (rawData.length === 0) {
+            // Backend responded with zero records — show nothing (not mock data)
+            setExpenses([])
+            return
+          }
           const mapped: ExpenseItem[] = rawData.map((item: any, idx: number) => ({
-            id: item.id || `exp_real_${idx}`,
-            expense_number: `EXP-${item.id ? item.id.slice(0, 4).toUpperCase() : 1000 + idx}`,
+            id: String(item.id) || `exp_real_${idx}`,
+            expense_number: `EXP-${String(item.id || '').slice(0, 4).toUpperCase() || String(1000 + idx)}`,
             amount: parseFloat(item.amount) || 0,
             currency: item.currency || 'INR',
-            category_name: item.category_id || 'General Expense',
-            category_id: item.category_id || 'general',
+            category_name: item.category_name || item.category_id || 'General Expense',
+            category_id: String(item.category_id || 'general'),
             description: item.description || 'Recorded Expense',
             vendor_name: 'Direct Payee',
             occurred_date: item.occurred_date || new Date().toISOString().split('T')[0],
@@ -240,13 +247,14 @@ export default function ExpensesPage() {
             project_name: scope.mode === 'portfolio' ? 'Org Wide' : scope.projectName,
             site_name: scope.mode === 'site' ? scope.siteName : 'All Sites',
           }))
-          // Merge real backend expenses with initial sample records (deduplicated by ID)
-          const existingIds = new Set(mapped.map((m) => m.id))
-          const combined = [...mapped, ...INITIAL_EXPENSES.filter((init) => !existingIds.has(init.id))]
-          setExpenses(combined)
+          setExpenses(mapped)
         }
       } catch (err) {
-        console.warn('Live backend expenses fetch unavailable, fallback mock data active:', err)
+        if (!backendResponded) {
+          console.warn('Live backend expenses fetch unavailable, showing sample data:', err)
+          // Only fall back to sample data if we never got a response
+          setExpenses(INITIAL_EXPENSES)
+        }
       }
     }
     loadBackendExpenses()
