@@ -43,7 +43,19 @@ _VISION_PROMPT = (
     "and do not drop rows you are unsure of -- transcribe the name as best you "
     "can read it. If a row is marked absent, leave it out. If you genuinely "
     'cannot read a name, use "?" for that name rather than skipping the row, so '
-    "the count stays right."
+    "the count stays right.\n\n"
+    "Sheets are often written in Malayalam, Hindi, Tamil, Bengali or another "
+    "Indian script. Handle the two kinds of text differently, because they are "
+    "not the same problem:\n"
+    '- NAMES: transliterate the sound into Latin script for "name" '
+    '(രവി -> "Ravi", सुरेश -> "Suresh"). '
+    "NEVER translate a name into an English word -- a name is a person, not "
+    'vocabulary. Also return the original spelling unchanged in "name_original" '
+    "so nothing is lost and the reading can be checked.\n"
+    '- TRADES: translate into the English trade word for "trade" '
+    '(കൊത്തുപണിക്കാരന് -> "mason", '
+    'मजदूर -> "helper"), using the trade list above.\n'
+    "Numerals in any script become plain digits."
 )
 
 _EXTRACTION_PROMPT = (
@@ -86,7 +98,11 @@ _EXTRACTION_PROMPT = (
     "that line. NEVER merge two named people into one line, and never collapse a "
     "named person into a count. A message with no names at all is still valid -- "
     'emit one workers entry per trade mentioned. "20 workers today" (no trade) '
-    '-> workers: [{"headcount":20}].\n'
+    '-> workers: [{"headcount":20}]. '
+    "If a name is written in a non-Latin script, transliterate the sound into "
+    'Latin for "name" (രവി -> "Ravi") and keep the original spelling in '
+    '"name_original" -- never translate a name into an English word. Translate '
+    "trades into the English trade word.\n"
     "- general_site_update: summary, activity, location, weather, project_name\n"
     "- general_question: question, topic\n"
     "- whoami_question: question\n"

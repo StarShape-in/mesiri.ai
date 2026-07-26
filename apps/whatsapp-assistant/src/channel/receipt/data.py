@@ -68,6 +68,46 @@ def _fmt_quantity(fields: dict) -> str:
     return f"{quantity} {unit}".strip()
 
 
+def _labour_summary(fields: dict) -> tuple[int, str, int]:
+    """Total people, a readable trade list, and how many were named.
+
+    Attendance is the one record type whose value is a *list*, not a single
+    quantity, so the receipt has to summarise rather than echo a field. Trades
+    are de-duplicated but kept in the order reported, so the card reads the way
+    the supervisor wrote it.
+    """
+    raw = fields.get("lines")
+    lines = [line for line in raw if isinstance(line, dict)] if isinstance(raw, list) else []
+    headcount = 0
+    named = 0
+    trades: list[str] = []
+    for line in lines:
+        try:
+            count = int(line.get("headcount", 1))
+        except (TypeError, ValueError):
+            count = 1
+        headcount += count
+        if str(line.get("worker_name") or "").strip():
+            named += 1
+        trade = str(line.get("trade") or "").strip().replace("_", " ")
+        if trade and trade not in trades:
+            trades.append(trade)
+    return headcount, ", ".join(t.title() for t in trades), named
+
+
+def _labour_people(headcount: int, named: int) -> str:
+    """How the headcount breaks down between named people and counted groups —
+    the distinction principle P10 exists to preserve, so it belongs on the
+    record the user keeps."""
+    if not headcount:
+        return "—"
+    if named == 0:
+        return f"{headcount} (by headcount)"
+    if named == headcount:
+        return f"{headcount} named"
+    return f"{headcount} ({named} named, {headcount - named} by headcount)"
+
+
 def build_receipt_data(
     draft: DraftActionV2,
     *,
@@ -125,6 +165,22 @@ def build_receipt_data(
             ],
         ]
         id_prefix = "MR"
+    elif draft.action_type is DraftActionType.RECORD_LABOUR_ATTENDANCE:
+        headcount, trades, named = _labour_summary(fields)
+        category = "Labour attendance"
+        value = str(headcount)
+        subtitle = f"{headcount} worker{'s' if headcount != 1 else ''} recorded"
+        sections = [
+            [
+                ReceiptField("users", "Workers", _labour_people(headcount, named)),
+                ReceiptField("layers", "Trades", trades or "—"),
+            ],
+            [
+                ReceiptField("user", "Reported by", reporter),
+                ReceiptField("whatsapp", "Source", "WhatsApp"),
+            ],
+        ]
+        id_prefix = "LA"
     else:
         category = "Material usage"
         value = _fmt_quantity(fields)

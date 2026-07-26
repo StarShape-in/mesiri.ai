@@ -247,3 +247,39 @@ def test_an_attendance_photo_is_carried_for_attachment():
     )
     assert event.fields["media_object_key"] == "media/wamid.1/sheet.jpg"
     assert event.completeness is IntentCompleteness.ACTIONABLE
+
+
+# --- non-Latin scripts (Malayalam, Hindi, Tamil) --------------------------
+
+
+def test_a_transliterated_name_keeps_the_original_spelling():
+    """Names transliterate, they never translate -- a name is a person, not
+    vocabulary. The original is kept so a wrong reading stays checkable
+    against the paper sheet."""
+    lines = _lines(
+        {"workers": [{"name": "Ravi", "name_original": "രവി", "trade": "mason", "headcount": 1}]}
+    )
+    assert lines[0]["worker_name"] == "Ravi"
+    assert lines[0]["worker_name_original"] == "രവി"
+
+
+def test_latin_script_sheets_gain_no_extra_field():
+    """No noise on the common case."""
+    assert "worker_name_original" not in _lines({"workers": [{"name": "Ravi", "trade": "mason"}]})[0]
+
+
+def test_an_original_identical_to_the_name_is_dropped():
+    lines = _lines({"workers": [{"name": "Ravi", "name_original": "Ravi", "trade": "mason"}]})
+    assert "worker_name_original" not in lines[0]
+
+
+def test_the_alternative_original_key_is_accepted():
+    lines = _lines({"workers": [{"name": "Suresh", "original_name": "സുരേഷ്"}]})
+    assert lines[0]["worker_name_original"] == "സുരേഷ്"
+
+
+def test_a_transliterated_group_row_still_carries_its_english_trade():
+    """Trades DO translate: കൊത്തുപണിക്കാരൻ is genuinely "mason"."""
+    lines = _lines({"workers": [{"trade": "mason", "headcount": 6}]})
+    assert lines[0]["trade"] == "mason"
+    assert lines[0]["worker_name"] is None

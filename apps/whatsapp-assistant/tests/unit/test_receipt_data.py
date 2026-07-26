@@ -118,3 +118,81 @@ def test_two_record_types_share_identical_shape():
     usage_data = build_receipt_data(usage, **common)
     assert len(receipt_data.sections) == len(usage_data.sections)
     assert [len(s) for s in receipt_data.sections] == [len(s) for s in usage_data.sections]
+
+
+def _labour_receipt(lines: list[dict]):
+    return build_receipt_data(
+        _draft(DraftActionType.RECORD_LABOUR_ATTENDANCE, {"lines": lines}),
+        material_row_id="stub-9999abcd",
+        reporter_name="Mohammed",
+        projects=[_Named(PRJ, "Riverside Tower")],
+        sites=[_Named(SITE, "Site B")],
+        confirmed_at=datetime(2026, 7, 26, 10, 57, tzinfo=UTC),
+    )
+
+
+def test_labour_receipt_is_not_labelled_material():
+    """The bug this fixes: attendance fell through to the `else` branch and
+    every confirmed attendance came back to the user as a *Material usage*
+    receipt with an MU- record id. The user is told what they recorded, so
+    getting this wrong is not cosmetic."""
+    data = _labour_receipt([{"worker_name": "Ravi", "trade": "mason", "headcount": 1}])
+    assert data.category == "Labour attendance"
+    assert "Material" not in data.category
+    assert "Material" not in data.subtitle
+    assert data.record_id.startswith("LA-")
+
+
+def test_labour_receipt_totals_people_across_named_and_group_lines():
+    data = _labour_receipt(
+        [
+            {"worker_name": "Ravi", "trade": "mason", "headcount": 1},
+            {"worker_name": "Arun", "trade": "painter", "headcount": 1},
+            {"worker_name": None, "trade": "helper", "headcount": 12},
+        ]
+    )
+    assert data.value == "14"
+    assert data.subtitle == "14 workers recorded"
+
+
+def test_labour_receipt_shows_how_the_headcount_breaks_down():
+    """P10's distinction -- who was named versus who was only counted --
+    belongs on the record the user keeps."""
+    data = _labour_receipt(
+        [
+            {"worker_name": "Ravi", "trade": "mason", "headcount": 1},
+            {"worker_name": None, "trade": "helper", "headcount": 12},
+        ]
+    )
+    workers_field = data.sections[0][0]
+    assert workers_field.label == "Workers"
+    assert workers_field.value == "13 (1 named, 12 by headcount)"
+
+
+def test_labour_receipt_wording_for_all_named_and_all_counted():
+    all_named = _labour_receipt([{"worker_name": "Ravi", "trade": "mason", "headcount": 1}])
+    assert all_named.sections[0][0].value == "1 named"
+    all_counted = _labour_receipt([{"worker_name": None, "trade": "helper", "headcount": 9}])
+    assert all_counted.sections[0][0].value == "9 (by headcount)"
+
+
+def test_labour_receipt_lists_trades_without_duplicates():
+    data = _labour_receipt(
+        [
+            {"worker_name": "Ravi", "trade": "mason", "headcount": 1},
+            {"worker_name": "Suresh", "trade": "mason", "headcount": 1},
+            {"worker_name": None, "trade": "bar_bender", "headcount": 4},
+        ]
+    )
+    assert data.sections[0][1].value == "Mason, Bar Bender"
+
+
+def test_labour_receipt_survives_an_empty_attendance():
+    data = _labour_receipt([])
+    assert data.category == "Labour attendance"
+    assert data.sections[0][0].value == "—"
+
+
+def test_labour_receipt_singular_worker_reads_naturally():
+    data = _labour_receipt([{"worker_name": "Ravi", "trade": "mason", "headcount": 1}])
+    assert data.subtitle == "1 worker recorded"

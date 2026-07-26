@@ -87,6 +87,42 @@ exactly what the image is — the vision model was still left to guess.
 **Fixed:** the tap is now passed through. On a creased, badly-lit sheet this
 is likely the single highest-value change here, and it costs nothing.
 
+## 2.5 Non-Latin scripts — names transliterate, trades translate
+
+Added 2026-07-26 after the question "can we upload Malayalam handwriting?".
+
+The answer is yes, and the important part is that a sheet contains **two kinds
+of text that must be handled oppositely**:
+
+| On the sheet | Treatment | Why |
+|---|---|---|
+| രവി (a name) | **Transliterate** → `Ravi` | A name is a person, not vocabulary. Translating it produces nonsense and destroys the identity matching depends on. |
+| കൊത്തുപണിക്കാരൻ (a trade) | **Translate** → `mason` | A trade genuinely is an English word, and matching/reporting need the canonical one. |
+
+This is done **inside the vision call**, not by adding a translation step.
+The image route is `vision -> text -> extraction` and never passes through
+translation (only text and voice do). Bolting one on would translate names —
+exactly the wrong outcome. Gemini is multilingual and can transliterate and
+translate in the same pass, correctly, if told which is which.
+
+The original spelling is preserved as `worker_name_original` and shown in the
+confirmation as **`Ravi (രവി)`**. Transliteration has no single right answer
+("Ravi" / "Ravy"), so the supervisor — who can read both the sheet and the
+script — is far better placed to catch a bad reading than we are. Confirmation
+is the one moment anyone is looking, and this makes it checkable. Latin-script
+sheets gain no extra field, so nothing is noisier for the common case.
+
+**Test Malayalam explicitly in §4** — it is a heavily conjunct script and is a
+harder read than Devanagari. Include sheets that mix Malayalam names with
+English trade words, which is how many Kerala sites actually write them.
+
+**Fallback if Gemini is weak on Malayalam:** the `sarvamai` SDK is already a
+dependency (it does speech and translation today) and ships a
+`document_intelligence` client with explicit `ml-IN` support. Sarvam is
+India-focused and may well read Malayalam handwriting better than Gemini.
+Worth measuring as a second provider before concluding the feature is not
+viable — not built, and not needed unless §4 says so.
+
 ## 3. How to run the measurement
 
 ```bash

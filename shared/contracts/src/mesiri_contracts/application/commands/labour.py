@@ -62,7 +62,17 @@ class LabourAttendanceLine(BaseModel):
     version: str = CONTRACT_VERSION
 
     #: Set only for a named individual. None for a headcount group.
+    #: Always Latin script — a name written in Malayalam, Hindi or Tamil is
+    #: transliterated (രവി -> "Ravi"), never translated, since a name is a
+    #: person rather than vocabulary.
     worker_name: str | None = None
+
+    #: The name exactly as written, when the source wasn't Latin script.
+    #: Stored because transliteration is a judgement call with no single right
+    #: answer ("Ravi"/"Ravy"), and losing the original would make a
+    #: mis-transliteration permanently unverifiable against the paper sheet.
+    #: None when the source was already Latin, so it adds nothing there.
+    worker_name_original: str | None = None
 
     #: Set once matching has resolved this line to someone already in the
     #: workforce register. None means "not in the register" — either a

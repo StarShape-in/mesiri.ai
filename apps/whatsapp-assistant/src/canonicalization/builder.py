@@ -143,6 +143,15 @@ def _labour_line(raw: dict) -> dict | None:
         "trade": str(trade).strip() if trade else None,
         "headcount": _coerce_headcount(count_raw, named=bool(name)),
     }
+    # The name as actually written, when the sheet wasn't in Latin script.
+    # Kept because transliteration is a judgement call the supervisor is far
+    # better placed to check than we are -- showing "Ravi (രവി)" back to them
+    # lets a wrong reading be caught at confirmation, which is the one moment
+    # anyone is looking. Dropped when it adds nothing (identical to the
+    # transliteration), so a Latin-script sheet gains no noise.
+    original = raw.get("name_original") or raw.get("original_name")
+    if original and str(original).strip() and str(original).strip() != name:
+        line["worker_name_original"] = str(original).strip()
     if wage is not None:
         line["daily_wage"] = wage
     for key in ("contractor", "activity"):

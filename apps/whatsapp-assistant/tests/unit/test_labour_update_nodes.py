@@ -516,3 +516,28 @@ def test_preview_omits_cost_when_no_wages_are_known():
     prompt = _preview({"lines": [_group(4, "mason")]})
     assert "Total:" not in prompt
     assert "4 workers" in prompt
+
+
+def test_preview_shows_the_original_spelling_beside_a_transliterated_name():
+    """Confirmation is the one moment anyone is looking, and the supervisor is
+    better placed than we are to catch a wrong transliteration -- but only if
+    they can see what was written on the sheet."""
+    prompt = _preview(
+        {
+            "lines": [
+                {
+                    "worker_name": "Ravi",
+                    "worker_name_original": "രവി",
+                    "trade": "mason",
+                    "headcount": 1,
+                }
+            ]
+        }
+    )
+    assert "Ravi (രവി)" in prompt
+
+
+def test_preview_does_not_repeat_a_latin_name():
+    prompt = _preview({"lines": [_named("Ravi", "mason")]})
+    assert "Ravi (Ravi)" not in prompt
+    assert "Ravi" in prompt

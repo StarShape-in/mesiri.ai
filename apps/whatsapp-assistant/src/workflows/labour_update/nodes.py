@@ -407,7 +407,14 @@ def _line_summary(line: dict[str, Any]) -> str:
         headcount = 1
 
     if name:
-        parts = [name]
+        # A name transliterated from Malayalam/Hindi/Tamil is shown beside the
+        # original spelling ("Ravi (രവി)"). Confirmation is the one moment
+        # someone is actually looking at this, and the supervisor is far better
+        # placed than we are to catch a wrong reading — but only if they can
+        # see what was on the paper.
+        original = str(line.get("worker_name_original") or "").strip()
+        display = f"{name} ({original})" if original and original != name else name
+        parts = [display]
         if trade:
             parts.append(trade)
         if wage is not None:

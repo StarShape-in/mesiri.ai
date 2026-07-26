@@ -29,6 +29,10 @@ _ICONS: dict[str, str] = {
     "layers": '<path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/>',
     "store": '<path d="M4 8l1-4h14l1 4"/><path d="M4 8a2 2 0 0 0 4 0 2 2 0 0 0 4 0 2 2 0 0 0 4 0 2 2 0 0 0 4 0"/><path d="M5 8v11h14V8"/><path d="M9 19v-6h6v6"/>',
     "user": '<circle cx="12" cy="8" r="3.6"/><path d="M5 20c0-4 3-6.5 7-6.5s7 2.5 7 6.5"/>',
+    # A crowd, distinct from "user" (one person, used for "Reported by") --
+    # labour attendance needs both on the same card and they must not look
+    # like the same field.
+    "users": '<circle cx="9" cy="8" r="3.2"/><path d="M2.5 19.5c0-3.6 2.9-5.8 6.5-5.8s6.5 2.2 6.5 5.8"/><path d="M16.5 5.2a3.2 3.2 0 0 1 0 6.1"/><path d="M18 13.9c2.1.5 3.5 2.2 3.5 4.4"/>',
     "whatsapp": '<path d="M12 3a9 9 0 0 0-7.8 13.5L3 21l4.7-1.2A9 9 0 1 0 12 3z"/><path d="M8.5 8.7c.2-.6.5-.6.8-.6h.6c.2 0 .4 0 .6.5s.7 1.7.7 1.8-.1.3-.2.5-.3.4-.5.6-.3.4-.1.7c.2.3.9 1.4 1.9 2.2 1.3 1.1 2.2 1.3 2.5 1.5.3.1.5.1.7-.1s.8-.9 1-1.2.4-.2.7-.1 1.7.8 2 .9.5.2.5.4c0 .2 0 1-.4 1.4-.4.5-1.8 1.3-3.2.7-1.8-.7-4.2-2.3-5.9-4.9-.6-1-.3-1.5.1-1.9z"/>',
     "hammer": '<path d="M14.5 3.5l6 6-3 3-6-6 3-3z"/><path d="M13 9L4 18l2 2 9-9"/><path d="M3 21l3-3"/>',
     "check": '<path d="M4 12l6 6L20 6"/>',
