@@ -189,13 +189,17 @@ class AdminFinanceSeedingService:
                 )
                 created_by = system_user_id
 
-        # 1. Seed Expense Categories
+        # 1. Seed Expense Categories. Dedup by `code`, not `name` --
+        # uq_expense_categories_org_code is the actual unique constraint
+        # (org, code); a name-only check misses a pre-existing row that
+        # uses the same code under a different name and then collides on
+        # insert instead of being recognized as "already seeded".
         category_ids: dict[str, uuid.UUID] = {}
         for name, code in DEFAULT_CATEGORIES:
             res = await self.conn.execute(
                 sa.select(_expense_categories.c.id).where(
                     _expense_categories.c.organization_id == organization_id,
-                    _expense_categories.c.name == name,
+                    _expense_categories.c.code == code,
                 )
             )
             row = res.first()
