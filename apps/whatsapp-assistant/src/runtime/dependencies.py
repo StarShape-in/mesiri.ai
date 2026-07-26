@@ -432,6 +432,43 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     # inbound_journey._render_reply() now covers every outcome, so the
     # understanding-only fallback it fed was dead weight.
     async def _on_normalized(message, raw_payload, retry_of_id=None) -> None:  # type: ignore[no-untyped-def]
+        """Never let an unhandled exception reach the user as silence.
+
+        The journey below has error handling at every stage it anticipates,
+        but anything it does *not* anticipate propagates to
+        WhatsAppReceiver._process_message, which logs it and writes a trace
+        row -- and sends nothing. From the sender's side that is
+        indistinguishable from Mesiri being down: they photographed an
+        attendance sheet, answered "what is this photo for?", and then
+        nothing ever came back.
+
+        inbound_journey._render_reply already states the principle for the
+        paths it owns ("a message that reaches the assistant and gets no
+        answer is indistinguishable from Mesiri being down"); this extends
+        the same guarantee to the paths nobody predicted. The exception is
+        still re-raised so the trace row and the log line are unchanged --
+        this only adds the reply that was missing.
+        """
+        try:
+            await _run_journey(message, raw_payload, retry_of_id)
+        except Exception:
+            _log.exception(
+                "inbound.unhandled correlation_id=%s message_id=%s",
+                getattr(message, "correlation_id", "?"),
+                getattr(message, "message_id", "?"),
+            )
+            try:
+                await sender.send_text(
+                    message.sender.wa_id,
+                    "⚠️ Something went wrong handling that — nothing was recorded. "
+                    "Please try again, and tell us if it keeps happening.",
+                )
+            except Exception:  # noqa: BLE001 -- the send itself can fail; the
+                # re-raise below still gets the failure into the trace log.
+                _log.exception("inbound.unhandled_reply_failed")
+            raise
+
+    async def _run_journey(message, raw_payload, retry_of_id=None) -> None:  # type: ignore[no-untyped-def]
         wa_id = message.sender.wa_id
 
         # Blue tick + "typing..." as soon as the message is normalized, before
