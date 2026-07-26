@@ -10,6 +10,7 @@ import ProjectDetails from '@/pages/ProjectDetails'
 import FieldReportsPage from '@/pages/FieldReportsPage'
 import MaterialsPage from '@/pages/MaterialsPage'
 import ExpensesPage from '@/pages/ExpensesPage'
+import ReceiptsPage from '@/pages/ReceiptsPage'
 import AccountsPage from '@/pages/AccountsPage'
 import WhatsAppFinancePage from '@/pages/WhatsAppFinancePage'
 import PettyCashPage from '@/pages/PettyCashPage'
@@ -43,6 +44,7 @@ export default function App() {
         {/* Finance Section */}
         <Route path="finance/overview" element={<OperationalPlaceholder title="Finance Overview" />} />
         <Route path="finance/expenses" element={<ExpensesPage />} />
+        <Route path="finance/receipts" element={<ReceiptsPage />} />
         <Route path="finance/accounts" element={<AccountsPage />} />
         <Route path="finance/whatsapp" element={<WhatsAppFinancePage />} />
         <Route path="whatsapp/finance" element={<WhatsAppFinancePage />} />
