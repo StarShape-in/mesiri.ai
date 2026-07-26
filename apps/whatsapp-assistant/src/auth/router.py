@@ -20,7 +20,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 # ---------------------------------------------------------------------------
 # Shared crypto config
 # ---------------------------------------------------------------------------
-SECRET_KEY = "mesiri-temp-secret-key-change-in-production"
+SECRET_KEY = os.environ.get("MESIRI_JWT_SECRET", "mesiri-temp-secret-key-change-in-production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 1 week
 
