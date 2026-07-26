@@ -54,3 +54,41 @@ def test_request_confirmation_deactivate_prompt():
     prompt = request_confirmation(state)["pending_prompt"]
     assert "Deactivate account" in prompt
     assert "Site Cash" in prompt
+
+
+def test_build_draft_create_missing_name_asks_instead_of_building_an_incomplete_draft():
+    """The gap AI extraction opened, that the deterministic parser never
+    could: `action` resolved but the action-specific field didn't. No draft
+    at all -- workflows/account_admin/graph.py routes this straight to END
+    (see workflows/runtime.py's _NO_DRAFT_ALLOWED_WORKFLOW_KEYS)."""
+    state = _base_state({"action": "create"})
+    update = build_draft(state)
+    assert "draft_action" not in update
+    assert "new account" in update["pending_prompt"].lower()
+
+
+def test_build_draft_rename_missing_new_name_asks():
+    state = _base_state({"action": "rename", "target_name": "Site Cash"})
+    update = build_draft(state)
+    assert "draft_action" not in update
+    assert "renamed" in update["pending_prompt"].lower()
+
+
+def test_build_draft_deactivate_missing_target_asks():
+    state = _base_state({"action": "deactivate"})
+    update = build_draft(state)
+    assert "draft_action" not in update
+
+
+def test_build_draft_unrecognized_action_asks_instead_of_crashing():
+    state = _base_state({"action": "delete", "target_name": "Site Cash"})
+    update = build_draft(state)
+    assert "draft_action" not in update
+    assert update["pending_prompt"]
+
+
+def test_build_draft_missing_action_entirely_asks_instead_of_crashing():
+    state = _base_state({})
+    update = build_draft(state)
+    assert "draft_action" not in update
+    assert update["pending_prompt"]

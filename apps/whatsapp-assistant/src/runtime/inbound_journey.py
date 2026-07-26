@@ -77,6 +77,17 @@ from workflows import (
 
 _log = logging.getLogger("mesiri.inbound_journey")
 
+# Matches runtime/account_admin_journey.py's _ACCOUNT_ADMIN_ROLES exactly --
+# that module gates the deterministic-parser fast path; this gates the
+# AI-understood path (SemanticType.ACCOUNT_ADMIN) so a disallowed role is
+# refused the same way regardless of which path a message takes. Kept as a
+# second literal (not imported) since the two modules are independent entry
+# points by design (see account_admin_journey.py's docstring) -- if this
+# ever drifts from that one, tests/unit/test_inbound_journey_account_admin_role.py
+# and tests/unit/test_account_admin_journey.py both cover the same role set.
+_ACCOUNT_ADMIN_ROLES = frozenset({"ADMIN", "FINANCE"})
+_ACCOUNT_ADMIN_DENIED_REPLY = "⛔ Only an admin or finance user can manage accounts."
+
 
 @dataclass(slots=True)
 class JourneyResult:
@@ -689,6 +700,20 @@ async def _seed_reversal_target(
         event.fields["reversal_amount"] = expense["amount"]
         event.fields["reversal_description"] = expense["description"]
         event.fields["reversal_occurred_date"] = expense["occurred_date"]
+
+
+def _seed_account_admin_role(event: CanonicalEventV2, decision: PlannerDecisionV2, actor: ActorIdentity | None) -> None:
+    """Feed the sender's role into the draft the same way
+    _seed_account_candidates does for TRANSFER/PETTY_CASH -- defense-in-depth
+    for application/finance/validation.py's role check. Not the primary
+    gate: _account_admin_role_denied_reply (called before workflow_runtime.
+    start(), see process_inbound_message) already refuses a disallowed role
+    before a draft is ever built, so this only matters if that earlier gate
+    is ever bypassed. Only ever runs for ACCOUNT_ADMIN. No I/O -- actor.role
+    is already resolved, same as _seed_account_candidates's created_by_role."""
+    if actor is None or decision.workflow_key is not WorkflowKey.ACCOUNT_ADMIN:
+        return
+    event.fields["created_by_role"] = actor.role
 
 
 async def _seed_worker_candidates(

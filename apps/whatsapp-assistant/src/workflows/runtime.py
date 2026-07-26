@@ -65,8 +65,15 @@ _INFORMATIONAL_WORKFLOW_KEYS = frozenset(
 # only where a missing draft_action is decided to be a legitimate no-op
 # rather than WorkflowRunStatus.FAILED.
 _NO_DRAFT_ALLOWED_WORKFLOW_KEYS = _INFORMATIONAL_WORKFLOW_KEYS | frozenset(
-    {WorkflowKey.REVERSE, WorkflowKey.EXPENSE_SUBMIT}
+    {WorkflowKey.REVERSE, WorkflowKey.EXPENSE_SUBMIT, WorkflowKey.ACCOUNT_ADMIN}
 )
+# ACCOUNT_ADMIN joined REVERSE/EXPENSE_SUBMIT here on 2026-07-26: now that it
+# can be reached via the AI-understood path (not just the deterministic
+# regex parser, which always has every field it needs by construction), an
+# extraction that resolved `action` but not the action-specific fields
+# (name / target_name+new_name / target_name) must be able to complete with
+# a clarifying reply and no draft, mirroring reverse/nodes.py's own
+# completeness check -- see workflows/account_admin/nodes.py's build_draft.
 
 
 def _to_slot_candidates(raw: list[dict[str, str]] | None) -> tuple[SlotCandidate, ...] | None:
