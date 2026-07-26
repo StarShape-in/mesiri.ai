@@ -65,6 +65,7 @@ from runtime.petty_cash_query import PettyCashRecipientQueryService
 from runtime.reply_dispatch import send_reply_spec
 from runtime.reversal_query import ReversalTargetQueryService
 from runtime.vendor_query import VendorQueryService
+from runtime.workforce_query import WorkforceQueryService
 from understanding.pipeline import UnderstandingPipeline
 from workflows import (
     WorkflowResumeResult,
@@ -690,6 +691,52 @@ async def _seed_reversal_target(
         event.fields["reversal_occurred_date"] = expense["occurred_date"]
 
 
+async def _seed_worker_candidates(
+    event: CanonicalEventV2,
+    decision: PlannerDecisionV2,
+    workforce_query: WorkforceQueryService | None,
+    actor: ActorIdentity | None,
+) -> None:
+    """Feed the workforce register into the event so labour_update's
+    match_workers node can decide whether a reported "Ravi" is someone
+    already known -- a node must never query a repository itself (see
+    workflows/runtime.py), same principle as _seed_account_candidates above.
+    Only ever runs for LABOUR_ATTENDANCE.
+
+    Skipped entirely when the report names nobody: an attendance of pure
+    headcount groups ("12 helpers, 4 masons") has nothing to match, so
+    reading the register would be work done to answer a question no one
+    asked. This is the common case on many sites (principle P10), and it is
+    also the fastest one -- keeping it free matters (P9).
+
+    An empty register is a normal, correct outcome, not a failure: every
+    named worker then resolves to a temporary worker and the workflow asks
+    nothing (P3). The register is only ever read here -- attendance must
+    never write it (P1).
+    """
+    if workforce_query is None or actor is None or not actor.organization_id:
+        return
+    if decision.workflow_key is not WorkflowKey.LABOUR_ATTENDANCE:
+        return
+
+    lines = event.fields.get("lines")
+    if not isinstance(lines, list):
+        return
+    names_reported = any(
+        isinstance(line, dict) and str(line.get("worker_name") or "").strip() for line in lines
+    )
+    if not names_reported:
+        return
+
+    candidates = await workforce_query.list_worker_candidates(
+        organization_id=actor.organization_id,
+        project_id=event.project_id,
+        site_id=event.site_id,
+    )
+    if candidates:
+        event.fields["worker_candidates"] = candidates
+
+
 async def _seed_duplicate_check(
     event: CanonicalEventV2,
     decision: PlannerDecisionV2,
@@ -871,6 +918,7 @@ async def process_inbound_message(
     petty_cash_query: PettyCashRecipientQueryService | None = None,
     reversal_query: ReversalTargetQueryService | None = None,
     duplicate_expense_query: DuplicateExpenseQueryService | None = None,
+    workforce_query: WorkforceQueryService | None = None,
     vendor_query: VendorQueryService | None = None,
     expense_query_service: ExpenseQueryService | None = None,
     semantic_hint: str | None = None,
@@ -1235,6 +1283,9 @@ async def process_inbound_message(
                     )
                     await _seed_reversal_target(
                         canonical_event, planner_decision, reversal_query, actor
+                    )
+                    await _seed_worker_candidates(
+                        canonical_event, planner_decision, workforce_query, actor
                     )
                     await _seed_duplicate_check(
                         canonical_event, planner_decision, duplicate_expense_query, actor

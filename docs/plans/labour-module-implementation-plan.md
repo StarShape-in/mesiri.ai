@@ -744,11 +744,23 @@ must never query a repository (`workflows/runtime.py`):
    cannot express named workers at all. **This is the single biggest
    remaining piece of Labour**, and it is where open question Q1 gets
    answered.
-2. **`collected_fields['worker_candidates']`** — register candidates for the
-   project/site, read by the caller and seeded, exactly as
-   `_seed_duplicate_check` does for expenses. Needs Phase 5's repository.
-   Until then the graph behaves correctly with none seeded: every named
-   worker becomes a temporary worker and nothing is asked.
+2. ~~**`collected_fields['worker_candidates']`**~~ — ✅ **done 2026-07-26.**
+   `runtime/workforce_query.py` + `_seed_worker_candidates` in
+   `inbound_journey.py`, mirroring `_seed_account_candidates`. Reads are
+   **stubbed** (`StubWorkforceQueryService`) since the register has no tables
+   until Phase 5; swapping in the Postgres reader is one line in
+   `dependencies.py`.
+
+   The stub's default is an **empty register**, deliberately. A stub that
+   returned plausible workers would make matching *look* like it works while
+   attaching real attendance to people who don't exist — the corruption P4
+   exists to prevent, arriving through test scaffolding. To exercise matching
+   before Phase 5, set an explicit roster via `MESIRI_LABOUR__STUB_WORKERS`
+   (JSON; see the module docstring). Opt-in, visible in config, logged at
+   WARNING when active.
+
+   Also note: a headcount-only report never reads the register at all —
+   nobody is named, so there is nothing to match (P9/P10).
 3. **`collected_fields['project_name']` / `['site_name']`** — optional, for
    the confirmation preview. Omitted rather than showing a raw UUID.
 
