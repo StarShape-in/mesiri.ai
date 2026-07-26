@@ -672,20 +672,34 @@ data for a future dashboard — so that building the UI later requires
 | 2 | `DraftActionType.RECORD_LABOUR_ATTENDANCE`, `RecordLabourAttendanceCommand`, 20 tests | `2f78ca9` |
 | 3 | `workflows/labour_update/` graph + nodes, registered; 35 unit + 5 integration tests | _(local commit — not yet pushed)_ |
 
-**Verified locally after Phase 3: 1072 passing, lint clean across the repo.**
+**Verified after Phase 3: 1138 passing, 0 failing, lint clean across the repo.**
 
-Two caveats about that number, so a future session doesn't chase ghosts:
+### Run the suite on a machine that can actually run it
 
-- **9 failures and 15 collection errors are pre-existing** and unrelated to
-  Labour (`test_adapter_conversion.py`, `test_replies.py`,
-  `test_admin_user_access_api.py`, plus modules that import `passlib`).
-  Verified by stashing all Labour work and re-running: byte-identical
-  failure set. They are local-environment gaps, not regressions.
-- **1072 < the 1098 previously recorded** for the same reason: several test
-  modules fail to *collect* locally because optional dependencies
-  (`passlib`, `langgraph`) aren't installed on this machine. CI installs
-  them and sees the higher number. Compare like with like before concluding
-  anything has regressed.
+This cost real time on 2026-07-26 and is worth not repeating. The suite was
+initially reporting *9 failures and 15 collection errors*, all of which
+looked pre-existing and unrelated — and all of which were **missing optional
+dependencies**, not code problems. Worse, the missing dependencies were
+*hiding a genuine regression* (see below).
+
+On a fresh Windows machine, install these before trusting any result:
+
+```
+pip install --user passlib bcrypt asyncpg langgraph google-genai tzdata
+```
+
+- `passlib`, `bcrypt`, `asyncpg` — 43+ modules fail to *collect* without them
+- `langgraph` — optional `workflow` group; without it **every graph
+  integration test silently skips**, including Labour's
+- `google-genai` — the *new* SDK. Installing `google-generativeai` (the
+  legacy package) does **not** satisfy `import google.genai` and leaves 7
+  Gemini adapter tests failing
+- `tzdata` — Windows ships no timezone database, so `ZoneInfo("Asia/Kolkata")
+  raises and the greeting test fails locally while passing on CI (Linux)
+
+**The lesson, stated plainly: a skipped test is not a passing test, and a
+collection error is not a "pre-existing failure".** Both were masking real
+signal here.
 
 ### What Phase 3 built
 
@@ -697,6 +711,13 @@ Two caveats about that number, so a future session doesn't chase ghosts:
 - Registered in `workflows/registry.py` under `WorkflowKey.LABOUR_ATTENDANCE`
   (the key already existed; until now it resolved to `None` and the user got
   "not supported yet").
+
+Registering the graph also flipped `labour_update` to **implemented** in the
+admin System Graph, which derives that flag live from
+`workflows.registry._BUILDERS` (`admin/system_graph_router.py`). The
+`labour.attendance` node now renders as built rather than "not built yet",
+and `test_system_graph_semantic_types.py` was updated to match. Equipment and
+general-site-update remain the only routed-but-unbuilt workflows.
 
 The design and its one genuinely novel element are documented in §13 — read
 that before changing `match_workers`.
