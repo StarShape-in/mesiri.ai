@@ -142,6 +142,9 @@ async def record_expense(
         source_message_id=body.source_message_id,
         correlation_id=body.correlation_id,
         created_by=str(auth_context.user_id),
+        tax_rate=body.tax_rate,
+        tax_amount=body.tax_amount,
+        is_tax_inclusive=body.is_tax_inclusive,
     )
 
     handler = RecordExpenseHandler(PostgresExpenseExecutionRepository())

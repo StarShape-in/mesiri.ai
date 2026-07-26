@@ -18,6 +18,7 @@ _money_accounts = sa.Table(
     sa.Column("site_id", sa.UUID(as_uuid=True)),
     sa.Column("owner_user_id", sa.UUID(as_uuid=True)),
     sa.Column("name", sa.String),
+    sa.Column("code", sa.String),
     sa.Column("account_type", sa.String),
     sa.Column("currency", sa.String),
     sa.Column("opening_balance", sa.Numeric),
@@ -59,6 +60,7 @@ def _row_to_account(row) -> MoneyAccount:
         opening_balance=row.opening_balance,
         opening_balance_date=row.opening_balance_date,
         status=row.status,
+        code=getattr(row, "code", None),
         project_id=row.project_id,
         site_id=row.site_id,
         owner_user_id=row.owner_user_id,
@@ -129,6 +131,24 @@ class PostgresMoneyAccountRepository:
         site_id: uuid.UUID | None = None,
         owner_user_id: uuid.UUID | None = None,
     ) -> MoneyAccount:
+        # Compute next sequential ACC-001 code for this organization
+        seq_res = (
+            await self.conn.execute(
+                sa.text(
+                    """
+                    SELECT COALESCE(MAX(
+                        CAST(SUBSTRING(code FROM 'ACC-([0-9]+)') AS INTEGER)
+                    ), 0) + 1 AS next_seq
+                    FROM money_accounts
+                    WHERE organization_id = :org_id
+                    """
+                ),
+                {"org_id": organization_id},
+            )
+        ).mappings().first()
+        next_seq = seq_res["next_seq"] if seq_res else 1
+        account_code = f"ACC-{next_seq:03d}"
+
         new_id = uuid.uuid4()
         await self.conn.execute(
             sa.insert(_money_accounts).values(
@@ -138,6 +158,7 @@ class PostgresMoneyAccountRepository:
                 site_id=site_id,
                 owner_user_id=owner_user_id,
                 name=name,
+                code=account_code,
                 account_type=account_type,
                 currency=currency,
                 opening_balance=opening_balance,

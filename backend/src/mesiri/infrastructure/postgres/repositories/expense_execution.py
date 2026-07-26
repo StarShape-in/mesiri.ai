@@ -130,15 +130,18 @@ class PostgresExpenseExecutionRepository(ExpenseExecutionRepository):
         # 'unpaid' too; record_payment below recomputes it to 'paid' once the
         # payment row lands, same as the REST/manual-payment path already does.
         initial_payment_status = "reimbursable" if cmd.paid_from_own_pocket else "unpaid"
+        expense_id = uuid.uuid4()
         await conn.execute(
             sa.text(
                 "INSERT INTO expenses "
                 "(id, organization_id, project_id, site_id, category_id, vendor_id, expense_number, "
                 "amount, currency, description, occurred_date, occurred_time, workflow_status, "
-                "payment_status, source, source_message_id, correlation_id, created_by) "
+                "payment_status, source, source_message_id, correlation_id, created_by, "
+                "tax_rate, tax_amount, is_tax_inclusive) "
                 "VALUES (:id, :organization_id, :project_id, :site_id, :category_id, :vendor_id, "
                 ":expense_number, :amount, :currency, :description, :occurred_date, :occurred_time, "
-                "'confirmed', :payment_status, :source, :source_message_id, :correlation_id, :created_by)"
+                "'confirmed', :payment_status, :source, :source_message_id, :correlation_id, :created_by, "
+                ":tax_rate, :tax_amount, :is_tax_inclusive)"
             ),
             {
                 "id": expense_id,
@@ -158,6 +161,9 @@ class PostgresExpenseExecutionRepository(ExpenseExecutionRepository):
                 "source_message_id": cmd.source_message_id,
                 "correlation_id": cmd.correlation_id,
                 "created_by": uuid.UUID(cmd.created_by),
+                "tax_rate": cmd.tax_rate,
+                "tax_amount": cmd.tax_amount,
+                "is_tax_inclusive": cmd.is_tax_inclusive,
             },
         )
 

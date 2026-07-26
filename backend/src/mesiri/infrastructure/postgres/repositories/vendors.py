@@ -13,6 +13,7 @@ _vendors = sa.Table(
     sa.Column("id", sa.UUID(as_uuid=True)),
     sa.Column("organization_id", sa.UUID(as_uuid=True)),
     sa.Column("name", sa.String),
+    sa.Column("code", sa.String),
     sa.Column("status", sa.String),
     sa.Column("created_at", sa.DateTime(timezone=True)),
     sa.Column("created_by", sa.UUID(as_uuid=True)),
@@ -35,7 +36,13 @@ _expenses = sa.Table(
 
 
 def _row_to_vendor(row) -> Vendor:
-    return Vendor(id=row.id, organization_id=row.organization_id, name=row.name, status=row.status)
+    return Vendor(
+        id=row.id,
+        organization_id=row.organization_id,
+        name=row.name,
+        status=row.status,
+        code=getattr(row, "code", None),
+    )
 
 
 class PostgresVendorRepository:
@@ -112,17 +119,36 @@ class PostgresVendorRepository:
     ) -> Vendor:
         """Create-on-first-use: a new vendor name typed/spoken over WhatsApp
         becomes a real vendor row immediately."""
+        # Compute next sequential VND-001 code for this organization
+        seq_res = (
+            await self.conn.execute(
+                sa.text(
+                    """
+                    SELECT COALESCE(MAX(
+                        CAST(SUBSTRING(code FROM 'VND-([0-9]+)') AS INTEGER)
+                    ), 0) + 1 AS next_seq
+                    FROM vendors
+                    WHERE organization_id = :org_id
+                    """
+                ),
+                {"org_id": organization_id},
+            )
+        ).mappings().first()
+        next_seq = seq_res["next_seq"] if seq_res else 1
+        vendor_code = f"VND-{next_seq:03d}"
+
         new_id = uuid.uuid4()
         await self.conn.execute(
             sa.text(
-                "INSERT INTO vendors (id, organization_id, name, status, created_by) "
-                "VALUES (:id, :organization_id, :name, 'active', :created_by) "
+                "INSERT INTO vendors (id, organization_id, name, code, status, created_by) "
+                "VALUES (:id, :organization_id, :name, :code, 'active', :created_by) "
                 "ON CONFLICT (organization_id, name) DO NOTHING"
             ),
             {
                 "id": new_id,
                 "organization_id": organization_id,
                 "name": name,
+                "code": vendor_code,
                 "created_by": created_by,
             },
         )

@@ -45,6 +45,7 @@ class MoneyAccount:
     opening_balance: Decimal
     opening_balance_date: datetime.date
     status: AccountStatus
+    code: str | None = None
     project_id: uuid.UUID | None = None
     site_id: uuid.UUID | None = None
     owner_user_id: uuid.UUID | None = None

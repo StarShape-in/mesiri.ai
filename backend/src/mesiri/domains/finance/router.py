@@ -54,6 +54,7 @@ class MoneyAccountResponse(BaseModel):
     opening_balance: Decimal
     current_balance: Decimal
     status: str
+    code: str | None = None
     project_id: uuid.UUID | None = None
     site_id: uuid.UUID | None = None
     owner_user_id: uuid.UUID | None = None

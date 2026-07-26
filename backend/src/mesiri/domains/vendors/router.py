@@ -18,6 +18,7 @@ router = APIRouter(prefix="/finance/vendors", tags=["vendors"])
 class VendorResponse(BaseModel):
     id: uuid.UUID
     name: str
+    code: str | None = None
     status: str
     expense_count: int = 0
     total_amount_paid: Decimal = Decimal("0")
@@ -44,6 +45,7 @@ async def list_vendors(
         VendorResponse(
             id=m["vendor"].id,
             name=m["vendor"].name,
+            code=m["vendor"].code,
             status=m["vendor"].status,
             expense_count=m["expense_count"],
             total_amount_paid=m["total_amount"],
@@ -71,6 +73,7 @@ async def create_vendor(
     return VendorResponse(
         id=vendor.id,
         name=vendor.name,
+        code=vendor.code,
         status=vendor.status,
         expense_count=0,
         total_amount_paid=Decimal("0"),

@@ -31,6 +31,13 @@ Hardware ₹500"), resolved into vendor_id by
 application/vendors/resolution.py before persistence. Unlike category, an
 absent vendor_text is left unresolved (vendor_id stays None) rather than
 falling back to a default -- see that module's docstring.
+
+`tax_rate`/`tax_amount`/`is_tax_inclusive` are pure information
+preservation, never computed or validated here (see migration
+0380_finance_add_expense_tax.py) -- stored when a receipt/bill states them
+(GST-style line items are common on Indian vendor bills), left NULL
+otherwise. No tax calculation or compliance filing logic anywhere in this
+codebase; this is a record of what the source document said, nothing more.
 """
 
 from __future__ import annotations
@@ -65,3 +72,6 @@ class RecordExpenseCommand(BaseModel):
     source: str = "web"
     source_message_id: str | None = None
     correlation_id: str | None = None
+    tax_rate: Decimal | None = None
+    tax_amount: Decimal | None = None
+    is_tax_inclusive: bool = True

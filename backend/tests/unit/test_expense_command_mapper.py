@@ -109,3 +109,32 @@ def test_vendor_text_is_none_when_absent():
     confirmed = _confirmed({"amount": 100})
     cmd = build_command(confirmed)
     assert cmd.vendor_text is None
+
+
+def test_tax_fields_are_mapped_when_present():
+    confirmed = _confirmed(
+        {"amount": 1180, "tax_rate": "18", "tax_amount": "180.00", "is_tax_inclusive": False}
+    )
+    cmd = build_command(confirmed)
+    assert cmd.tax_rate == Decimal("18")
+    assert cmd.tax_amount == Decimal("180.00")
+    assert cmd.is_tax_inclusive is False
+
+
+def test_tax_fields_default_to_none_and_inclusive_true_when_absent():
+    """Most expenses have no stated tax breakdown -- absence must stay NULL,
+    never default to 0, and is_tax_inclusive defaults True (matches the
+    migration's column default)."""
+    confirmed = _confirmed({"amount": 100})
+    cmd = build_command(confirmed)
+    assert cmd.tax_rate is None
+    assert cmd.tax_amount is None
+    assert cmd.is_tax_inclusive is True
+
+
+def test_unparseable_tax_amount_stays_none_not_zero():
+    """Unlike amount (defaults to 0 so validation.py can reject it), a
+    garbled tax_amount should just be treated as not-stated."""
+    confirmed = _confirmed({"amount": 100, "tax_amount": "not a number"})
+    cmd = build_command(confirmed)
+    assert cmd.tax_amount is None

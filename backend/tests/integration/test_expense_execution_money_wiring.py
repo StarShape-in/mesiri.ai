@@ -168,6 +168,67 @@ async def test_expense_with_account_creates_payment_and_ledger_row_and_moves_bal
     assert balance == Decimal("5000.00") - Decimal("1200.00")
 
 
+async def test_expense_with_tax_fields_persists_and_round_trips(engine: AsyncEngine, scenario: dict):
+    """The gap this closes: RecordExpenseCommand/persist_success never wrote
+    tax_rate/tax_amount/is_tax_inclusive at all, so migration 0380's columns
+    were unreachable from either the REST or WhatsApp path -- every expense
+    came back with NULL tax data regardless of what was sent."""
+    handler = RecordExpenseHandler(PostgresExpenseExecutionRepository())
+    cmd = _command(
+        scenario,
+        tax_rate=Decimal("18.00"),
+        tax_amount=Decimal("180.00"),
+        is_tax_inclusive=False,
+    )
+
+    async with engine.begin() as conn:
+        result = await handler.handle(conn, cmd)
+
+    assert result.status == ExecutionStatus.SUCCEEDED
+    expense_id = uuid.UUID(result.material_row_id)
+
+    async with engine.connect() as conn:
+        row = (
+            await conn.execute(
+                sa.text(
+                    "SELECT tax_rate, tax_amount, is_tax_inclusive FROM expenses WHERE id = :id"
+                ),
+                {"id": expense_id},
+            )
+        ).mappings().first()
+
+    assert row["tax_rate"] == Decimal("18.00")
+    assert row["tax_amount"] == Decimal("180.00")
+    assert row["is_tax_inclusive"] is False
+
+
+async def test_expense_without_tax_fields_stays_null(engine: AsyncEngine, scenario: dict):
+    """Most expenses have no stated tax -- must stay NULL, not default to 0,
+    and is_tax_inclusive defaults True (matches migration 0380's column
+    default)."""
+    handler = RecordExpenseHandler(PostgresExpenseExecutionRepository())
+    cmd = _command(scenario)
+
+    async with engine.begin() as conn:
+        result = await handler.handle(conn, cmd)
+
+    expense_id = uuid.UUID(result.material_row_id)
+
+    async with engine.connect() as conn:
+        row = (
+            await conn.execute(
+                sa.text(
+                    "SELECT tax_rate, tax_amount, is_tax_inclusive FROM expenses WHERE id = :id"
+                ),
+                {"id": expense_id},
+            )
+        ).mappings().first()
+
+    assert row["tax_rate"] is None
+    assert row["tax_amount"] is None
+    assert row["is_tax_inclusive"] is True
+
+
 async def test_own_pocket_expense_has_no_payment_or_ledger_row(
     engine: AsyncEngine, scenario: dict
 ):

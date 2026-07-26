@@ -52,6 +52,7 @@ import { AccountDetailSheet } from '@/components/accounts/account-detail-sheet'
 export interface MoneyAccountItem {
   id: string
   name: string
+  code?: string
   account_type: 'bank' | 'cash' | 'employee_advance' | 'other'
   currency: string
   opening_balance: number

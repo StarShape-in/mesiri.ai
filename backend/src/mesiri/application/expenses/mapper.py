@@ -24,6 +24,19 @@ def _decimal(value: object) -> Decimal:
         return Decimal("0")
 
 
+def _optional_decimal(value: object) -> Decimal | None:
+    """Same coercion as _decimal, but absent/unparseable stays None rather
+    than defaulting to 0 -- tax_rate/tax_amount are genuinely optional
+    (most expenses have no stated tax), unlike amount, which every expense
+    must have."""
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError):
+        return None
+
+
 def build_command(confirmed: ConfirmedActionV2) -> RecordExpenseCommand:
     """Map a ConfirmedActionV2 into a RecordExpenseCommand.
 
@@ -54,4 +67,7 @@ def build_command(confirmed: ConfirmedActionV2) -> RecordExpenseCommand:
         source="whatsapp",
         correlation_id=confirmed.correlation_id,
         created_by=confirmed.confirmed_by_user_id,
+        tax_rate=_optional_decimal(fields.get("tax_rate")),
+        tax_amount=_optional_decimal(fields.get("tax_amount")),
+        is_tax_inclusive=bool(fields.get("is_tax_inclusive", True)),
     )

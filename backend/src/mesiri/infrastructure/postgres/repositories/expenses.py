@@ -338,13 +338,32 @@ class PostgresExpenseCategoryRepository:
         parent_category_id: uuid.UUID | None = None,
         created_by: uuid.UUID,
     ) -> ExpenseCategory:
+        category_code = code.strip().upper() if code else None
+        if not category_code:
+            seq_res = (
+                await self.conn.execute(
+                    sa.text(
+                        """
+                        SELECT COALESCE(MAX(
+                            CAST(SUBSTRING(code FROM 'CAT-([0-9]+)') AS INTEGER)
+                        ), 0) + 1 AS next_seq
+                        FROM expense_categories
+                        WHERE organization_id = :org_id
+                        """
+                    ),
+                    {"org_id": organization_id},
+                )
+            ).mappings().first()
+            next_seq = seq_res["next_seq"] if seq_res else 1
+            category_code = f"CAT-{next_seq:03d}"
+
         new_id = uuid.uuid4()
         await self.conn.execute(
             sa.insert(_expense_categories).values(
                 id=new_id,
                 organization_id=organization_id,
                 name=name.strip(),
-                code=code.strip().upper() if code else None,
+                code=category_code,
                 parent_category_id=parent_category_id,
                 status="active",
                 created_by=created_by,

@@ -24,3 +24,4 @@ class Vendor:
     organization_id: uuid.UUID
     name: str
     status: VendorStatus
+    code: str | None = None
