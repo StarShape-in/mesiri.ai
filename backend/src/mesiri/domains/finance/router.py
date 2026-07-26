@@ -122,6 +122,30 @@ class FinanceSummaryResponse(BaseModel):
     health_alerts: FinanceHealthAlerts
 
 
+class FinanceSettingsResponse(BaseModel):
+    base_currency: str = "INR"
+    currency_symbol: str = "₹"
+    fiscal_year_start: str = "04-01"
+    low_float_threshold: Decimal = Decimal("50000")
+    auto_approval_limit: Decimal = Decimal("5000")
+    require_receipt_above: Decimal = Decimal("1000")
+    duplicate_window_hours: int = 24
+    default_tax_rate: Decimal = Decimal("18")
+    enabled_payment_methods: list[str] = ["bank_transfer", "cash", "upi", "cheque", "card"]
+
+
+class UpdateFinanceSettingsRequest(BaseModel):
+    base_currency: str | None = None
+    currency_symbol: str | None = None
+    fiscal_year_start: str | None = None
+    low_float_threshold: Decimal | None = None
+    auto_approval_limit: Decimal | None = None
+    require_receipt_above: Decimal | None = None
+    duplicate_window_hours: int | None = None
+    default_tax_rate: Decimal | None = None
+    enabled_payment_methods: list[str] | None = None
+
+
 
 # ---------------------------------------------------------------------------
 # Request schema
@@ -250,6 +274,40 @@ async def get_finance_summary(
         petty_cash_accounts=petty_summary,
         health_alerts=health_alerts,
     )
+
+
+_FINANCE_SETTINGS_STORE: dict[str, FinanceSettingsResponse] = {}
+
+
+@router.get("/settings", response_model=FinanceSettingsResponse)
+async def get_finance_settings(
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+):
+    """Get organization-wide financial preferences & WhatsApp assistant policies."""
+    org_id = str(auth_context.organization_id)
+    if org_id not in _FINANCE_SETTINGS_STORE:
+        _FINANCE_SETTINGS_STORE[org_id] = FinanceSettingsResponse()
+    return _FINANCE_SETTINGS_STORE[org_id]
+
+
+@router.patch("/settings", response_model=FinanceSettingsResponse)
+async def update_finance_settings(
+    body: UpdateFinanceSettingsRequest,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+):
+    """Update organization-wide financial preferences & WhatsApp assistant policies."""
+    org_id = str(auth_context.organization_id)
+    current = _FINANCE_SETTINGS_STORE.get(org_id, FinanceSettingsResponse())
+
+    updated_dict = current.model_dump()
+    patch_data = body.model_dump(exclude_unset=True)
+    for key, val in patch_data.items():
+        if val is not None:
+            updated_dict[key] = val
+
+    updated = FinanceSettingsResponse(**updated_dict)
+    _FINANCE_SETTINGS_STORE[org_id] = updated
+    return updated
 
 
 @router.get("/accounts", response_model=list[MoneyAccountResponse])

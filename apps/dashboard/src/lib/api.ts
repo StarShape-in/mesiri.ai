@@ -729,5 +729,29 @@ export async function fetchFinanceSummaryApi(): Promise<FinanceSummaryItem> {
   return res.data
 }
 
+export interface FinanceSettingsItem {
+  base_currency: string
+  currency_symbol: string
+  fiscal_year_start: string
+  low_float_threshold: number
+  auto_approval_limit: number
+  require_receipt_above: number
+  duplicate_window_hours: number
+  default_tax_rate: number
+  enabled_payment_methods: string[]
+}
+
+export async function fetchFinanceSettingsApi(): Promise<FinanceSettingsItem> {
+  const res = await api.get('/finance/settings')
+  return res.data
+}
+
+export async function updateFinanceSettingsApi(
+  payload: Partial<FinanceSettingsItem>
+): Promise<FinanceSettingsItem> {
+  const res = await api.patch('/finance/settings', payload)
+  return res.data
+}
+
 
 
