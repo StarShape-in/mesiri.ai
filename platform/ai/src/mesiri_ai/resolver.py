@@ -233,10 +233,13 @@ class DynamicAIProviderResolver:
             except Exception as exc:
                 logger.warning("Failed to query DB for AI routing config: %s", exc)
 
-        # 3. Write back to Redis cache
+        # 3. Write back to Redis cache. TTL matters here: this previously
+        # cached forever, so a routing change made in the control panel
+        # (e.g. switching voice from gemini to sarvam) would silently never
+        # take effect until the key was flushed by hand.
         try:
             if self._redis and hasattr(self._redis, "set"):
-                await self._redis.set(cache_key, json.dumps(config))
+                await self._redis.set(cache_key, json.dumps(config), ex=300)
         except Exception as exc:
             logger.warning("Failed to write AI config to Redis: %s", exc)
 
