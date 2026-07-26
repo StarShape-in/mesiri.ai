@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { flushSync } from 'react-dom'
 import {
   LayoutDashboard,
   Building2,
@@ -267,24 +268,33 @@ export function AppSidebar() {
     )
 
     const transition = (document as Document & { startViewTransition?: (callback: () => void) => { ready: Promise<void> } }).startViewTransition!(() => {
-      setIsDark((prev) => !prev)
+      flushSync(() => {
+        setIsDark((prev) => {
+          const next = !prev
+          if (next) {
+            document.documentElement.classList.add('dark')
+            localStorage.setItem('theme', 'dark')
+          } else {
+            document.documentElement.classList.remove('dark')
+            localStorage.setItem('theme', 'light')
+          }
+          return next
+        })
+      })
     })
 
     transition.ready.then(() => {
-      const clipPath = [
-        `circle(0px at ${x}px ${y}px)`,
-        `circle(${endRadius}px at ${x}px ${y}px)`,
-      ]
       document.documentElement.animate(
         {
-          clipPath: isDark ? clipPath : [...clipPath].reverse(),
+          clipPath: [
+            `circle(0px at ${x}px ${y}px)`,
+            `circle(${endRadius}px at ${x}px ${y}px)`,
+          ],
         },
         {
-          duration: 450,
+          duration: 500,
           easing: 'ease-in-out',
-          pseudoElement: isDark
-            ? '::view-transition-old(root)'
-            : '::view-transition-new(root)',
+          pseudoElement: '::view-transition-new(root)',
         }
       )
     })
