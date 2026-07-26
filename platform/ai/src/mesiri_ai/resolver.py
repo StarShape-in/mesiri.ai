@@ -388,7 +388,7 @@ class DynamicAIProviderResolver:
 
         async def _call_vision(pid: str, mdl: str) -> VisionResult:
             if pid == "gemini":
-                provider = _build_gemini_provider(config, mdl, self._settings)
+                provider = self._cached_gemini_provider(config, mdl)
                 return await provider.analyze_image(
                     image, mime_type=mime_type, hint=hint, correlation_id=correlation_id
                 )
@@ -426,10 +426,10 @@ class DynamicAIProviderResolver:
 
         async def _call_translate(pid: str, mdl: str) -> TranslationResult:
             if pid == "gemini":
-                provider = _build_gemini_provider(config, mdl, self._settings)
+                provider = self._cached_gemini_provider(config, mdl)
                 return await provider.translate_to_english(text, correlation_id=correlation_id)
             if pid == "deepseek":
-                provider = _build_deepseek_provider(config, mdl, self._settings)
+                provider = self._cached_deepseek_provider(config, mdl)
                 return await provider.translate_to_english(text, correlation_id=correlation_id)
             from mesiri_ai.fakes import FakeTranslationProvider
 
