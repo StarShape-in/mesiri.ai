@@ -82,7 +82,6 @@ const FINANCE_CATEGORY: NavCategory = {
   items: [
     { title: 'Overview', url: '/finance/overview', icon: PieChart },
     { title: 'Expenses', url: '/finance/expenses', icon: DollarSign },
-    { title: 'Receipts', url: '/finance/receipts', icon: ImageIcon },
     { title: 'Accounts', url: '/finance/accounts', icon: Landmark },
     { title: 'WhatsApp Automations', url: '/finance/whatsapp', icon: Bot },
     { title: 'Transactions', url: '/finance/transactions', icon: ArrowLeftRight },
@@ -157,29 +156,29 @@ function CollapsibleNavCategory({
         onClick={() => setIsOpen((prev) => !prev)}
         tooltip={category.title}
         className={cn(
-          'w-full flex items-center justify-between font-medium text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/80 rounded-md px-2.5 py-2 transition-colors',
+          'w-full flex items-center justify-between font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/80 rounded-md px-2 py-1.5 text-xs transition-colors',
           isChildActive && 'bg-slate-100 dark:bg-slate-800 font-semibold text-slate-900 dark:text-white'
         )}
       >
-        <div className="flex items-center gap-3 min-w-0">
-          <IconComp className="size-4.5 text-slate-700 dark:text-slate-300 shrink-0" />
-          <span className="truncate group-data-[collapsible=icon]:hidden text-sm">{category.title}</span>
+        <div className="flex items-center gap-2.5 min-w-0">
+          <IconComp className="size-4 text-slate-600 dark:text-slate-400 shrink-0" />
+          <span className="truncate group-data-[collapsible=icon]:hidden">{category.title}</span>
         </div>
-        <div className="flex items-center gap-2 group-data-[collapsible=icon]:hidden">
-          <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200/60 dark:border-slate-700/60">
+        <div className="flex items-center gap-1.5 group-data-[collapsible=icon]:hidden">
+          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200/60 dark:border-slate-700/60">
             {filteredItems.length}
           </span>
           {isOpen ? (
-            <ChevronDown className="size-4 text-slate-400 transition-transform duration-200" />
+            <ChevronDown className="size-3.5 text-slate-400 transition-transform duration-200" />
           ) : (
-            <ChevronRight className="size-4 text-slate-400 transition-transform duration-200" />
+            <ChevronRight className="size-3.5 text-slate-400 transition-transform duration-200" />
           )}
         </div>
       </SidebarMenuButton>
 
       {/* Submenu Items */}
       {isOpen && !isCollapsedMode && (
-        <div className="ml-4 pl-3 border-l border-slate-200 dark:border-slate-800 my-1 flex flex-col gap-0.5 group-data-[collapsible=icon]:hidden">
+        <div className="ml-3 pl-2.5 border-l border-slate-200 dark:border-slate-800 my-0.5 flex flex-col gap-0.5 group-data-[collapsible=icon]:hidden">
           {filteredItems.map((item) => {
             const ItemIcon = item.icon
             const targetUrl = getUrlWithScope(item.url)
@@ -194,7 +193,7 @@ function CollapsibleNavCategory({
                 to={targetUrl}
                 className={({ isActive: isLinkActive }) =>
                   cn(
-                    'flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all duration-150',
+                    'flex items-center gap-2 px-2 py-1.5 rounded-md text-xs font-medium transition-all duration-150',
                     isLinkActive || isActive
                       ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-semibold'
                       : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100/70 dark:hover:bg-slate-800/50'
@@ -244,16 +243,16 @@ export function AppSidebar() {
   return (
     <Sidebar collapsible="icon" className="border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950">
       <SidebarHeader>
-        <div className="flex items-center justify-between px-3 py-3 border-b border-slate-200/80 dark:border-slate-800/80">
-          <div className="flex items-center gap-2.5 overflow-hidden">
-            <div className="size-8 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold text-sm shadow-sm shrink-0">
+        <div className="flex items-center justify-between px-2.5 py-2 border-b border-slate-200/80 dark:border-slate-800/80">
+          <div className="flex items-center gap-2 overflow-hidden">
+            <div className="size-7 rounded-md bg-blue-600 text-white flex items-center justify-center font-bold text-xs shadow-xs shrink-0">
               M
             </div>
             <div className="flex flex-col min-w-0 group-data-[collapsible=icon]:hidden">
-              <span className="font-semibold text-sm truncate leading-tight text-slate-900 dark:text-slate-100">
+              <span className="font-semibold text-xs truncate leading-tight text-slate-900 dark:text-slate-100">
                 {me?.organization_name ?? 'Mesiri'}
               </span>
-              <span className="text-[10px] text-slate-500 dark:text-slate-400 uppercase tracking-wider font-medium">
+              <span className="text-[9px] text-slate-500 dark:text-slate-400 uppercase tracking-wider font-medium">
                 Enterprise App
               </span>
             </div>
@@ -261,20 +260,20 @@ export function AppSidebar() {
           {showBackButton && (
             <Link
               to={location.pathname.startsWith('/users/') ? '/users' : '/projects'}
-              className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors group-data-[collapsible=icon]:hidden size-7 flex items-center justify-center hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md"
+              className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors group-data-[collapsible=icon]:hidden size-6 flex items-center justify-center hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md"
               title="Back"
             >
-              <ArrowLeft className="size-4" />
+              <ArrowLeft className="size-3.5" />
             </Link>
           )}
         </div>
       </SidebarHeader>
 
-      <SidebarContent className="px-2 py-2 gap-4">
+      <SidebarContent className="px-1.5 py-1 gap-1">
         {/* Core Operations Section */}
-        <SidebarGroup>
-          <SidebarGroupLabel className="flex items-center gap-2 text-[11px] font-bold tracking-wider text-blue-600 dark:text-blue-400 uppercase px-2 mb-1">
-            <span className="size-2 rounded-full bg-blue-600 shrink-0" />
+        <SidebarGroup className="p-1 py-0.5">
+          <SidebarGroupLabel className="flex items-center gap-1.5 text-[10px] font-bold tracking-wider text-blue-600 dark:text-blue-400 uppercase whitespace-nowrap px-1.5 h-6">
+            <span className="size-1.5 rounded-full bg-blue-600 shrink-0" />
             <span>Core Operations</span>
           </SidebarGroupLabel>
           <SidebarGroupContent>
@@ -286,14 +285,14 @@ export function AppSidebar() {
                     end
                     className={({ isActive }) =>
                       cn(
-                        'flex items-center justify-between w-full px-2.5 py-2 rounded-md font-medium text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/80 transition-colors',
+                        'flex items-center justify-between w-full px-2 py-1.5 rounded-md text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/80 transition-colors',
                         isActive && 'bg-slate-100 dark:bg-slate-800 font-semibold text-slate-900 dark:text-white'
                       )
                     }
                   >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <LayoutDashboard className="size-4.5 text-slate-700 dark:text-slate-300 shrink-0" />
-                      <span className="text-sm truncate">Dashboard</span>
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <LayoutDashboard className="size-4 text-slate-600 dark:text-slate-400 shrink-0" />
+                      <span className="truncate">Dashboard</span>
                     </div>
                   </NavLink>
                 </SidebarMenuButton>
@@ -310,9 +309,9 @@ export function AppSidebar() {
         </SidebarGroup>
 
         {/* Financial Management Section */}
-        <SidebarGroup>
-          <SidebarGroupLabel className="flex items-center gap-2 text-[11px] font-bold tracking-wider text-emerald-600 dark:text-emerald-400 uppercase px-2 mb-1">
-            <span className="size-2 rounded-full bg-emerald-600 shrink-0" />
+        <SidebarGroup className="p-1 py-0.5">
+          <SidebarGroupLabel className="flex items-center gap-1.5 text-[10px] font-bold tracking-wider text-emerald-600 dark:text-emerald-400 uppercase whitespace-nowrap px-1.5 h-6">
+            <span className="size-1.5 rounded-full bg-emerald-600 shrink-0" />
             <span>Financial Management</span>
           </SidebarGroupLabel>
           <SidebarGroupContent>
@@ -329,9 +328,9 @@ export function AppSidebar() {
         </SidebarGroup>
 
         {/* Business & Materials Section */}
-        <SidebarGroup>
-          <SidebarGroupLabel className="flex items-center gap-2 text-[11px] font-bold tracking-wider text-purple-600 dark:text-purple-400 uppercase px-2 mb-1">
-            <span className="size-2 rounded-full bg-purple-600 shrink-0" />
+        <SidebarGroup className="p-1 py-0.5">
+          <SidebarGroupLabel className="flex items-center gap-1.5 text-[10px] font-bold tracking-wider text-purple-600 dark:text-purple-400 uppercase whitespace-nowrap px-1.5 h-6">
+            <span className="size-1.5 rounded-full bg-purple-600 shrink-0" />
             <span>Business Operations</span>
           </SidebarGroupLabel>
           <SidebarGroupContent>
@@ -349,9 +348,9 @@ export function AppSidebar() {
 
         {/* Management & Admin Section */}
         {visibleManagementItems.length > 0 && (
-          <SidebarGroup>
-            <SidebarGroupLabel className="flex items-center gap-2 text-[11px] font-bold tracking-wider text-cyan-600 dark:text-cyan-400 uppercase px-2 mb-1">
-              <span className="size-2 rounded-full bg-cyan-600 shrink-0" />
+          <SidebarGroup className="p-1 py-0.5">
+            <SidebarGroupLabel className="flex items-center gap-1.5 text-[10px] font-bold tracking-wider text-cyan-600 dark:text-cyan-400 uppercase whitespace-nowrap px-1.5 h-6">
+              <span className="size-1.5 rounded-full bg-cyan-600 shrink-0" />
               <span>Management & Admin</span>
             </SidebarGroupLabel>
             <SidebarGroupContent>
@@ -365,14 +364,14 @@ export function AppSidebar() {
                           to={getUrlWithScope(item.url)}
                           className={({ isActive }) =>
                             cn(
-                              'flex items-center justify-between w-full px-2.5 py-2 rounded-md font-medium text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/80 transition-colors',
+                              'flex items-center justify-between w-full px-2 py-1.5 rounded-md text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/80 transition-colors',
                               isActive && 'bg-slate-100 dark:bg-slate-800 font-semibold text-slate-900 dark:text-white'
                             )
                           }
                         >
-                          <div className="flex items-center gap-3 min-w-0">
-                            <ItemIcon className="size-4.5 text-slate-700 dark:text-slate-300 shrink-0" />
-                            <span className="text-sm truncate">{item.title}</span>
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <ItemIcon className="size-4 text-slate-600 dark:text-slate-400 shrink-0" />
+                            <span className="truncate">{item.title}</span>
                           </div>
                         </NavLink>
                       </SidebarMenuButton>
@@ -385,16 +384,16 @@ export function AppSidebar() {
         )}
       </SidebarContent>
 
-      <SidebarFooter className="border-t border-slate-200 dark:border-slate-800 p-2">
+      <SidebarFooter className="border-t border-slate-200 dark:border-slate-800 p-1.5">
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
               onClick={() => logout().then(() => window.location.assign('/login'))}
               tooltip="Log out"
-              className="hover:bg-red-50 dark:hover:bg-red-950/50 text-slate-700 dark:text-slate-300 hover:text-red-600 dark:hover:text-red-400 transition-colors rounded-md px-2.5 py-2"
+              className="hover:bg-red-50 dark:hover:bg-red-950/50 text-slate-700 dark:text-slate-300 hover:text-red-600 dark:hover:text-red-400 transition-colors rounded-md px-2 py-1.5 text-xs"
             >
               <LogOut className="size-4 text-slate-500 shrink-0" />
-              <span className="text-sm font-medium">Log out</span>
+              <span className="font-medium">Log out</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
