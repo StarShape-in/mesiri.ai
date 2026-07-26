@@ -30,6 +30,24 @@ VALID_ROLES: frozenset[str] = frozenset(
 # conservative default keeps casual field reports from populating a shared
 # catalog with typos, while still unblocking the people who own it.
 WHATSAPP_MATERIAL_CREATE_ROLES = "whatsapp_material_create_roles"
+FINANCE_SETTINGS = "finance_settings"
+
+DEFAULT_FINANCE_SETTINGS = {
+    "base_currency": "INR",
+    "currency_symbol": "₹",
+    "fiscal_year_start": "04-01",
+    "low_float_threshold": 50000.0,
+    "auto_approval_limit": 5000.0,
+    "require_receipt_above": 1000.0,
+    "duplicate_window_hours": 24,
+    "default_tax_rate": 18.0,
+    "enabled_payment_methods": ["bank_transfer", "cash", "upi", "cheque", "card"],
+    "low_balance_warning_enabled": True,
+    "transfer_receipt_enabled": True,
+    "expense_card_enabled": True,
+    "weekly_digest_enabled": True,
+    "weekly_digest_schedule": "weekly_monday",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +67,11 @@ _SPECS: dict[str, SettingSpec] = {
             "Roles allowed to add a new material to the catalog directly from a "
             "WhatsApp report. Anyone else is told to ask their admin."
         ),
+    ),
+    FINANCE_SETTINGS: SettingSpec(
+        key=FINANCE_SETTINGS,
+        default=DEFAULT_FINANCE_SETTINGS,
+        description="Organization-wide financial preferences & WhatsApp assistant policies.",
     ),
 }
 
