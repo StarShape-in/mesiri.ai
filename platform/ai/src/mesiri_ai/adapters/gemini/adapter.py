@@ -70,7 +70,17 @@ _EXTRACTION_PROMPT = (
     'number stated (e.g. "almost 70 bags" -> quantity 70).\n\n'
     "Field schema per semantic_type (only include keys you actually found):\n"
     "Note: For ALL semantic types, if the text mentions a specific project, site, or location by name (e.g. 'project alpha', 'at the main site'), extract it as 'project_name'.\n"
-    "- expense: amount, currency, vendor, category, description, paid_to, occurred_on, project_name\n"
+    "- expense: amount, currency, vendor, category, description, paid_to, occurred_on, "
+    "project_name, tax_rate, tax_amount, is_tax_inclusive. tax_rate/tax_amount are only "
+    "for a bill/receipt that itemizes a specific tax line (e.g. \"GST 18%\", \"CGST 9% + "
+    "SGST 9%\" -- sum the parts into one tax_rate/tax_amount, \"VAT: ₹180\") -- omit both "
+    "entirely if no tax is itemized, never guess or estimate a rate/amount that isn't "
+    "explicitly stated. tax_rate is the plain percentage number (18, not \"18%\"); "
+    "tax_amount is the plain currency amount. is_tax_inclusive is `true` when amount "
+    "already includes the tax (the common case for a total-due figure) or `false` when "
+    "tax is added on top of amount -- infer from context (a receipt's grand total is "
+    "inclusive; a quote/invoice listing \"subtotal + tax = total\" separately means "
+    "amount is the subtotal, exclusive) and omit entirely if genuinely unclear.\n"
     "- equipment_usage: equipment_name, duration_hours, operator, activity, project_name\n"
     "- material_update: material_name, quantity, unit, direction, work_item, project_name. "
     'direction MUST be exactly "received" or "used" -- never any other word. '

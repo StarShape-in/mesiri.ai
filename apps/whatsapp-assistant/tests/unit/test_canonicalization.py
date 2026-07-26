@@ -228,6 +228,30 @@ def test_expense_complete_is_actionable():
     assert event.completeness is IntentCompleteness.ACTIONABLE
 
 
+def test_expense_tax_fields_pass_through_to_canonical_event():
+    """No special-casing needed for tax_rate/tax_amount/is_tax_inclusive --
+    same free-pass-through as vendor/category -- but this proves it, since
+    a future refactor of build_canonical_event's field allowlist could
+    silently drop them."""
+    understanding = _understanding(
+        semantic_type=SemanticType.EXPENSE,
+        candidates=[
+            ExpenseCandidate(
+                fields={
+                    "amount": 1180,
+                    "tax_rate": 18,
+                    "tax_amount": 180,
+                    "is_tax_inclusive": False,
+                }
+            )
+        ],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.fields["tax_rate"] == 18
+    assert event.fields["tax_amount"] == 180
+    assert event.fields["is_tax_inclusive"] is False
+
+
 def test_expense_missing_amount_needs_clarification():
     understanding = _understanding(
         semantic_type=SemanticType.EXPENSE,
