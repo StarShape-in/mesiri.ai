@@ -22,6 +22,10 @@ from mesiri.application.finance.transfer_resolution import PostgresTransferAccou
 from mesiri.authorization.context import AuthorizationContext
 from mesiri.domains.projects.router import get_auth_context
 from mesiri.infrastructure.postgres.dependency import get_db_conn
+from mesiri.infrastructure.postgres.repositories.expenses import (
+    PostgresExpenseCategoryRepository,
+    PostgresExpenseRepository,
+)
 from mesiri.infrastructure.postgres.repositories.finance import (
     PostgresMoneyAccountRepository,
     PostgresMoneyTransactionRepository,
@@ -29,6 +33,7 @@ from mesiri.infrastructure.postgres.repositories.finance import (
 from mesiri.infrastructure.postgres.repositories.transfer_execution import (
     PostgresTransferExecutionRepository,
 )
+from mesiri.infrastructure.postgres.repositories.vendors import PostgresVendorRepository
 from mesiri_contracts.application.results.execution_result import ExecutionStatus
 
 router = APIRouter(prefix="/finance", tags=["finance"])
@@ -70,6 +75,100 @@ class MoneyTransactionResponse(BaseModel):
     correlation_id: str | None = None
 
 
+class CategoryBreakdownItem(BaseModel):
+    id: uuid.UUID
+    name: str
+    amount: Decimal
+
+
+class MonthlyTrendItem(BaseModel):
+    month: str
+    amount: Decimal
+    count: int
+
+
+class TopVendorItem(BaseModel):
+    id: uuid.UUID
+    name: str
+    total_spent: Decimal
+    unpaid_amount: Decimal
+
+
+class PettyCashSummaryItem(BaseModel):
+    id: uuid.UUID
+    name: str
+    custodian_name: str
+    current_balance: Decimal
+    opening_balance: Decimal
+
+
+class FinanceHealthAlerts(BaseModel):
+    low_float_count: int
+    unpaid_invoice_count: int
+    total_unpaid_amount: Decimal
+
+
+class FinanceSummaryResponse(BaseModel):
+    total_liquidity: Decimal
+    total_expenses: Decimal
+    unpaid_expenses: Decimal
+    active_accounts_count: int
+    active_vendors_count: int
+    active_categories_count: int
+    category_breakdown: list[CategoryBreakdownItem]
+    monthly_trend: list[MonthlyTrendItem]
+    top_vendors: list[TopVendorItem]
+    petty_cash_accounts: list[PettyCashSummaryItem]
+    health_alerts: FinanceHealthAlerts
+
+
+class FinanceSettingsResponse(BaseModel):
+    base_currency: str = "INR"
+    currency_symbol: str = "₹"
+    fiscal_year_start: str = "04-01"
+    low_float_threshold: Decimal = Decimal("50000")
+    auto_approval_limit: Decimal = Decimal("5000")
+    require_receipt_above: Decimal = Decimal("1000")
+    duplicate_window_hours: int = 24
+    default_tax_rate: Decimal = Decimal("18")
+    enabled_payment_methods: list[str] = ["bank_transfer", "cash", "upi", "cheque", "card"]
+
+
+class UpdateFinanceSettingsRequest(BaseModel):
+    base_currency: str | None = None
+    currency_symbol: str | None = None
+    fiscal_year_start: str | None = None
+    low_float_threshold: Decimal | None = None
+    auto_approval_limit: Decimal | None = None
+    require_receipt_above: Decimal | None = None
+    duplicate_window_hours: int | None = None
+    default_tax_rate: Decimal | None = None
+    enabled_payment_methods: list[str] | None = None
+
+
+class FinanceReportRow(BaseModel):
+    id: str
+    code: str | None = None
+    title: str
+    category: str | None = None
+    account_name: str | None = None
+    amount: Decimal
+    percentage: Decimal | None = None
+    status: str | None = None
+    notes: str | None = None
+
+
+class FinanceReportStatementResponse(BaseModel):
+    report_type: str
+    title: str
+    subtitle: str
+    generated_at: str
+    total_inflows: Decimal
+    total_outflows: Decimal
+    net_margin: Decimal
+    rows: list[FinanceReportRow]
+
+
 
 # ---------------------------------------------------------------------------
 # Request schema
@@ -98,6 +197,268 @@ class TransferMoneyRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+@router.get("/summary", response_model=FinanceSummaryResponse)
+async def get_finance_summary(
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Return executive-level financial summary metrics for the organization."""
+    acc_repo = PostgresMoneyAccountRepository(conn)
+    cat_repo = PostgresExpenseCategoryRepository(conn)
+    vendor_repo = PostgresVendorRepository(conn)
+    exp_repo = PostgresExpenseRepository(conn)
+
+    # 1. Accounts & Total Liquidity
+    accounts = await acc_repo.list_accounts(auth_context.organization_id, status="active")
+    total_liquidity = Decimal("0")
+    for acc in accounts:
+        try:
+            bal = await acc_repo.get_balance(auth_context.organization_id, acc.id)
+        except Exception:
+            bal = acc.opening_balance
+        total_liquidity += Decimal(bal)
+
+    # 2. Expenses & Unpaid Liabilities
+    expenses = await exp_repo.list_confirmed(auth_context.organization_id)
+    total_expenses = sum((e.amount for e in expenses), Decimal("0"))
+    unpaid_expenses = sum((e.amount for e in expenses if e.payment_status == "unpaid"), Decimal("0"))
+
+    # 3. Vendors & Top Vendors
+    vendor_metrics = await vendor_repo.list_with_metrics(auth_context.organization_id)
+    top_vendors = [
+        TopVendorItem(
+            id=v["vendor"].id,
+            name=v["vendor"].name,
+            total_spent=v["total_amount"],
+            unpaid_amount=v["unpaid_amount"],
+        )
+        for v in vendor_metrics[:5]
+    ]
+
+    # 4. Categories & Category Breakdown
+    cat_metrics = await cat_repo.list_with_metrics(auth_context.organization_id)
+    cat_breakdown = [
+        CategoryBreakdownItem(
+            id=m["category"].id,
+            name=m["category"].name,
+            amount=m["total_amount"],
+        )
+        for m in cat_metrics
+    ]
+
+    # 5. Monthly Spending Trend
+    monthly_map: dict[str, dict] = {}
+    for e in expenses:
+        m_str = e.occurred_date.strftime("%b %Y") if e.occurred_date else "Recent"
+        if m_str not in monthly_map:
+            monthly_map[m_str] = {"month": m_str, "amount": Decimal("0"), "count": 0}
+        monthly_map[m_str]["amount"] += e.amount
+        monthly_map[m_str]["count"] += 1
+    monthly_trend = [MonthlyTrendItem(**v) for v in monthly_map.values()]
+
+    # 6. Petty Cash Accounts Summary
+    petty_accounts = [acc for acc in accounts if acc.account_type in ("cash", "employee_advance")]
+    petty_summary = []
+    for acc in petty_accounts:
+        try:
+            bal = await acc_repo.get_balance(auth_context.organization_id, acc.id)
+        except Exception:
+            bal = acc.opening_balance
+        petty_summary.append(
+            PettyCashSummaryItem(
+                id=acc.id,
+                name=acc.name,
+                custodian_name=str(acc.owner_user_id)[:8] if acc.owner_user_id else "Finance Custodian",
+                current_balance=Decimal(bal),
+                opening_balance=acc.opening_balance,
+            )
+        )
+
+    # 7. Health Alerts
+    low_float_count = sum(1 for acc in accounts if Decimal(acc.opening_balance) > 0 and Decimal(getattr(acc, 'current_balance', acc.opening_balance)) < 50000)
+    unpaid_invoice_count = sum(1 for e in expenses if e.payment_status == "unpaid")
+    health_alerts = FinanceHealthAlerts(
+        low_float_count=low_float_count,
+        unpaid_invoice_count=unpaid_invoice_count,
+        total_unpaid_amount=unpaid_expenses,
+    )
+
+    return FinanceSummaryResponse(
+        total_liquidity=total_liquidity,
+        total_expenses=total_expenses,
+        unpaid_expenses=unpaid_expenses,
+        active_accounts_count=len(accounts),
+        active_vendors_count=len(vendor_metrics),
+        active_categories_count=len(cat_metrics),
+        category_breakdown=cat_breakdown,
+        monthly_trend=monthly_trend,
+        top_vendors=top_vendors,
+        petty_cash_accounts=petty_summary,
+        health_alerts=health_alerts,
+    )
+
+
+_FINANCE_SETTINGS_STORE: dict[str, FinanceSettingsResponse] = {}
+
+
+@router.get("/settings", response_model=FinanceSettingsResponse)
+async def get_finance_settings(
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+):
+    """Get organization-wide financial preferences & WhatsApp assistant policies."""
+    org_id = str(auth_context.organization_id)
+    if org_id not in _FINANCE_SETTINGS_STORE:
+        _FINANCE_SETTINGS_STORE[org_id] = FinanceSettingsResponse()
+    return _FINANCE_SETTINGS_STORE[org_id]
+
+
+@router.patch("/settings", response_model=FinanceSettingsResponse)
+async def update_finance_settings(
+    body: UpdateFinanceSettingsRequest,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+):
+    """Update organization-wide financial preferences & WhatsApp assistant policies."""
+    org_id = str(auth_context.organization_id)
+    current = _FINANCE_SETTINGS_STORE.get(org_id, FinanceSettingsResponse())
+
+    updated_dict = current.model_dump()
+    patch_data = body.model_dump(exclude_unset=True)
+    for key, val in patch_data.items():
+        if val is not None:
+            updated_dict[key] = val
+
+    updated = FinanceSettingsResponse(**updated_dict)
+    _FINANCE_SETTINGS_STORE[org_id] = updated
+    return updated
+
+
+@router.get("/reports/statement", response_model=FinanceReportStatementResponse)
+async def generate_financial_report_statement(
+    report_type: str = "pnl",
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Generate executive financial statement report with calculated line items."""
+    exp_repo = PostgresExpenseRepository(conn)
+    acc_repo = PostgresMoneyAccountRepository(conn)
+    cat_repo = PostgresExpenseCategoryRepository(conn)
+    vendor_repo = PostgresVendorRepository(conn)
+
+    expenses = await exp_repo.list_confirmed(auth_context.organization_id)
+    accounts = await acc_repo.list_accounts(auth_context.organization_id)
+    cat_metrics = await cat_repo.list_with_metrics(auth_context.organization_id)
+    vendor_metrics = await vendor_repo.list_with_metrics(auth_context.organization_id)
+
+    total_outflows = sum((e.amount for e in expenses), Decimal("0"))
+    total_inflows = Decimal("0")
+    net_margin = total_inflows - total_outflows
+
+    rows: list[FinanceReportRow] = []
+
+    if report_type == "pnl":
+        title = "Income & Operational Expense Statement (P&L)"
+        subtitle = "Cumulative summary of revenues and operational expenditure"
+        for m in cat_metrics:
+            pct = (m["total_amount"] / total_outflows * 100) if total_outflows > 0 else Decimal("0")
+            rows.append(
+                FinanceReportRow(
+                    id=str(m["category"].id),
+                    code=m["category"].code,
+                    title=m["category"].name,
+                    category="Expense Category",
+                    amount=m["total_amount"],
+                    percentage=pct.round(2),
+                    status=m["category"].status,
+                    notes=f"{m['expense_count']} records logged",
+                )
+            )
+
+    elif report_type == "category_breakdown":
+        title = "Category Expenditure Audit Statement"
+        subtitle = "Detailed audit line items per expense classification"
+        for m in cat_metrics:
+            pct = (m["total_amount"] / total_outflows * 100) if total_outflows > 0 else Decimal("0")
+            rows.append(
+                FinanceReportRow(
+                    id=str(m["category"].id),
+                    code=m["category"].code,
+                    title=m["category"].name,
+                    category="Disbursement",
+                    amount=m["total_amount"],
+                    percentage=pct.round(2),
+                    status=m["category"].status,
+                )
+            )
+
+    elif report_type == "cashflow":
+        title = "Cash Flow & Money Account Movement Statement"
+        subtitle = "Liquidity statement across bank accounts and cash floats"
+        for acc in accounts:
+            try:
+                bal = await acc_repo.get_balance(auth_context.organization_id, acc.id)
+            except Exception:
+                bal = acc.opening_balance
+            rows.append(
+                FinanceReportRow(
+                    id=str(acc.id),
+                    code=acc.account_type.upper(),
+                    title=acc.name,
+                    account_name=acc.name,
+                    amount=Decimal(bal),
+                    status=acc.status,
+                    notes=f"Opening: ₹{acc.opening_balance}",
+                )
+            )
+
+    elif report_type == "vendor_ledger":
+        title = "Vendor Outstandings & Supplier Payable Statement"
+        subtitle = "Audit statement of total vendor payouts and unpaid liabilities"
+        for v in vendor_metrics:
+            rows.append(
+                FinanceReportRow(
+                    id=str(v["vendor"].id),
+                    code=v["vendor"].tax_id,
+                    title=v["vendor"].name,
+                    category="Supplier / Payee",
+                    amount=v["total_amount"],
+                    status=v["vendor"].status,
+                    notes=f"Unpaid: ₹{v['unpaid_amount']}",
+                )
+            )
+
+    else:
+        title = "Petty Cash Reconciliation Statement"
+        subtitle = "Custodian cash float allocation and utilization report"
+        petty_accs = [a for a in accounts if a.account_type in ("cash", "employee_advance")]
+        for acc in petty_accs:
+            try:
+                bal = await acc_repo.get_balance(auth_context.organization_id, acc.id)
+            except Exception:
+                bal = acc.opening_balance
+            rows.append(
+                FinanceReportRow(
+                    id=str(acc.id),
+                    code="PETTY_FLOAT",
+                    title=acc.name,
+                    account_name=acc.name,
+                    amount=Decimal(bal),
+                    status=acc.status,
+                    notes=f"Allocation: ₹{acc.opening_balance}",
+                )
+            )
+
+    return FinanceReportStatementResponse(
+        report_type=report_type,
+        title=title,
+        subtitle=subtitle,
+        generated_at=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        total_inflows=total_inflows,
+        total_outflows=total_outflows,
+        net_margin=net_margin,
+        rows=rows,
+    )
+
 
 @router.get("/accounts", response_model=list[MoneyAccountResponse])
 async def list_accounts(

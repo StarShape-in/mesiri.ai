@@ -677,5 +677,111 @@ export async function fetchTransactionsApi(params?: {
   return res.data
 }
 
+export interface CategoryBreakdownItem {
+  id: string
+  name: string
+  amount: number
+}
+
+export interface MonthlyTrendItem {
+  month: string
+  amount: number
+  count: number
+}
+
+export interface TopVendorItem {
+  id: string
+  name: string
+  total_spent: number
+  unpaid_amount: number
+}
+
+export interface PettyCashSummaryItem {
+  id: string
+  name: string
+  custodian_name: string
+  current_balance: number
+  opening_balance: number
+}
+
+export interface FinanceHealthAlerts {
+  low_float_count: number
+  unpaid_invoice_count: number
+  total_unpaid_amount: number
+}
+
+export interface FinanceSummaryItem {
+  total_liquidity: number
+  total_expenses: number
+  unpaid_expenses: number
+  active_accounts_count: number
+  active_vendors_count: number
+  active_categories_count: number
+  category_breakdown: CategoryBreakdownItem[]
+  monthly_trend: MonthlyTrendItem[]
+  top_vendors: TopVendorItem[]
+  petty_cash_accounts: PettyCashSummaryItem[]
+  health_alerts: FinanceHealthAlerts
+}
+
+export async function fetchFinanceSummaryApi(): Promise<FinanceSummaryItem> {
+  const res = await api.get('/finance/summary')
+  return res.data
+}
+
+export interface FinanceSettingsItem {
+  base_currency: string
+  currency_symbol: string
+  fiscal_year_start: string
+  low_float_threshold: number
+  auto_approval_limit: number
+  require_receipt_above: number
+  duplicate_window_hours: number
+  default_tax_rate: number
+  enabled_payment_methods: string[]
+}
+
+export async function fetchFinanceSettingsApi(): Promise<FinanceSettingsItem> {
+  const res = await api.get('/finance/settings')
+  return res.data
+}
+
+export async function updateFinanceSettingsApi(
+  payload: Partial<FinanceSettingsItem>
+): Promise<FinanceSettingsItem> {
+  const res = await api.patch('/finance/settings', payload)
+  return res.data
+}
+
+export interface FinanceReportRow {
+  id: string
+  code: string | null
+  title: string
+  category: string | null
+  account_name: string | null
+  amount: number
+  percentage: number | null
+  status: string | null
+  notes: string | null
+}
+
+export interface FinanceReportStatementItem {
+  report_type: string
+  title: string
+  subtitle: string
+  generated_at: string
+  total_inflows: number
+  total_outflows: number
+  net_margin: number
+  rows: FinanceReportRow[]
+}
+
+export async function fetchFinanceReportApi(params?: {
+  report_type?: string
+}): Promise<FinanceReportStatementItem> {
+  const res = await api.get('/finance/reports/statement', { params })
+  return res.data
+}
+
 
 
