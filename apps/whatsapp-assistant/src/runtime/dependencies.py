@@ -619,22 +619,32 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         # is suffixed with the new correlation_id to avoid colliding with the
         # original row (ON CONFLICT (dedup_key) DO NOTHING would otherwise
         # silently drop the retry attempt).
+        #
+        # Phase 7 perf: fired in the background with ensure_future so the DB
+        # write does not block the reply path. The return value is never read
+        # and the write is already best-effort (it was wrapped in try/except
+        # at the call site before this change). Same pattern as _safe() used
+        # throughout this module. In the rare event of a process crash within
+        # ~50ms, this one audit row is lost; the message itself is not lost
+        # because WhatsApp retries unacknowledged webhooks.
         dedup_key = (
             message.message_id
             if retry_of_id is None
             else f"{message.message_id}:retry:{message.correlation_id}"
         )
-        await message_logger.log_received(
-            correlation_id=message.correlation_id,
-            sender_wa_id=wa_id,
-            message_type=message.modality.value,
-            raw_payload=dict(raw_payload),
-            normalized_message=message.model_dump(mode="json"),
-            body_text=message.text,
-            media_object_key=message.media.object_key if message.media else None,
-            dedup_key=dedup_key,
-            retry_of_id=retry_of_id,
-            organization_id=org_id,
+        asyncio.ensure_future(
+            message_logger.log_received(
+                correlation_id=message.correlation_id,
+                sender_wa_id=wa_id,
+                message_type=message.modality.value,
+                raw_payload=dict(raw_payload),
+                normalized_message=message.model_dump(mode="json"),
+                body_text=message.text,
+                media_object_key=message.media.object_key if message.media else None,
+                dedup_key=dedup_key,
+                retry_of_id=retry_of_id,
+                organization_id=org_id,
+            )
         )
         timer.lap("log_received")
 
