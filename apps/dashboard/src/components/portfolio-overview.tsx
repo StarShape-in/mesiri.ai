@@ -384,7 +384,7 @@ export function PortfolioOverview() {
                   return (
                     <Link
                       key={item.eventType}
-                      to={`/field-reports${meta ? `?type=${meta.slug}` : ''}`}
+                      to={`/operations/daily-reports${meta ? `?type=${meta.slug}` : ''}`}
                       className="flex items-center justify-between p-3 border border-border/50 rounded-md hover:border-sky-500/40 hover:bg-sky-500/[0.01] transition-all group"
                     >
                       <div className="flex items-center gap-2">
@@ -401,8 +401,8 @@ export function PortfolioOverview() {
             )}
             <div className="flex justify-end mt-4">
               <Button variant="outline" size="sm" asChild className="h-7 text-xs font-bold rounded-md px-3">
-                <Link to="/field-reports">
-                  View All Field Reports
+                <Link to="/operations/daily-reports">
+                  View All Daily Reports
                   <ChevronRight className="size-3 ml-0.5" />
                 </Link>
               </Button>

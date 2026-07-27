@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { ClipboardList, Hammer, AlertCircle } from 'lucide-react'
+import { FileText, Hammer, AlertCircle } from 'lucide-react'
 import { useScope } from '@/lib/ScopeContext'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -18,7 +18,7 @@ const CATEGORIES = [
   { value: 'general', label: 'General Updates' },
 ]
 
-export default function FieldReportsPage() {
+export default function DailyReportsPage() {
   const { scope } = useScope()
   const [searchParams, setSearchParams] = useSearchParams()
   
@@ -32,7 +32,7 @@ export default function FieldReportsPage() {
 
   const activeCategoryLabel = React.useMemo(() => {
     const match = CATEGORIES.find((c) => c.value === activeType)
-    return match ? match.label : 'Field Reports'
+    return match ? match.label : 'Daily Reports'
   }, [activeType])
 
   const selectCategory = (type: string) => {
@@ -52,10 +52,10 @@ export default function FieldReportsPage() {
       <div className="flex flex-col gap-1 border-b pb-4">
         <div className="flex items-center gap-3">
           <div className="size-10 rounded-full border border-primary/20 bg-primary/10 flex items-center justify-center text-primary shrink-0">
-            <ClipboardList className="size-5" />
+            <FileText className="size-5" />
           </div>
           <div>
-            <h1 className="text-xl font-bold tracking-tight text-foreground">Field Reports</h1>
+            <h1 className="text-xl font-bold tracking-tight text-foreground">Daily Reports</h1>
             <p className="text-xs text-muted-foreground">
               Monitor operational daily reports across active sites.
             </p>
@@ -109,7 +109,7 @@ export default function FieldReportsPage() {
             <CardHeader className="pb-3 border-b border-l-3 border-l-amber-500 bg-amber-500/[0.01]">
               <CardTitle className="text-xs uppercase tracking-wider text-amber-600 dark:text-amber-400 font-bold flex items-center gap-2">
                 <Hammer className="size-4 animate-pulse" />
-                Operational Records Area
+                Operational Daily Reports Area
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-8 pb-12 flex flex-col items-center justify-center text-center gap-3">
@@ -117,7 +117,7 @@ export default function FieldReportsPage() {
               <h3 className="text-sm font-semibold text-foreground">No Records Found</h3>
               <p className="text-xs text-muted-foreground max-w-sm leading-relaxed">
                 There are no active records in database for <strong className="text-foreground">{activeCategoryLabel}</strong> under this scope. 
-                Field report submission APIs for this category are pending backend deployment.
+                Daily report submission APIs for this category are pending backend deployment.
               </p>
             </CardContent>
           </div>

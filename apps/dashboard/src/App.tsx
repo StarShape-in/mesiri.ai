@@ -7,7 +7,7 @@ import UserDetails from '@/pages/UserDetails'
 import CompanyDetails from '@/pages/CompanyDetails'
 import Projects from '@/pages/Projects'
 import ProjectDetails from '@/pages/ProjectDetails'
-import FieldReportsPage from '@/pages/FieldReportsPage'
+import DailyReportsPage from '@/pages/DailyReportsPage'
 import MaterialsPage from '@/pages/MaterialsPage'
 import ExpensesPage from '@/pages/ExpensesPage'
 import ReceiptsPage from '@/pages/ReceiptsPage'
@@ -37,6 +37,11 @@ function IndexRedirect() {
   return <Navigate to={`/overview${location.search}`} replace />
 }
 
+function OperationsIndexRedirect() {
+  const location = useLocation()
+  return <Navigate to={`/operations/dashboard${location.search}`} replace />
+}
+
 export default function App() {
   return (
     <ToastProvider>
@@ -53,12 +58,15 @@ export default function App() {
         <Route path="projects/:id" element={<ProjectDetails />} />
 
         {/* Operations Section */}
-        <Route path="operations" element={<IndexRedirect />} />
-        <Route path="operations/overview" element={<Overview />} />
+        <Route path="operations" element={<OperationsIndexRedirect />} />
+        <Route path="operations/dashboard" element={<Overview />} />
+        <Route path="operations/activities" element={<OperationalPlaceholder title="Operations Activities" />} />
         <Route path="operations/timeline" element={<OperationalPlaceholder title="Operations Timeline" />} />
-        <Route path="operations/field-reports" element={<FieldReportsPage />} />
+        <Route path="operations/daily-reports" element={<DailyReportsPage />} />
+        <Route path="operations/issues" element={<OperationalPlaceholder title="Operations Issues" />} />
         <Route path="operations/gallery" element={<OperationalPlaceholder title="Operations Gallery" />} />
         <Route path="operations/analytics" element={<OperationalPlaceholder title="Operations Analytics" />} />
+        <Route path="operations/settings" element={<OperationalPlaceholder title="Operations Settings" />} />
 
         {/* Finance Section */}
         <Route path="finance" element={<Navigate to="/finance/expenses" replace />} />
@@ -95,7 +103,6 @@ export default function App() {
         <Route path="labour/settings" element={<LabourSettingsPage />} />
 
         {/* Legacy operational routes fallbacks */}
-        <Route path="field-reports" element={<FieldReportsPage />} />
         <Route path="timeline" element={<OperationalPlaceholder title="Timeline" />} />
         <Route path="analytics" element={<OperationalPlaceholder title="Analytics" />} />
         <Route path="gallery" element={<OperationalPlaceholder title="Gallery" />} />

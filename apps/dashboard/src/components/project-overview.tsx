@@ -113,7 +113,7 @@ export function ProjectOverview({ projectId }: ProjectOverviewProps) {
         title: `${project.openIssues} Active Project Issue(s)`,
         context: `Factual delays or blockers registered under project scope. Check issues tab.`,
         severity: project.openIssues > 2 ? 'critical' : 'warning',
-        action: () => navigate(`/field-reports?project=${projectId}&type=issues-delays`),
+        action: () => navigate(`/operations/issues?project=${projectId}&type=issues-delays`),
       })
     }
 
@@ -314,7 +314,7 @@ export function ProjectOverview({ projectId }: ProjectOverviewProps) {
         <CardContent className="pt-4 text-xs">
           <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
             <Link
-              to={`/field-reports?project=${projectId}&type=work-progress`}
+              to={`/operations/daily-reports?project=${projectId}&type=work-progress`}
               className="flex items-center justify-between p-3 border border-border/50 rounded-md hover:border-sky-500/40 hover:bg-sky-500/[0.01] transition-all group"
             >
               <div className="flex items-center gap-2">
@@ -324,7 +324,7 @@ export function ProjectOverview({ projectId }: ProjectOverviewProps) {
               <ChevronRight className="size-3.5 text-muted-foreground/50 group-hover:text-sky-500 transition-colors" />
             </Link>
             <Link
-              to={`/field-reports?project=${projectId}&type=workforce`}
+              to={`/operations/daily-reports?project=${projectId}&type=workforce`}
               className="flex items-center justify-between p-3 border border-border/50 rounded-md hover:border-sky-500/40 hover:bg-sky-500/[0.01] transition-all group"
             >
               <div className="flex items-center gap-2">
@@ -334,7 +334,7 @@ export function ProjectOverview({ projectId }: ProjectOverviewProps) {
               <ChevronRight className="size-3.5 text-muted-foreground/50 group-hover:text-emerald-500 transition-colors" />
             </Link>
             <Link
-              to={`/field-reports?project=${projectId}&type=equipment`}
+              to={`/operations/daily-reports?project=${projectId}&type=equipment`}
               className="flex items-center justify-between p-3 border border-border/50 rounded-md hover:border-sky-500/40 hover:bg-sky-500/[0.01] transition-all group"
             >
               <div className="flex items-center gap-2">
@@ -344,7 +344,7 @@ export function ProjectOverview({ projectId }: ProjectOverviewProps) {
               <ChevronRight className="size-3.5 text-muted-foreground/50 group-hover:text-orange-500 transition-colors" />
             </Link>
             <Link
-              to={`/field-reports?project=${projectId}&type=material-in`}
+              to={`/operations/daily-reports?project=${projectId}&type=material-in`}
               className="flex items-center justify-between p-3 border border-border/50 rounded-md hover:border-sky-500/40 hover:bg-sky-500/[0.01] transition-all group"
             >
               <div className="flex items-center gap-2">
@@ -362,8 +362,8 @@ export function ProjectOverview({ projectId }: ProjectOverviewProps) {
               asChild
               className="h-7 text-xs font-bold border border-sky-500/30 text-sky-600 hover:bg-sky-600 hover:text-white dark:text-sky-400 dark:hover:bg-sky-500 transition-all rounded-md px-3"
             >
-              <Link to={`/field-reports?project=${projectId}`}>
-                View All Field Reports
+              <Link to={`/operations/daily-reports?project=${projectId}`}>
+                View All Daily Reports
                 <ChevronRight className="size-3 ml-0.5" />
               </Link>
             </Button>

@@ -208,8 +208,8 @@ export function SiteOverview({ projectId, siteId }: SiteOverviewProps) {
                   key={item.id}
                   to={
                     item.slug
-                      ? `/field-reports?project=${projectId}&site=${siteId}&type=${item.slug}`
-                      : `/field-reports?project=${projectId}&site=${siteId}`
+                      ? `/operations/daily-reports?project=${projectId}&site=${siteId}&type=${item.slug}`
+                      : `/operations/daily-reports?project=${projectId}&site=${siteId}`
                   }
                   className="flex items-start justify-between py-2.5 first:pt-0 last:pb-0 group hover:text-primary transition-all"
                 >
@@ -254,8 +254,8 @@ export function SiteOverview({ projectId, siteId }: SiteOverviewProps) {
                   key={row.eventType}
                   to={
                     row.meta
-                      ? `/field-reports?project=${projectId}&site=${siteId}&type=${row.meta.slug}`
-                      : `/field-reports?project=${projectId}&site=${siteId}`
+                      ? `/operations/daily-reports?project=${projectId}&site=${siteId}&type=${row.meta.slug}`
+                      : `/operations/daily-reports?project=${projectId}&site=${siteId}`
                   }
                   className="flex items-center justify-between py-2.5 first:pt-0 last:pb-0 group hover:text-primary transition-colors"
                 >
@@ -289,8 +289,8 @@ export function SiteOverview({ projectId, siteId }: SiteOverviewProps) {
           </div>
           <div className="flex justify-end mt-3 pt-3 border-t border-border/40">
             <Button variant="outline" size="sm" asChild className="h-7 text-xs font-bold rounded-md px-3">
-              <Link to={`/field-reports?project=${projectId}&site=${siteId}`}>
-                View All Field Reports
+              <Link to={`/operations/daily-reports?project=${projectId}&site=${siteId}`}>
+                View All Daily Reports
                 <ChevronRight className="size-3 ml-0.5" />
               </Link>
             </Button>
@@ -341,12 +341,12 @@ export function SiteOverview({ projectId, siteId }: SiteOverviewProps) {
           )}
           <div className="flex flex-wrap justify-end gap-2 border-t border-border/40 mt-3 pt-4">
             <Button variant="outline" size="sm" asChild className="h-7 text-xs font-bold rounded-md px-3">
-              <Link to={`/field-reports?project=${projectId}&site=${siteId}&type=material-in`}>
+              <Link to={`/operations/daily-reports?project=${projectId}&site=${siteId}&type=material-in`}>
                 View Material In
               </Link>
             </Button>
             <Button variant="outline" size="sm" asChild className="h-7 text-xs font-bold rounded-md px-3">
-              <Link to={`/field-reports?project=${projectId}&site=${siteId}&type=material-out`}>
+              <Link to={`/operations/daily-reports?project=${projectId}&site=${siteId}&type=material-out`}>
                 View Material Out
               </Link>
             </Button>

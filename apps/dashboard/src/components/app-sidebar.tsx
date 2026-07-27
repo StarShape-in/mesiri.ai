@@ -11,7 +11,6 @@ import {
   BarChart3,
   Image as ImageIcon,
   FileText,
-  ClipboardList,
   DollarSign,
   Wallet,
   Boxes,
@@ -34,6 +33,7 @@ import {
   HardHat,
   ClipboardCheck,
   MessageSquare,
+  AlertCircle,
 } from 'lucide-react'
 import { NavLink, Link, useLocation } from 'react-router-dom'
 import {
@@ -58,7 +58,7 @@ import { cn } from '@/lib/utils'
 type NavItem = {
   title: string
   url: string
-  icon: React.ElementType
+  icon: React.ComponentType<{ className?: string }>
   requiredScope?: ScopeKind
   requiredRole?: string
 }
@@ -74,11 +74,14 @@ const OPERATIONS_CATEGORY: NavCategory = {
   title: 'Operations',
   icon: Activity,
   items: [
-    { title: 'Overview', url: '/operations/overview', icon: LayoutDashboard },
+    { title: 'Dashboard', url: '/operations/dashboard', icon: LayoutDashboard },
+    { title: 'Activities', url: '/operations/activities', icon: Activity },
     { title: 'Timeline', url: '/operations/timeline', icon: History },
-    { title: 'Field Reports', url: '/operations/field-reports', icon: ClipboardList },
+    { title: 'Daily Reports', url: '/operations/daily-reports', icon: FileText },
+    { title: 'Issues', url: '/operations/issues', icon: AlertCircle },
     { title: 'Gallery', url: '/operations/gallery', icon: ImageIcon },
     { title: 'Analytics', url: '/operations/analytics', icon: BarChart3 },
+    { title: 'Settings', url: '/operations/settings', icon: SlidersHorizontal },
   ],
 }
 
@@ -133,7 +136,7 @@ const ROOT_MANAGEMENT_ITEMS: NavItem[] = [
 function checkIsItemActive(pathname: string, itemUrl: string): boolean {
   if (pathname === itemUrl) return true
   if (itemUrl === '/overview' && pathname === '/') return true
-  if (itemUrl === '/operations/overview' && (pathname === '/operations' || pathname === '/overview')) return true
+  if (itemUrl === '/operations/dashboard' && (pathname === '/operations' || pathname === '/operations/dashboard' || pathname === '/overview')) return true
   if (itemUrl === '/finance/overview' && pathname === '/finance') return true
   if (itemUrl === '/materials/overview' && pathname === '/materials') return true
   if (itemUrl !== '/' && pathname.startsWith(itemUrl)) return true
