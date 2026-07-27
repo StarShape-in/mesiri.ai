@@ -470,6 +470,12 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from runtime.evidence_query import EvidenceAttachService
 
     evidence_query = EvidenceAttachService(material_db)
+    # #10 Human Review: creates a durable escalation record the moment #7
+    # Low-Confidence Routing decides ESCALATE (nothing usable extracted at
+    # all). See runtime/escalation_query.py.
+    from runtime.escalation_query import EscalationCreateService
+
+    escalation_query = EscalationCreateService(material_db)
     # #1 Multi-Activity / #13 Cross-Module Trigger: queues segments AFTER
     # the first in a multi-segment message, started one at a time as each
     # prior segment's confirmation resolves. See workflows/batch_store.py
@@ -1065,6 +1071,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
                 memory_loader=memory_loader,
                 memory_coordinator=memory_coordinator,
                 batch_store=batch_store,
+                escalation_query=escalation_query,
             )
             timer.lap("process_inbound_message_held_media")
             if len(held_batch) > 1:
@@ -1427,6 +1434,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             memory_loader=memory_loader,
             memory_coordinator=memory_coordinator,
             batch_store=batch_store,
+            escalation_query=escalation_query,
         )
         timer.lap("process_inbound_message")
 

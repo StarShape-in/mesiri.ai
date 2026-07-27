@@ -61,6 +61,7 @@ from planner import Planner, log_planner_decision
 from planner.ambiguity import AmbiguityAction, caveat_text, decide_ambiguity
 from runtime.activity_query import ActivityQueryService
 from runtime.duplicate_expense_query import DuplicateExpenseQueryService
+from runtime.escalation_query import EscalationCreateService
 from runtime.expense_category_query import ExpenseCategoryQueryService
 from runtime.expense_query_service import ExpenseQueryService, resolve_date_range
 from runtime.inventory_query import MaterialInventoryQueryService
@@ -1103,6 +1104,7 @@ async def process_inbound_message(
     memory_loader: ConversationMemoryLoader | None = None,
     memory_coordinator: ConversationMemoryCoordinator | None = None,
     batch_store: PendingBatchStore | None = None,
+    escalation_query: EscalationCreateService | None = None,
 ) -> JourneyResult:
     mlog: MessageLogger = message_logger or NoopMessageLogger()
     tlog: TraceLogger = trace_logger or NoopTraceLogger()
@@ -1184,6 +1186,31 @@ async def process_inbound_message(
                 correlation_id,
                 ambiguity_decision.reason,
             )
+            # #10 Human Review: a durable review record, not a re-triggerable
+            # draft -- there is no workflow, no context resolution, and
+            # often no organization_id yet at this point (ESCALATE fires
+            # right off understanding, before context resolution runs
+            # below), so the snapshot captures what understanding itself
+            # saw. Fire-and-forget: creating the review record must never
+            # delay or fail the reply the user still gets this turn.
+            if escalation_query is not None and actor is not None and actor.organization_id:
+                asyncio.ensure_future(
+                    escalation_query.create(
+                        organization_id=actor.organization_id,
+                        correlation_id=correlation_id,
+                        reason=ambiguity_decision.reason,
+                        snapshot={
+                            "modality": understanding.input_modality.value,
+                            "semantic_type": understanding.semantic_type.value,
+                            "transcript": understanding.transcript,
+                            "normalized_text": understanding.normalized_text,
+                            "translated_text": understanding.translated_text,
+                            "overall_confidence": understanding.overall_confidence.value,
+                            "missing_fields": understanding.missing_fields,
+                            "warnings": understanding.warnings,
+                        },
+                    )
+                )
     except Exception as exc:
         await _safe(
             tlog.log_stage(

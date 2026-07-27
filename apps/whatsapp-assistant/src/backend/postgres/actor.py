@@ -259,3 +259,33 @@ class PostgresActorReader:
                 for s in site_rows
             ],
         )
+
+    async def resolve_whatsapp_id_by_user_id(self, user_id: str) -> str | None:
+        """The reverse of resolve_by_whatsapp_id -- #9 Notifications needs
+        this to turn a notification's recipient_user_id (a canonical user,
+        resolved on the backend side which has no notion of WhatsApp
+        numbers) into the wa_id WhatsAppSender actually sends to. Returns
+        None for a user with no whatsapp_number on file or who is not
+        active -- same exclusion reasoning as resolve_by_whatsapp_id above,
+        a deactivated user must not receive a notification either."""
+        import uuid
+
+        from sqlalchemy import text
+
+        try:
+            uid = uuid.UUID(user_id)
+        except (TypeError, ValueError):
+            return None
+
+        async with self._get_engine().connect() as conn:
+            row = (
+                await conn.execute(
+                    text(
+                        "SELECT whatsapp_number FROM users "
+                        "WHERE id = :id AND whatsapp_number IS NOT NULL "
+                        "AND lower(status) = 'active'"
+                    ),
+                    {"id": uid},
+                )
+            ).mappings().first()
+        return str(row["whatsapp_number"]) if row else None
