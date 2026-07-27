@@ -19,21 +19,27 @@ async def send_reply_spec(
     send_text: Callable[[str, str], Awaitable[Any]],
     send_list: Callable[[str, str, str, tuple[ListRow, ...]], Awaitable[Any]] | None = None,
     send_button: Callable[[str, str, tuple[ListRow, ...]], Awaitable[Any]] | None = None,
-) -> None:
+) -> Any:
+    """Dispatches by ReplySpec shape and returns whatever the underlying
+    send_* call returned. Only the plain-text branch's return value is ever
+    a wamid today (#11 Reply Workflow, see channel/whatsapp/outbound.py's
+    send_text_capturing_id) -- the list/button branches return whatever
+    their own bool-returning senders give back, which callers wanting a
+    wamid must treat as "not captured" (see runtime/inbound_journey.py's
+    final "Send reply" step, which only acts on a str result)."""
     if reply.buttons and send_button is not None:
-        await send_button(wa_id, body=reply.text, buttons=reply.buttons)
-    elif reply.buttons:
+        return await send_button(wa_id, body=reply.text, buttons=reply.buttons)
+    if reply.buttons:
         options = " / ".join(row.title for row in reply.buttons)
-        await send_text(wa_id, f"{reply.text}\n\nReply {options}")
-    elif reply.list_rows and send_list is not None:
-        await send_list(
+        return await send_text(wa_id, f"{reply.text}\n\nReply {options}")
+    if reply.list_rows and send_list is not None:
+        return await send_list(
             wa_id,
             body=reply.text,
             button_label=reply.list_button_label or "Choose one",
             rows=reply.list_rows,
         )
-    elif reply.list_rows:
+    if reply.list_rows:
         options = "\n".join(f"  • {row.title}" for row in reply.list_rows)
-        await send_text(wa_id, f"{reply.text}\n{options}")
-    else:
-        await send_text(wa_id, reply.text)
+        return await send_text(wa_id, f"{reply.text}\n{options}")
+    return await send_text(wa_id, reply.text)

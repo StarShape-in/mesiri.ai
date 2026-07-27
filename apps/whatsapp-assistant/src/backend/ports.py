@@ -79,3 +79,10 @@ class ActorReader(Protocol):
     """
 
     async def resolve_by_whatsapp_id(self, wa_id: str) -> ActorIdentity | None: ...
+
+    async def resolve_whatsapp_id_by_user_id(self, user_id: str) -> str | None:
+        """The reverse lookup -- #9 Notifications needs to turn a
+        backend-resolved recipient_user_id back into the wa_id
+        WhatsAppSender sends to. None when the user has no whatsapp_number
+        on file or is not active."""
+        ...

@@ -6,6 +6,6 @@ Single responsibility: bridge Context (M4) and Planner (M5). Depends only on
 
 from __future__ import annotations
 
-from .builder import build_canonical_event, log_canonical_event
+from .builder import build_canonical_event, build_canonical_events, log_canonical_event
 
-__all__ = ["build_canonical_event", "log_canonical_event"]
+__all__ = ["build_canonical_event", "build_canonical_events", "log_canonical_event"]

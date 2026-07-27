@@ -150,24 +150,52 @@ def render_image_purpose_picker() -> ReplySpec:
     )
 
 
-def render_image_purpose_coming_soon(row_id: str) -> str | None:
-    """Site Update photos aren't processed yet -- an honest reply instead of
-    a silent failure.
+def render_completion_photo_followup() -> str:
+    """#25 AI Follow-up: appended to the confirmation reply once an Activity
+    is marked COMPLETED. Deliberately a plain question, not an interactive
+    picker -- the expected answer is "send a photo" or "send nothing",
+    neither of which benefits from a tappable list the way a multi-choice
+    question would."""
+    return "📷 Want to attach a completion photo?"
 
-    WorkflowKey.SITE_UPDATE gained a compiled graph on 2026-07-27
-    (workflows/site_update/), so the *text/voice* path is real. This still
-    blocks specifically because attaching a photo to an activity is the
-    Evidence workflow (docs/execution/DAILY_REPORTING_PLAN.md Phase 4,
-    `progress_attachments`), which doesn't exist yet -- routing this image
-    through today would either drop it silently or attach it to nothing.
 
-    None for every other purpose, which is what routes it to real processing:
-    "img_expense" and (since 2026-07-26) "img_attendance" both have compiled
-    graphs, so they fall through to process_inbound_message with their
-    semantic hint (see runtime/dependencies.py)."""
-    if row_id == "img_site_update":
-        return "📷 Got it — site update photos aren't processed yet, but that's coming soon."
-    return None
+def render_evidence_attached_reply(*, count: int, activity_summary: str | None) -> str:
+    """#2 Batch Media: confirmation after attaching a whole batch of "Site
+    Update" photos to the open activity in ONE reply -- never one reply per
+    photo (the gallery principle: a burst of N photos gets exactly one
+    acknowledgement)."""
+    noun = "photo" if count == 1 else "photos"
+    if activity_summary:
+        return f"📷 {count} {noun} attached to {activity_summary}."
+    return f"📷 {count} {noun} attached to your current activity."
+
+
+def render_no_open_activity_for_evidence_reply() -> str:
+    """Honest reply when a "Site Update" photo batch has nothing open to
+    attach to -- never silently dropped (P1: there is nothing here to
+    attach evidence onto, same reasoning as
+    workflows/activity_continuation/nodes.py's own "nothing to continue"
+    message)."""
+    return (
+        "📷 Got your photo(s), but there's no activity in progress right now to attach "
+        "them to. Describe the work first (e.g. \"started plastering Block A\"), then "
+        "resend the photos."
+    )
+
+
+def render_batch_overflow_reply(*, held_count: int, remaining_count: int) -> str:
+    """#2 Batch Media: when a batch of photos answered as Expense/Attendance
+    has more than one photo, only the first goes through the normal
+    single-report confirm flow this turn (concurrent confirmations for
+    Expense/Attendance would collide with the single-active-workflow
+    invariant -- see workflows/runtime.py -- and resolving that properly is
+    #1 Multi-Activity's job, not this one's). The rest are named honestly
+    rather than silently dropped."""
+    plural = "photo" if remaining_count == 1 else "photos"
+    return (
+        f"(I'm only processing 1 of your {held_count} photos right now — please resend "
+        f"the other {remaining_count} {plural} once this one is confirmed.)"
+    )
 
 
 # Field names as a site worker would say them, not as the schema spells them.

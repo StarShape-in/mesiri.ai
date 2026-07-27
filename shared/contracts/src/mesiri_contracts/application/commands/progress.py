@@ -106,6 +106,43 @@ class CreateActivityCommand(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+class AttachEvidenceCommand(BaseModel):
+    """Attach one or more photos to an existing Activity as evidence (#2
+    Batch Media). Distinct from CreateActivityCommand/AddProgressUpdateCommand:
+    an attachment is never a draft awaiting YES/NO confirmation (a photo is
+    unambiguous evidence, not a business fact someone could have misheard),
+    so this command has no idempotency_key and does not travel through
+    ConfirmedActionV2 -- it is dispatched directly from the WhatsApp image-
+    purpose tap handler once the target activity is known, mirroring how
+    interactions/image_purpose.py already holds media outside the normal
+    draft/confirm machinery.
+
+    `media_object_keys` (plural) is the whole point of this command over a
+    single-attachment shape: a batch of N photos tapped "Site Update" in one
+    picker answer must attach as N rows in one transaction, not N separate
+    round trips each able to partially fail.
+    """
+
+    version: str = CONTRACT_VERSION
+
+    command_id: str
+    correlation_id: str
+
+    organization_id: CanonicalUuid
+    activity_id: CanonicalUuid
+
+    media_object_keys: list[str]
+    mime_type: str | None = None
+    #: The reporter's own caption, if any -- a fact, never AI-generated (see
+    #: migration 0430's progress_attachments docstring on the caption/
+    #: ai_caption split).
+    caption: str | None = None
+
+    uploaded_by: CanonicalUuid
+
+    model_config = {"extra": "forbid"}
+
+
 class AddProgressUpdateCommand(BaseModel):
     """Append a Progress Update to an existing Activity (plan §1B.1,
     `activity_continuation` graph). Never edits the Activity or a prior

@@ -11,11 +11,13 @@ from channel.replies import (
     CATEGORY_ROWS,
     IMAGE_PURPOSE_ROWS,
     IMAGE_PURPOSE_SEMANTIC_HINT,
+    render_batch_overflow_reply,
     render_category_prompt,
     render_clarify_reply,
     render_direct_reply,
-    render_image_purpose_coming_soon,
+    render_evidence_attached_reply,
     render_image_purpose_picker,
+    render_no_open_activity_for_evidence_reply,
     render_no_projects_reply,
     render_project_picker,
     render_understanding_failed_reply,
@@ -201,13 +203,23 @@ def test_image_purpose_semantic_hint_covers_every_row():
     assert IMAGE_PURPOSE_SEMANTIC_HINT["img_site_update"] == "general_site_update"
 
 
-def test_image_purpose_coming_soon_only_fires_for_site_update():
-    assert render_image_purpose_coming_soon("img_expense") is None
-    # A photographed attendance sheet is the most common way a site records
-    # who turned up, so it must reach the Labour workflow rather than the
-    # "coming soon" reply img_site_update still gets.
-    assert render_image_purpose_coming_soon("img_attendance") is None
-    reply = render_image_purpose_coming_soon("img_site_update")
-    assert reply is not None
-    assert "coming soon" in reply.lower()
-    assert render_image_purpose_coming_soon("unrelated_id") is None
+def test_evidence_attached_reply_is_one_message_for_the_whole_batch():
+    reply = render_evidence_attached_reply(count=3, activity_summary="Plastering — Block A")
+    assert "3 photos" in reply
+    assert "Plastering — Block A" in reply
+
+
+def test_evidence_attached_reply_singular_and_no_summary_fallback():
+    assert "1 photo " in render_evidence_attached_reply(count=1, activity_summary=None)
+    assert "photos" not in render_evidence_attached_reply(count=1, activity_summary=None)
+
+
+def test_no_open_activity_for_evidence_reply_is_honest_not_silent():
+    reply = render_no_open_activity_for_evidence_reply()
+    assert "no activity in progress" in reply.lower()
+
+
+def test_batch_overflow_reply_names_the_remaining_count():
+    reply = render_batch_overflow_reply(held_count=4, remaining_count=3)
+    assert "4 photos" in reply
+    assert "3 photos" in reply

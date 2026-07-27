@@ -42,6 +42,14 @@ def render_execution_reply(result: ExecutionResult) -> str:
     """Reply after M8 execution actually runs — reflects the real domain outcome,
     not just "the user confirmed" (fixes the M7 always-optimistic reply bug)."""
     if result.status in (ExecutionStatus.SUCCEEDED, ExecutionStatus.ALREADY_EXECUTED):
+        # Conflict Resolution (#12): the write still succeeded -- this is
+        # never a rejection -- but one narrower part of it (a concurrent
+        # status transition) was safely held back rather than silently
+        # overwriting what someone else already applied. Surfaced, not
+        # swallowed: a user who thinks they just paused an activity that was
+        # actually already completed by a colleague needs to know that.
+        if result.conflict_note:
+            return f"✅ Recorded. Thank you.\n\n{result.conflict_note}"
         return "✅ Recorded. Thank you."
     if result.status is ExecutionStatus.REJECTED:
         reasons = "; ".join(result.rejection_reasons)

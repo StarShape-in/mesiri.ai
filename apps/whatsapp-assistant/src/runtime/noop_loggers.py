@@ -52,6 +52,8 @@ class NoopMessageLogger:
 
     async def set_interaction_group(self, *, correlation_id: str, group_id: str) -> None: ...
 
+    async def set_reply_wamid(self, *, correlation_id: str, reply_wamid: str) -> None: ...
+
 
 class NoopTraceLogger:
     async def log_stage(
@@ -109,6 +111,7 @@ class RecordingMessageLogger:
     transcriptions: list[tuple[str, str]] = field(default_factory=list)
     workflow_links: list[tuple[str, str]] = field(default_factory=list)
     interaction_groups: list[tuple[str, str]] = field(default_factory=list)
+    reply_wamids: list[tuple[str, str]] = field(default_factory=list)
 
     async def log_received(
         self,
@@ -178,6 +181,9 @@ class RecordingMessageLogger:
 
     async def set_interaction_group(self, *, correlation_id: str, group_id: str) -> None:
         self.interaction_groups.append((correlation_id, group_id))
+
+    async def set_reply_wamid(self, *, correlation_id: str, reply_wamid: str) -> None:
+        self.reply_wamids.append((correlation_id, reply_wamid))
 
 
 @dataclass

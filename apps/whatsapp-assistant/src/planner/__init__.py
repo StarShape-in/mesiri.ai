@@ -7,6 +7,14 @@ Must never import a workflow engine, LangGraph, or any specific graph
 
 from __future__ import annotations
 
+from .ambiguity import AmbiguityAction, AmbiguityDecision, caveat_text, decide_ambiguity
 from .planner import Planner, log_planner_decision
 
-__all__ = ["Planner", "log_planner_decision"]
+__all__ = [
+    "Planner",
+    "log_planner_decision",
+    "AmbiguityAction",
+    "AmbiguityDecision",
+    "decide_ambiguity",
+    "caveat_text",
+]

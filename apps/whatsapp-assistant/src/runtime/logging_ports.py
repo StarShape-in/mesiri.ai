@@ -74,6 +74,13 @@ class MessageLogger(Protocol):
         before any workflow_instances row exists to link to directly."""
         ...
 
+    async def set_reply_wamid(self, *, correlation_id: str, reply_wamid: str) -> None:
+        """UPDATE the row's reply_wamid -- Meta's own id for the reply
+        Mesiri sent back, captured so a LATER reply to that message can be
+        resolved via PostgresReplyContextProvider (#11 Reply Workflow, see
+        migration 0452's docstring)."""
+        ...
+
 
 class TraceLogger(Protocol):
     """Best-effort per-stage pipeline trace."""

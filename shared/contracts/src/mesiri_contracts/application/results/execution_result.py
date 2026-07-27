@@ -34,6 +34,17 @@ class ExecutionResult(BaseModel):
     idempotency_key: str
     material_row_id: str | None = None
     rejection_reasons: list[str] = Field(default_factory=list)
+    # Conflict Resolution (#12): set only on a SUCCEEDED/ALREADY_EXECUTED
+    # result whose write partially yielded to a genuine concurrent conflict
+    # -- e.g. two engineers reporting different Activity status transitions
+    # at once. The write that COULD safely proceed (an append-only Progress
+    # Update) still did; the part that would have silently overwritten
+    # someone else's already-applied change (the status mutation) did not.
+    # None is the overwhelmingly common case: nothing to say. This is
+    # deliberately NOT a REJECTED outcome -- the confirmed action was not
+    # refused, it succeeded with one narrower side effect held back, and the
+    # user needs to know that, not be told their report failed.
+    conflict_note: str | None = None
 
     model_config = {"extra": "forbid"}
 
@@ -49,9 +60,13 @@ class ExecutionResult(BaseModel):
                 raise ValueError("REJECTED requires rejection_reasons")
             if self.material_row_id is not None:
                 raise ValueError("REJECTED must not carry material_row_id")
+            if self.conflict_note is not None:
+                raise ValueError("REJECTED must not carry conflict_note")
         else:  # FAILED
             if self.material_row_id is not None or self.rejection_reasons:
                 raise ValueError("FAILED must not carry material_row_id or rejection_reasons")
+            if self.conflict_note is not None:
+                raise ValueError("FAILED must not carry conflict_note")
         return self
 
 

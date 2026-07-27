@@ -91,6 +91,12 @@ class WhatsAppSender:
 
     async def send_text(self, to_wa_id: str, body: str) -> bool:
         """Send a plain text message. Returns True on success."""
+        return (await self.send_text_capturing_id(to_wa_id, body)) is not None
+
+    async def send_text_capturing_id(self, to_wa_id: str, body: str) -> str | None:
+        """Same as send_text, but returns Meta's wamid (or None on failure)
+        instead of a bool -- for callers that need to record what was sent
+        so a later reply to it can be resolved (#11 Reply Workflow)."""
         return await self._send(
             to_wa_id,
             {
@@ -151,7 +157,7 @@ class WhatsAppSender:
         if footer:
             interactive["footer"] = {"text": footer}
 
-        return await self._send(to_wa_id, {"type": "interactive", "interactive": interactive})
+        return (await self._send(to_wa_id, {"type": "interactive", "interactive": interactive})) is not None
 
     async def send_button(
         self,
@@ -194,7 +200,7 @@ class WhatsAppSender:
                 ]
             },
         }
-        return await self._send(to_wa_id, {"type": "interactive", "interactive": interactive})
+        return (await self._send(to_wa_id, {"type": "interactive", "interactive": interactive})) is not None
 
     async def send_image(
         self, to_wa_id: str, image_bytes: bytes, *, caption: str | None = None
@@ -218,7 +224,7 @@ class WhatsAppSender:
         image_fields: dict = {"id": media_id}
         if caption:
             image_fields["caption"] = caption
-        return await self._send(to_wa_id, {"type": "image", "image": image_fields})
+        return (await self._send(to_wa_id, {"type": "image", "image": image_fields})) is not None
 
     async def _upload_media(self, data: bytes, *, mime_type: str) -> str | None:
         url = f"{self._graph_base_url}/{self._api_version}/{self._phone_number_id}/media"
@@ -243,12 +249,21 @@ class WhatsAppSender:
             return None
         return media_id
 
-    async def _send(self, to_wa_id: str, message_fields: dict) -> bool:
+    async def _send(self, to_wa_id: str, message_fields: dict) -> str | None:
         """POST one message to the Cloud API. `message_fields` supplies the
-        `type` key and its matching payload (`text`, `interactive`, ...)."""
+        `type` key and its matching payload (`text`, `interactive`, ...).
+
+        Returns Meta's own wamid for the sent message, or None on any
+        failure -- every existing bool-returning send_* method below wraps
+        this with `is not None`, so their contract is unchanged. The raw
+        id is what #11 Reply Workflow needs: a reply to THIS message can
+        only be resolved back to its context if the id was captured when
+        it was sent (see channel/reply_dispatch.py's send_text_capturing_id
+        and context/postgres_repositories.py's PostgresReplyContextProvider).
+        """
         if not self.enabled:
             logger.warning("WhatsApp sender disabled (missing phone_number_id/access_token)")
-            return False
+            return None
 
         url = f"{self._graph_base_url}/{self._api_version}/{self._phone_number_id}/messages"
         payload = {
@@ -275,7 +290,7 @@ class WhatsAppSender:
                 round((time.perf_counter() - started) * 1000, 1),
                 exc,
             )
-            return False
+            return None
 
         elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
         if resp.status_code >= 400:
@@ -285,9 +300,17 @@ class WhatsAppSender:
                 elapsed_ms,
                 resp.text[:300],
             )
-            return False
+            return None
 
         logger.info(
             "whatsapp.sent type=%s to=%s send_ms=%s", message_fields["type"], to_wa_id, elapsed_ms
         )
-        return True
+        # Meta returns {"messages": [{"id": "wamid...."}], ...} on success.
+        # A malformed/missing id degrades to None (still "sent", just not
+        # reply-trackable) rather than raising -- the send itself succeeded.
+        try:
+            messages = resp.json().get("messages") or []
+            return str(messages[0]["id"]) if messages else None
+        except (ValueError, KeyError, IndexError, TypeError):
+            logger.warning("whatsapp.sent response had no parseable message id to=%s", to_wa_id)
+            return None

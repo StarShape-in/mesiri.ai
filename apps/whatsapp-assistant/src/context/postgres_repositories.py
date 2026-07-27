@@ -288,10 +288,20 @@ class PostgresReplyContextProvider(_EngineMixin):
     stores the CANONICAL organization_id while this port is handed the CONTEXT
     one, so the join is both the translation and the tenant check.
 
-    Returns None when the target is unknown (expired retention, a message from
-    before this feature, or a reply to Mesiri's own outbound bubble -- Meta's
-    outbound wamid is not persisted yet). None means "no opinion", which
-    simply lets the next precedence level answer.
+    A reply can target EITHER of two messages, matched with the same query:
+    the sender's own earlier message (`dedup_key`, as above) OR Mesiri's own
+    reply to some earlier turn (`reply_wamid`, captured since migration 0452
+    -- see runtime/inbound_journey.py's final "Send reply" step and
+    channel/whatsapp/outbound.py's send_text_capturing_id). Replying to
+    Mesiri's own "✅ Recorded." to reference or correct that record later is
+    exactly the case `reply_wamid` closes -- `dedup_key` alone could never
+    match it, since that column only ever holds an INBOUND message's id.
+
+    Returns None when the target is unknown (expired retention, a message
+    from before this feature, or a reply to an interactive list/button
+    message -- those aren't reply_wamid-capturing yet, see migration 0452's
+    docstring). None means "no opinion", which simply lets the next
+    precedence level answer.
     """
 
     async def context_for_reply(
@@ -304,7 +314,9 @@ class PostgresReplyContextProvider(_EngineMixin):
             "  ON co.canonical_organization_id = im.organization_id AND co.id = :org "
             "LEFT JOIN context_projects cp ON cp.canonical_project_id = im.project_id "
             "LEFT JOIN context_sites cs ON cs.canonical_site_id = im.site_id "
-            "WHERE im.dedup_key = :wamid",
+            "WHERE im.dedup_key = :wamid OR im.reply_wamid = :wamid "
+            "ORDER BY im.received_at DESC "
+            "LIMIT 1",
             {"org": organization_id, "wamid": replied_to_message_id},
         )
         if row is None:

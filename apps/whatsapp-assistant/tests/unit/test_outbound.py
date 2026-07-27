@@ -118,3 +118,80 @@ async def test_send_text_still_sends_plain_text_shape():
     payload = json.loads(captured[0].content)
     assert payload["type"] == "text"
     assert payload["text"]["body"] == "Recorded. Thank you."
+
+
+# --- #11 Reply Workflow: wamid capture -------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_send_text_capturing_id_returns_metas_wamid():
+    captured: list[httpx.Request] = []
+    sender = _sender(captured)
+
+    wamid = await sender.send_text_capturing_id("919876543210", "Recorded. Thank you.")
+
+    assert wamid == "wamid.out.1"
+
+
+@pytest.mark.asyncio
+async def test_send_text_still_returns_bool_true_on_success():
+    """send_text's own contract (bool) must be unchanged now that _send
+    returns str | None internally."""
+    captured: list[httpx.Request] = []
+    sender = _sender(captured)
+
+    result = await sender.send_text("919876543210", "hi")
+    assert result is True
+    assert isinstance(result, bool)
+
+
+@pytest.mark.asyncio
+async def test_send_text_capturing_id_returns_none_on_http_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="server error")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    sender = WhatsAppSender(client=client, access_token="token", phone_number_id="PHONE_NUMBER_ID")
+
+    wamid = await sender.send_text_capturing_id("919876543210", "hi")
+    assert wamid is None
+
+
+@pytest.mark.asyncio
+async def test_send_text_capturing_id_returns_none_when_disabled():
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={})))
+    sender = WhatsAppSender(client=client, access_token="", phone_number_id="")
+
+    wamid = await sender.send_text_capturing_id("919876543210", "hi")
+    assert wamid is None
+
+
+@pytest.mark.asyncio
+async def test_send_text_capturing_id_degrades_to_none_on_malformed_response():
+    """Meta responding 200 with no parseable messages[0].id must not raise --
+    the send itself succeeded, there's just nothing to record for later
+    reply resolution."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"messaging_product": "whatsapp"})  # no "messages" key
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    sender = WhatsAppSender(client=client, access_token="token", phone_number_id="PHONE_NUMBER_ID")
+
+    wamid = await sender.send_text_capturing_id("919876543210", "hi")
+    assert wamid is None
+
+
+@pytest.mark.asyncio
+async def test_send_list_and_send_button_bool_contract_unchanged_by_str_refactor():
+    """send_list/send_button return bool, not the raw _send result -- pins
+    the (await self._send(...)) is not None wrapping added alongside
+    send_text_capturing_id."""
+    captured: list[httpx.Request] = []
+    sender = _sender(captured)
+
+    result = await sender.send_list(
+        "919876543210", body="b", button_label="Choose", rows=[ListRow("r1", "Row 1")]
+    )
+    assert result is True
+    assert isinstance(result, bool)

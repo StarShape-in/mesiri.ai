@@ -176,5 +176,12 @@ def create_app(lifecycle: AppLifecycle | None = None) -> FastAPI:
     except Exception as exc:  # noqa: BLE001
         _log.exception("dpr router not loaded: %s", exc)
 
+    try:
+        from mesiri.domains.escalations.router import router as escalations_router
+
+        app.include_router(escalations_router)
+    except Exception as exc:  # noqa: BLE001
+        _log.exception("escalations router not loaded: %s", exc)
+
     return app
 
