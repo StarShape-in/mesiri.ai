@@ -60,6 +60,12 @@ class SemanticType(str, Enum):
     # LABOUR_UPDATE: a narrative report should never be misread as a
     # question about the log, and vice versa.
     ACTIVITY_QUERY = "activity_query"
+    # A request to be sent today's Daily Progress Report as a document
+    # (e.g. "send me today's DPR", "share today's report") -- #16 Daily
+    # Report Generation's chat trigger. Read-only, never an update, and
+    # deliberately distinct from ACTIVITY_QUERY: a DPR request wants the
+    # generated PDF document itself, not a text summary of the log.
+    DPR_REQUEST = "dpr_request"
     # A question about cash/account balances or past expenses (e.g. "how much
     # cash do I have?", "balance of Site Cash", "how much did we spend on
     # diesel?") -- read-only, never an update. Splits into two

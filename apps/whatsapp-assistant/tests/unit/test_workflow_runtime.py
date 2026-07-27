@@ -598,6 +598,10 @@ def test_informational_and_no_draft_keys_are_pinned() -> None:
         # #17 Search / Ask Mesiri's read side: "what did I log today?" /
         # "any open issues?" answers and stops, same reasoning as LABOUR_QUERY.
         WorkflowKey.ACTIVITY_QUERY,
+        # #16 Daily Report Generation's chat trigger: "send me today's DPR"
+        # answers with status text and stops -- the PDF itself (if ready) is
+        # delivered as a side-channel document send, never a draft/confirm.
+        WorkflowKey.DPR_REQUEST,
     }
     assert no_draft == informational | {
         WorkflowKey.REVERSE,

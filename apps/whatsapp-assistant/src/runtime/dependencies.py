@@ -511,6 +511,12 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from runtime.activity_search_service import ActivitySearchService
 
     activity_search_service = ActivitySearchService(material_db)
+    # Status lookup for the dpr.request workflow ("send me today's DPR" --
+    # #16 Daily Report Generation). Reuses the same pool; never opens a
+    # write transaction. See runtime/dpr_request_query.py.
+    from runtime.dpr_request_query import DprRequestQueryService
+
+    dpr_request_query = DprRequestQueryService(material_db)
     # Flags a vendor name that doesn't match any existing active vendor, fed
     # into expense_capture's "create this vendor?" slot -- same reasoning and
     # same material_db as catalog_query above. See runtime/vendor_query.py.
@@ -1058,6 +1064,8 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
                 send_list=sender.send_list,
                 send_button=sender.send_button,
                 send_image=sender.send_image,
+                send_document=sender.send_document,
+                object_storage=object_storage,
                 context_debug=settings.context_debug,
                 message_logger=message_logger,
                 trace_logger=trace_logger,
@@ -1073,6 +1081,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
                 activity_query=activity_query,
                 labour_query_service=labour_query_service,
                 activity_search_service=activity_search_service,
+                dpr_request_query=dpr_request_query,
                 vendor_query=vendor_query,
                 expense_query_service=expense_query_service,
                 pending_report_store=pending_report_store,
@@ -1422,6 +1431,8 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             send_list=sender.send_list,
             send_button=sender.send_button,
             send_image=sender.send_image,
+            send_document=sender.send_document,
+            object_storage=object_storage,
             context_debug=settings.context_debug,
             message_logger=message_logger,
             trace_logger=trace_logger,
@@ -1437,6 +1448,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             activity_query=activity_query,
             labour_query_service=labour_query_service,
             activity_search_service=activity_search_service,
+            dpr_request_query=dpr_request_query,
             vendor_query=vendor_query,
             expense_query_service=expense_query_service,
             pending_report_store=pending_report_store,

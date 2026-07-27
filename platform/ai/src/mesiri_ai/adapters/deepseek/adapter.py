@@ -55,7 +55,8 @@ _EXTRACTION_PROMPT = (
     '"Malayalam", "English"), '
     '"semantic_type" (one of: expense, equipment_usage, material_update, '
     "labour_update, general_site_update, general_question, whoami_question, "
-    "inventory_query, labour_query, activity_query, finance_query, transfer, petty_cash, "
+    "inventory_query, labour_query, activity_query, dpr_request, finance_query, transfer, "
+    "petty_cash, "
     "reversal, account_admin, unknown), "
     '"fields" (object of extracted values, in English except proper nouns/names), '
     '"missing_fields" (array of expected-but-absent keys), '

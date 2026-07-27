@@ -1,0 +1,108 @@
+"""DPR lookup service for the dpr.request workflow ("send me today's DPR").
+
+Same shape and justification as runtime/labour_query_service.py: a plain
+async method the assistant can call so a node never queries a repository
+itself (see workflows/runtime.py). Read-only -- never opens a write
+transaction, never renders or generates anything itself.
+
+Scope: TODAY only, one site. #16 Daily Report Generation's DPR is already
+narrowed to SITE-level (see backend/.../dpr.py's module docstring); this
+narrows further to "today" specifically, since "send me yesterday's DPR"
+or "send me last week's" needs a date/range extraction this V1 chat
+trigger doesn't have. Asking for a DPR on a day with no activity, or before
+today's generation cron has run, both resolve to `not_generated` --
+distinguished from `pending_render` (a version exists but hasn't been
+through channel/dpr_document/'s Playwright render yet) so the reply can
+tell the difference between "nothing was logged" and "it's on its way."
+"""
+
+from __future__ import annotations
+
+import datetime
+import uuid
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from mesiri.infrastructure.postgres.database import PostgresDatabase
+
+
+class DprRequestQueryService:
+    def __init__(self, db: PostgresDatabase) -> None:
+        self._db = db
+
+    async def find_report(
+        self,
+        *,
+        organization_id: str,
+        project_id: str | None,
+        site_id: str | None,
+        report_date: datetime.date,
+    ) -> dict[str, Any]:
+        """Status of `report_date`'s SITE-level DPR for this project/site.
+        `report_date` is the CALLER's responsibility to resolve against the
+        sender's timezone (see runtime/inbound_journey.py's `today_for`) --
+        this service does no timezone math of its own, same split
+        labour_query_service.py's `resolve_date_range` makes. Always
+        returns a dict (never None) -- `status` is one of "not_generated"
+        (no daily_reports row for that date yet), "pending_render" (a
+        version exists but rendered_object_key is still NULL), or "ready"
+        (a PDF is stored -- `object_key`/`code` are set)."""
+        if not project_id or not site_id:
+            return {"status": "not_generated", "object_key": None, "code": None}
+
+        import sqlalchemy as sa
+
+        try:
+            org_id = uuid.UUID(organization_id)
+            proj_uuid = uuid.UUID(project_id)
+            site_uuid = uuid.UUID(site_id)
+        except (TypeError, ValueError):
+            return {"status": "not_generated", "object_key": None, "code": None}
+
+        daily_reports = sa.table(
+            "daily_reports",
+            sa.column("id"),
+            sa.column("organization_id"),
+            sa.column("project_id"),
+            sa.column("site_id"),
+            sa.column("report_date"),
+            sa.column("level"),
+            sa.column("code"),
+            sa.column("current_version_id"),
+        )
+        daily_report_versions = sa.table(
+            "daily_report_versions",
+            sa.column("id"),
+            sa.column("rendered_object_key"),
+        )
+
+        query = (
+            sa.select(
+                daily_reports.c.code,
+                daily_report_versions.c.rendered_object_key,
+            )
+            .select_from(
+                daily_reports.join(
+                    daily_report_versions,
+                    daily_reports.c.current_version_id == daily_report_versions.c.id,
+                    isouter=True,
+                )
+            )
+            .where(
+                daily_reports.c.organization_id == org_id,
+                daily_reports.c.project_id == proj_uuid,
+                daily_reports.c.site_id == site_uuid,
+                daily_reports.c.report_date == report_date,
+                daily_reports.c.level == "SITE",
+            )
+            .limit(1)
+        )
+
+        async with self._db.transaction() as conn:
+            row = (await conn.execute(query)).mappings().first()
+
+        if row is None:
+            return {"status": "not_generated", "object_key": None, "code": None}
+        if not row["rendered_object_key"]:
+            return {"status": "pending_render", "object_key": None, "code": row["code"]}
+        return {"status": "ready", "object_key": row["rendered_object_key"], "code": row["code"]}
