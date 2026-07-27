@@ -3,7 +3,7 @@
 # These wrap `uv` and `docker compose`. On Windows, run under Git Bash or WSL,
 # or invoke the underlying commands directly (see each target).
 .DEFAULT_GOAL := help
-.PHONY: help venv install dev down logs test test-integration lint typecheck migrate m1-golden m4-gate project-timeline event-consumers notification-checks notification-send
+.PHONY: help venv install dev down logs test test-integration lint typecheck migrate m1-golden m4-gate project-timeline event-consumers notification-checks notification-send dpr-generate dpr-render
 
 # Import roots for scripts invoked as `python -m` (pytest uses pyproject config).
 export PYTHONPATH := shared/contracts/src:platform/ai/src:backend/src:apps/whatsapp-assistant/src
@@ -58,6 +58,12 @@ notification-checks: ## Run #9 Notifications' scheduled checks and queue due not
 
 notification-send: ## Send #9 Notifications' queued 'pending' rows over WhatsApp (run manually or via cron)
 	cd apps/whatsapp-assistant/src && PYTHONPATH=$(PYTHONPATH) uv run python -m runtime.send_pending_notifications
+
+dpr-generate: ## Assemble/refresh today's #16 DPR draft for every site with activity (run manually or via cron)
+	uv run python -m mesiri.scripts.run_dpr_generation
+
+dpr-render: ## Render #16 DPR versions with a payload but no PDF yet (run manually or via cron)
+	cd apps/whatsapp-assistant/src && PYTHONPATH=$(PYTHONPATH) uv run python -m runtime.render_pending_dpr_pdfs
 
 m4-gate: ## Run the M4 "Context Foundation" golden scenario + M4 scenarios
 	uv run python scripts/run_m4_golden_scenario.py
