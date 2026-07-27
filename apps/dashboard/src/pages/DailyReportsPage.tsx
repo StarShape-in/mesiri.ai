@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   AlertTriangle,
   ChevronRight,
+  ChevronLeft,
   Download,
   Layers,
   Plus,
@@ -27,6 +28,7 @@ import {
   Check,
   X,
   FileCheck,
+  CalendarDays,
 } from 'lucide-react'
 import { useScope } from '@/lib/ScopeContext'
 import {
@@ -250,6 +252,217 @@ const SAMPLE_DPRS: DailyReportDetailResponse[] = [
   },
 ]
 
+// ─── DPR Calendar Component ───────────────────────────────────────────────────
+
+function DPRCalendarView({
+  reports,
+  onSelectReport,
+  onCreateDraftForDate,
+}: {
+  reports: DailyReportSummary[]
+  onSelectReport: (id: string) => void
+  onCreateDraftForDate: (dateStr: string) => void
+}) {
+  const [currentDate, setCurrentDate] = React.useState<Date>(new Date(2026, 6, 1)) // July 2026 default
+
+  const year = currentDate.getFullYear()
+  const month = currentDate.getMonth()
+
+  const firstDayOfWeek = new Date(year, month, 1).getDay()
+  const daysInMonth = new Date(year, month + 1, 0).getDate()
+  const daysInPrevMonth = new Date(year, month, 0).getDate()
+
+  const monthName = currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })
+
+  const prevMonth = () => setCurrentDate(new Date(year, month - 1, 1))
+  const nextMonth = () => setCurrentDate(new Date(year, month + 1, 1))
+  const goToToday = () => setCurrentDate(new Date())
+
+  // Map reports by date string (YYYY-MM-DD)
+  const reportsByDate = React.useMemo(() => {
+    const map: Record<string, DailyReportSummary[]> = {}
+    reports.forEach((r) => {
+      if (!map[r.report_date]) map[r.report_date] = []
+      map[r.report_date].push(r)
+    })
+    return map
+  }, [reports])
+
+  // Build grid calendar cells (35 or 42 cells)
+  const cells = React.useMemo(() => {
+    const result: Array<{
+      dateStr: string
+      dayNum: number
+      isCurrentMonth: boolean
+      isToday: boolean
+      reports: DailyReportSummary[]
+    }> = []
+
+    const todayStr = new Date().toISOString().split('T')[0]
+
+    // Prev month padding
+    for (let i = firstDayOfWeek - 1; i >= 0; i--) {
+      const day = daysInPrevMonth - i
+      const d = new Date(year, month - 1, day)
+      const dateStr = d.toISOString().split('T')[0]
+      result.push({
+        dateStr,
+        dayNum: day,
+        isCurrentMonth: false,
+        isToday: dateStr === todayStr,
+        reports: reportsByDate[dateStr] || [],
+      })
+    }
+
+    // Current month days
+    for (let day = 1; day <= daysInMonth; day++) {
+      const monthStr = String(month + 1).padStart(2, '0')
+      const dayStr = String(day).padStart(2, '0')
+      const dateStr = `${year}-${monthStr}-${dayStr}`
+      result.push({
+        dateStr,
+        dayNum: day,
+        isCurrentMonth: true,
+        isToday: dateStr === todayStr,
+        reports: reportsByDate[dateStr] || [],
+      })
+    }
+
+    // Next month padding to complete 35 or 42 grid cells
+    const remaining = 35 - result.length > 0 ? 35 - result.length : 42 - result.length
+    for (let day = 1; day <= remaining; day++) {
+      const d = new Date(year, month + 1, day)
+      const dateStr = d.toISOString().split('T')[0]
+      result.push({
+        dateStr,
+        dayNum: day,
+        isCurrentMonth: false,
+        isToday: dateStr === todayStr,
+        reports: reportsByDate[dateStr] || [],
+      })
+    }
+
+    return result
+  }, [year, month, firstDayOfWeek, daysInMonth, daysInPrevMonth, reportsByDate])
+
+  const DAYS_OF_WEEK = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+  return (
+    <div className="rounded-lg border border-border/80 overflow-hidden bg-card shadow-2xs">
+
+      {/* Calendar Header Toolbar */}
+      <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/20">
+        <div className="flex items-center gap-3">
+          <div className="size-8 rounded-md bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+            <CalendarDays className="size-4" />
+          </div>
+          <h2 className="text-sm font-bold text-foreground font-mono tracking-tight">{monthName}</h2>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <Button variant="outline" size="sm" onClick={goToToday} className="h-7 text-xs font-semibold px-2.5">
+            Today
+          </Button>
+          <Button variant="outline" size="sm" onClick={prevMonth} className="h-7 w-7 p-0">
+            <ChevronLeft className="size-4" />
+          </Button>
+          <Button variant="outline" size="sm" onClick={nextMonth} className="h-7 w-7 p-0">
+            <ChevronRight className="size-4" />
+          </Button>
+        </div>
+      </div>
+
+      {/* Day of week headers */}
+      <div className="grid grid-cols-7 border-b bg-muted/40 text-center text-[11px] font-bold text-muted-foreground uppercase tracking-wider py-2">
+        {DAYS_OF_WEEK.map((d) => (
+          <div key={d}>{d}</div>
+        ))}
+      </div>
+
+      {/* Grid Days */}
+      <div className="grid grid-cols-7 divide-x divide-y border-b border-border/60">
+        {cells.map((cell, idx) => {
+          const hasReports = cell.reports.length > 0
+          return (
+            <div
+              key={idx}
+              className={cn(
+                'min-h-[110px] p-2 flex flex-col justify-between transition-colors group relative',
+                !cell.isCurrentMonth && 'bg-muted/15 text-muted-foreground/50 opacity-60',
+                cell.isToday && 'bg-indigo-500/5 font-bold ring-1 ring-indigo-500/40 inset-0 z-10',
+                cell.isCurrentMonth && 'hover:bg-muted/30 bg-card'
+              )}
+            >
+              {/* Day Number Header */}
+              <div className="flex items-center justify-between">
+                <span
+                  className={cn(
+                    'text-xs font-mono font-bold leading-none size-5 rounded-full flex items-center justify-center',
+                    cell.isToday && 'bg-indigo-600 text-white shadow-2xs',
+                    !cell.isToday && cell.isCurrentMonth && 'text-foreground',
+                    !cell.isCurrentMonth && 'text-muted-foreground/60'
+                  )}
+                >
+                  {cell.dayNum}
+                </span>
+
+                {/* Quick Add DPR draft button on hover */}
+                {cell.isCurrentMonth && (
+                  <button
+                    onClick={() => onCreateDraftForDate(cell.dateStr)}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity size-5 rounded hover:bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground"
+                    title={`Create DPR for ${cell.dateStr}`}
+                  >
+                    <Plus className="size-3" />
+                  </button>
+                )}
+              </div>
+
+              {/* DPR Cards inside Day cell */}
+              <div className="flex flex-col gap-1.5 mt-1.5 flex-1 justify-start">
+                {cell.reports.map((r) => (
+                  <button
+                    key={r.id}
+                    onClick={() => onSelectReport(r.id)}
+                    className={cn(
+                      'w-full text-left p-1.5 rounded-md border transition-all hover:scale-[1.02] shadow-2xs text-[10px] flex flex-col gap-0.5',
+                      r.workflow_status.toLowerCase() === 'approved' && 'bg-emerald-500/10 border-emerald-500/30 text-emerald-950 dark:text-emerald-200',
+                      r.workflow_status.toLowerCase() === 'frozen' && 'bg-indigo-500/10 border-indigo-500/30 text-indigo-950 dark:text-indigo-200',
+                      r.workflow_status.toLowerCase() === 'under_review' && 'bg-amber-500/10 border-amber-500/30 text-amber-950 dark:text-amber-200',
+                      r.workflow_status.toLowerCase() === 'draft' && 'bg-zinc-500/10 border-zinc-500/30 text-zinc-900 dark:text-zinc-200'
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-1 font-bold">
+                      <span className="font-mono truncate">{r.dpr_number}</span>
+                      <DPRStatusBadge status={r.workflow_status} />
+                    </div>
+
+                    <div className="flex items-center gap-1 text-[9px] opacity-90 truncate">
+                      <WeatherBadge weather={r.weather} />
+                      <span className="font-medium truncate">{r.site_name}</span>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[9px] text-muted-foreground mt-0.5 pt-0.5 border-t border-border/40 font-mono">
+                      <span>👷 {r.labour_count}</span>
+                      {r.issues_count > 0 && <span className="text-rose-600 font-bold">⚠️ {r.issues_count}</span>}
+                    </div>
+                  </button>
+                ))}
+              </div>
+
+              {!hasReports && cell.isCurrentMonth && (
+                <div className="text-[10px] text-muted-foreground/30 italic text-center py-2">
+                  No DPR
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function DailyReportsPage() {
@@ -268,7 +481,7 @@ export default function DailyReportsPage() {
   const [datePreset, setDatePreset] = React.useState<string>('ALL')
   const [dateFrom, setDateFrom] = React.useState<string>('')
   const [dateTo, setDateTo] = React.useState<string>('')
-  const [viewMode, setViewMode] = React.useState<'table' | 'grid'>('table')
+  const [viewMode, setViewMode] = React.useState<'table' | 'grid' | 'calendar'>('table')
 
   // Sheet detail state
   const [selectedReportId, setSelectedReportId] = React.useState<string | null>(null)
@@ -277,6 +490,7 @@ export default function DailyReportsPage() {
 
   // Create Modal state
   const [createDialogOpen, setCreateDialogOpen] = React.useState<boolean>(false)
+  const [draftDate, setDraftDate] = React.useState<string>(new Date().toISOString().split('T')[0])
 
   const handleDatePresetChange = (val: string) => {
     setDatePreset(val)
@@ -445,7 +659,10 @@ export default function DailyReportsPage() {
           <Button
             size="sm"
             className="h-8 gap-1.5 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-2xs"
-            onClick={() => setCreateDialogOpen(true)}
+            onClick={() => {
+              setDraftDate(new Date().toISOString().split('T')[0])
+              setCreateDialogOpen(true)
+            }}
           >
             <Plus className="size-4" />
             New DPR Draft
@@ -601,7 +818,7 @@ export default function DailyReportsPage() {
           )}
         </div>
 
-        {/* View Switcher */}
+        {/* View Switcher (Table / Grid / Calendar) */}
         <div className="flex items-center gap-1 border border-border/80 rounded-md p-0.5 bg-background shrink-0">
           <Button
             variant={viewMode === 'table' ? 'secondary' : 'ghost'}
@@ -621,11 +838,31 @@ export default function DailyReportsPage() {
           >
             <LayoutGrid className="size-3.5" />
           </Button>
+
+          <Button
+            variant={viewMode === 'calendar' ? 'secondary' : 'ghost'}
+            size="sm"
+            className="h-7 px-2 text-xs font-semibold gap-1"
+            onClick={() => setViewMode('calendar')}
+            title="Calendar View"
+          >
+            <CalendarDays className="size-3.5" />
+            Calendar
+          </Button>
         </div>
       </div>
 
-      {/* ── Main View (Table or Grid) ── */}
-      {viewMode === 'table' ? (
+      {/* ── Main View (Table / Grid / Calendar) ── */}
+      {viewMode === 'calendar' ? (
+        <DPRCalendarView
+          reports={filteredReports}
+          onSelectReport={(id) => setSelectedReportId(id)}
+          onCreateDraftForDate={(dateStr) => {
+            setDraftDate(dateStr)
+            setCreateDialogOpen(true)
+          }}
+        />
+      ) : viewMode === 'table' ? (
         <div className="rounded-lg border border-border/80 overflow-hidden bg-card">
           <div className="flex items-center justify-between px-4 py-2.5 border-b bg-muted/20">
             <div className="flex items-center gap-2">
@@ -1070,7 +1307,7 @@ export default function DailyReportsPage() {
           >
             <div>
               <label className="font-semibold block mb-1">Report Date</label>
-              <Input type="date" defaultValue={new Date().toISOString().split('T')[0]} className="h-9 text-xs" />
+              <Input type="date" value={draftDate} onChange={(e) => setDraftDate(e.target.value)} className="h-9 text-xs font-mono dark:[color-scheme:dark]" />
             </div>
 
             <div>

@@ -871,6 +871,43 @@ async def _seed_vendor_check(
         event.fields["vendor_needs_confirmation"] = True
 
 
+async def _seed_open_activity(
+    event: CanonicalEventV2,
+    decision: PlannerDecisionV2,
+    activity_query: ActivityQueryService | None,
+    actor: ActorIdentity | None,
+) -> None:
+    """Resolve which Activity a continuation message ("finished plastering",
+    "completed another 40 sqm") is about, before the graph runs (a node must
+    never query a repository itself, same principle as
+    _seed_account_candidates above). Only ever runs for
+    WorkflowKey.ACTIVITY_CONTINUATION.
+
+    Seeds `activity_id` (+ `activity_summary` for the confirmation prompt) if
+    exactly one open activity is found. Otherwise leaves fields untouched --
+    workflows/activity_continuation/nodes.py's `build_draft` checks for a
+    missing `activity_id` and ends the pass with a clarifying message and no
+    draft (P1: there is nothing to append a Progress Update onto), rather
+    than persisting anything against a guess.
+    """
+    if activity_query is None or actor is None or not actor.organization_id:
+        return
+    if decision.workflow_key is not WorkflowKey.ACTIVITY_CONTINUATION:
+        return
+
+    found = await activity_query.find_open_activity(
+        organization_id=actor.organization_id,
+        site_id=event.site_id,
+        reported_by_user_id=actor.user_id,
+    )
+    if found is None:
+        return
+    event.fields["activity_id"] = found["activity_id"]
+    summary_bits = [b for b in (found.get("work_type"), found.get("narrative")) if b]
+    if summary_bits:
+        event.fields["activity_summary"] = " — ".join(summary_bits)
+
+
 async def _seed_finance_query_context(
     event: CanonicalEventV2,
     decision: PlannerDecisionV2,
@@ -1362,7 +1399,7 @@ async def process_inbound_message(
                 # --- Workflow stage ---
                 t0 = time.perf_counter()
                 try:
-                    # Run all 7 seed functions in parallel — each targets a
+                    # Run all 8 seed functions in parallel — each targets a
                     # different table and is fully independent of the others.
                     await asyncio.gather(
                         _seed_account_candidates(
@@ -1389,6 +1426,9 @@ async def process_inbound_message(
                             money_account_query,
                             expense_query_service,
                             actor,
+                        ),
+                        _seed_open_activity(
+                            canonical_event, planner_decision, activity_query, actor
                         ),
                     )
                     # Synchronous — not a coroutine, runs after the gather.

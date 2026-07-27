@@ -348,19 +348,40 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     # depth, mirrors PostgresMaterialResolver) -- location/work-package
     # resolution is a separate gate (plan §1B.2) that hasn't been built yet,
     # so those fields simply stay null when unresolved (P4).
-    from mesiri.application.progress.dispatcher import CreateActivityExecutionDispatcher
-    from mesiri.application.progress.handlers import ExecuteConfirmedCreateActivityHandler
+    from mesiri.application.progress.dispatcher import (
+        AddProgressUpdateExecutionDispatcher,
+        CreateActivityExecutionDispatcher,
+    )
+    from mesiri.application.progress.handlers import (
+        ExecuteConfirmedAddProgressUpdateHandler,
+        ExecuteConfirmedCreateActivityHandler,
+    )
     from mesiri.application.progress.resolution import PostgresProgressUnitResolver
     from mesiri.infrastructure.postgres.repositories.progress_execution import (
         PostgresProgressExecutionRepository,
     )
 
+    progress_execution_repo = PostgresProgressExecutionRepository()
+    progress_unit_resolver = PostgresProgressUnitResolver()
     create_activity_handler = ExecuteConfirmedCreateActivityHandler(
         db=material_db,
-        repo=PostgresProgressExecutionRepository(),
-        resolver=PostgresProgressUnitResolver(),
+        repo=progress_execution_repo,
+        resolver=progress_unit_resolver,
     )
     create_activity_dispatcher = CreateActivityExecutionDispatcher(create_activity_handler)
+    # Activity Continuation (Daily Reporting): same repo/resolver as Activity
+    # creation above -- both commands persist to the same tables via
+    # PostgresProgressExecutionRepository, so there is exactly one instance
+    # of each, shared by both handlers, same as Material's receipt/usage
+    # commands share one dispatcher.
+    add_progress_update_handler = ExecuteConfirmedAddProgressUpdateHandler(
+        db=material_db,
+        repo=progress_execution_repo,
+        resolver=progress_unit_resolver,
+    )
+    add_progress_update_dispatcher = AddProgressUpdateExecutionDispatcher(
+        add_progress_update_handler
+    )
 
     execution_dispatcher = ActionTypeRoutingDispatcher(
         {
@@ -372,6 +393,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             DraftActionType.REVERSE_TRANSACTION: reverse_dispatcher,
             DraftActionType.RECORD_LABOUR_ATTENDANCE: labour_dispatcher,
             DraftActionType.CREATE_ACTIVITY: create_activity_dispatcher,
+            DraftActionType.ADD_PROGRESS_UPDATE: add_progress_update_dispatcher,
         }
     )
     # Read-only inventory lookups for the material.inventory_query workflow --
@@ -433,6 +455,13 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from runtime.workforce_query import PostgresWorkforceQueryService
 
     workforce_query = PostgresWorkforceQueryService(material_db)
+    # Open-activity lookup for the Activity Continuation workflow (Daily
+    # Reporting) -- resolves which Activity "finished plastering" continues,
+    # before the graph runs. Reuses the same pool; never opens a write
+    # transaction. See runtime/activity_query.py.
+    from runtime.activity_query import ActivityQueryService
+
+    activity_query = ActivityQueryService(material_db)
     # Read-only attendance lookups for the labour.query workflow ("how many
     # workers today?"). Reuses the same pool; never opens a write
     # transaction. See runtime/labour_query_service.py.
@@ -962,6 +991,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
                 reversal_query=reversal_query,
                 duplicate_expense_query=duplicate_expense_query,
                 workforce_query=workforce_query,
+                activity_query=activity_query,
                 labour_query_service=labour_query_service,
                 vendor_query=vendor_query,
                 expense_query_service=expense_query_service,
@@ -1270,6 +1300,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             reversal_query=reversal_query,
             duplicate_expense_query=duplicate_expense_query,
             workforce_query=workforce_query,
+            activity_query=activity_query,
             labour_query_service=labour_query_service,
             vendor_query=vendor_query,
             expense_query_service=expense_query_service,
