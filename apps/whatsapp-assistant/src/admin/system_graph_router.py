@@ -879,6 +879,17 @@ def _semantic_type_infos() -> list[SemanticTypeInfo]:
         # Resolve the canonical event(s) this semantic type maps to.
         if semantic is SemanticType.MATERIAL_UPDATE:
             events = list(_MATERIAL_DIRECTION_EVENT_TYPE.values())
+        elif semantic is SemanticType.GENERAL_SITE_UPDATE:
+            # Splits by `update_kind` like MATERIAL_UPDATE splits by
+            # `direction` (see canonicalization.mapping.resolve_event_type),
+            # so it isn't in _SIMPLE_EVENT_TYPE either -- without this case it
+            # fell through to the UNRECOGNIZED branch below and reported as
+            # not implemented, even though workflows.registry has both
+            # SITE_UPDATE and ACTIVITY_CONTINUATION built.
+            events = [
+                CanonicalEventType.GENERAL_SITE_UPDATE_REQUESTED,
+                CanonicalEventType.ACTIVITY_CONTINUATION_REQUESTED,
+            ]
         elif semantic in _SIMPLE_EVENT_TYPE:
             events = [_SIMPLE_EVENT_TYPE[semantic]]
         else:  # UNKNOWN — no mapping, routes to UNRECOGNIZED
