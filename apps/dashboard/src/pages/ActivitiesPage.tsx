@@ -20,6 +20,7 @@ import {
   Image as ImageIcon,
   Download,
   Layers,
+  X,
 } from 'lucide-react'
 import { useScope } from '@/lib/ScopeContext'
 import {
@@ -124,15 +125,39 @@ export default function ActivitiesPage() {
   const [loading, setLoading] = React.useState<boolean>(true)
   const [error, setError] = React.useState<string | null>(null)
 
+  // Filters
   const [statusFilter, setStatusFilter] = React.useState<string>('ALL')
   const [searchQuery, setSearchQuery] = React.useState<string>('')
+  const [datePreset, setDatePreset] = React.useState<string>('ALL')
   const [dateFrom, setDateFrom] = React.useState<string>('')
   const [dateTo, setDateTo] = React.useState<string>('')
 
+  // Detail sheet
   const [selectedActivityId, setSelectedActivityId] = React.useState<string | null>(null)
   const [detailData, setDetailData] = React.useState<ActivityDetailResponse | null>(null)
   const [detailLoading, setDetailLoading] = React.useState<boolean>(false)
   const [detailError, setDetailError] = React.useState<string | null>(null)
+
+  const handleDatePresetChange = (val: string) => {
+    setDatePreset(val)
+    const now = new Date()
+    if (val === 'ALL') {
+      setDateFrom('')
+      setDateTo('')
+    } else if (val === 'TODAY') {
+      const todayStr = now.toISOString().split('T')[0]
+      setDateFrom(todayStr)
+      setDateTo(todayStr)
+    } else if (val === 'THIS_WEEK') {
+      const lastWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+      setDateFrom(lastWeek.toISOString().split('T')[0])
+      setDateTo(now.toISOString().split('T')[0])
+    } else if (val === 'THIS_MONTH') {
+      const firstDay = new Date(now.getFullYear(), now.getMonth(), 1)
+      setDateFrom(firstDay.toISOString().split('T')[0])
+      setDateTo(now.toISOString().split('T')[0])
+    }
+  }
 
   const fetchList = React.useCallback(async () => {
     setLoading(true)
@@ -197,7 +222,15 @@ export default function ActivitiesPage() {
     return `Site Scope: ${scope.projectName} / ${scope.siteName}`
   }, [scope])
 
-  const hasActiveFilters = statusFilter !== 'ALL' || !!dateFrom || !!dateTo || !!searchQuery
+  const hasActiveFilters = statusFilter !== 'ALL' || datePreset !== 'ALL' || !!dateFrom || !!dateTo || !!searchQuery
+
+  const resetFilters = () => {
+    setStatusFilter('ALL')
+    setDatePreset('ALL')
+    setDateFrom('')
+    setDateTo('')
+    setSearchQuery('')
+  }
 
   return (
     <div className="flex flex-col gap-4 w-full max-w-full relative pb-12">
@@ -271,7 +304,8 @@ export default function ActivitiesPage() {
       {/* Filter Toolbar */}
       <div className="flex flex-col sm:flex-row gap-2.5 items-center justify-between border border-border/80 p-2.5 rounded-lg bg-card/40">
         <div className="flex flex-wrap gap-2 w-full sm:w-auto flex-1 items-center">
-          <div className="relative w-full sm:w-64">
+          {/* Search */}
+          <div className="relative w-full sm:w-60">
             <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
             <Input
               placeholder="Search work type, contractor..."
@@ -280,9 +314,11 @@ export default function ActivitiesPage() {
               className="pl-8 h-9 text-xs"
             />
           </div>
+
+          {/* Status filter */}
           <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="h-9 text-xs w-full sm:w-40">
-              <Filter className="size-3.5 mr-1 text-muted-foreground" />
+            <SelectTrigger className="h-9 text-xs w-full sm:w-36">
+              <Filter className="size-3.5 mr-1.5 text-muted-foreground shrink-0" />
               <SelectValue placeholder="All Statuses" />
             </SelectTrigger>
             <SelectContent>
@@ -294,20 +330,61 @@ export default function ActivitiesPage() {
               <SelectItem value="CANCELLED">Cancelled</SelectItem>
             </SelectContent>
           </Select>
-          <div className="flex items-center gap-1.5">
-            <Calendar className="size-3.5 text-muted-foreground shrink-0" />
-            <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-[130px] h-9 text-xs" />
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-muted-foreground shrink-0">to</span>
-            <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-[130px] h-9 text-xs" />
-          </div>
+
+          {/* Date Preset Dropdown */}
+          <Select value={datePreset} onValueChange={handleDatePresetChange}>
+            <SelectTrigger className="h-9 text-xs w-full sm:w-36">
+              <Calendar className="size-3.5 mr-1.5 text-muted-foreground shrink-0" />
+              <SelectValue placeholder="All Dates" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL">All Dates</SelectItem>
+              <SelectItem value="TODAY">Today</SelectItem>
+              <SelectItem value="THIS_WEEK">This Week</SelectItem>
+              <SelectItem value="THIS_MONTH">This Month</SelectItem>
+              <SelectItem value="CUSTOM">Custom Range</SelectItem>
+            </SelectContent>
+          </Select>
+
+          {/* Custom Date Range Inputs - Clean aligned pill box */}
+          {(datePreset === 'CUSTOM' || (dateFrom && datePreset !== 'TODAY' && datePreset !== 'THIS_WEEK' && datePreset !== 'THIS_MONTH')) && (
+            <div className="flex items-center gap-1.5 bg-muted/40 p-1 px-2.5 rounded-md border border-border/80 h-9">
+              <span className="text-[11px] text-muted-foreground font-semibold shrink-0">From</span>
+              <Input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => {
+                  setDateFrom(e.target.value)
+                  setDatePreset('CUSTOM')
+                }}
+                className="w-36 h-7 text-xs bg-background font-mono dark:[color-scheme:dark] px-2 py-0 border-border/80 shadow-2xs"
+              />
+              <span className="text-[11px] text-muted-foreground font-semibold shrink-0">To</span>
+              <Input
+                type="date"
+                value={dateTo}
+                onChange={(e) => {
+                  setDateTo(e.target.value)
+                  setDatePreset('CUSTOM')
+                }}
+                className="w-36 h-7 text-xs bg-background font-mono dark:[color-scheme:dark] px-2 py-0 border-border/80 shadow-2xs"
+              />
+            </div>
+          )}
+
           {hasActiveFilters && (
-            <Button variant="ghost" size="sm" onClick={() => { setStatusFilter('ALL'); setDateFrom(''); setDateTo(''); setSearchQuery('') }} className="h-9 text-xs text-muted-foreground hover:text-foreground">
-              Clear filters
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={resetFilters}
+              className="h-9 text-xs text-muted-foreground hover:text-foreground gap-1 px-2"
+            >
+              <X className="size-3.5" />
+              Clear
             </Button>
           )}
         </div>
+
         <p className="text-xs text-muted-foreground shrink-0 font-medium">
           {filteredActivities.length} of {total} activities
         </p>
@@ -365,7 +442,7 @@ export default function ActivitiesPage() {
                         </p>
                       </div>
                       {hasActiveFilters && (
-                        <Button variant="outline" size="sm" onClick={() => { setStatusFilter('ALL'); setDateFrom(''); setDateTo(''); setSearchQuery('') }} className="text-xs h-8 mt-1">Clear filters</Button>
+                        <Button variant="outline" size="sm" onClick={resetFilters} className="text-xs h-8 mt-1">Clear filters</Button>
                       )}
                     </div>
                   </TableCell>
