@@ -40,6 +40,9 @@ def _build_gemini_provider(config: dict, model: str, env_settings: Any):
         model=model or env_settings.gemini.model,
         timeout_seconds=env_settings.gemini.timeout_seconds,
         max_retries=env_settings.gemini.max_retries,
+        # Test doubles for env_settings don't always carry this (it's newer
+        # than they are), and a missing tuning knob must not break routing.
+        max_image_edge=getattr(env_settings.gemini, "max_image_edge", 1568),
     )
     return GeminiProvider(settings)
 

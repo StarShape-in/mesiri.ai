@@ -106,6 +106,105 @@ async def test_gemini_json_mode_sets_response_mime_type():
     assert captured["config"].response_mime_type == "application/json"
 
 
+def _png_bytes(width: int, height: int) -> bytes:
+    from io import BytesIO
+
+    from PIL import Image
+
+    buffer = BytesIO()
+    Image.new("RGB", (width, height), "white").save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def test_downscale_shrinks_a_large_photo_and_reports_jpeg():
+    from io import BytesIO
+
+    from PIL import Image
+
+    from mesiri_ai.adapters.gemini.adapter import _downscale_image
+
+    original = _png_bytes(4000, 3000)
+    out, mime = _downscale_image(original, "image/png", 1568)
+
+    assert mime == "image/jpeg"
+    assert len(out) < len(original)
+    with Image.open(BytesIO(out)) as img:
+        assert max(img.size) == 1568
+        # Aspect ratio preserved (4:3 -> 1568x1176).
+        assert img.size == (1568, 1176)
+
+
+def test_downscale_leaves_an_already_small_image_untouched():
+    """A no-op must return the *original* bytes, not a re-encoded copy --
+    re-encoding a small image would cost quality and time for nothing."""
+    from mesiri_ai.adapters.gemini.adapter import _downscale_image
+
+    original = _png_bytes(800, 600)
+    out, mime = _downscale_image(original, "image/png", 1568)
+
+    assert out is original
+    assert mime == "image/png"
+
+
+def test_downscale_is_disabled_by_zero_and_skips_non_images():
+    from mesiri_ai.adapters.gemini.adapter import _downscale_image
+
+    original = _png_bytes(4000, 3000)
+    assert _downscale_image(original, "image/png", 0) == (original, "image/png")
+    assert _downscale_image(b"%PDF-1.4 not an image", "application/pdf", 1568) == (
+        b"%PDF-1.4 not an image",
+        "application/pdf",
+    )
+
+
+def test_downscale_fails_open_on_undecodable_bytes():
+    """Fail-open contract: a resize problem must never be the reason a
+    receipt can't be read -- garbage in returns the same garbage out for
+    Gemini to reject on its own terms, rather than raising here."""
+    from mesiri_ai.adapters.gemini.adapter import _downscale_image
+
+    junk = b"not really an image at all"
+    assert _downscale_image(junk, "image/jpeg", 1568) == (junk, "image/jpeg")
+
+
+async def test_gemini_analyze_image_downscales_before_sending():
+    from io import BytesIO
+
+    from PIL import Image
+
+    captured: dict = {}
+
+    class _FakeModels:
+        def generate_content(self, *, model, contents, config=None):
+            captured["contents"] = contents
+            return SimpleNamespace(
+                text='{"document_classification": "receipt", "description": "x", "fields": {}}'
+            )
+
+    class _FakePart:
+        @staticmethod
+        def from_bytes(*, data, mime_type):
+            captured["data"] = data
+            captured["mime_type"] = mime_type
+            return "part"
+
+    provider = GeminiProvider.__new__(GeminiProvider)
+    provider._settings = SimpleNamespace(
+        model="gemini-test", timeout_seconds=5, max_retries=0, max_image_edge=1024
+    )
+    provider._client = SimpleNamespace(models=_FakeModels())
+
+    with pytest.MonkeyPatch.context() as mp:
+        import google.genai
+
+        mp.setattr(google.genai.types, "Part", _FakePart)
+        await provider.analyze_image(_png_bytes(3000, 2000), mime_type="image/png")
+
+    assert captured["mime_type"] == "image/jpeg"
+    with Image.open(BytesIO(captured["data"])) as img:
+        assert max(img.size) == 1024
+
+
 async def test_gemini_understand_voice_returns_combined_result_in_one_call():
     """understand_voice() merges transcribe+extract into one generate_content
     call -- previously two sequential calls (~4.5s combined, measured). One
