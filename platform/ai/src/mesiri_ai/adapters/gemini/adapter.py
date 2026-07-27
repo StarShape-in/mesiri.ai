@@ -333,44 +333,47 @@ class GeminiProvider:
         client = self._get_client()
 
         async def _raw() -> Any:
-            import asyncio
+            kwargs: dict[str, Any] = {"model": self._settings.model, "contents": contents}
+            if json_mode or thinking_budget is not None:
+                from google.genai import types
 
-            def _call() -> Any:
-                kwargs: dict[str, Any] = {"model": self._settings.model, "contents": contents}
-                if json_mode or thinking_budget is not None:
-                    from google.genai import types
-
-                    config_kwargs: dict[str, Any] = {}
-                    if json_mode:
-                        # Ask Gemini to return only the JSON object, no
-                        # surrounding commentary -- without this, code-mixed
-                        # input (e.g. a Malayalam sentence with an embedded
-                        # English proper noun like a project name) sometimes
-                        # prompts Gemini to add an explanatory sentence around
-                        # the JSON, which _parse_json's naive fence-stripping
-                        # can't handle (real bug: an inventory query naming a
-                        # project failed translation this way). DeepSeek's
-                        # adapter already forces its own equivalent
-                        # (response_format=json_object); this is the same
-                        # guarantee for Gemini. _parse_json below is hardened
-                        # as a second line of defense in case this mode is
-                        # ever unavailable/ignored by a future model.
-                        config_kwargs["response_mime_type"] = "application/json"
-                    if thinking_budget is not None:
-                        # 2.5-flash reasons by default even on schema-filling
-                        # calls that don't benefit from it (traced: extract
-                        # averaged 3.7s, translate 1.9s) -- thinking_budget=0
-                        # turns that off. analyze_image deliberately doesn't
-                        # pass this: reasoning measurably helps parsing messy
-                        # handwritten attendance sheets, so it keeps the
-                        # model's default budget.
-                        config_kwargs["thinking_config"] = types.ThinkingConfig(
-                            thinking_budget=thinking_budget
-                        )
-                    kwargs["config"] = types.GenerateContentConfig(**config_kwargs)
-                return client.models.generate_content(**kwargs)
-
-            return await asyncio.to_thread(_call)
+                config_kwargs: dict[str, Any] = {}
+                if json_mode:
+                    # Ask Gemini to return only the JSON object, no
+                    # surrounding commentary -- without this, code-mixed
+                    # input (e.g. a Malayalam sentence with an embedded
+                    # English proper noun like a project name) sometimes
+                    # prompts Gemini to add an explanatory sentence around
+                    # the JSON, which _parse_json's naive fence-stripping
+                    # can't handle (real bug: an inventory query naming a
+                    # project failed translation this way). DeepSeek's
+                    # adapter already forces its own equivalent
+                    # (response_format=json_object); this is the same
+                    # guarantee for Gemini. _parse_json below is hardened
+                    # as a second line of defense in case this mode is
+                    # ever unavailable/ignored by a future model.
+                    config_kwargs["response_mime_type"] = "application/json"
+                if thinking_budget is not None:
+                    # 2.5-flash reasons by default even on schema-filling
+                    # calls that don't benefit from it (traced: extract
+                    # averaged 3.7s, translate 1.9s) -- thinking_budget=0
+                    # turns that off. analyze_image deliberately doesn't
+                    # pass this: reasoning measurably helps parsing messy
+                    # handwritten attendance sheets, so it keeps the
+                    # model's default budget.
+                    config_kwargs["thinking_config"] = types.ThinkingConfig(
+                        thinking_budget=thinking_budget
+                    )
+                kwargs["config"] = types.GenerateContentConfig(**config_kwargs)
+            # The SDK's native async surface, not the sync one wrapped in
+            # asyncio.to_thread as this used to be. to_thread borrows from the
+            # default executor (~cpu_count+4 threads), so on a small container
+            # concurrent messages queued behind each other *inside* the
+            # measured latency -- which is why traced p99 ran far above p50
+            # (extract: 3.3s p50 vs 11.6s p99) on the same prompt. Also makes
+            # the call_with_resilience timeout actually cancel the in-flight
+            # request instead of abandoning a thread that keeps running.
+            return await client.aio.models.generate_content(**kwargs)
 
         resp, latency_ms = await call_with_resilience(
             _raw,
