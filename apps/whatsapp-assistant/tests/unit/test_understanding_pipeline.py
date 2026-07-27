@@ -12,9 +12,10 @@ from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
 from mesiri_ai import fixtures
 from mesiri_ai.fakes import (
     FakeExtractionProvider,
-    FakeSpeechProvider,
     FakeVisionProvider,
+    FakeVoiceExtractionProvider,
 )
+from mesiri_ai.models import ExtractionResult
 from mesiri_contracts.assistant import MediaReference, NormalizedMessage
 from mesiri_contracts.assistant.confidence import ConfidenceLevel
 from mesiri_contracts.assistant.enums import InputModality, SemanticType
@@ -34,10 +35,11 @@ def _msg(**kwargs) -> NormalizedMessage:
 
 
 async def _build(
-    *, speech=None, vision=None, extraction=None, storage=None
+    *, voice_extraction=None, vision=None, extraction=None, storage=None
 ) -> UnderstandingPipeline:
     return UnderstandingPipeline(
-        speech=speech or FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
+        voice_extraction=voice_extraction
+        or FakeVoiceExtractionProvider(fixtures.MALAYALAM_JCB_VOICE_EXTRACTION),
         vision=vision or FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
         extraction=extraction or FakeExtractionProvider(fixtures.JCB_EQUIPMENT_EXTRACTION),
         object_storage=storage or FakeObjectStorage(),
@@ -48,8 +50,7 @@ async def test_malayalam_jcb_voice_yields_equipment_facts():
     storage = FakeObjectStorage()
     await storage.put_object("voice/1.ogg", b"<audio>")
     pipeline = await _build(
-        speech=FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
-        extraction=FakeExtractionProvider(fixtures.JCB_EQUIPMENT_EXTRACTION),
+        voice_extraction=FakeVoiceExtractionProvider(fixtures.MALAYALAM_JCB_VOICE_EXTRACTION),
         storage=storage,
     )
     msg = _msg(
@@ -66,8 +67,10 @@ async def test_malayalam_jcb_voice_yields_equipment_facts():
     assert result.translated_text == "The JCB ran for 4 hours"
     assert result.overall_confidence == ConfidenceLevel.HIGH
     assert result.correlation_id == "cor_pipeline"
+    # One merged call now, not a separate speech_to_text_translate + extract
+    # pair -- see ports/voice_extraction.py.
     ops = {e.operation for e in result.provider_executions}
-    assert {"speech_to_text_translate", "extract"} <= ops
+    assert ops == {"understand_voice"}
 
 
 async def test_receipt_image_yields_expense():
@@ -185,7 +188,10 @@ async def test_empty_transcript_is_unusable():
     storage = FakeObjectStorage()
     await storage.put_object("voice/2.ogg", b"<audio>")
     pipeline = await _build(
-        speech=FakeSpeechProvider(fixtures.EMPTY_TRANSCRIPT_SPEECH), storage=storage
+        voice_extraction=FakeVoiceExtractionProvider(
+            ExtractionResult(transcript="", translated_text="")
+        ),
+        storage=storage,
     )
     msg = _msg(modality=InputModality.VOICE, media=MediaReference(object_key="voice/2.ogg"))
     result = await pipeline.understand(msg)
@@ -197,7 +203,8 @@ async def test_provider_timeout_is_handled_and_observable():
     storage = FakeObjectStorage()
     await storage.put_object("voice/3.ogg", b"<audio>")
     pipeline = await _build(
-        speech=FakeSpeechProvider(error=fixtures.timeout_error()), storage=storage
+        voice_extraction=FakeVoiceExtractionProvider(error=fixtures.timeout_error()),
+        storage=storage,
     )
     msg = _msg(modality=InputModality.VOICE, media=MediaReference(object_key="voice/3.ogg"))
     result = await pipeline.understand(msg)
@@ -248,34 +255,34 @@ async def test_text_greeting_skips_extraction():
     assert extraction.calls == 0
 
 
-async def test_voice_greeting_skips_extraction_after_transcription():
-    """STT is unavoidable for voice -- but the extraction call after it is
-    not, once the transcript is a recognized greeting."""
-    from mesiri_ai.models import SpeechResult
-
+async def test_voice_greeting_is_understood_via_the_single_merged_call():
+    """A spoken "hi" used to skip a *second* call (extraction) after
+    transcription -- that shortcut no longer exists once transcribe+extract
+    are merged into one call (see ports/voice_extraction.py and pipeline.py's
+    _handle_voice): there's no cheap first call left to check the transcript
+    against the greeting list before deciding whether to spend the second
+    one. A greeting now costs the same one call as everything else, and
+    must still come back correctly classified and HIGH-confidence via
+    ordinary extraction's own "unknown" semantic_type -- not a deterministic
+    shortcut."""
+    voice_extraction = FakeVoiceExtractionProvider(
+        ExtractionResult(transcript="hi", translated_text="hi", semantic_type="unknown")
+    )
     storage = FakeObjectStorage()
     await storage.put_object("voice/greeting.ogg", b"<audio>")
-    extraction = FakeExtractionProvider()
-    pipeline = await _build(
-        speech=FakeSpeechProvider(SpeechResult(transcript="hi", translated_text="hi")),
-        extraction=extraction,
-        storage=storage,
-    )
+    pipeline = await _build(voice_extraction=voice_extraction, storage=storage)
     msg = _msg(
         modality=InputModality.VOICE,
-        media=MediaReference(object_key="voice/greeting.ogg", mime_type="audio/ogg"),
+        media=MediaReference(object_key="voice/greeting.ogg"),
     )
 
     result = await pipeline.understand(msg)
 
     assert result.semantic_type == SemanticType.UNKNOWN
     assert result.overall_confidence == ConfidenceLevel.HIGH
-    assert extraction.calls == 0
-    # The transcription call itself is never skipped -- there's no text to
-    # check against the greeting list before Sarvam produces one.
+    assert voice_extraction.calls == 1
     ops = {e.operation for e in result.provider_executions}
-    assert "speech_to_text_translate" in ops
-    assert "extract" not in ops
+    assert ops == {"understand_voice"}
 
 
 async def test_a_report_that_merely_mentions_hi_still_gets_extracted():

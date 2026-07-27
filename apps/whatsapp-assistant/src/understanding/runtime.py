@@ -26,7 +26,7 @@ def build_pipeline(
 
     logger.info("Understanding pipeline configured with DynamicAIProviderResolver proxy.")
     return UnderstandingPipeline(
-        speech=resolver,  # type: ignore[arg-type]
+        voice_extraction=resolver,  # type: ignore[arg-type]
         vision=resolver,  # type: ignore[arg-type]
         extraction=resolver,  # type: ignore[arg-type]
         object_storage=object_storage,

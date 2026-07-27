@@ -36,12 +36,28 @@ EMPTY_TRANSCRIPT_SPEECH = SpeechResult(
 )
 
 # The equipment-usage extraction expected from the Malayalam JCB voice note.
+# Kept for callers still composing speech+extraction as two calls (e.g. the
+# resolver's non-Gemini voice fallback path).
 JCB_EQUIPMENT_EXTRACTION = ExtractionResult(
     semantic_type="equipment_usage",
     fields={"equipment_name": "JCB", "duration_hours": 4},
     field_confidences={"equipment_name": 0.97, "duration_hours": 0.95},
     model="fake-gemini",
     latency_ms=200.0,
+)
+
+# The single merged understand_voice() result for the same Malayalam JCB
+# voice note -- transcript/translated_text/detected_language alongside the
+# extraction, all from one call (see ports/voice_extraction.py).
+MALAYALAM_JCB_VOICE_EXTRACTION = ExtractionResult(
+    transcript="ജെസിബി നാല് മണിക്കൂർ ഓടി",
+    translated_text="The JCB ran for 4 hours",
+    detected_language="Malayalam",
+    semantic_type="equipment_usage",
+    fields={"equipment_name": "JCB", "duration_hours": 4},
+    field_confidences={"equipment_name": 0.97, "duration_hours": 0.95},
+    model="fake-gemini",
+    latency_ms=320.0,
 )
 
 # --- Image ------------------------------------------------------------------

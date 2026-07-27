@@ -3,7 +3,7 @@
 Consumes ``NormalizedMessage.v1`` and produces ``UnderstandingResult.v1``:
 
     text/interactive -> extraction
-    voice            -> speech (STT + translation) -> extraction
+    voice            -> understand_voice (merged transcribe+extract, one call)
     image/document   -> vision -> extraction
 
 Providers are injected via their ports (never SDKs), media is read through the
@@ -24,8 +24,8 @@ from mesiri_ai.confidence import ConfidencePolicy, ConfidenceSignals
 from mesiri_ai.greeting_classifier import is_greeting_trigger
 from mesiri_ai.models import ExtractionResult
 from mesiri_ai.ports.extraction import StructuredExtractionProvider
-from mesiri_ai.ports.speech import SpeechUnderstandingProvider
 from mesiri_ai.ports.vision import VisionUnderstandingProvider
+from mesiri_ai.ports.voice_extraction import VoiceExtractionProvider
 from mesiri_ai.whoami_classifier import is_whoami_trigger
 from mesiri_contracts.assistant.candidates import CANDIDATE_TYPES, Candidate, FieldConfidence
 from mesiri_contracts.assistant.confidence import ConfidenceLevel
@@ -88,13 +88,13 @@ class UnderstandingPipeline:
     def __init__(
         self,
         *,
-        speech: SpeechUnderstandingProvider,
+        voice_extraction: VoiceExtractionProvider,
         vision: VisionUnderstandingProvider,
         extraction: StructuredExtractionProvider,
         object_storage: ObjectStoragePort,
         confidence_policy: ConfidencePolicy | None = None,
     ) -> None:
-        self._speech = speech
+        self._voice_extraction = voice_extraction
         self._vision = vision
         self._extraction = extraction
         self._storage = object_storage
@@ -225,63 +225,41 @@ class UnderstandingPipeline:
         semantic_hint: str | None = None,
         expense_categories: list[str] | None = None,
     ) -> None:
+        # One call: transcribe + extract together (see
+        # ports/voice_extraction.py), not the old sequential transcribe()
+        # then extract() (~4.5s combined, measured). This means the
+        # deterministic greeting/whoami shortcuts that used to run *between*
+        # those two calls (skipping extraction for a spoken "hi") no longer
+        # apply -- there is no longer a cheap first call to check before
+        # committing to the expensive one. Traffic-weighted this should
+        # still be a net win (most voice traffic is real reports), but a
+        # spoken greeting now costs the same one call as everything else,
+        # where it used to cost only the transcription half.
         audio = await self._read_media(message)
-        speech = await self._speech.transcribe(audio, correlation_id=result.correlation_id)
-        result.transcript = speech.transcript
-        result.detected_language = speech.detected_language
-        result.translated_text = speech.translated_text
-        result.normalized_text = speech.translated_text or speech.transcript
-        result.provider_executions.append(
-            ProviderExecution(
-                provider=speech.provider or "sarvam",
-                operation="speech_to_text_translate",
-                model=speech.model,
-                latency_ms=speech.latency_ms,
-            )
-        )
-        if not (result.normalized_text or "").strip():
-            result.overall_confidence = ConfidenceLevel.UNUSABLE
-            result.warnings.append("empty transcript")
-            return
-
-        # Deterministic greeting/menu check, after transcription (unavoidable
-        # for voice) but before extraction. This is the real saving for
-        # voice: a spoken "hi" skips the extraction call entirely and is
-        # never left to an AI provider's judgment about whether it carries
-        # business fields. See mesiri_ai.greeting_classifier.
-        if is_greeting_trigger(result.normalized_text):
-            self._apply_deterministic_shortcut(result, SemanticType.UNKNOWN)
-            return
-
-        # This is the real saving for voice whoami questions ("njaan aara"
-        # translates to "who am I" in the same Sarvam call that produced
-        # normalized_text above) -- extraction is skipped entirely rather
-        # than spent on a question with no business fields to extract.
-        # WHOAMI_QUESTION (not UNKNOWN) is the signal inbound_journey.py
-        # reads to build the identity-summary reply -- see the comment in
-        # _handle_text above for why it reads this instead of re-classifying.
-        if is_whoami_trigger(result.normalized_text):
-            self._apply_deterministic_shortcut(result, SemanticType.WHOAMI_QUESTION)
-            return
-
-        extraction = await self._extraction.extract(
-            result.normalized_text,
+        extraction = await self._voice_extraction.understand_voice(
+            audio,
             semantic_hint=semantic_hint,
             expense_categories=expense_categories,
             correlation_id=result.correlation_id,
         )
-        if not result.detected_language:
-            # Sarvam's transcribe() genuinely does STT+translate in one call
-            # and returns a real detected_language; Gemini's transcribe()
-            # only ever transcribes (see the Gemini adapter -- its prompt
-            # never asks for translation) and always leaves this None. extract()
-            # reads the raw transcript directly and identifies the language
-            # itself regardless of which STT provider ran, so it's a strictly
-            # better source than "no answer at all" -- this is what stops the
-            # control panel from showing a false "Translation did not run"
-            # warning on every Gemini-routed voice message.
-            result.detected_language = extraction.detected_language
-        self._apply_extraction(result, extraction, is_empty=False)
+        result.transcript = extraction.transcript
+        result.detected_language = extraction.detected_language
+        result.translated_text = extraction.translated_text
+        result.normalized_text = extraction.translated_text or extraction.transcript
+        if not (result.normalized_text or "").strip():
+            result.overall_confidence = ConfidenceLevel.UNUSABLE
+            result.warnings.append("empty transcript")
+            result.provider_executions.append(
+                ProviderExecution(
+                    provider=extraction.provider or "gemini",
+                    operation="understand_voice",
+                    model=extraction.model,
+                    latency_ms=extraction.latency_ms,
+                )
+            )
+            return
+
+        self._apply_extraction(result, extraction, is_empty=False, operation="understand_voice")
 
     async def _handle_image(
         self,
@@ -370,7 +348,12 @@ class UnderstandingPipeline:
         result.overall_confidence = ConfidenceLevel.HIGH
 
     def _apply_extraction(
-        self, result: UnderstandingResult, extraction: ExtractionResult, *, is_empty: bool
+        self,
+        result: UnderstandingResult,
+        extraction: ExtractionResult,
+        *,
+        is_empty: bool,
+        operation: str = "extract",
     ) -> None:
         try:
             semantic = SemanticType(extraction.semantic_type)
@@ -385,7 +368,7 @@ class UnderstandingPipeline:
         result.provider_executions.append(
             ProviderExecution(
                 provider=extraction.provider or getattr(self._extraction, "provider", "unknown"),
-                operation="extract",
+                operation=operation,
                 model=extraction.model,
                 latency_ms=extraction.latency_ms,
             )

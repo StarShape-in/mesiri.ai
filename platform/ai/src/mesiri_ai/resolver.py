@@ -290,6 +290,53 @@ class DynamicAIProviderResolver:
                 return await _call_voice(fallback_id, fallback_model)
             raise
 
+    async def understand_voice(
+        self,
+        audio: bytes,
+        *,
+        semantic_hint: str | None = None,
+        expense_categories: list[str] | None = None,
+        correlation_id: str | None = None,
+    ) -> ExtractionResult:
+        """Transcribe + extract in one call when voice is routed to Gemini
+        (the real win -- previously two sequential calls, ~4.5s combined).
+        Sarvam has no extraction capability of its own to merge with, so
+        when voice is routed elsewhere this falls back to calling
+        transcribe() then extract() internally and composing one
+        ExtractionResult from both -- same external contract either way,
+        callers never need to know which path ran."""
+        config = await self._resolve_config()
+        route = config["routing"].get("voice", {"provider_id": "fake", "model": ""})
+        if route["provider_id"] == "gemini":
+            provider = self._cached_gemini_provider(config, route["model"])
+            return await provider.understand_voice(
+                audio,
+                semantic_hint=semantic_hint,
+                expense_categories=expense_categories,
+                correlation_id=correlation_id,
+            )
+
+        speech = await self.transcribe(audio, correlation_id=correlation_id)
+        normalized_text = speech.translated_text or speech.transcript
+        extraction = await self.extract(
+            normalized_text,
+            semantic_hint=semantic_hint,
+            expense_categories=expense_categories,
+            correlation_id=correlation_id,
+        )
+        return extraction.model_copy(
+            update={
+                "transcript": speech.transcript,
+                "translated_text": speech.translated_text,
+                "detected_language": speech.detected_language or extraction.detected_language,
+                # Two real calls happened here (speech + extraction) -- sum
+                # their latency so the one provider_execution row callers
+                # end up logging for understand_voice reflects the true
+                # total cost, not just the second call's.
+                "latency_ms": (speech.latency_ms or 0) + (extraction.latency_ms or 0),
+            }
+        )
+
     async def extract(
         self,
         text: str,

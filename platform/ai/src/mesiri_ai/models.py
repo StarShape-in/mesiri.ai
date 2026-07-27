@@ -70,6 +70,13 @@ class ExtractionResult(BaseModel):
     # understanding/pipeline.py's _handle_text) so nothing downstream needs
     # translation to exist to know what language the sender used.
     detected_language: str | None = None
+    # transcript/translated_text are only populated by understand_voice()
+    # (see ports/voice_extraction.py) -- the merged transcribe+extract call
+    # for voice, which returns everything _handle_voice needs (including
+    # what the sender actually said, for logging/display) from one round
+    # trip instead of two.
+    transcript: str | None = None
+    translated_text: str | None = None
     provider: str | None = None
     model: str | None = None
     latency_ms: float | None = None

@@ -99,7 +99,7 @@ async def _run_image(pipeline_module_vision, extraction, *, hint):
     storage = AsyncMock()
     storage.get_object.return_value = type("Obj", (), {"data": b"fake-bytes"})()
     pipeline = UnderstandingPipeline(
-        speech=AsyncMock(),
+        voice_extraction=AsyncMock(),
         vision=pipeline_module_vision,
         extraction=extraction,
         object_storage=storage,

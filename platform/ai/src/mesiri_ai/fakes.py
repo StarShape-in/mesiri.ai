@@ -105,6 +105,47 @@ class FakeExtractionProvider:
         return self._result
 
 
+class FakeVoiceExtractionProvider:
+    """Fake for VoiceExtractionProvider.understand_voice() -- the merged
+    transcribe+extract call for voice. Mirrors FakeExtractionProvider's
+    shape/tracking, since callers pass the same preset ExtractionResult
+    (now carrying transcript/translated_text too)."""
+
+    provider = "fake"
+
+    def __init__(
+        self,
+        result: ExtractionResult | None = None,
+        *,
+        error: BaseException | None = None,
+        delay_seconds: float = 0.0,
+    ) -> None:
+        self._result = result
+        self._error = error
+        self._delay = delay_seconds
+        self.calls = 0
+        self.last_semantic_hint: str | None = None
+        self.last_expense_categories: list[str] | None = None
+
+    async def understand_voice(
+        self,
+        audio: bytes,
+        *,
+        semantic_hint: str | None = None,
+        expense_categories: list[str] | None = None,
+        correlation_id: str | None = None,
+    ) -> ExtractionResult:
+        self.calls += 1
+        self.last_semantic_hint = semantic_hint
+        self.last_expense_categories = expense_categories
+        if self._delay:
+            await asyncio.sleep(self._delay)
+        if self._error is not None:
+            raise self._error
+        assert self._result is not None, "FakeVoiceExtractionProvider needs a result or an error"
+        return self._result
+
+
 class FakeTranslationProvider:
     provider = "fake"
 

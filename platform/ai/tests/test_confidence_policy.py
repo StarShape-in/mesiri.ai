@@ -47,6 +47,18 @@ def test_optional_missing_is_medium():
     assert policy.evaluate(sig) == ConfidenceLevel.MEDIUM
 
 
+def test_no_fields_expected_and_none_returned_is_high():
+    """Regression: a semantic type with no required fields and nothing
+    extracted (greeting, whoami) must not be scored as LOW just because
+    average_confidence of an empty tuple defaults to 0.0 -- there's nothing
+    to be uncertain about. This surfaced once voice's merged
+    understand_voice() call started running ordinary extraction for
+    greetings instead of short-circuiting before ever reaching this
+    policy."""
+    sig = ConfidenceSignals(required_fields=(), present_fields=(), field_confidences=())
+    assert policy.evaluate(sig) == ConfidenceLevel.HIGH
+
+
 def test_all_present_high_confidence_is_high():
     sig = ConfidenceSignals(
         required_fields=("equipment_name", "duration_hours"),

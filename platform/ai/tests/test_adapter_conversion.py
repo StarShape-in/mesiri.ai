@@ -106,6 +106,48 @@ async def test_gemini_json_mode_sets_response_mime_type():
     assert captured["config"].response_mime_type == "application/json"
 
 
+async def test_gemini_understand_voice_returns_combined_result_in_one_call():
+    """understand_voice() merges transcribe+extract into one generate_content
+    call -- previously two sequential calls (~4.5s combined, measured). One
+    call in, one JSON response out with transcript/translated_text/
+    detected_language alongside the usual extraction fields."""
+    captured: dict = {}
+
+    class _FakeModels:
+        def generate_content(self, *, model, contents, config=None):
+            captured["config"] = config
+            captured["contents"] = contents
+            return SimpleNamespace(
+                text=json.dumps(
+                    {
+                        "transcript": "ജെസിബി നാല് മണിക്കൂർ ഓടി",
+                        "translated_text": "The JCB ran for 4 hours",
+                        "detected_language": "Malayalam",
+                        "semantic_type": "equipment_usage",
+                        "fields": {"equipment_name": "JCB", "duration_hours": 4},
+                        "missing_fields": [],
+                        "field_confidences": {"equipment_name": 0.97, "duration_hours": 0.95},
+                    }
+                )
+            )
+
+    provider = GeminiProvider.__new__(GeminiProvider)
+    provider._settings = SimpleNamespace(model="gemini-test", timeout_seconds=5, max_retries=0)
+    provider._client = SimpleNamespace(models=_FakeModels())
+
+    result = await provider.understand_voice(b"audio-bytes", correlation_id="cor_1")
+
+    assert captured["config"].response_mime_type == "application/json"
+    assert result.transcript == "ജെസിബി നാല് മണിക്കൂർ ഓടി"
+    assert result.translated_text == "The JCB ran for 4 hours"
+    assert result.detected_language == "Malayalam"
+    assert result.semantic_type == "equipment_usage"
+    assert result.fields == {"equipment_name": "JCB", "duration_hours": 4}
+    # One call, not two -- both the audio and the extraction prompt travel
+    # together as a single `contents` payload.
+    assert len(captured["contents"]) == 2
+
+
 async def test_gemini_transcribe_requests_json_with_translation_and_language():
     """transcribe() asks Gemini to transcribe, translate, and identify the
     source language in one call -- it used to only transcribe and silently

@@ -156,6 +156,116 @@ async def test_generate_json_falls_back_to_gemini_even_when_extraction_routes_el
 
 
 @pytest.mark.anyio
+async def test_understand_voice_calls_gemini_directly_when_voice_routes_to_gemini():
+    """The real win: when voice is routed to Gemini, understand_voice() must
+    call the adapter's own merged transcribe+extract method directly -- one
+    call, not two -- rather than composing transcribe()+extract() itself."""
+    from mesiri_ai.models import ExtractionResult
+
+    settings = FakeSettings()
+    db = MagicMock()
+    if hasattr(db, "transaction"):
+        del db.transaction
+    # FakeSettings' env defaults route voice to sarvam (see _resolve_config's
+    # fallback derivation) -- force gemini explicitly via the Redis cache so
+    # this test actually exercises the branch it's named for.
+    cached_config = {
+        "routing": {
+            "voice": {"provider_id": "gemini", "model": "gemini-test"},
+            "extraction": {"provider_id": "fake", "model": ""},
+            "vision": {"provider_id": "fake", "model": ""},
+            "translation": {"provider_id": "fake", "model": ""},
+        },
+        "secrets": {"gemini": {"api_key": "gemini-key", "base_url": None}},
+    }
+    redis = AsyncMock()
+    redis.get.return_value = json.dumps(cached_config)
+
+    resolver = DynamicAIProviderResolver(db, redis, settings)
+
+    combined = ExtractionResult(
+        transcript="hi",
+        translated_text="hi",
+        semantic_type="unknown",
+        model="gemini-test",
+        latency_ms=900.0,
+    )
+
+    class FakeGeminiProvider:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def understand_voice(self, audio, **kwargs):
+            return combined
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            "mesiri_ai.resolver._build_gemini_provider", lambda *a, **kw: FakeGeminiProvider()
+        )
+        result = await resolver.understand_voice(b"audio-bytes", correlation_id="cor_1")
+
+    assert result is combined
+
+
+@pytest.mark.anyio
+async def test_understand_voice_falls_back_to_transcribe_then_extract_for_non_gemini_voice():
+    """Sarvam (or any non-Gemini voice provider) has no extraction
+    capability of its own to merge with -- understand_voice() must fall back
+    to composing transcribe() then extract() internally, and the caller gets
+    the same ExtractionResult shape back either way."""
+    from mesiri_ai.models import ExtractionResult, SpeechResult
+
+    settings = FakeSettings()
+    db = MagicMock()
+    if hasattr(db, "transaction"):
+        del db.transaction
+
+    cached_config = {
+        "routing": {
+            "voice": {"provider_id": "fake", "model": ""},
+            "extraction": {"provider_id": "fake", "model": ""},
+            "vision": {"provider_id": "fake", "model": ""},
+            "translation": {"provider_id": "fake", "model": ""},
+        },
+        "secrets": {"gemini": {"api_key": None, "base_url": None}},
+    }
+    redis = AsyncMock()
+    redis.get.return_value = json.dumps(cached_config)
+
+    resolver = DynamicAIProviderResolver(db, redis, settings)
+
+    async def _fake_transcribe(audio, **kwargs):
+        return SpeechResult(
+            transcript="ஜேசிபி ஓடியது",
+            translated_text="the JCB ran",
+            detected_language="Tamil",
+            latency_ms=100.0,
+        )
+
+    async def _fake_extract(text, **kwargs):
+        return ExtractionResult(
+            semantic_type="equipment_usage",
+            fields={"equipment_name": "JCB"},
+            latency_ms=150.0,
+        )
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(resolver, "transcribe", _fake_transcribe)
+        mp.setattr(resolver, "extract", _fake_extract)
+        result = await resolver.understand_voice(b"audio-bytes", correlation_id="cor_2")
+
+    assert result.transcript == "ஜேசிபி ஓடியது"
+    assert result.translated_text == "the JCB ran"
+    assert result.detected_language == "Tamil"
+    assert result.semantic_type == "equipment_usage"
+    assert result.fields == {"equipment_name": "JCB"}
+    # Two real calls happened -- their latencies are summed so the one
+    # provider_execution row a caller logs for understand_voice reflects
+    # the true total cost.
+    assert result.latency_ms == 250.0
+
+
+@pytest.mark.anyio
 async def test_generate_json_raises_without_any_gemini_key():
     settings = FakeSettings()
     settings.gemini = FakeSettings.Section(api_key=None)

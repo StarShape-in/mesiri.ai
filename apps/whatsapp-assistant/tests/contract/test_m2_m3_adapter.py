@@ -10,8 +10,8 @@ from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
 from mesiri_ai import fixtures
 from mesiri_ai.fakes import (
     FakeExtractionProvider,
-    FakeSpeechProvider,
     FakeVisionProvider,
+    FakeVoiceExtractionProvider,
 )
 from mesiri_contracts.assistant.enums import InputModality
 from mesiri_contracts.assistant.normalized_message import (
@@ -24,7 +24,7 @@ from understanding.pipeline import UnderstandingPipeline
 
 def _pipeline(storage: FakeObjectStorage) -> UnderstandingPipeline:
     return UnderstandingPipeline(
-        speech=FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
+        voice_extraction=FakeVoiceExtractionProvider(fixtures.MALAYALAM_JCB_VOICE_EXTRACTION),
         vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
         extraction=FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION),
         object_storage=storage,

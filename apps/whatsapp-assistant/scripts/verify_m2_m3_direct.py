@@ -27,7 +27,7 @@ from ingress.media_ingestion import DownloadedMedia
 from ingress.receiver import InMemoryNormalizedMessageStore, WhatsAppReceiver
 from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
 from mesiri_ai import fixtures
-from mesiri_ai.fakes import FakeExtractionProvider, FakeSpeechProvider, FakeVisionProvider
+from mesiri_ai.fakes import FakeExtractionProvider, FakeVisionProvider, FakeVoiceExtractionProvider
 from mesiri_contracts.assistant.enums import InputModality
 from understanding.pipeline import UnderstandingPipeline
 
@@ -35,7 +35,7 @@ from understanding.pipeline import UnderstandingPipeline
 async def main() -> None:
     storage = FakeObjectStorage()
     pipeline = UnderstandingPipeline(
-        speech=FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
+        voice_extraction=FakeVoiceExtractionProvider(fixtures.MALAYALAM_JCB_VOICE_EXTRACTION),
         vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
         extraction=FakeExtractionProvider(fixtures.JCB_EQUIPMENT_EXTRACTION),
         object_storage=storage,
@@ -68,12 +68,10 @@ async def main() -> None:
     assert text_msg.text == "Installed 20 bags of cement"
     assert text_msg.modality is InputModality.TEXT
 
-    voice_file = Path(__file__).resolve().parent / "_voice_test.ogg"
-    voice_file.write_bytes(b"fake-voice")
     receiver._media_downloader.download.return_value = DownloadedMedia(
         media_id="media-audio-1",
         mime_type="audio/ogg",
-        file_path=str(voice_file),
+        content=b"fake-voice",
         sha256="x",
         file_size=10,
     )
@@ -86,7 +84,6 @@ async def main() -> None:
     assert stored.data == b"fake-voice"
     assert len(results) == 2
     assert results[1].candidates[0].fields.get("equipment_name") == "JCB"
-    voice_file.unlink(missing_ok=True)
     print("E2E M2->M3 without adapter: PASSED")
 
 

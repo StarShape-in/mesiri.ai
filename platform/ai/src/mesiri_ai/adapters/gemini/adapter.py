@@ -421,6 +421,77 @@ class GeminiProvider:
             latency_ms=latency_ms,
         )
 
+    async def understand_voice(
+        self,
+        audio: bytes,
+        *,
+        semantic_hint: str | None = None,
+        expense_categories: list[str] | None = None,
+        correlation_id: str | None = None,
+    ) -> ExtractionResult:
+        """Transcribe and extract in one call instead of two sequential
+        round trips (transcribe() then extract() -- previously ~4.5s
+        combined). Reuses _EXTRACTION_PROMPT verbatim, prefixed with
+        transcription instructions and three extra JSON keys.
+
+        Tradeoff accepted deliberately: understanding/pipeline.py's old
+        _handle_voice checked the transcript against the deterministic
+        greeting/whoami phrase lists *between* transcribe() and extract(),
+        skipping the second call for a spoken "hi". That shortcut is gone --
+        this one call always does the full extraction-shaped work, greeting
+        or not. Traffic-weighted this should still be a net win (most voice
+        traffic is real reports, not greetings), but it is a real behavior
+        change, not just a relocation of code.
+        """
+        from google.genai import types  # lazy
+
+        part = types.Part.from_bytes(data=audio, mime_type="audio/ogg")
+        prompt = (
+            "You will be given spoken audio. First transcribe it accurately "
+            "in its own language. Then, exactly as if you were given the "
+            "transcript as text directly, extract structured construction "
+            "data from what was said -- read it in its own language, do not "
+            "wait for a translation. In addition to the fields described "
+            'below, also include in your JSON response: "transcript" '
+            '(verbatim, original language), "translated_text" (English '
+            "translation of the transcript; same as transcript if already "
+            'English), "detected_language" (the source language\'s common '
+            'English name, e.g. "Malayalam", "English").\n\n'
+        ) + _EXTRACTION_PROMPT
+        if semantic_hint:
+            prompt += (
+                f'\n\nHint: the user selected the "{semantic_hint}" category just before '
+                "sending this message. Prefer that semantic_type unless the audio clearly "
+                "indicates a different one -- never force it against clear evidence."
+            )
+        if expense_categories:
+            options = ", ".join(f'"{c}"' for c in expense_categories)
+            prompt += (
+                f"\n\nIf semantic_type is expense, the organization's existing expense "
+                f"categories are: {options}. Set the expense's `category` field to the "
+                "closest matching one of these, verbatim. Only use a different value if "
+                "none of these fit at all."
+            )
+        raw_text, latency_ms = await self._generate(
+            [prompt, part], correlation_id, "understand_voice", json_mode=True, thinking_budget=0
+        )
+        data = self._parse_json(raw_text, correlation_id)
+        transcript = (data.get("transcript") or "").strip()
+        return ExtractionResult(
+            transcript=transcript,
+            translated_text=data.get("translated_text") or transcript,
+            detected_language=data.get("detected_language"),
+            semantic_type=data.get("semantic_type", "unknown"),
+            fields=data.get("fields", {}) or {},
+            missing_fields=list(data.get("missing_fields", []) or []),
+            field_confidences={
+                k: float(v) for k, v in (data.get("field_confidences", {}) or {}).items()
+            },
+            provider=self.provider,
+            model=self._settings.model,
+            latency_ms=latency_ms,
+        )
+
     async def generate_json(
         self,
         system_prompt: str,

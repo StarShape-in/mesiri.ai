@@ -19,8 +19,8 @@ from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
 from mesiri_ai import fixtures
 from mesiri_ai.fakes import (
     FakeExtractionProvider,
-    FakeSpeechProvider,
     FakeVisionProvider,
+    FakeVoiceExtractionProvider,
 )
 from mesiri_contracts.assistant.enums import InputModality
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage, SenderInfo
@@ -48,7 +48,7 @@ def _message(**kwargs) -> NormalizedMessage:
 
 def _pipeline() -> UnderstandingPipeline:
     return UnderstandingPipeline(
-        speech=FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
+        voice_extraction=FakeVoiceExtractionProvider(fixtures.MALAYALAM_JCB_VOICE_EXTRACTION),
         vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
         extraction=FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION),
         object_storage=FakeObjectStorage(),
@@ -270,7 +270,7 @@ async def test_voice_message_transcription_logging(anyio_backend: str) -> None: 
     )
     # Stub pipeline returns JCB speech transcription
     pipeline = UnderstandingPipeline(
-        speech=FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
+        voice_extraction=FakeVoiceExtractionProvider(fixtures.MALAYALAM_JCB_VOICE_EXTRACTION),
         vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
         extraction=FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION),
         object_storage=storage,
@@ -322,7 +322,7 @@ async def test_voice_whoami_is_answered_without_extraction():
     STARTED path, not the old fast-path.
     """
     from backend.ports import ActorIdentity
-    from mesiri_ai.models import SpeechResult
+    from mesiri_ai.models import ExtractionResult
     from mesiri_contracts.assistant import MediaReference
 
     actor = ActorIdentity(
@@ -337,8 +337,17 @@ async def test_voice_whoami_is_answered_without_extraction():
     await storage.put_object("voice/whoami.ogg", b"<audio>")
     extraction = FakeExtractionProvider()
     pipeline = UnderstandingPipeline(
-        speech=FakeSpeechProvider(
-            SpeechResult(transcript="njaan aara", translated_text="who am I")
+        # Merged understand_voice() must classify this itself now -- there's
+        # no separate post-transcription is_whoami_trigger check to fall
+        # back on (see pipeline.py's _handle_voice), so the fake result has
+        # to carry semantic_type="whoami_question" directly, the same way a
+        # real merged Gemini call would.
+        voice_extraction=FakeVoiceExtractionProvider(
+            ExtractionResult(
+                transcript="njaan aara",
+                translated_text="who am I",
+                semantic_type="whoami_question",
+            )
         ),
         vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
         extraction=extraction,

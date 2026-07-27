@@ -48,6 +48,26 @@ class ConfidencePolicy:
         if not signals.provider_succeeded or not signals.schema_valid or signals.is_empty:
             return ConfidenceLevel.UNUSABLE
 
+        # A semantic type with no required fields and nothing extracted
+        # (greeting, whoami, a general question) isn't "low confidence" --
+        # there was nothing to be confident or uncertain about.
+        # average_confidence's empty-tuple default of 0.0 would otherwise
+        # score this the same as a real low-confidence extraction, which
+        # would send a correctly-classified "hi" down a clarification path
+        # instead of just answering it. This case used to be unreachable in
+        # practice -- these semantic types were always short-circuited
+        # before ever reaching this policy (see pipeline.py's deterministic
+        # greeting/whoami shortcuts) -- until voice's merged
+        # understand_voice() call started routing greetings through
+        # ordinary extraction instead, since there's no longer a cheap
+        # pre-check to skip it with.
+        if (
+            not signals.required_fields
+            and not signals.present_fields
+            and not signals.field_confidences
+        ):
+            return ConfidenceLevel.HIGH
+
         avg = signals.average_confidence
 
         # Required data missing, ambiguity, or very low signal -> low.

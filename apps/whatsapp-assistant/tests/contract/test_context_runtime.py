@@ -29,8 +29,8 @@ from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
 from mesiri_ai import fixtures
 from mesiri_ai.fakes import (
     FakeExtractionProvider,
-    FakeSpeechProvider,
     FakeVisionProvider,
+    FakeVoiceExtractionProvider,
 )
 from mesiri_ai.models import ExtractionResult
 from mesiri_contracts.assistant.draft_action import DraftActionType
@@ -73,7 +73,7 @@ def _message(wa_id: str = seed.WA_ENGINEER, **kwargs) -> NormalizedMessage:
 
 def _pipeline() -> UnderstandingPipeline:
     return UnderstandingPipeline(
-        speech=FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
+        voice_extraction=FakeVoiceExtractionProvider(fixtures.MALAYALAM_JCB_VOICE_EXTRACTION),
         vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
         extraction=FakeExtractionProvider(fixtures.VALID_RECEIPT_EXTRACTION),
         object_storage=FakeObjectStorage(),
@@ -217,7 +217,7 @@ async def test_inbound_journey_starts_workflow_and_replies_with_confirmation_pro
     the workflow's confirmation prompt — never the understanding summary."""
     message = _message()
     pipeline = UnderstandingPipeline(
-        speech=FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
+        voice_extraction=FakeVoiceExtractionProvider(fixtures.MALAYALAM_JCB_VOICE_EXTRACTION),
         vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
         extraction=FakeExtractionProvider(
             ExtractionResult(
@@ -294,7 +294,7 @@ async def test_inbound_journey_starts_workflow_and_replies_with_confirmation_pro
 
 def _material_pipeline() -> UnderstandingPipeline:
     return UnderstandingPipeline(
-        speech=FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
+        voice_extraction=FakeVoiceExtractionProvider(fixtures.MALAYALAM_JCB_VOICE_EXTRACTION),
         vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
         extraction=FakeExtractionProvider(
             ExtractionResult(
@@ -561,7 +561,7 @@ async def test_voice_reply_gets_the_same_reply_a_text_message_would():
     storage = FakeObjectStorage()
     await storage.put_object("voice/1.ogg", b"<audio>")
     pipeline = UnderstandingPipeline(
-        speech=FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
+        voice_extraction=FakeVoiceExtractionProvider(fixtures.MALAYALAM_JCB_VOICE_EXTRACTION),
         vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
         extraction=FakeExtractionProvider(fixtures.JCB_EQUIPMENT_EXTRACTION),
         object_storage=storage,
@@ -592,7 +592,7 @@ async def test_inventory_query_answer_sets_a_material_hint_for_the_next_message(
     fall through to the generic category menu."""
     message = _message(text="how much cement is left?")
     pipeline = UnderstandingPipeline(
-        speech=FakeSpeechProvider(fixtures.MALAYALAM_JCB_SPEECH),
+        voice_extraction=FakeVoiceExtractionProvider(fixtures.MALAYALAM_JCB_VOICE_EXTRACTION),
         vision=FakeVisionProvider(fixtures.VALID_RECEIPT_VISION),
         extraction=FakeExtractionProvider(
             ExtractionResult(
