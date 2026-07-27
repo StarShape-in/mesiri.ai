@@ -15,7 +15,7 @@ the domain and the database both expect.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -78,6 +78,33 @@ def _attachment_object_keys(fields: dict[str, Any]) -> list[str]:
     return [str(single)] if single else []
 
 
+def _occurred_date(fields: dict[str, Any]) -> date:
+    """The day the work happened, as decided upstream.
+
+    Canonicalization owns this now (canonicalization/occurred_date.py): it is
+    the only point holding both what the message said and the sender's
+    timezone. Deciding it here instead was the direct cause of two bugs --
+    a stated "yesterday" was overwritten with today, and `date.today()` used
+    the host's UTC clock, so any report from India before 05:30 local was
+    filed under the previous day.
+
+    Falling back to `date.today()` keeps an older draft (persisted before
+    this shipped, still sitting at AWAITING_CONFIRMATION) confirmable rather
+    than failing on a field it never carried. New drafts always carry it.
+    """
+    raw = fields.get("occurred_date")
+    if isinstance(raw, date) and not isinstance(raw, datetime):
+        return raw
+    if isinstance(raw, datetime):
+        return raw.date()
+    if raw:
+        try:
+            return date.fromisoformat(str(raw))
+        except ValueError:
+            pass
+    return date.today()
+
+
 def build_command(confirmed: ConfirmedActionV2) -> RecordLabourAttendanceCommand:
     """Map a ConfirmedActionV2 into RecordLabourAttendanceCommand.
 
@@ -107,8 +134,8 @@ def build_command(confirmed: ConfirmedActionV2) -> RecordLabourAttendanceCommand
         lines=lines,
         notes=fields.get("notes"),
         attachment_object_keys=_attachment_object_keys(fields),
-        occurred_date=date.today(),
-        occurred_date_source="inferred_at_confirmation",
+        occurred_date=_occurred_date(fields),
+        occurred_date_source=str(fields.get("occurred_date_source") or "inferred_at_confirmation"),
         recorded_via=str(fields.get("recorded_via") or "whatsapp_text"),
         created_by=confirmed.confirmed_by_user_id,
     )

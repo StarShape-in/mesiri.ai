@@ -551,3 +551,52 @@ def test_preview_never_shows_recorded_via_as_a_raw_field():
     supervisor confirming a headcount needs to see."""
     prompt = _preview({"lines": [_group(4, "mason")], "recorded_via": "whatsapp_voice"})
     assert "recorded_via" not in prompt
+
+
+# --- the date is visible before anything is saved -------------------------
+
+
+def test_preview_shows_the_date():
+    """Attendance is append-only: a wrong date can't be edited afterwards,
+    only superseded. Confirmation is the only cheap moment to catch it."""
+    prompt = _preview(
+        {
+            "lines": [_group(4, "mason")],
+            "occurred_date": "2026-07-20",
+            "occurred_date_source": "stated_by_user",
+        }
+    )
+    assert "Date: 20 Jul 2026" in prompt
+    assert "assumed" not in prompt
+
+
+def test_preview_admits_when_the_date_was_guessed():
+    """A guess presented as fact is what let "yesterday 12 masons worked" get
+    filed under today without anyone noticing."""
+    prompt = _preview(
+        {
+            "lines": [_group(4, "mason")],
+            "occurred_date": "2026-07-27",
+            "occurred_date_source": "inferred_at_confirmation",
+        }
+    )
+    assert "Date: 27 Jul 2026 (assumed today)" in prompt
+
+
+def test_preview_never_shows_the_raw_date_plumbing():
+    """"occurred_date_source: inferred_at_confirmation" means nothing to a
+    supervisor -- the date line says it in words instead."""
+    prompt = _preview(
+        {
+            "lines": [_group(4, "mason")],
+            "occurred_date": "2026-07-27",
+            "occurred_date_source": "inferred_at_confirmation",
+        }
+    )
+    assert "occurred_date" not in prompt
+    assert "inferred_at_confirmation" not in prompt
+
+
+def test_preview_omits_the_date_line_when_there_is_no_date():
+    """An older draft persisted before dating shipped must still render."""
+    assert "Date:" not in _preview({"lines": [_group(4, "mason")]})

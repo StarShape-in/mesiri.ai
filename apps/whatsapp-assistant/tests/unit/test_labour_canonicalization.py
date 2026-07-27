@@ -314,3 +314,27 @@ def test_recorded_via_reaches_the_command_mapper():
     doesn't drop the value before the mapper ever sees it."""
     event = _event({"workers": [{"name": "Ravi", "trade": "mason"}]}, modality=InputModality.VOICE)
     assert event.fields["recorded_via"] == "whatsapp_voice"
+
+
+# --- dating the report ------------------------------------------------------
+
+
+def test_a_stated_date_reaches_the_event_as_stated():
+    """End of the chain: what the message said survives to the record."""
+    fields = _event({"workers": [{"trade": "mason", "headcount": 4}], "occurred_on": "2026-07-20"}).fields
+    assert fields["occurred_date"] == "2026-07-20"
+    assert fields["occurred_date_source"] == "stated_by_user"
+
+
+def test_a_report_with_no_stated_date_is_marked_as_assumed():
+    fields = _event({"workers": [{"trade": "mason", "headcount": 4}]}).fields
+    assert fields["occurred_date"]
+    assert fields["occurred_date_source"] == "inferred_at_confirmation"
+
+
+def test_every_labour_event_carries_a_date():
+    """So the confirmation can always show one, and the mapper never has to
+    decide what a missing date means."""
+    fields = _event({"headcount": 12, "trade": "helper"}).fields
+    assert "occurred_date" in fields
+    assert "occurred_date_source" in fields

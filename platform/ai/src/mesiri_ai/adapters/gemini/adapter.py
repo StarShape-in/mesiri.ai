@@ -98,7 +98,13 @@ _EXTRACTION_PROMPT = (
     "work_item is only for used material: the activity or task it was used for "
     '(e.g. "slabing the footing area", "column casting"). Omit work_item entirely '
     "for received material.\n"
-    "- labour_update: workers (array), contractor, hours, project_name. "
+    "- labour_update: workers (array), contractor, hours, project_name, occurred_on. "
+    'occurred_on is the day the work happened, ONLY when the message says so: '
+    'either "yesterday" / "today" / "day before yesterday" verbatim, or an '
+    'exact ISO date "YYYY-MM-DD" when a full date is written (e.g. "on 25 July" '
+    '-> "2026-07-25"). Omit occurred_on entirely when no day is mentioned -- '
+    "never guess it, and never emit a bare weekday like \"Friday\", which is "
+    "ambiguous. "
     "Each item in workers is ONE line of the attendance report, with keys: "
     '"name" (the person\'s name -- omit entirely for an unnamed group), '
     '"trade" (mason, helper, painter, carpenter, electrician, plumber, welder, '

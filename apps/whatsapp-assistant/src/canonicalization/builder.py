@@ -17,6 +17,7 @@ from mesiri_contracts.assistant.v2.resolved_context import ResolvedContextV2
 from mesiri_contracts.common.ids import new_id
 
 from .mapping import REQUIRED_FIELDS, resolve_event_type
+from .occurred_date import resolve_occurred_date
 
 logger = logging.getLogger(__name__)
 
@@ -290,6 +291,12 @@ def build_canonical_event(
 
     if understanding.semantic_type is SemanticType.LABOUR_UPDATE:
         fields = _normalize_labour_fields(fields, input_modality=understanding.input_modality)
+        # Dated here, not in the mapper: this is the only point that holds
+        # both what the message said and where the sender is. See
+        # canonicalization/occurred_date.py. Material and Expense still date
+        # their records at save time and inherit both bugs it fixes -- adding
+        # the same one line here is all their adoption needs.
+        fields = resolve_occurred_date(fields, timezone_name=context.timezone)
 
     if understanding.semantic_type is SemanticType.MATERIAL_UPDATE:
         fields = _normalize_material_fields(fields)

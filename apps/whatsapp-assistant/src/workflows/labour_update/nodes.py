@@ -48,6 +48,7 @@ resolves to a temporary worker without asking anything.
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -384,8 +385,35 @@ _DISPLAY_HIDDEN_FIELD_KEYS = frozenset(
         "project_name",
         "site_name",
         "recorded_via",
+        # Both rendered by the date line in request_confirmation, which reads
+        # them together to say whether the date was stated or assumed. Shown
+        # as raw key:value lines they would be noise ("occurred_date_source:
+        # inferred_at_confirmation" means nothing to a supervisor).
+        "occurred_date",
+        "occurred_date_source",
     }
 )
+
+
+def _date_line(fields: dict[str, Any]) -> str | None:
+    """The day being recorded, marked when Mesiri guessed it.
+
+    Shown because attendance is append-only: a wrong date cannot be edited
+    afterwards, only superseded, so confirmation is the only cheap moment to
+    catch it. Saying "(assumed today)" out loud is the point -- a guess
+    presented as fact is what let "yesterday 12 masons worked" get filed
+    under today without anyone noticing.
+    """
+    raw = str(fields.get("occurred_date") or "").strip()
+    if not raw:
+        return None
+    try:
+        shown = date.fromisoformat(raw).strftime("%d %b %Y")
+    except ValueError:
+        shown = raw
+    if str(fields.get("occurred_date_source") or "") == "inferred_at_confirmation":
+        return f"   • Date: {shown} (assumed today)"
+    return f"   • Date: {shown}"
 
 
 def _fmt_amount(value: object) -> str:
@@ -485,6 +513,9 @@ def request_confirmation(state: WorkflowGraphState) -> dict:
         out.append(f"   • Project: {project_name}")
     if site_name:
         out.append(f"   • Site: {site_name}")
+    date_line = _date_line(fields)
+    if date_line:
+        out.append(date_line)
 
     for key, value in fields.items():
         if key in _DISPLAY_HIDDEN_FIELD_KEYS:

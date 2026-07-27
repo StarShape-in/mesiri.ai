@@ -136,10 +136,37 @@ def test_project_id_none_is_preserved_not_invented():
     assert cmd.project_id is None
 
 
-def test_occurred_date_defaults_to_today_with_inferred_source():
+def test_the_date_decided_upstream_is_used_not_overwritten():
+    """The bug this closes: the mapper used to stamp date.today() over
+    whatever the message said, so "yesterday 12 masons worked" was filed
+    under today. Canonicalization now owns the decision -- it is the only
+    point holding both the message and the sender's timezone."""
+    cmd = build_command(
+        _confirmed(
+            {
+                "lines": [_line()],
+                "occurred_date": "2026-07-20",
+                "occurred_date_source": "stated_by_user",
+            }
+        )
+    )
+    assert cmd.occurred_date == date(2026, 7, 20)
+    assert cmd.occurred_date_source == "stated_by_user"
+
+
+def test_occurred_date_defaults_to_today_when_a_draft_predates_dating():
+    """An older draft, persisted at AWAITING_CONFIRMATION before this shipped,
+    must stay confirmable rather than failing on a field it never carried."""
     cmd = build_command(_confirmed({"lines": [_line()]}))
     assert cmd.occurred_date == date.today()
     assert cmd.occurred_date_source == "inferred_at_confirmation"
+
+
+def test_a_corrupt_stored_date_falls_back_rather_than_failing_the_save():
+    """The user already confirmed; losing the whole record over an unparseable
+    date field would be worse than recording it dated today."""
+    cmd = build_command(_confirmed({"lines": [_line()], "occurred_date": "not-a-date"}))
+    assert cmd.occurred_date == date.today()
 
 
 def test_recorded_via_is_carried_through():
