@@ -53,6 +53,13 @@ class SemanticType(str, Enum):
     # "14 workers today?" as a report would try to *record* 14 workers
     # instead of counting them.
     LABOUR_QUERY = "labour_query"
+    # A question about progress already logged or open site issues (e.g.
+    # "what did I log today?", "what happened on site X yesterday?", "any
+    # open issues on site Y?") -- read-only, never a report. Distinct from
+    # GENERAL_SITE_UPDATE the same way LABOUR_QUERY is distinct from
+    # LABOUR_UPDATE: a narrative report should never be misread as a
+    # question about the log, and vice versa.
+    ACTIVITY_QUERY = "activity_query"
     # A question about cash/account balances or past expenses (e.g. "how much
     # cash do I have?", "balance of Site Cash", "how much did we spend on
     # diesel?") -- read-only, never an update. Splits into two

@@ -595,6 +595,9 @@ def test_informational_and_no_draft_keys_are_pinned() -> None:
         # reply IS the confirmation, so it must never be blocked by (or block)
         # an unrelated pending confirmation. See worker_promotion/graph.py.
         WorkflowKey.WORKER_PROMOTION,
+        # #17 Search / Ask Mesiri's read side: "what did I log today?" /
+        # "any open issues?" answers and stops, same reasoning as LABOUR_QUERY.
+        WorkflowKey.ACTIVITY_QUERY,
     }
     assert no_draft == informational | {
         WorkflowKey.REVERSE,

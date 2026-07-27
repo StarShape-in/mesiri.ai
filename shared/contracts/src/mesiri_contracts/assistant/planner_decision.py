@@ -61,6 +61,7 @@ class WorkflowKey(str, Enum):
     WHO_AM_I = "who.am.i"
     MATERIAL_INVENTORY_QUERY = "material.inventory_query"
     LABOUR_QUERY = "labour.query"
+    ACTIVITY_QUERY = "activity.query"
     ACCOUNT_ADMIN = "finance.account_admin"
     ACCOUNT_BALANCE_QUERY = "finance.account_query"
     EXPENSE_QUERY = "expense.query"

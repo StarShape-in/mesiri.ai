@@ -19,6 +19,7 @@ _SIMPLE_EVENT_TYPE: dict[SemanticType, CanonicalEventType] = {
     SemanticType.WHOAMI_QUESTION: CanonicalEventType.IDENTITY_LOOKUP_REQUESTED,
     SemanticType.INVENTORY_QUERY: CanonicalEventType.INVENTORY_QUERY_ASKED,
     SemanticType.LABOUR_QUERY: CanonicalEventType.LABOUR_QUERY_ASKED,
+    SemanticType.ACTIVITY_QUERY: CanonicalEventType.ACTIVITY_QUERY_ASKED,
     SemanticType.TRANSFER: CanonicalEventType.TRANSFER_REQUESTED,
     SemanticType.ACCOUNT_ADMIN: CanonicalEventType.ACCOUNT_ADMIN_REQUESTED,
 }
@@ -94,6 +95,7 @@ REQUIRED_FIELDS: dict[CanonicalEventType, tuple[str, ...]] = {
     CanonicalEventType.IDENTITY_LOOKUP_REQUESTED: (),
     CanonicalEventType.INVENTORY_QUERY_ASKED: (),
     CanonicalEventType.LABOUR_QUERY_ASKED: (),
+    CanonicalEventType.ACTIVITY_QUERY_ASKED: (),
     CanonicalEventType.ACCOUNT_BALANCE_QUERY_ASKED: (),
     CanonicalEventType.EXPENSE_QUERY_ASKED: (),
     CanonicalEventType.TRANSFER_REQUESTED: ("amount",),

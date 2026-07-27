@@ -62,6 +62,7 @@ from mesiri_contracts.common.ids import new_id as _new_id
 from planner import Planner, log_planner_decision
 from planner.ambiguity import AmbiguityAction, caveat_text, decide_ambiguity
 from runtime.activity_query import ActivityQueryService
+from runtime.activity_search_service import ActivitySearchService
 from runtime.duplicate_expense_query import DuplicateExpenseQueryService
 from runtime.escalation_query import EscalationCreateService
 from runtime.expense_category_query import ExpenseCategoryQueryService
@@ -813,6 +814,42 @@ async def _seed_labour_query(
     event.fields["labour_results"] = results
 
 
+async def _seed_activity_search(
+    event: CanonicalEventV2,
+    decision: PlannerDecisionV2,
+    activity_search_service: ActivitySearchService | None,
+    actor: ActorIdentity | None,
+    timezone_name: str | None,
+) -> None:
+    """Answer #17 "what did I log / any open issues" before the graph runs --
+    same shape and reasoning as _seed_labour_query above. Only ever runs for
+    ACTIVITY_QUERY.
+
+    Defaults to *today*, same reasoning as labour_query's default: the
+    question a supervisor asks about their own site log is almost always
+    about the current day, not a rolling window.
+    """
+    if activity_search_service is None or actor is None or not actor.organization_id:
+        return
+    if decision.workflow_key is not WorkflowKey.ACTIVITY_QUERY:
+        return
+
+    today = today_for(timezone_name)
+    start_date, end_date, date_range_label = resolve_labour_date_range(
+        event.fields.get("date_range"), today=today
+    )
+    results = await activity_search_service.search(
+        organization_id=actor.organization_id,
+        project_id=event.project_id,
+        site_id=event.site_id,
+        start_date=start_date,
+        end_date=end_date,
+        work_type=event.fields.get("work_type"),
+    )
+    results["date_range_label"] = date_range_label
+    event.fields["activity_search_results"] = results
+
+
 async def _seed_worker_candidates(
     event: CanonicalEventV2,
     decision: PlannerDecisionV2,
@@ -1249,6 +1286,7 @@ async def process_inbound_message(
     vendor_query: VendorQueryService | None = None,
     expense_query_service: ExpenseQueryService | None = None,
     activity_query: ActivityQueryService | None = None,
+    activity_search_service: ActivitySearchService | None = None,
     semantic_hint: str | None = None,
     direction_hint: str | None = None,
     pending_report_store: PendingReportStore | None = None,
@@ -1711,8 +1749,9 @@ async def process_inbound_message(
                                 correlation_id,
                                 exc_info=True,
                             )
-                    # Run all 8 seed functions in parallel — each targets a
+                    # Run all 10 seed functions in parallel — each targets a
                     # different table and is fully independent of the others.
+                    timezone_name = resolved.timezone if resolved else None
                     await asyncio.gather(
                         _seed_account_candidates(
                             canonical_event, planner_decision, money_account_query, actor
@@ -1747,6 +1786,29 @@ async def process_inbound_message(
                             remembered_activity_id=(
                                 memory_pack.current_activity_id if memory_pack else None
                             ),
+                        ),
+                        # LABOUR_QUERY was defined but never wired into this
+                        # gather -- every attendance question silently
+                        # answered "no attendance recorded" regardless of
+                        # what was actually logged, since generate_labour_
+                        # query_reply reads collected_fields['labour_results']
+                        # and nothing ever populated it. Fixed alongside #17
+                        # Search/Ask Mesiri, which follows this exact
+                        # seed-before-graph pattern and would have inherited
+                        # the same silent-no-op bug if copied uncorrected.
+                        _seed_labour_query(
+                            canonical_event,
+                            planner_decision,
+                            labour_query_service,
+                            actor,
+                            timezone_name,
+                        ),
+                        _seed_activity_search(
+                            canonical_event,
+                            planner_decision,
+                            activity_search_service,
+                            actor,
+                            timezone_name,
                         ),
                     )
                     # Synchronous — not a coroutine, runs after the gather.
