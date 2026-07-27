@@ -71,7 +71,8 @@ _EXTRACTION_PROMPT = (
     '"Malayalam", "English"), '
     '"semantic_type" (expense|equipment_usage|material_update|labour_update|'
     "general_site_update|general_question|whoami_question|inventory_query|"
-    "labour_query|finance_query|transfer|petty_cash|reversal|account_admin|unknown), "
+    "labour_query|activity_query|finance_query|transfer|petty_cash|reversal|account_admin|"
+    "unknown), "
     '"fields" (object, values in English except proper nouns/names -- see '
     "per-type rules below for how to handle names), "
     '"missing_fields" (array), '
@@ -180,6 +181,17 @@ _EXTRACTION_PROMPT = (
     'report. "14 workers today" is a labour_update (recording who worked); '
     '"how many workers today?" is a labour_query (asking). Getting this backwards '
     "would record workers instead of counting them.\n"
+    "- activity_query: date_range, project_name, work_type. Use this type for QUESTIONS "
+    'about progress already logged or open site issues (e.g. "what did I log today?", '
+    '"what happened on site X yesterday?", "show today\'s site log", "any open issues?", '
+    '"what\'s blocking us on site Y?"). date_range is exactly one of "today", "this_week", '
+    '"this_month" if a period is stated or implied; omit if none is. work_type narrows to '
+    'one kind of work when asked (e.g. "any plastering logged today?" -> work_type '
+    '"plastering"); omit for everything. CRITICAL: this is a question ABOUT existing '
+    'progress/issue records, never a new report. "180 sqm plastering done" is a '
+    'general_site_update (recording work); "what did I log today?" is an activity_query '
+    "(asking). Getting this backwards would try to record a report instead of answering "
+    "a question.\n"
     "- finance_query: query_kind, account_name, category_name, date_range, missing_receipts, "
     "project_name. "
     'query_kind MUST be exactly "balance" or "expenses" -- never any other word. '

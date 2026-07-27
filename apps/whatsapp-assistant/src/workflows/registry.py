@@ -18,6 +18,7 @@ from mesiri_contracts.assistant.planner_decision import WorkflowKey
 from .account_admin.graph import build_account_admin_graph
 from .account_balance_query.graph import build_account_balance_query_graph
 from .activity_continuation.graph import build_activity_continuation_graph
+from .activity_query.graph import build_activity_query_graph
 from .expense_capture.graph import build_expense_capture_graph
 from .expense_query.graph import build_expense_query_graph
 from .labour_query.graph import build_labour_query_graph
@@ -174,6 +175,12 @@ _DEFINITIONS: dict[WorkflowKey, WorkflowDefinition] = dict(
             # Never produces a DraftActionV2. Writes the Worker Register
             # directly inside the node (via a callable seeded by the caller),
             # which is intentional: the user's selection IS the confirmation.
+            is_informational=True,
+        ),
+        _define(
+            WorkflowKey.ACTIVITY_QUERY,
+            build_activity_query_graph,
+            WorkflowCategory.PROGRESS,
             is_informational=True,
         ),
     )

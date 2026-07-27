@@ -1,0 +1,184 @@
+"""Progress/activity read service for the activity.query workflow (#17
+Search / Ask Mesiri).
+
+Same shape and justification as runtime/labour_query_service.py: a plain
+async method the assistant can call, reading already-saved activities and
+open site issues so a node never queries a repository itself (see
+workflows/runtime.py). Never opens a write transaction.
+
+Answers "what did I log today?", "what happened on site X yesterday?", "any
+open issues on site Y?" -- the questions a supervisor asks about work
+already recorded, complementing labour_query (attendance) and expense_query
+(spending) for the Daily Reporting module's own records.
+
+**Scope is not optional.** Every read is filtered by organization, and by
+the caller's current project/site the same way labour_query is -- a search
+that leaked across projects would leak what is happening on someone else's
+site.
+
+Open issues are NOT date-scoped: a blocker raised three days ago that is
+still open is still relevant today, unlike an activity log entry which is
+inherently a record of a specific day.
+"""
+
+from __future__ import annotations
+
+import datetime
+import uuid
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from mesiri.infrastructure.postgres.database import PostgresDatabase
+
+#: Individual rows fetched per category. The reply node further caps what it
+#: displays (_MAX_ENTRIES_SHOWN); this is the ceiling on what is even read
+#: from the database for one answer.
+_MAX_ROWS = 20
+
+
+class ActivitySearchService:
+    def __init__(self, db: PostgresDatabase) -> None:
+        self._db = db
+
+    async def search(
+        self,
+        *,
+        organization_id: str,
+        project_id: str | None,
+        site_id: str | None,
+        start_date: datetime.date,
+        end_date: datetime.date,
+        work_type: str | None = None,
+    ) -> dict[str, Any]:
+        """Activities logged over [start_date, end_date] plus currently open
+        site issues in scope.
+
+        Returns a plain dict rather than a domain object because the only
+        consumer is the reply node, which formats it -- the same choice
+        labour_query's seeding makes.
+        """
+        import sqlalchemy as sa
+
+        try:
+            org_id = uuid.UUID(organization_id)
+        except (TypeError, ValueError):
+            return _empty_results()
+
+        proj_uuid: uuid.UUID | None = None
+        if project_id:
+            try:
+                proj_uuid = uuid.UUID(project_id)
+            except (TypeError, ValueError):
+                proj_uuid = None
+        site_uuid: uuid.UUID | None = None
+        if site_id:
+            try:
+                site_uuid = uuid.UUID(site_id)
+            except (TypeError, ValueError):
+                site_uuid = None
+
+        activities = sa.table(
+            "activities",
+            sa.column("id"),
+            sa.column("organization_id"),
+            sa.column("project_id"),
+            sa.column("site_id"),
+            sa.column("work_type"),
+            sa.column("narrative"),
+            sa.column("status"),
+            sa.column("activity_date"),
+            sa.column("deleted_at"),
+            sa.column("updated_at"),
+        )
+        site_issues = sa.table(
+            "site_issues",
+            sa.column("id"),
+            sa.column("organization_id"),
+            sa.column("project_id"),
+            sa.column("site_id"),
+            sa.column("issue_type"),
+            sa.column("severity"),
+            sa.column("narrative"),
+            sa.column("status"),
+            sa.column("occurred_at"),
+        )
+
+        activity_conditions = [
+            activities.c.organization_id == org_id,
+            activities.c.activity_date >= start_date,
+            activities.c.activity_date <= end_date,
+            activities.c.deleted_at.is_(None),
+        ]
+        issue_conditions = [
+            site_issues.c.organization_id == org_id,
+            site_issues.c.status == "OPEN",
+        ]
+        # A null project/site on the caller's context means "don't narrow",
+        # not "match rows with a null column" -- mirrors labour_query.
+        if proj_uuid is not None:
+            activity_conditions.append(activities.c.project_id == proj_uuid)
+            issue_conditions.append(site_issues.c.project_id == proj_uuid)
+        if site_uuid is not None:
+            activity_conditions.append(activities.c.site_id == site_uuid)
+            issue_conditions.append(site_issues.c.site_id == site_uuid)
+        if work_type:
+            activity_conditions.append(activities.c.work_type.ilike(f"%{work_type.strip()}%"))
+
+        activity_query = (
+            sa.select(
+                activities.c.work_type,
+                activities.c.narrative,
+                activities.c.status,
+                activities.c.activity_date,
+            )
+            .where(*activity_conditions)
+            .order_by(activities.c.activity_date.desc(), activities.c.updated_at.desc())
+            .limit(_MAX_ROWS)
+        )
+        activity_count_query = sa.select(sa.func.count()).select_from(
+            sa.select(activities.c.id).where(*activity_conditions).subquery()
+        )
+        issue_query = (
+            sa.select(
+                site_issues.c.issue_type,
+                site_issues.c.severity,
+                site_issues.c.narrative,
+            )
+            .where(*issue_conditions)
+            .order_by(site_issues.c.occurred_at.desc())
+            .limit(_MAX_ROWS)
+        )
+        issue_count_query = sa.select(sa.func.count()).select_from(
+            sa.select(site_issues.c.id).where(*issue_conditions).subquery()
+        )
+
+        async with self._db.transaction() as conn:
+            activity_rows = (await conn.execute(activity_query)).mappings().all()
+            activity_total = (await conn.execute(activity_count_query)).scalar_one()
+            issue_rows = (await conn.execute(issue_query)).mappings().all()
+            issue_total = (await conn.execute(issue_count_query)).scalar_one()
+
+        return {
+            "activities": [
+                {
+                    "work_type": row["work_type"],
+                    "narrative": row["narrative"],
+                    "status": row["status"],
+                }
+                for row in activity_rows
+            ],
+            "activity_count": int(activity_total),
+            "open_issues": [
+                {
+                    "issue_type": row["issue_type"],
+                    "severity": row["severity"],
+                    "narrative": row["narrative"],
+                }
+                for row in issue_rows
+            ],
+            "open_issue_count": int(issue_total),
+        }
+
+
+def _empty_results() -> dict[str, Any]:
+    return {"activities": [], "activity_count": 0, "open_issues": [], "open_issue_count": 0}

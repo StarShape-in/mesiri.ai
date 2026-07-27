@@ -504,6 +504,13 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from runtime.labour_query_service import LabourQueryService
 
     labour_query_service = LabourQueryService(material_db)
+    # Read-only progress/activity + open-issue lookups for the activity.query
+    # workflow (#17 Search / Ask Mesiri -- "what did I log today?"). Reuses
+    # the same pool; never opens a write transaction. See
+    # runtime/activity_search_service.py.
+    from runtime.activity_search_service import ActivitySearchService
+
+    activity_search_service = ActivitySearchService(material_db)
     # Flags a vendor name that doesn't match any existing active vendor, fed
     # into expense_capture's "create this vendor?" slot -- same reasoning and
     # same material_db as catalog_query above. See runtime/vendor_query.py.
@@ -1065,6 +1072,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
                 workforce_query=workforce_query,
                 activity_query=activity_query,
                 labour_query_service=labour_query_service,
+                activity_search_service=activity_search_service,
                 vendor_query=vendor_query,
                 expense_query_service=expense_query_service,
                 pending_report_store=pending_report_store,
@@ -1428,6 +1436,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             workforce_query=workforce_query,
             activity_query=activity_query,
             labour_query_service=labour_query_service,
+            activity_search_service=activity_search_service,
             vendor_query=vendor_query,
             expense_query_service=expense_query_service,
             pending_report_store=pending_report_store,
