@@ -916,207 +916,214 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             await message_logger.mark_completed(correlation_id=message.correlation_id)
             return
 
-        # A tap on the material picker sent by the material-resolution gate
-        # (runtime/inbound_journey.py, ambiguous/unmatched material name) --
-        # resumes with material_id filled in and re-runs the remaining gates
-        # (unit, then project) rather than assuming those are settled.
-        material_reply = await resume_pending_report_with_material(
-            message,
-            ctx.user_id,
-            pending_report_store=pending_report_store,
-            catalog_query=catalog_query,
-            planner=planner,
-            workflow_runtime=workflow_runtime,
-            actor=ctx,
-            inventory_query=inventory_query,
-            message_logger=message_logger,
-        )
-        timer.lap("resume_material")
-        if material_reply is not None:
-            await send_reply_spec(
-                material_reply,
-                wa_id,
-                send_text=sender.send_text,
-                send_list=sender.send_list,
-                send_button=sender.send_button,
+        # Phase 6 perf: all of the resume_pending_report_with_* checks below can
+        # only ever return something when the incoming message is a button/list tap
+        # (InputModality.INTERACTIVE). For text and voice messages they always
+        # return None, so we skip them entirely — eliminating up to 8 sequential
+        # DB reads (pending_report_store lookups) from every normal message.
+        if message.modality is InputModality.INTERACTIVE:
+            # A tap on the material picker sent by the material-resolution gate
+            # (runtime/inbound_journey.py, ambiguous/unmatched material name) --
+            # resumes with material_id filled in and re-runs the remaining gates
+            # (unit, then project) rather than assuming those are settled.
+            material_reply = await resume_pending_report_with_material(
+                message,
+                ctx.user_id,
+                pending_report_store=pending_report_store,
+                catalog_query=catalog_query,
+                planner=planner,
+                workflow_runtime=workflow_runtime,
+                actor=ctx,
+                inventory_query=inventory_query,
+                message_logger=message_logger,
             )
-            await message_logger.log_reply(
-                correlation_id=message.correlation_id, reply=material_reply.text
-            )
-            return
+            timer.lap("resume_material")
+            if material_reply is not None:
+                await send_reply_spec(
+                    material_reply,
+                    wa_id,
+                    send_text=sender.send_text,
+                    send_list=sender.send_list,
+                    send_button=sender.send_button,
+                )
+                await message_logger.log_reply(
+                    correlation_id=message.correlation_id, reply=material_reply.text
+                )
+                return
 
-        # A Yes/No tap on the "add this material to the catalog?" offer sent
-        # when a reported name matched nothing and the sender's role is
-        # allowed to create one (STA-139). Checked before the Stock Unit
-        # mismatch resume below -- distinct row-id prefixes, but these two
-        # answer different questions and must stay separately dispatched.
-        material_create_reply = await resume_pending_report_with_material_create(
-            message,
-            ctx.user_id,
-            pending_report_store=pending_report_store,
-            catalog_query=catalog_query,
-            planner=planner,
-            workflow_runtime=workflow_runtime,
-            actor=ctx,
-            inventory_query=inventory_query,
-            message_logger=message_logger,
-        )
-        timer.lap("resume_material_create")
-        if material_create_reply is not None:
-            await send_reply_spec(
-                material_create_reply,
-                wa_id,
-                send_text=sender.send_text,
-                send_list=sender.send_list,
-                send_button=sender.send_button,
+            # A Yes/No tap on the "add this material to the catalog?" offer sent
+            # when a reported name matched nothing and the sender's role is
+            # allowed to create one (STA-139). Checked before the Stock Unit
+            # mismatch resume below -- distinct row-id prefixes, but these two
+            # answer different questions and must stay separately dispatched.
+            material_create_reply = await resume_pending_report_with_material_create(
+                message,
+                ctx.user_id,
+                pending_report_store=pending_report_store,
+                catalog_query=catalog_query,
+                planner=planner,
+                workflow_runtime=workflow_runtime,
+                actor=ctx,
+                inventory_query=inventory_query,
+                message_logger=message_logger,
             )
-            await message_logger.log_reply(
-                correlation_id=message.correlation_id, reply=material_create_reply.text
-            )
-            return
+            timer.lap("resume_material_create")
+            if material_create_reply is not None:
+                await send_reply_spec(
+                    material_create_reply,
+                    wa_id,
+                    send_text=sender.send_text,
+                    send_list=sender.send_list,
+                    send_button=sender.send_button,
+                )
+                await message_logger.log_reply(
+                    correlation_id=message.correlation_id, reply=material_create_reply.text
+                )
+                return
 
-        # A tap on the unit picker shown when a brand-new material's Stock
-        # Unit couldn't be inferred from the report's own words -- creates
-        # the catalog entry and continues the held report.
-        material_unit_reply = await resume_pending_report_with_material_unit_choice(
-            message,
-            ctx.user_id,
-            pending_report_store=pending_report_store,
-            catalog_query=catalog_query,
-            planner=planner,
-            workflow_runtime=workflow_runtime,
-            actor=ctx,
-            inventory_query=inventory_query,
-            message_logger=message_logger,
-        )
-        timer.lap("resume_material_unit_choice")
-        if material_unit_reply is not None:
-            await send_reply_spec(
-                material_unit_reply,
-                wa_id,
-                send_text=sender.send_text,
-                send_list=sender.send_list,
-                send_button=sender.send_button,
+            # A tap on the unit picker shown when a brand-new material's Stock
+            # Unit couldn't be inferred from the report's own words -- creates
+            # the catalog entry and continues the held report.
+            material_unit_reply = await resume_pending_report_with_material_unit_choice(
+                message,
+                ctx.user_id,
+                pending_report_store=pending_report_store,
+                catalog_query=catalog_query,
+                planner=planner,
+                workflow_runtime=workflow_runtime,
+                actor=ctx,
+                inventory_query=inventory_query,
+                message_logger=message_logger,
             )
-            await message_logger.log_reply(
-                correlation_id=message.correlation_id, reply=material_unit_reply.text
-            )
-            return
+            timer.lap("resume_material_unit_choice")
+            if material_unit_reply is not None:
+                await send_reply_spec(
+                    material_unit_reply,
+                    wa_id,
+                    send_text=sender.send_text,
+                    send_list=sender.send_list,
+                    send_button=sender.send_button,
+                )
+                await message_logger.log_reply(
+                    correlation_id=message.correlation_id, reply=material_unit_reply.text
+                )
+                return
 
-        # A Yes/No tap on the Stock Unit mismatch clarification -- resumes
-        # with unit_id filled in (or tells the sender to resend on "No") and
-        # re-runs the project gate before planner/workflow.
-        unit_reply = await resume_pending_report_with_unit(
-            message,
-            ctx.user_id,
-            pending_report_store=pending_report_store,
-            catalog_query=catalog_query,
-            planner=planner,
-            workflow_runtime=workflow_runtime,
-            actor=ctx,
-            inventory_query=inventory_query,
-            message_logger=message_logger,
-        )
-        timer.lap("resume_unit")
-        if unit_reply is not None:
-            await send_reply_spec(
-                unit_reply,
-                wa_id,
-                send_text=sender.send_text,
-                send_list=sender.send_list,
-                send_button=sender.send_button,
+            # A Yes/No tap on the Stock Unit mismatch clarification -- resumes
+            # with unit_id filled in (or tells the sender to resend on "No") and
+            # re-runs the project gate before planner/workflow.
+            unit_reply = await resume_pending_report_with_unit(
+                message,
+                ctx.user_id,
+                pending_report_store=pending_report_store,
+                catalog_query=catalog_query,
+                planner=planner,
+                workflow_runtime=workflow_runtime,
+                actor=ctx,
+                inventory_query=inventory_query,
+                message_logger=message_logger,
             )
-            await message_logger.log_reply(
-                correlation_id=message.correlation_id, reply=unit_reply.text
-            )
-            return
+            timer.lap("resume_unit")
+            if unit_reply is not None:
+                await send_reply_spec(
+                    unit_reply,
+                    wa_id,
+                    send_text=sender.send_text,
+                    send_list=sender.send_list,
+                    send_button=sender.send_button,
+                )
+                await message_logger.log_reply(
+                    correlation_id=message.correlation_id, reply=unit_reply.text
+                )
+                return
 
-        # A tap on one of the three buttons sent by the stock sufficiency
-        # gate (runtime/inbound_journey.py, usage quantity greater than what's
-        # in stock) -- resumes with the report capped/switched-to-arrival/
-        # cancelled per the tap, same principle as the other interactive fast
-        # paths above.
-        stock_reply = await resume_pending_report_with_stock_choice(
-            message,
-            ctx.user_id,
-            pending_report_store=pending_report_store,
-            planner=planner,
-            workflow_runtime=workflow_runtime,
-            inventory_query=inventory_query,
-            message_logger=message_logger,
-        )
-        timer.lap("resume_stock_choice")
-        if stock_reply is not None:
-            await send_reply_spec(
-                stock_reply,
-                wa_id,
-                send_text=sender.send_text,
-                send_list=sender.send_list,
-                send_button=sender.send_button,
+            # A tap on one of the three buttons sent by the stock sufficiency
+            # gate (runtime/inbound_journey.py, usage quantity greater than what's
+            # in stock) -- resumes with the report capped/switched-to-arrival/
+            # cancelled per the tap, same principle as the other interactive fast
+            # paths above.
+            stock_reply = await resume_pending_report_with_stock_choice(
+                message,
+                ctx.user_id,
+                pending_report_store=pending_report_store,
+                planner=planner,
+                workflow_runtime=workflow_runtime,
+                inventory_query=inventory_query,
+                message_logger=message_logger,
             )
-            await message_logger.log_reply(
-                correlation_id=message.correlation_id, reply=stock_reply.text
-            )
-            return
+            timer.lap("resume_stock_choice")
+            if stock_reply is not None:
+                await send_reply_spec(
+                    stock_reply,
+                    wa_id,
+                    send_text=sender.send_text,
+                    send_list=sender.send_list,
+                    send_button=sender.send_button,
+                )
+                await message_logger.log_reply(
+                    correlation_id=message.correlation_id, reply=stock_reply.text
+                )
+                return
 
-        # A tap on the project-picker list sent by the project-selection gate
-        # (runtime/inbound_journey.py, when a report was otherwise complete
-        # but no project could be resolved) -- resumes the held report with
-        # the chosen project_id and runs planner/workflow directly, same
-        # principle as the other interactive fast paths above.
-        project_reply = await resume_pending_report_with_project(
-            message,
-            ctx.user_id,
-            pending_report_store=pending_report_store,
-            planner=planner,
-            workflow_runtime=workflow_runtime,
-            actor=ctx,
-            inventory_query=inventory_query,
-            message_logger=message_logger,
-        )
-        timer.lap("resume_project")
-        if project_reply is not None:
-            await send_reply_spec(
-                project_reply,
-                wa_id,
-                send_text=sender.send_text,
-                send_list=sender.send_list,
-                send_button=sender.send_button,
+            # A tap on the project-picker list sent by the project-selection gate
+            # (runtime/inbound_journey.py, when a report was otherwise complete
+            # but no project could be resolved) -- resumes the held report with
+            # the chosen project_id and runs planner/workflow directly, same
+            # principle as the other interactive fast paths above.
+            project_reply = await resume_pending_report_with_project(
+                message,
+                ctx.user_id,
+                pending_report_store=pending_report_store,
+                planner=planner,
+                workflow_runtime=workflow_runtime,
+                actor=ctx,
+                inventory_query=inventory_query,
+                message_logger=message_logger,
             )
-            await message_logger.log_reply(
-                correlation_id=message.correlation_id, reply=project_reply.text
-            )
-            return
+            timer.lap("resume_project")
+            if project_reply is not None:
+                await send_reply_spec(
+                    project_reply,
+                    wa_id,
+                    send_text=sender.send_text,
+                    send_list=sender.send_list,
+                    send_button=sender.send_button,
+                )
+                await message_logger.log_reply(
+                    correlation_id=message.correlation_id, reply=project_reply.text
+                )
+                return
 
-        # A tap on the site-picker list sent by the site-selection gate
-        # (runtime/inbound_journey.py, once project is settled but the
-        # project has more than one site) -- resumes the held report/query
-        # with the chosen site_id (or None for "All Sites Combined") and
-        # runs planner/workflow directly, same principle as the other
-        # interactive fast paths above.
-        site_reply = await resume_pending_report_with_site(
-            message,
-            ctx.user_id,
-            pending_report_store=pending_report_store,
-            planner=planner,
-            workflow_runtime=workflow_runtime,
-            actor=ctx,
-            inventory_query=inventory_query,
-            message_logger=message_logger,
-        )
-        timer.lap("resume_site")
-        if site_reply is not None:
-            await send_reply_spec(
-                site_reply,
-                wa_id,
-                send_text=sender.send_text,
-                send_list=sender.send_list,
-                send_button=sender.send_button,
+            # A tap on the site-picker list sent by the site-selection gate
+            # (runtime/inbound_journey.py, once project is settled but the
+            # project has more than one site) -- resumes the held report/query
+            # with the chosen site_id (or None for "All Sites Combined") and
+            # runs planner/workflow directly, same principle as the other
+            # interactive fast paths above.
+            site_reply = await resume_pending_report_with_site(
+                message,
+                ctx.user_id,
+                pending_report_store=pending_report_store,
+                planner=planner,
+                workflow_runtime=workflow_runtime,
+                actor=ctx,
+                inventory_query=inventory_query,
+                message_logger=message_logger,
             )
-            await message_logger.log_reply(
-                correlation_id=message.correlation_id, reply=site_reply.text
-            )
-            return
+            timer.lap("resume_site")
+            if site_reply is not None:
+                await send_reply_spec(
+                    site_reply,
+                    wa_id,
+                    send_text=sender.send_text,
+                    send_list=sender.send_list,
+                    send_button=sender.send_button,
+                )
+                await message_logger.log_reply(
+                    correlation_id=message.correlation_id, reply=site_reply.text
+                )
+                return
+
 
         # A genuinely new image (not a tap answering the picker above) is
         # held while we ask "what is this photo for?" instead of running
