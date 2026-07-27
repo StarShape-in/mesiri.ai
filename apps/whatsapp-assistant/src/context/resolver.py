@@ -13,6 +13,7 @@ workflow, persists a business record, or converses with the user (all M5+).
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
 from mesiri.observability import tracing
@@ -141,19 +142,33 @@ class ContextResolver:
         context_project_id: str | None,
         context_site_id: str | None,
     ) -> tuple[str, str, str | None, str | None]:
-        org = await self._d.bridge.canonical_organization_id(context_organization_id)
+        # org and user are always required and fully independent reads.
+        org, user = await asyncio.gather(
+            self._d.bridge.canonical_organization_id(context_organization_id),
+            self._d.bridge.canonical_user_id(context_user_id),
+        )
         if org is None:
             raise errors.canonical_identity_not_mapped("organization", context_organization_id)
-        user = await self._d.bridge.canonical_user_id(context_user_id)
         if user is None:
             raise errors.canonical_identity_not_mapped("user", context_user_id)
+
         project: str | None = None
         site: str | None = None
-        if context_project_id is not None:
+        if context_project_id is not None and context_site_id is not None:
+            # Both present: fetch in parallel.
+            project, site = await asyncio.gather(
+                self._d.bridge.canonical_project_id(context_project_id),
+                self._d.bridge.canonical_site_id(context_site_id),
+            )
+            if project is None:
+                raise errors.canonical_identity_not_mapped("project", context_project_id)
+            if site is None:
+                raise errors.canonical_identity_not_mapped("site", context_site_id)
+        elif context_project_id is not None:
             project = await self._d.bridge.canonical_project_id(context_project_id)
             if project is None:
                 raise errors.canonical_identity_not_mapped("project", context_project_id)
-        if context_site_id is not None:
+        elif context_site_id is not None:
             site = await self._d.bridge.canonical_site_id(context_site_id)
             if site is None:
                 raise errors.canonical_identity_not_mapped("site", context_site_id)
@@ -170,7 +185,9 @@ class ContextResolver:
         candidates: list[ContextCandidate] = []
         org, user = principal.organization_id, principal.user_id
 
-        # 1. Explicit references in the current message (highest precedence).
+        # 1. Explicit references (highest precedence — must resolve first before
+        # the parallel gather below, so short-circuit can still save the 4 other
+        # reads if an explicit tap already gave us a definitive answer).
         project_ref, site_ref = extract_references(understanding)
         explicit = await self._explicit_candidate(org, user, project_ref, site_ref)
         if explicit is not None:
@@ -179,48 +196,84 @@ class ContextResolver:
         else:
             _log.info("context.explicit_context_evaluated", resolved=False)
 
-        # 2. Reply context.
-        if message.reply_context:
-            pair = await self._d.reply_context.context_for_reply(
-                organization_id=org,
-                replied_to_message_id=message.reply_context.replied_to_message_id,
+        # 2+3+4+5: The remaining four context sources are fully independent
+        # reads — none depends on another's result. Run them concurrently.
+        # _get_active_candidate returns (was_present, candidate) to preserve
+        # the "present but stale/unauthorized" distinction in logging.
+        reply_cand, workflow_cand, active_result, default_cand = await asyncio.gather(
+            self._get_reply_candidate(
+                org, user, message.reply_context.replied_to_message_id
             )
-            cand = await self._validated_candidate(org, user, ContextSource.REPLY_CONTEXT, pair)
-            if cand is not None:
-                candidates.append(cand)
-            _log.info("context.reply_context_evaluated", resolved=cand is not None)
+            if message.reply_context
+            else self._skip_none(),
+            self._get_workflow_candidate(org, user),
+            self._get_active_candidate(org, user),
+            self._default_candidate(org, user),
+        )
+        active_present, active_cand = active_result
 
-        # 3. Workflow context (behind the M5 port).
+        if message.reply_context:
+            if reply_cand is not None:
+                candidates.append(reply_cand)
+            _log.info("context.reply_context_evaluated", resolved=reply_cand is not None)
+
+        if workflow_cand is not None:
+            candidates.append(workflow_cand)
+        _log.info("context.workflow_context_evaluated", resolved=workflow_cand is not None)
+
+        if active_cand is not None:
+            candidates.append(active_cand)
+        _log.info(
+            "context.active_context_evaluated",
+            present=active_present,
+            resolved=active_cand is not None,
+        )
+
+        if default_cand is not None:
+            candidates.append(default_cand)
+        _log.info("context.default_context_evaluated", resolved=default_cand is not None)
+
+        return candidates
+
+    # -- Private coroutine helpers for the parallel gather above ---------------
+
+    @staticmethod
+    async def _skip_none() -> None:
+        """No-op placeholder used in asyncio.gather() when an optional
+        context source (reply) does not apply to the current message."""
+        return None
+
+    async def _get_reply_candidate(
+        self, org: str, user: str, replied_to_message_id: str
+    ) -> ContextCandidate | None:
+        pair = await self._d.reply_context.context_for_reply(
+            organization_id=org,
+            replied_to_message_id=replied_to_message_id,
+        )
+        return await self._validated_candidate(org, user, ContextSource.REPLY_CONTEXT, pair)
+
+    async def _get_workflow_candidate(
+        self, org: str, user: str
+    ) -> ContextCandidate | None:
         pair = await self._d.workflow_context.active_workflow_context(
             organization_id=org, user_id=user
         )
-        cand = await self._validated_candidate(org, user, ContextSource.WORKFLOW_CONTEXT, pair)
-        if cand is not None:
-            candidates.append(cand)
-        _log.info("context.workflow_context_evaluated", resolved=cand is not None)
+        return await self._validated_candidate(org, user, ContextSource.WORKFLOW_CONTEXT, pair)
 
-        # 4. Active context (Redis) — revalidated against Postgres authorization.
-        active = await self._d.active_context.get_active_context(organization_id=org, user_id=user)
-        cand = None
-        if active is not None:
-            cand = await self._validated_candidate(
-                org, user, ContextSource.ACTIVE_CONTEXT, (active.project_id, active.site_id)
-            )
-            if cand is not None:
-                candidates.append(cand)
-        _log.info(
-            "context.active_context_evaluated",
-            present=active is not None,
-            resolved=cand is not None,
+    async def _get_active_candidate(
+        self, org: str, user: str
+    ) -> tuple[bool, ContextCandidate | None]:
+        """Returns (was_present, candidate) so the caller can log `present`
+        accurately even when the active-context entry is stale/unauthorized."""
+        active = await self._d.active_context.get_active_context(
+            organization_id=org, user_id=user
         )
-
-        # 5. User default assignment (Postgres) — or single-project convenience.
-        default = await self._default_candidate(org, user)
-        if default is not None:
-            candidates.append(default)
-        _log.info("context.default_context_evaluated", resolved=default is not None)
-
-        return candidates
+        if active is None:
+            return False, None
+        cand = await self._validated_candidate(
+            org, user, ContextSource.ACTIVE_CONTEXT, (active.project_id, active.site_id)
+        )
+        return True, cand
 
     # Name-reference resolution failures that must degrade gracefully rather
     # than kill context resolution outright -- see _explicit_candidate.
