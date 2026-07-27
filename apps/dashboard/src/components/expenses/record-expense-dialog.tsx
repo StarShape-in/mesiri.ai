@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/select'
 import type { AppScope } from '@/lib/scope-types'
 import { useToast } from '@/components/ui/toast-notification'
+import { toLocalISODate } from '@/lib/utils'
 import {
   recordExpenseApi,
   fetchCategoriesApi,
@@ -48,7 +49,7 @@ export function RecordExpenseDialog({
   const [description, setDescription] = React.useState('')
   const [vendor, setVendor] = React.useState('')
   const [vendors, setVendors] = React.useState<VendorItem[]>([])
-  const [occurredDate, setOccurredDate] = React.useState(() => new Date().toISOString().split('T')[0])
+  const [occurredDate, setOccurredDate] = React.useState(() => toLocalISODate())
   const [paymentStatus, setPaymentStatus] = React.useState<'unpaid' | 'paid'>('paid')
   const [paymentMethod, setPaymentMethod] = React.useState('bank_transfer')
   const [submitting, setSubmitting] = React.useState(false)

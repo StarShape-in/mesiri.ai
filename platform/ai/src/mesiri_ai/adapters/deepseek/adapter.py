@@ -54,8 +54,9 @@ _EXTRACTION_PROMPT = (
     '"detected_language" (the source language\'s common English name, e.g. '
     '"Malayalam", "English"), '
     '"semantic_type" (one of: expense, equipment_usage, material_update, '
-    "labour_update, general_site_update, general_question, inventory_query, "
-    "finance_query, transfer, petty_cash, reversal, account_admin, unknown), "
+    "labour_update, general_site_update, general_question, whoami_question, "
+    "inventory_query, labour_query, finance_query, transfer, petty_cash, "
+    "reversal, account_admin, unknown), "
     '"fields" (object of extracted values, in English except proper nouns/names), '
     '"missing_fields" (array of expected-but-absent keys), '
     '"field_confidences" (object mapping each field to 0..1). '
@@ -103,6 +104,7 @@ _EXTRACTION_PROMPT = (
     '(including a bare quantity with no other context, e.g. "180 sqm"). Never '
     "for problems/delays/blockers.\n"
     "- general_question: question, topic\n"
+    "- whoami_question: question\n"
     "- inventory_query: material_name, project_name (omit material_name if asking about all "
     'materials, e.g. "show inventory"). Use this type for questions about how '
     'much of a material is currently in stock (e.g. "how much cement is left?", '

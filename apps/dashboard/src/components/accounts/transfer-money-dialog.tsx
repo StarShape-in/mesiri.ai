@@ -34,6 +34,7 @@ interface TransferMoneyDialogProps {
 }
 
 import { transferMoneyApi } from '@/lib/api'
+import { toLocalISODate } from '@/lib/utils'
 
 export function TransferMoneyDialog({
   open,
@@ -45,7 +46,7 @@ export function TransferMoneyDialog({
   const [toAccountId, setToAccountId] = React.useState('')
   const [amount, setAmount] = React.useState('')
   const [description, setDescription] = React.useState('')
-  const [transferDate, setTransferDate] = React.useState(() => new Date().toISOString().split('T')[0])
+  const [transferDate, setTransferDate] = React.useState(() => toLocalISODate())
   const [submitting, setSubmitting] = React.useState(false)
 
   const activeAccounts = React.useMemo(() => {

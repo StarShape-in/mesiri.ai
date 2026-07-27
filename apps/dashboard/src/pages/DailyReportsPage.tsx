@@ -52,7 +52,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
-import { cn } from '@/lib/utils'
+import { cn, toLocalISODate } from '@/lib/utils'
 
 // ─── Weather Badge ────────────────────────────────────────────────────────────
 
@@ -299,12 +299,12 @@ function DPRCalendarView({
       reports: DailyReportSummary[]
     }> = []
 
-    const todayStr = new Date().toISOString().split('T')[0]
+    const todayStr = toLocalISODate()
 
     for (let i = firstDayOfWeek - 1; i >= 0; i--) {
       const day = daysInPrevMonth - i
       const d = new Date(year, month - 1, day)
-      const dateStr = d.toISOString().split('T')[0]
+      const dateStr = toLocalISODate(d)
       result.push({
         dateStr,
         dayNum: day,
@@ -330,7 +330,7 @@ function DPRCalendarView({
     const remaining = 35 - result.length > 0 ? 35 - result.length : 42 - result.length
     for (let day = 1; day <= remaining; day++) {
       const d = new Date(year, month + 1, day)
-      const dateStr = d.toISOString().split('T')[0]
+      const dateStr = toLocalISODate(d)
       result.push({
         dateStr,
         dayNum: day,
@@ -485,7 +485,7 @@ export default function DailyReportsPage() {
 
   // Create Modal state
   const [createDialogOpen, setCreateDialogOpen] = React.useState<boolean>(false)
-  const [draftDate, setDraftDate] = React.useState<string>(new Date().toISOString().split('T')[0])
+  const [draftDate, setDraftDate] = React.useState<string>(toLocalISODate())
 
   const handleDatePresetChange = (val: string) => {
     setDatePreset(val)
@@ -494,17 +494,17 @@ export default function DailyReportsPage() {
       setDateFrom('')
       setDateTo('')
     } else if (val === 'TODAY') {
-      const todayStr = now.toISOString().split('T')[0]
+      const todayStr = toLocalISODate(now)
       setDateFrom(todayStr)
       setDateTo(todayStr)
     } else if (val === 'THIS_WEEK') {
       const lastWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-      setDateFrom(lastWeek.toISOString().split('T')[0])
-      setDateTo(now.toISOString().split('T')[0])
+      setDateFrom(toLocalISODate(lastWeek))
+      setDateTo(toLocalISODate(now))
     } else if (val === 'THIS_MONTH') {
       const firstDay = new Date(now.getFullYear(), now.getMonth(), 1)
-      setDateFrom(firstDay.toISOString().split('T')[0])
-      setDateTo(now.toISOString().split('T')[0])
+      setDateFrom(toLocalISODate(firstDay))
+      setDateTo(toLocalISODate(now))
     }
   }
 
@@ -689,7 +689,7 @@ export default function DailyReportsPage() {
             size="sm"
             className="h-8 gap-1.5 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-2xs"
             onClick={() => {
-              setDraftDate(new Date().toISOString().split('T')[0])
+              setDraftDate(toLocalISODate())
               setCreateDialogOpen(true)
             }}
           >

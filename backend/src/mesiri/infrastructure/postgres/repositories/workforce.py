@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import datetime
 import uuid
+from decimal import Decimal
 from typing import Any
 
 import sqlalchemy as sa
@@ -82,16 +83,31 @@ _labour_attendance_attachments = sa.Table(
 )
 
 
-def _line_totals(lines: list[dict[str, Any]]) -> tuple[int, float]:
+def _line_totals(lines: list[dict[str, Any]]) -> tuple[int, Decimal]:
+    """Headcount and cost for one report's lines.
+
+    Decimal throughout, never float: `daily_wage` is Numeric(14, 2) and comes
+    back from the driver as a Decimal. Accumulating it in binary float made
+    3x1166.67 + 3x1166.67 + 7x820.10 land on 12740.720000000001, which pydantic
+    then re-widened via str() so the dashboard rendered the full 17-digit repr.
+    The three other implementations of this same total (the WhatsApp
+    confirmation, the labour query service, and the contract-level command)
+    are all Decimal-exact -- this one was the outlier, so the dashboard
+    disagreed with the confirmation message for the very same report.
+
+    A missing wage skips the line's cost rather than contributing zero, so a
+    partially-priced report understates cost instead of dragging an average
+    down to nothing.
+    """
     headcount = 0
-    cost = 0.0
+    cost = Decimal("0")
     for line in lines:
         count = int(line.get("headcount") or 1)
         headcount += count
         wage = line.get("daily_wage")
         if wage is not None:
-            cost += float(wage) * count
-    return headcount, cost
+            cost += Decimal(str(wage)) * count
+    return headcount, cost.quantize(Decimal("0.01"))
 
 
 class PostgresWorkforceReadRepository:

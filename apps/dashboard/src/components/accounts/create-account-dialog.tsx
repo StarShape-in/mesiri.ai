@@ -29,6 +29,7 @@ interface CreateAccountDialogProps {
 }
 
 import { createAccountApi, fetchUsers, type User as UserItem } from '@/lib/api'
+import { toLocalISODate } from '@/lib/utils'
 
 export function CreateAccountDialog({
   open,
@@ -105,7 +106,7 @@ export function CreateAccountDialog({
         site_name: scope.mode === 'site' ? scope.siteName : undefined,
         scope_level: scope.mode,
         status: 'active' as const,
-        created_at: new Date().toISOString().split('T')[0],
+        created_at: toLocalISODate(),
       }
 
       onAccountCreated?.(newEntry)

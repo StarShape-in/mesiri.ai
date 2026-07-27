@@ -38,7 +38,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Skeleton } from '@/components/ui/skeleton'
-import { cn } from '@/lib/utils'
+import { cn, toLocalISODate } from '@/lib/utils'
 
 // --- Status Badge ---
 
@@ -145,17 +145,17 @@ export default function ActivitiesPage() {
       setDateFrom('')
       setDateTo('')
     } else if (val === 'TODAY') {
-      const todayStr = now.toISOString().split('T')[0]
+      const todayStr = toLocalISODate(now)
       setDateFrom(todayStr)
       setDateTo(todayStr)
     } else if (val === 'THIS_WEEK') {
       const lastWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-      setDateFrom(lastWeek.toISOString().split('T')[0])
-      setDateTo(now.toISOString().split('T')[0])
+      setDateFrom(toLocalISODate(lastWeek))
+      setDateTo(toLocalISODate(now))
     } else if (val === 'THIS_MONTH') {
       const firstDay = new Date(now.getFullYear(), now.getMonth(), 1)
-      setDateFrom(firstDay.toISOString().split('T')[0])
-      setDateTo(now.toISOString().split('T')[0])
+      setDateFrom(toLocalISODate(firstDay))
+      setDateTo(toLocalISODate(now))
     }
   }
 

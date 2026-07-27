@@ -16,6 +16,7 @@ import {
   ChevronRight,
 } from 'lucide-react'
 import { useScope } from '@/lib/ScopeContext'
+import { toLocalISODate } from '@/lib/utils'
 import { KpiCard } from '@/components/ui/kpi-card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -76,13 +77,13 @@ export default function AttendancePage() {
       const now = new Date()
 
       if (dateFilter === 'TODAY') {
-        date_from = now.toISOString().split('T')[0]
+        date_from = toLocalISODate(now)
       } else if (dateFilter === 'THIS_WEEK') {
         const lastWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-        date_from = lastWeek.toISOString().split('T')[0]
+        date_from = toLocalISODate(lastWeek)
       } else if (dateFilter === 'THIS_MONTH') {
         const firstDay = new Date(now.getFullYear(), now.getMonth(), 1)
-        date_from = firstDay.toISOString().split('T')[0]
+        date_from = toLocalISODate(firstDay)
       }
 
       const res = await fetchAttendanceReportsApi({
@@ -181,7 +182,7 @@ export default function AttendancePage() {
     const encodedUri = encodeURI(csvContent)
     const link = document.createElement('a')
     link.setAttribute('href', encodedUri)
-    link.setAttribute('download', `Labour_Attendance_Reports_${new Date().toISOString().split('T')[0]}.csv`)
+    link.setAttribute('download', `Labour_Attendance_Reports_${toLocalISODate()}.csv`)
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)

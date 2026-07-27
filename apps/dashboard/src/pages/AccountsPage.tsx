@@ -73,6 +73,7 @@ type SortOrder = 'asc' | 'desc'
 
 import { fetchAccountsApi, deleteAccountApi } from '@/lib/api'
 import { useToast } from '@/components/ui/toast-notification'
+import { toLocalISODate } from '@/lib/utils'
 
 export default function AccountsPage() {
   const { scope } = useScope()
@@ -116,7 +117,7 @@ export default function AccountsPage() {
             site_id: a.site_id ? String(a.site_id) : undefined,
             scope_level: a.project_id ? (a.site_id ? 'site' : 'project') : 'portfolio',
             status: (a.status === 'active' || a.status === 'inactive') ? a.status : 'active',
-            created_at: a.opening_balance_date || new Date().toISOString().split('T')[0],
+            created_at: a.opening_balance_date || toLocalISODate(),
           }))
           setAccounts(mapped)
         }

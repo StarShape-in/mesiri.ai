@@ -131,7 +131,17 @@ export default function LabourOverviewPage() {
       map[date].headcount += r.total_headcount || 0
       map[date].cost += r.total_cost || 0
     }
-    return Object.values(map).slice(-7)
+    // Sort explicitly rather than relying on insertion order. `reports`
+    // arrives occurred_date DESC, so Object.values() was newest-first and
+    // `.slice(-7)` took the seven *oldest* days in the fetched window --
+    // with 100 reports loaded, a chart captioned "Last 7 Days" could be
+    // plotting three months ago, and today never appeared on it at all.
+    // Take the seven most recent, then flip to chronological so the x-axis
+    // reads left-to-right oldest-to-newest.
+    return Object.values(map)
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, 7)
+      .reverse()
   }, [reports])
 
   // Subcontractor Summary

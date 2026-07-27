@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from mesiri.authorization.context import AuthorizationContext
 from mesiri.domains.projects.router import get_auth_context
 from mesiri.domains.shared.media import assert_downloadable_url
+from mesiri.domains.shared.money import Money
 from mesiri.domains.workforce.matching import MatchOutcome, ReportedWorker, match_worker
 from mesiri.domains.workforce.workers import (
     VALID_WORKER_STATUSES,
@@ -103,7 +104,7 @@ class WorkforceWorkerResponse(BaseModel):
     name: str
     trade: str | None = None
     worker_type: str
-    default_daily_wage: Decimal | None = None
+    default_daily_wage: Money | None = None
     contractor: str | None = None
     status: str
 
@@ -117,7 +118,7 @@ class CreateWorkerRequest(BaseModel):
     name: str
     trade: str | None = None
     worker_type: str = "permanent"
-    default_daily_wage: Decimal | None = None
+    default_daily_wage: Money | None = None
     contractor: str | None = None
     status: str = "active"
 
@@ -126,7 +127,7 @@ class UpdateWorkerRequest(BaseModel):
     name: str | None = None
     trade: str | None = None
     worker_type: str | None = None
-    default_daily_wage: Decimal | None = None
+    default_daily_wage: Money | None = None
     contractor: str | None = None
     status: str | None = None
 
@@ -138,7 +139,7 @@ class LabourAttendanceLineResponse(BaseModel):
     worker_name_original: str | None = None
     trade: str | None = None
     headcount: int
-    daily_wage: Decimal | None = None
+    daily_wage: Money | None = None
     contractor: str | None = None
     activity: str | None = None
 
@@ -159,7 +160,7 @@ class LabourAttendanceReportSummaryResponse(BaseModel):
     notes: str | None = None
     line_count: int
     total_headcount: int
-    total_cost: Decimal
+    total_cost: Money
 
 
 class LabourAttendanceGalleryItem(BaseModel):
@@ -177,7 +178,7 @@ class LabourAttendanceGalleryItem(BaseModel):
     project_id: uuid.UUID
     site_id: uuid.UUID | None = None
     total_headcount: int
-    total_cost: Decimal
+    total_cost: Money
 
 
 class LabourAttendanceReportsListResponse(BaseModel):

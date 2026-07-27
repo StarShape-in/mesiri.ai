@@ -39,6 +39,7 @@ const DEFAULT_BANKS: BankAccountItem[] = [
 ]
 
 import { replenishFloatApi } from '@/lib/api'
+import { toLocalISODate } from '@/lib/utils'
 
 export function ReplenishFloatDialog({
   open,
@@ -51,7 +52,7 @@ export function ReplenishFloatDialog({
   const [targetBoxId, setTargetBoxId] = React.useState('')
   const [amount, setAmount] = React.useState('')
   const [description, setDescription] = React.useState('')
-  const [transferDate, setTransferDate] = React.useState(() => new Date().toISOString().split('T')[0])
+  const [transferDate, setTransferDate] = React.useState(() => toLocalISODate())
   const [submitting, setSubmitting] = React.useState(false)
 
   const selectedBank = React.useMemo(() => {

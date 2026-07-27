@@ -35,6 +35,7 @@ interface RecordVoucherDialogProps {
 }
 
 import { recordVoucherApi } from '@/lib/api'
+import { toLocalISODate } from '@/lib/utils'
 
 export function RecordVoucherDialog({
   open,
@@ -47,7 +48,7 @@ export function RecordVoucherDialog({
   const [category, setCategory] = React.useState('Fuel & Logistics')
   const [vendorName, setVendorName] = React.useState('')
   const [description, setDescription] = React.useState('')
-  const [voucherDate, setVoucherDate] = React.useState(() => new Date().toISOString().split('T')[0])
+  const [voucherDate, setVoucherDate] = React.useState(() => toLocalISODate())
   const [submitting, setSubmitting] = React.useState(false)
 
   const selectedBox = React.useMemo(() => {
