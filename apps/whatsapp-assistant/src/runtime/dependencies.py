@@ -380,15 +380,14 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from runtime.duplicate_expense_query import DuplicateExpenseQueryService
 
     duplicate_expense_query = DuplicateExpenseQueryService(material_db)
-    # Workforce register reads for the Labour attendance workflow. Stubbed:
-    # the register has no tables yet (Labour is being built conversation-first
-    # by explicit decision), so this returns an empty register unless a test
-    # roster is configured via MESIRI_LABOUR__STUB_WORKERS. Empty is the
-    # honest default -- every named worker becomes a temporary worker and
-    # nothing is asked. Phase 5 swaps this one line for the Postgres reader.
-    from runtime.workforce_query import StubWorkforceQueryService
+    # Workforce register reads for the Labour attendance workflow. Now the
+    # real reader (2026-07-27): workforce_workers exists, has dashboard CRUD,
+    # and labour_attendance_lines gives genuine "worked here before" signals.
+    # Until this line changed, a worker added on the dashboard was invisible
+    # to WhatsApp matching -- the register was real but nothing read it.
+    from runtime.workforce_query import PostgresWorkforceQueryService
 
-    workforce_query = StubWorkforceQueryService()
+    workforce_query = PostgresWorkforceQueryService(material_db)
     # Flags a vendor name that doesn't match any existing active vendor, fed
     # into expense_capture's "create this vendor?" slot -- same reasoning and
     # same material_db as catalog_query above. See runtime/vendor_query.py.

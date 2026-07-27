@@ -7,49 +7,28 @@ workflows/runtime.py), so the read happens here and is seeded into the event's
 fields by runtime/inbound_journey.py's `_seed_worker_candidates`, exactly as
 money accounts are for expense.
 
-**The register has no tables yet.** Labour is being built conversation-first
-by explicit decision (2026-07-26): prove the assistant understands attendance,
-matches workers and previews correctly, *before* committing to a schema. So
-this ships a stub, and Phase 5 replaces it with a Postgres reader behind the
-same call.
+**2026-07-27: this is now backed by the real database.** It shipped as a stub
+while Labour was built conversation-first, and the stub is kept below only for
+local/test use where no database exists. The register (``workforce_workers``)
+is real, has dashboard CRUD (domains/workforce/router.py), and attendance
+history (``labour_attendance_lines``) is real too — so "has this worker been
+seen on this site before", the single strongest corroborating signal matching
+has, is now a genuine answer rather than a configured guess.
 
-The stub's default is an **empty register**, and that is a deliberate, honest
-default rather than a placeholder:
+Why that signal matters enough to compute here rather than defer: P4 caps a
+name-only match below auto-accept by construction, so without corroboration
+*every* named worker asks a question. `seen_on_site` / `seen_on_project` are
+what let a returning worker match silently, which is what keeps a ten-worker
+report to zero questions instead of ten (P9).
 
-- An organization that has never recorded attendance genuinely has no
-  register, so empty is the truthful answer on day one.
-- With no candidates, every named worker resolves to a temporary worker and
-  the workflow asks nothing. That is correct behaviour (principle P3), not a
-  degraded mode.
-- Nothing is ever invented. A stub that fabricated plausible workers would
-  make matching *look* like it worked while attaching real attendance to
-  people who do not exist — the exact class of corruption P4 exists to
-  prevent.
+Two properties this deliberately preserves from the stub era:
 
-To actually exercise matching before the tables land, set a roster explicitly
-via ``MESIRI_LABOUR__STUB_WORKERS`` (JSON). Opt-in, visible in config, and
-impossible to mistake for real data.
-
-``worker_id`` must be a real UUID, not a short label like ``"w-ravi"`` --
-once a line matches, its worker_id flows into
-``LabourAttendanceLine.worker_id`` (application/labour/mapper.py), a
-``CanonicalUuid`` field, and a non-UUID value fails command validation
-(safely: the whole confirmation fails and stays recoverable, per
-OperationalExecutionDispatcher -- it does not corrupt data, but it does mean
-a copy-pasted example roster with fake ids cannot actually be confirmed)::
-
-    MESIRI_LABOUR__STUB_WORKERS='[
-      {"worker_id": "11111111-1111-4111-8111-111111111111", "name": "Ravi Kumar",
-       "trade": "mason", "contractor": "Kumar Team", "seen_on_site": true},
-      {"worker_id": "22222222-2222-4222-8222-222222222222", "name": "Arun",
-       "trade": "painter"}
-    ]'
-
-Attendance must never write this register (principle P1) — note there is no
-write path here at all, and the stub deliberately does not "remember" workers
-from confirmed reports. Promotion into the register is a separate, explicitly
-confirmed act, and building the stub to auto-learn would quietly break the
-very rule the workflow is being validated against.
+- **Read-only.** There is no write path here at all. Attendance never writes
+  the register (principle P1); promotion is a separate, explicitly confirmed
+  act performed from the dashboard.
+- **Never invents a worker.** An organization with an empty register gets an
+  empty list, every named worker becomes a temporary worker, and nothing is
+  asked (principle P3). That is correct behaviour, not a degraded mode.
 """
 
 from __future__ import annotations
@@ -57,20 +36,31 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Any, Protocol
+import uuid
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from mesiri.infrastructure.postgres.database import PostgresDatabase
 
 logger = logging.getLogger(__name__)
 
 STUB_WORKERS_ENV = "MESIRI_LABOUR__STUB_WORKERS"
 
+#: Only active workers are offered as candidates. A retired worker must never
+#: be silently matched onto a new report -- if they genuinely returned, that
+#: is a deliberate reactivation on the dashboard, not something attendance
+#: capture should infer.
+_ACTIVE = "active"
+
+#: Upper bound on candidates handed to matching. Matching is O(candidates x
+#: reported names) pure scoring, and a prompt can only show 10 options anyway
+#: (channel/replies.py's list limit), so reading an entire 2000-worker register
+#: into memory for one report would be waste, not thoroughness.
+_MAX_CANDIDATES = 200
+
 
 class WorkforceQueryService(Protocol):
-    """Read-only access to the workforce register.
-
-    Phase 5 supplies a Postgres implementation; the signature is what the
-    seeding step needs and nothing more, so the real reader can be dropped in
-    without touching inbound_journey.
-    """
+    """Read-only access to the workforce register."""
 
     async def list_worker_candidates(
         self,
@@ -79,7 +69,7 @@ class WorkforceQueryService(Protocol):
         project_id: str | None = None,
         site_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Registered workers plausibly on this project/site, best-first.
+        """Registered workers plausibly on this project/site.
 
         Each entry matches `domains/workforce/matching.WorkerCandidate`'s
         shape: worker_id, name, and optionally trade, contractor,
@@ -88,8 +78,129 @@ class WorkforceQueryService(Protocol):
         ...
 
 
+class PostgresWorkforceQueryService:
+    """Reads the real register, annotated with where each worker has worked."""
+
+    def __init__(self, db: PostgresDatabase) -> None:
+        self._db = db
+
+    async def list_worker_candidates(
+        self,
+        *,
+        organization_id: str,
+        project_id: str | None = None,
+        site_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        import sqlalchemy as sa
+
+        try:
+            org_id = uuid.UUID(organization_id)
+        except (TypeError, ValueError):
+            return []
+
+        # seen_on_site / seen_on_project are computed in SQL rather than by
+        # reading attendance history into Python: the register is the small
+        # table and its history is the large one, so the join belongs in the
+        # database. EXISTS (not a count) because matching only asks whether
+        # the worker has been here before, never how often.
+        lines = sa.table(
+            "labour_attendance_lines",
+            sa.column("worker_id"),
+            sa.column("report_id"),
+        )
+        reports = sa.table(
+            "labour_attendance_reports",
+            sa.column("id"),
+            sa.column("project_id"),
+            sa.column("site_id"),
+            sa.column("organization_id"),
+        )
+        workers = sa.table(
+            "workforce_workers",
+            sa.column("id"),
+            sa.column("organization_id"),
+            sa.column("name"),
+            sa.column("trade"),
+            sa.column("contractor"),
+            sa.column("status"),
+        )
+
+        def _worked_in(scope_column, scope_value: uuid.UUID):
+            return (
+                sa.select(sa.literal(1))
+                .select_from(lines.join(reports, lines.c.report_id == reports.c.id))
+                .where(
+                    lines.c.worker_id == workers.c.id,
+                    reports.c.organization_id == org_id,
+                    scope_column == scope_value,
+                )
+                .exists()
+            )
+
+        seen_on_site: Any = sa.literal(False)
+        seen_on_project: Any = sa.literal(False)
+        if site_id:
+            try:
+                seen_on_site = _worked_in(reports.c.site_id, uuid.UUID(site_id))
+            except (TypeError, ValueError):
+                pass
+        if project_id:
+            try:
+                seen_on_project = _worked_in(reports.c.project_id, uuid.UUID(project_id))
+            except (TypeError, ValueError):
+                pass
+
+        query = (
+            sa.select(
+                workers.c.id,
+                workers.c.name,
+                workers.c.trade,
+                workers.c.contractor,
+                seen_on_site.label("seen_on_site"),
+                seen_on_project.label("seen_on_project"),
+            )
+            .where(
+                workers.c.organization_id == org_id,
+                workers.c.status == _ACTIVE,
+            )
+            .order_by(workers.c.name)
+            .limit(_MAX_CANDIDATES)
+        )
+
+        async with self._db.transaction() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+
+        return [
+            {
+                "worker_id": str(row["id"]),
+                "name": row["name"],
+                "trade": row["trade"],
+                "contractor": row["contractor"],
+                "seen_on_site": bool(row["seen_on_site"]),
+                "seen_on_project": bool(row["seen_on_project"]),
+            }
+            for row in rows
+        ]
+
+
 class StubWorkforceQueryService:
-    """Empty register unless a roster is configured. See the module docstring."""
+    """Empty register unless a roster is configured — local/test use only.
+
+    Superseded in production by PostgresWorkforceQueryService above. Kept
+    because it is genuinely useful for exercising matching without a database,
+    and because its default (empty) is the honest answer rather than a
+    fabrication.
+
+    ``worker_id`` must be a real UUID, not a short label like ``"w-ravi"`` --
+    once a line matches, its worker_id flows into
+    ``LabourAttendanceLine.worker_id`` (application/labour/mapper.py), a
+    ``CanonicalUuid`` field, and a non-UUID value fails command validation::
+
+        MESIRI_LABOUR__STUB_WORKERS='[
+          {"worker_id": "11111111-1111-4111-8111-111111111111", "name": "Ravi Kumar",
+           "trade": "mason", "contractor": "Kumar Team", "seen_on_site": true}
+        ]'
+    """
 
     def __init__(self, roster: list[dict[str, Any]] | None = None) -> None:
         self._roster = roster if roster is not None else _roster_from_env()
@@ -102,9 +213,9 @@ class StubWorkforceQueryService:
         site_id: str | None = None,
     ) -> list[dict[str, Any]]:
         # Not scoped by org/project/site: a configured test roster is for one
-        # tenant on one machine by construction. The real reader must scope on
-        # all three -- a worker from another organization must never appear as
-        # a candidate.
+        # tenant on one machine by construction. The Postgres reader above
+        # scopes on organization and computes the site/project signals for
+        # real -- a worker from another organization never appears there.
         return list(self._roster)
 
 

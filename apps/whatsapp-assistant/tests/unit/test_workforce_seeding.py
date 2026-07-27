@@ -15,6 +15,7 @@ of test scaffolding.
 from __future__ import annotations
 
 import json
+import uuid
 
 import pytest
 
@@ -199,3 +200,118 @@ async def test_no_actor_or_no_service_is_a_no_op():
     await _seed_worker_candidates(event, _decision(), None, _Actor())
     await _seed_worker_candidates(event, _decision(), _RecordingQuery(ROSTER), None)
     assert "worker_candidates" not in event.fields
+
+
+# --- the real Postgres reader ----------------------------------------------
+#
+# Compiled-SQL assertions, not a live database. They cannot prove Postgres
+# returns the right rows, but they do pin the three things most likely to be
+# got wrong and silently corrupt matching: scoping to the organization,
+# excluding retired workers, and computing "worked here before" against the
+# right scope column. A live-DB integration test is still owed.
+
+
+def _hex(value: str) -> str:
+    """SQLAlchemy's literal_binds renders a UUID as bare hex, no dashes."""
+    return uuid.UUID(value).hex
+
+
+class _CapturingConn:
+    def __init__(self):
+        self.compiled: str | None = None
+
+    async def execute(self, query):
+        self.compiled = str(query.compile(compile_kwargs={"literal_binds": True}))
+
+        class _R:
+            def mappings(self_inner):
+                class _M:
+                    def all(self_m):
+                        return []
+
+                return _M()
+
+        return _R()
+
+
+class _CapturingDb:
+    def __init__(self):
+        self.conn = _CapturingConn()
+
+    def transaction(self):
+        conn = self.conn
+
+        class _Ctx:
+            async def __aenter__(self_ctx):
+                return conn
+
+            async def __aexit__(self_ctx, *exc):
+                return False
+
+        return _Ctx()
+
+
+async def _compiled_query(*, project_id=PRJ, site_id=SITE, organization_id=ORG) -> str:
+    from runtime.workforce_query import PostgresWorkforceQueryService
+
+    db = _CapturingDb()
+    await PostgresWorkforceQueryService(db).list_worker_candidates(
+        organization_id=organization_id, project_id=project_id, site_id=site_id
+    )
+    assert db.conn.compiled is not None
+    return db.conn.compiled
+
+
+async def test_the_reader_scopes_candidates_to_the_organization():
+    """A worker from another tenant must never be offered as a match."""
+    sql = await _compiled_query()
+    assert "workforce_workers.organization_id" in sql
+    assert _hex(ORG) in sql
+
+
+async def test_retired_workers_are_never_offered_as_candidates():
+    """If someone genuinely returned, that's a deliberate reactivation on the
+    dashboard -- not something attendance capture should infer."""
+    sql = await _compiled_query()
+    assert "workforce_workers.status" in sql
+    assert "'active'" in sql
+
+
+async def test_worked_here_before_is_computed_against_both_scopes():
+    """These are the signals that let a returning worker match silently, which
+    is what keeps a ten-worker report to zero questions (P9)."""
+    sql = await _compiled_query()
+    assert "labour_attendance_lines" in sql
+    assert "labour_attendance_reports" in sql
+    assert "EXISTS" in sql.upper()
+    assert "labour_attendance_reports.site_id" in sql
+    assert _hex(SITE) in sql
+    assert "labour_attendance_reports.project_id" in sql
+    assert _hex(PRJ) in sql
+
+
+async def test_a_report_with_no_site_still_reads_the_register():
+    """Site is optional on a report; losing the register entirely because of
+    it would turn every named worker into a temporary worker."""
+    sql = await _compiled_query(site_id=None)
+    assert "workforce_workers" in sql
+    # No site to check against, so that signal is a constant false -- but the
+    # project signal must still be computed for real.
+    assert "false AS seen_on_site" in sql
+    assert _hex(PRJ) in sql
+
+
+async def test_a_malformed_organization_id_returns_empty_rather_than_raising():
+    """Attendance capture must not die on a bad id -- an empty register just
+    means every worker is treated as temporary."""
+    from runtime.workforce_query import PostgresWorkforceQueryService
+
+    got = await PostgresWorkforceQueryService(_CapturingDb()).list_worker_candidates(
+        organization_id="not-a-uuid"
+    )
+    assert got == []
+
+
+async def test_a_malformed_site_id_does_not_break_the_read():
+    sql = await _compiled_query(site_id="not-a-uuid")
+    assert "workforce_workers" in sql
