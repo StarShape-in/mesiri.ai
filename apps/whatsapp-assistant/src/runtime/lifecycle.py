@@ -264,4 +264,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         logging.getLogger(__name__).warning("Vendors router not loaded: %s", exc)
 
+    # Labour/workforce routes (dashboard Worker Roster, Attendance Log,
+    # Overview, Reports, Settings pages; POST /labour/workers add-worker) --
+    # same gap as expenses/finance/vendors above: built against
+    # backend/src/mesiri/http/app.py, never wired into the app that actually
+    # runs. Every dashboard labour call -- including saving a new worker --
+    # 404'd in production until this was added (reported by Alan 2026-07-27:
+    # "Add Worker" said not found, and a WhatsApp-confirmed attendance never
+    # appeared on the dashboard even though it was genuinely saved).
+    try:
+        from mesiri.domains.workforce.router import router as workforce_router
+
+        app.include_router(workforce_router)
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("Workforce router not loaded: %s", exc)
+
     return app
