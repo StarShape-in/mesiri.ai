@@ -1721,7 +1721,7 @@ async def process_inbound_message(
             )
 
     if reply is not None:
-        await send_reply_spec(
+        send_result = await send_reply_spec(
             reply,
             message.sender.wa_id,
             send_text=send_text,
@@ -1729,6 +1729,15 @@ async def process_inbound_message(
             send_button=send_button,
         )
         await _safe(mlog.log_reply(correlation_id=correlation_id, reply=reply.text))
+        # #11 Reply Workflow: only the plain-text branch of send_reply_spec
+        # returns a wamid (see that module's docstring) -- a str result
+        # means the reply was captured; anything else (bool from the list/
+        # button branches, or None on send failure) means there is nothing
+        # to record.
+        if isinstance(send_result, str):
+            await _safe(
+                mlog.set_reply_wamid(correlation_id=correlation_id, reply_wamid=send_result)
+            )
 
     await _safe(mlog.mark_completed(correlation_id=correlation_id))
 

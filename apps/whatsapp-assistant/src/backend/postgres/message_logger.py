@@ -178,6 +178,24 @@ class PostgresMessageLogger:
                 "message_logger.set_interaction_group failed correlation_id=%s", correlation_id
             )
 
+    async def set_reply_wamid(self, *, correlation_id: str, reply_wamid: str) -> None:
+        from sqlalchemy import text
+
+        try:
+            async with self._get_engine().begin() as conn:
+                await conn.execute(
+                    text(
+                        "UPDATE inbound_messages "
+                        "SET reply_wamid = :reply_wamid "
+                        "WHERE correlation_id = :correlation_id"
+                    ),
+                    {"correlation_id": correlation_id, "reply_wamid": reply_wamid},
+                )
+        except Exception:  # noqa: BLE001
+            _log.exception(
+                "message_logger.set_reply_wamid failed correlation_id=%s", correlation_id
+            )
+
     async def mark_completed(self, *, correlation_id: str) -> None:
         from sqlalchemy import text
 
