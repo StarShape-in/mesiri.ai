@@ -20,10 +20,22 @@ import {
 } from '@/components/ui/select'
 import { createWorkerApi, type CreateWorkerPayload } from '@/lib/api'
 
+interface AddWorkerDialogInitialValues {
+  name?: string
+  trade?: string
+  dailyWage?: number | null
+  contractor?: string | null
+}
+
 interface AddWorkerDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   onSuccess: () => void
+  /** Pre-fills the form -- used from the attendance detail view to promote a
+   * temporary line (worker_id absent) into the register, carrying over
+   * exactly what the site already reported rather than making someone
+   * retype a name and trade that were already typed once on WhatsApp. */
+  initialValues?: AddWorkerDialogInitialValues
 }
 
 const COMMON_TRADES = [
@@ -39,7 +51,20 @@ const COMMON_TRADES = [
   'Supervisor',
 ]
 
-export function AddWorkerDialog({ open, onOpenChange, onSuccess }: AddWorkerDialogProps) {
+/** Matches a freeform reported trade (e.g. "bar_bender", "mason") to the
+ * dialog's fixed Select options, case/underscore-insensitively -- so
+ * promoting "mason" from an attendance line actually pre-selects Mason
+ * instead of silently falling back to the default. An unrecognised trade
+ * (e.g. one not in COMMON_TRADES) leaves the field for the user to pick,
+ * rather than guessing. */
+function _matchTradeOption(reported: string | null | undefined): string | null {
+  if (!reported) return null
+  const normalized = reported.trim().toLowerCase().replace(/[\s_-]+/g, ' ')
+  const match = COMMON_TRADES.find((t) => t.toLowerCase() === normalized)
+  return match ?? null
+}
+
+export function AddWorkerDialog({ open, onOpenChange, onSuccess, initialValues }: AddWorkerDialogProps) {
   const [name, setName] = React.useState('')
   const [trade, setTrade] = React.useState('Mason')
   const [workerType, setWorkerType] = React.useState<'permanent' | 'temporary' | 'contractor'>('permanent')
@@ -48,6 +73,21 @@ export function AddWorkerDialog({ open, onOpenChange, onSuccess }: AddWorkerDial
 
   const [submitting, setSubmitting] = React.useState(false)
   const [error, setError] = React.useState('')
+
+  // Re-seed the form whenever the dialog opens with new initial values --
+  // effect (not lazy useState init) because the SAME dialog instance is
+  // reused across different attendance lines, each opening it with a
+  // different worker's details.
+  React.useEffect(() => {
+    if (!open) return
+    setName(initialValues?.name ?? '')
+    setTrade(_matchTradeOption(initialValues?.trade) ?? 'Mason')
+    setDailyWage(initialValues?.dailyWage != null ? String(initialValues.dailyWage) : '800')
+    setContractor(initialValues?.contractor ?? '')
+    setWorkerType('permanent')
+    setError('')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initialValues])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()

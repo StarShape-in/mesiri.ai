@@ -298,6 +298,13 @@ class PostgresWorkforceReadRepository:
             **dict(report),
             "lines": lines,
             "attachments": [dict(a) for a in attachment_rows],
+            # line_count is required (no default) on
+            # LabourAttendanceReportSummaryResponse -- list_reports below sets
+            # it correctly; this method never did, so every single-report
+            # detail fetch 500'd on response validation. "lines" is the raw
+            # per-worker line count, distinct from total_headcount (a headcount
+            # group is one line but several people).
+            "line_count": len(lines),
             "total_headcount": headcount,
             "total_cost": cost,
         }

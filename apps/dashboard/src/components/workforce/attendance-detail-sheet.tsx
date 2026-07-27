@@ -8,6 +8,8 @@ import {
   ImageIcon,
   Bot,
   Globe,
+  Link2,
+  UserPlus,
 } from 'lucide-react'
 import {
   Sheet,
@@ -17,6 +19,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import {
   Table,
   TableBody,
@@ -28,7 +31,9 @@ import {
 import {
   fetchAttendanceReportDetailApi,
   type LabourAttendanceDetailItem,
+  type LabourAttendanceLineItem,
 } from '@/lib/api'
+import { AddWorkerDialog } from './add-worker-dialog'
 
 interface AttendanceDetailSheetProps {
   reportId: string | null
@@ -43,6 +48,11 @@ export function AttendanceDetailSheet({
 }: AttendanceDetailSheetProps) {
   const [detail, setDetail] = React.useState<LabourAttendanceDetailItem | null>(null)
   const [loading, setLoading] = React.useState(false)
+  // The line currently being promoted -- drives both the "Save as permanent
+  // worker" dialog's open state and what it's pre-filled with. null means
+  // closed; kept as the whole line (not just booleans) so the dialog can
+  // read name/trade/wage straight off it.
+  const [promotingLine, setPromotingLine] = React.useState<LabourAttendanceLineItem | null>(null)
 
   React.useEffect(() => {
     if (reportId && open) {
@@ -161,12 +171,13 @@ export function AttendanceDetailSheet({
                         <TableHead className="text-[11px] font-semibold h-8 text-center">Headcount</TableHead>
                         <TableHead className="text-[11px] font-semibold h-8 text-right">Daily Wage</TableHead>
                         <TableHead className="text-[11px] font-semibold h-8 text-right">Subtotal</TableHead>
+                        <TableHead className="text-[11px] font-semibold h-8" />
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {!detail.lines || detail.lines.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={4} className="h-20 text-center text-xs text-muted-foreground">
+                          <TableCell colSpan={5} className="h-20 text-center text-xs text-muted-foreground">
                             No trade lines recorded for this report.
                           </TableCell>
                         </TableRow>
@@ -174,14 +185,61 @@ export function AttendanceDetailSheet({
                         detail.lines.map((line, idx) => {
                           const rate = line.daily_wage || 0
                           const subtotal = rate * (line.headcount || 1)
+                          // A headcount group ("12 helpers") names nobody --
+                          // there is no one to match or promote, so the
+                          // matched/temporary distinction (which is about a
+                          // specific person) simply doesn't apply to it.
+                          const isNamedWorker = Boolean(line.worker_name)
+                          const isMatched = Boolean(line.worker_id)
                           return (
                             <TableRow key={line.id || idx} className="hover:bg-muted/30">
                               <TableCell className="py-2 text-xs">
-                                <div className="flex flex-col">
-                                  <span className="font-semibold text-foreground flex items-center gap-1.5">
-                                    <HardHat className="size-3 text-amber-500" />
-                                    {line.trade || line.worker_name || 'General Labor'}
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="font-semibold text-foreground flex items-center gap-1.5 flex-wrap">
+                                    <HardHat className="size-3 text-amber-500 shrink-0" />
+                                    {isNamedWorker ? (
+                                      <>
+                                        {line.worker_name}
+                                        {line.trade && (
+                                          <span className="font-normal text-muted-foreground">
+                                            — {line.trade}
+                                          </span>
+                                        )}
+                                      </>
+                                    ) : (
+                                      <>{line.trade || 'General Labor'}</>
+                                    )}
+                                    {isNamedWorker && (
+                                      <Badge
+                                        variant="outline"
+                                        className={
+                                          isMatched
+                                            ? 'border-emerald-500/30 text-emerald-600 bg-emerald-500/10 text-[9px] gap-0.5 px-1.5 py-0 h-4'
+                                            : 'border-amber-500/30 text-amber-600 bg-amber-500/10 text-[9px] gap-0.5 px-1.5 py-0 h-4'
+                                        }
+                                      >
+                                        {isMatched ? (
+                                          <>
+                                            <Link2 className="size-2.5" /> Register
+                                          </>
+                                        ) : (
+                                          'Temporary'
+                                        )}
+                                      </Badge>
+                                    )}
                                   </span>
+                                  {/* The reading as originally written, e.g. a
+                                      Malayalam script name -- shown so a
+                                      mis-transliteration is catchable here the
+                                      same way it is at WhatsApp confirmation
+                                      (workflows/labour_update/nodes.py's
+                                      _line_summary). */}
+                                  {line.worker_name_original &&
+                                    line.worker_name_original !== line.worker_name && (
+                                      <span className="text-[10px] text-muted-foreground">
+                                        As written: {line.worker_name_original}
+                                      </span>
+                                    )}
                                   {line.contractor && (
                                     <span className="text-[10px] text-muted-foreground">
                                       Contractor: {line.contractor}
@@ -205,6 +263,21 @@ export function AttendanceDetailSheet({
 
                               <TableCell className="py-2 text-xs text-right font-mono font-bold text-foreground">
                                 {subtotal ? `₹${subtotal.toLocaleString('en-IN')}` : '—'}
+                              </TableCell>
+
+                              <TableCell className="py-2 text-xs text-right">
+                                {isNamedWorker && !isMatched && (
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-6 text-[10px] px-2 gap-1"
+                                    onClick={() => setPromotingLine(line)}
+                                  >
+                                    <UserPlus className="size-3" />
+                                    Save as worker
+                                  </Button>
+                                )}
                               </TableCell>
                             </TableRow>
                           )
@@ -249,6 +322,29 @@ export function AttendanceDetailSheet({
           )}
         </div>
       </SheetContent>
+
+      {/* Attendance never writes the register as a side effect of recording
+          (principle P1) -- this dialog is the explicit, separate act that
+          promotes a temporary line into it, pre-filled with what the site
+          already reported so nobody retypes a name and trade that were
+          already typed once on WhatsApp. */}
+      <AddWorkerDialog
+        open={promotingLine !== null}
+        onOpenChange={(next) => {
+          if (!next) setPromotingLine(null)
+        }}
+        onSuccess={() => setPromotingLine(null)}
+        initialValues={
+          promotingLine
+            ? {
+                name: promotingLine.worker_name ?? undefined,
+                trade: promotingLine.trade ?? undefined,
+                dailyWage: promotingLine.daily_wage,
+                contractor: promotingLine.contractor,
+              }
+            : undefined
+        }
+      />
     </Sheet>
   )
 }
