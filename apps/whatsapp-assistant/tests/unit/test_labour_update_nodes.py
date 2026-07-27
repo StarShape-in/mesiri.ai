@@ -161,9 +161,9 @@ def test_trade_change_question_names_both_trades():
     pick the familiar name without noticing the discrepancy — which is exactly
     how two workers' histories get merged.
 
-    Note the exact name: a *partial* name plus a trade mismatch scores below
-    the ask threshold and resolves to a temporary worker instead — see
-    test_partial_name_with_changed_trade_is_a_new_worker."""
+    Note the exact name: a *partial* name plus a trade mismatch, corroborated
+    by prior history on this site, also clears the ask threshold — see
+    test_partial_name_with_changed_trade_and_site_history_asks."""
     state = _base_state(
         {
             "lines": [_named("Ravi Kumar", "carpenter")],
@@ -183,14 +183,15 @@ def test_trade_change_question_names_both_trades():
     assert "updated trade" in prompt
 
 
-def test_partial_name_with_changed_trade_is_a_new_worker():
-    """The other side of the trade-change rule, pinned because it is easy to
-    read P4 as "a trade mismatch always asks". It does not: the mismatch
-    lowers confidence, and "Ravi, carpenter" against a registered "Ravi
-    Kumar, mason" falls below the ask threshold entirely. Recording a
-    temporary worker is the safe outcome — it keeps the two histories
-    separate, which a later promotion can still merge, whereas a wrong merge
-    cannot be undone."""
+def test_partial_name_with_changed_trade_and_site_history_asks():
+    """A *partial* name plus a trade mismatch, corroborated by having worked
+    this site before: "Ravi, carpenter" against a registered "Ravi Kumar,
+    mason" who has worked here already. That combination — same first name,
+    known to this site — is real evidence it might be the same person, so it
+    asks rather than silently splitting the history. (A partial name with
+    *nothing* else corroborating it still asks too, just more weakly — see
+    test_workforce_matching.py — but never silently resolves to a new
+    worker; only a genuinely unrelated name does that.)"""
     state = _base_state(
         {
             "lines": [_named("Ravi", "carpenter")],
@@ -205,8 +206,7 @@ def test_partial_name_with_changed_trade_is_a_new_worker():
         }
     )
     update = match_workers(state)
-    assert update["awaiting_slot"] is None
-    assert update["collected_fields"]["lines"][0]["worker_id"] is None
+    assert update["awaiting_slot"] is not None
 
 
 def test_duplicate_candidate_names_are_disambiguated_by_trade():

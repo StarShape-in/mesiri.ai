@@ -31,7 +31,12 @@ from .workers import normalize_name, normalize_trade
 # Chosen so that no single signal, and no pair that excludes trade, can reach
 # AUTO_ACCEPT on its own. See the module docstring.
 _W_NAME_EXACT = 0.55
-_W_NAME_PARTIAL = 0.30
+#: Equal to ASK, not below it: a same-first-name match with nothing else
+#: corroborating it ("Ravi" reported against registered "Ravi Kumar") must
+#: still surface as a question. Landing under ASK made this silently resolve
+#: to NO_MATCH -- a registered worker's own name, typed the short way,
+#: created a second identity instead of asking which Ravi was meant.
+_W_NAME_PARTIAL = 0.35
 _W_TRADE = 0.30
 _W_CONTRACTOR = 0.20
 _W_SEEN_ON_SITE = 0.15
