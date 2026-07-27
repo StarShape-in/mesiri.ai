@@ -211,17 +211,23 @@ async def _insert_labour_report(
     occurred_date: datetime.date = datetime.date(2026, 7, 1),
 ) -> uuid.UUID:
     """No occurred_time column -- this is the fixture that exercises the
-    projector's conditional column selection against a real database."""
+    projector's conditional column selection against a real database.
+
+    occurred_date_source is deliberately absent: it is a command-level field
+    the workflow uses to word the confirmation message ("(assumed today)")
+    before anything is saved, and the real write path
+    (labour_execution.py's persist_success) never persists it -- matching
+    that exactly, not the command shape, is what this fixture is for."""
     row_id = uuid.uuid4()
     async with engine.begin() as conn:
         await conn.execute(
             sa.text("""
             INSERT INTO labour_attendance_reports (
                 id, organization_id, project_id, site_id, occurred_date,
-                occurred_date_source, recorded_via, created_by, created_at
+                recorded_via, created_by, created_at
             ) VALUES (
                 :id, :org_id, :project_id, :site_id, :date,
-                'reported', 'whatsapp_text', :user_id, now()
+                'whatsapp_text', :user_id, now()
             )
             """),
             {
