@@ -20,11 +20,12 @@ from context.postgres_repositories import (
     PostgresExternalIdentityRepository,
     PostgresMembershipRepository,
     PostgresProjectRepository,
+    PostgresReplyContextProvider,
     PostgresRolePermissionRepository,
     PostgresSiteRepository,
+    PostgresWorkflowContextProvider,
 )
 from context.resolver import ContextDependencies, ContextResolver
-from context.workflow_context import NullReplyContextProvider, NullWorkflowContextProvider
 from mesiri_contracts.assistant.v2.resolved_context import ResolvedContextV2
 
 logger = logging.getLogger(__name__)
@@ -89,8 +90,13 @@ def build_context_resolver(redis=None) -> ContextResolver:
         sites=PostgresSiteRepository(engine),
         preferences=PostgresContextPreferenceRepository(engine),
         active_context=RedisActiveContextStore(redis),
-        reply_context=NullReplyContextProvider(),
-        workflow_context=NullWorkflowContextProvider(),
+        # Real adapters as of the reply/workflow-context wiring: these were
+        # Null providers, which silently disabled two of the five precedence
+        # levels in context_policy. Both fail soft (None = "no opinion"), so
+        # the chain simply falls through to ACTIVE_CONTEXT / USER_DEFAULT as
+        # before if either lookup finds nothing.
+        reply_context=PostgresReplyContextProvider(engine),
+        workflow_context=PostgresWorkflowContextProvider(engine),
         bridge=PostgresIdentityBridgeRepository(engine),
         redis=redis,  # identity cache TTL=60s
     )

@@ -261,3 +261,110 @@ class PostgresContextPreferenceRepository(_EngineMixin):
             locale=row["locale"],
             timezone=row["timezone"],
         )
+
+
+class PostgresReplyContextProvider(_EngineMixin):
+    """Resolves a WhatsApp reply back to the context its target was recorded under.
+
+    When an engineer long-presses a message and replies to it, that gesture is
+    an explicit, unambiguous statement of which report they mean -- far
+    stronger evidence than any NLP guess over "completed". `context_policy`
+    already ranks REPLY_CONTEXT second only to an explicit in-message
+    reference; until now the port behind it was `NullReplyContextProvider`, so
+    the gesture was parsed at ingress and then discarded.
+
+    `inbound_messages.dedup_key` holds the WhatsApp `wamid` verbatim (see
+    runtime/dependencies.py, which sets it to `message.message_id`) and is
+    UNIQUE, so this is an index lookup, not a scan. Retry rows suffix the key
+    with `:retry:<correlation_id>` and therefore never match a real reply
+    target -- correct, since a replayed admin retry is not something a user
+    can long-press.
+
+    Both joins are LEFT: a target message that was recorded before its project
+    or site was resolved still yields whatever half is known, and the resolver
+    validates each id against the sender's own authorizations afterwards
+    (`_validated_candidate`). Tenancy is enforced by joining
+    `context_organizations` rather than trusting the caller: `inbound_messages`
+    stores the CANONICAL organization_id while this port is handed the CONTEXT
+    one, so the join is both the translation and the tenant check.
+
+    Returns None when the target is unknown (expired retention, a message from
+    before this feature, or a reply to Mesiri's own outbound bubble -- Meta's
+    outbound wamid is not persisted yet). None means "no opinion", which
+    simply lets the next precedence level answer.
+    """
+
+    async def context_for_reply(
+        self, *, organization_id: str, replied_to_message_id: str
+    ) -> tuple[str | None, str | None] | None:
+        row = await self._row(
+            "SELECT cp.id AS project_id, cs.id AS site_id "
+            "FROM inbound_messages im "
+            "JOIN context_organizations co "
+            "  ON co.canonical_organization_id = im.organization_id AND co.id = :org "
+            "LEFT JOIN context_projects cp ON cp.canonical_project_id = im.project_id "
+            "LEFT JOIN context_sites cs ON cs.canonical_site_id = im.site_id "
+            "WHERE im.dedup_key = :wamid",
+            {"org": organization_id, "wamid": replied_to_message_id},
+        )
+        if row is None:
+            return None
+        project_id = row["project_id"]
+        site_id = row["site_id"]
+        if project_id is None and site_id is None:
+            # The target exists but carried no resolved scope -- that is not a
+            # reply-context signal, and returning (None, None) would register
+            # an empty candidate that outranks ACTIVE_CONTEXT for no reason.
+            return None
+        return (str(project_id) if project_id else None, str(site_id) if site_id else None)
+
+
+class PostgresWorkflowContextProvider(_EngineMixin):
+    """Scope inherited from the user's own in-flight workflow.
+
+    A user mid-workflow ("which account?" / "reply YES to confirm") is
+    demonstrably still talking about that workflow's project and site, so a
+    follow-up message with no scope of its own should inherit it rather than
+    fall back to whatever `active_context` last cached. This is the
+    WORKFLOW_CONTEXT level of `context_policy`'s precedence chain, wired for
+    the first time -- previously `NullWorkflowContextProvider`.
+
+    Only genuinely open phases count. AWAITING_CONFIRMATION and
+    COLLECTING_FIELDS are the two the runtime can actually resume
+    (`get_awaiting_confirmation` / `get_awaiting_input`); a CONFIRMED or
+    CANCELLED instance is finished and must not keep steering later messages.
+    `ORDER BY updated_at DESC` is a tiebreak only -- the single-active
+    invariant means there is normally at most one.
+
+    project_id/site_id live inside the `state` JSONB (WorkflowStateV2), not as
+    columns, so they are extracted with ->> and then mapped from canonical
+    into context ids the same way as the reply provider above.
+    """
+
+    _OPEN_PHASES = ("awaiting_confirmation", "collecting_fields")
+
+    async def active_workflow_context(
+        self, *, organization_id: str, user_id: str
+    ) -> tuple[str | None, str | None] | None:
+        row = await self._row(
+            "SELECT cp.id AS project_id, cs.id AS site_id "
+            "FROM workflow_instances wi "
+            "JOIN context_organizations co "
+            "  ON co.canonical_organization_id = wi.organization_id AND co.id = :org "
+            "JOIN context_users cu ON cu.canonical_user_id = wi.user_id AND cu.id = :usr "
+            "LEFT JOIN context_projects cp "
+            "  ON cp.canonical_project_id = NULLIF(wi.state->>'project_id', '')::uuid "
+            "LEFT JOIN context_sites cs "
+            "  ON cs.canonical_site_id = NULLIF(wi.state->>'site_id', '')::uuid "
+            "WHERE wi.phase = ANY(:phases) "
+            "ORDER BY wi.updated_at DESC "
+            "LIMIT 1",
+            {"org": organization_id, "usr": user_id, "phases": list(self._OPEN_PHASES)},
+        )
+        if row is None:
+            return None
+        project_id = row["project_id"]
+        site_id = row["site_id"]
+        if project_id is None and site_id is None:
+            return None
+        return (str(project_id) if project_id else None, str(site_id) if site_id else None)

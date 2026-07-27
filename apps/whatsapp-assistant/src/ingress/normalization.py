@@ -42,6 +42,16 @@ class MessageNormalizer:
             "display_phone_number": display_phone_number,
             "raw_type": message.get("type"),
         }
+        forwarded, frequently_forwarded = self._resolve_forwarding(message)
+        if forwarded:
+            metadata["forwarded"] = True
+            # Meta's own "many times forwarded" marker. Kept distinct rather
+            # than collapsed into `forwarded`: a message relayed once by the
+            # site engineer is ordinary second-hand reporting, while a
+            # frequently-forwarded one is far more likely to be a broadcast or
+            # chain message that was never about this site at all.
+            if frequently_forwarded:
+                metadata["frequently_forwarded"] = True
 
         if modality is InputModality.INTERACTIVE:
             interactive_reply = self._resolve_interactive_reply(message)
@@ -157,3 +167,21 @@ class MessageNormalizer:
         if not reply_to:
             return None
         return ReplyContext(replied_to_message_id=str(reply_to))
+
+    @staticmethod
+    def _resolve_forwarding(message: Mapping[str, Any]) -> tuple[bool, bool]:
+        """Whether Meta flagged this message as forwarded, and heavily so.
+
+        Both flags live on the same `context` object as a reply's
+        `message_id`, but they are independent: a forward carries
+        `forwarded: true` with NO `message_id`, so it is never mistaken for a
+        reply by `_resolve_reply_context` above.
+
+        This matters because a forwarded report is second-hand -- the engineer
+        is relaying a contractor's or supplier's message, not observing the
+        work themselves. Recording it identically to a first-hand report is
+        what makes an assistant feel careless, so the flag is carried through
+        to the confirmation prompt (see canonicalization/builder.py).
+        """
+        context = message.get("context") or {}
+        return bool(context.get("forwarded")), bool(context.get("frequently_forwarded"))
