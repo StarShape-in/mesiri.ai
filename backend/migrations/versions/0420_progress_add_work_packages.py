@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects.postgresql import ENUM as PG_ENUM
 
 revision = "0420"
 down_revision = "0410"
@@ -43,7 +44,17 @@ depends_on = None
 # block (idempotent regardless of partial-apply history — see module
 # docstring addendum), so SQLAlchemy must never attempt to (re)create it
 # implicitly while emitting CREATE TABLE DDL for a column using this type.
-_completion_mode = sa.Enum(
+#
+# Must be sqlalchemy.dialects.postgresql.ENUM, not the generic sa.Enum --
+# the generic cross-dialect type has no `create_type` attribute at all (a
+# `create_type=False` kwarg passed to sa.Enum(...) is silently accepted and
+# then discarded, never actually suppressing anything). Only the
+# postgres-dialect ENUM class genuinely honors it. This was the real cause
+# of the "type already exists" failure recurring even after the DO-block
+# guard below was added: SQLAlchemy's own before_create hook on the table
+# was independently attempting `CREATE TYPE` a second time, unconditionally,
+# because the generic sa.Enum instance never actually suppressed it.
+_completion_mode = PG_ENUM(
     "NONE",
     "QUANTITY",
     "MILESTONE",
@@ -51,7 +62,7 @@ _completion_mode = sa.Enum(
     name="work_package_completion_mode",
     create_type=False,
 )
-_work_package_status = sa.Enum(
+_work_package_status = PG_ENUM(
     "NOT_STARTED",
     "IN_PROGRESS",
     "ON_HOLD",

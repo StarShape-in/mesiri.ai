@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects.postgresql import ENUM as PG_ENUM
 from sqlalchemy.dialects.postgresql import JSONB
 
 revision = "0440"
@@ -43,9 +44,13 @@ branch_labels = None
 depends_on = None
 
 # create_type=False -- see 0420/0430's identical convention; the type is
-# created explicitly by _create_enum_if_not_exists below.
-_dpr_level = sa.Enum("SITE", "PROJECT", name="daily_report_level", create_type=False)
-_dpr_status = sa.Enum(
+# created explicitly by _create_enum_if_not_exists below. Must be
+# sqlalchemy.dialects.postgresql.ENUM (aliased PG_ENUM), not the generic
+# sa.Enum -- see 0420's expanded comment for why the generic type silently
+# discards create_type and does not actually suppress SQLAlchemy's automatic
+# CREATE TYPE attempt when the column is created.
+_dpr_level = PG_ENUM("SITE", "PROJECT", name="daily_report_level", create_type=False)
+_dpr_status = PG_ENUM(
     "DRAFT",
     "IN_REVIEW",
     "APPROVED",

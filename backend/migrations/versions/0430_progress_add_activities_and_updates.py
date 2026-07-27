@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects.postgresql import ENUM as PG_ENUM
 from sqlalchemy.dialects.postgresql import JSONB
 
 revision = "0430"
@@ -64,14 +65,18 @@ branch_labels = None
 depends_on = None
 
 # create_type=False on every enum here -- see 0420's identical convention.
-# The type is created explicitly by _create_enum_if_not_exists below.
-_activity_status = sa.Enum(
+# The type is created explicitly by _create_enum_if_not_exists below. Must
+# be sqlalchemy.dialects.postgresql.ENUM (aliased PG_ENUM), not the generic
+# sa.Enum -- the generic type has no `create_type` attribute at all, so the
+# kwarg is silently discarded and never actually suppresses anything (see
+# 0420's expanded comment for the incident this caused).
+_activity_status = PG_ENUM(
     "PLANNED", "IN_PROGRESS", "COMPLETED", "STOPPED", name="activity_status", create_type=False
 )
-_measurement_type = sa.Enum(
+_measurement_type = PG_ENUM(
     "ACHIEVED", "CUMULATIVE", name="activity_measurement_type", create_type=False
 )
-_linked_type = sa.Enum(
+_linked_type = PG_ENUM(
     "ATTENDANCE",
     "MATERIAL_MOVEMENT",
     "EQUIPMENT_EVENT",
@@ -79,7 +84,7 @@ _linked_type = sa.Enum(
     name="activity_linked_type",
     create_type=False,
 )
-_update_kind = sa.Enum(
+_update_kind = PG_ENUM(
     "STARTED",
     "PROGRESS",
     "PAUSED",
@@ -89,7 +94,7 @@ _update_kind = sa.Enum(
     name="progress_update_kind",
     create_type=False,
 )
-_issue_type = sa.Enum(
+_issue_type = PG_ENUM(
     "WEATHER",
     "MATERIAL_SHORTAGE",
     "LABOUR_SHORTAGE",
@@ -101,13 +106,13 @@ _issue_type = sa.Enum(
     name="site_issue_type",
     create_type=False,
 )
-_issue_severity = sa.Enum(
+_issue_severity = PG_ENUM(
     "LOW", "MEDIUM", "HIGH", "CRITICAL", name="site_issue_severity", create_type=False
 )
-_issue_status = sa.Enum(
+_issue_status = PG_ENUM(
     "OPEN", "ACKNOWLEDGED", "RESOLVED", "WONT_FIX", name="site_issue_status", create_type=False
 )
-_attachment_parent_type = sa.Enum(
+_attachment_parent_type = PG_ENUM(
     "ACTIVITY",
     "PROGRESS_UPDATE",
     "SITE_ISSUE",
