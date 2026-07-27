@@ -90,7 +90,7 @@ class InteractionHandler:
 
     async def _resume_and_render(
         self, user_id: str, loaded, resume_action, *, log_prefix: str, actor: ActorIdentity | None = None
-    ) -> tuple[WorkflowResumeResult, str, ExecutionResult | None, "Coroutine[Any, Any, bytes | None] | None"]:
+    ) -> tuple[WorkflowResumeResult, str, ExecutionResult | None, Coroutine[Any, Any, bytes | None] | None]:
         """Resume the workflow and, if it lands on CONFIRMED and a dispatcher is
         wired (M8), execute the domain write synchronously and reflect the real
         outcome in the reply. Shared by the fast and slow paths so a confirm
