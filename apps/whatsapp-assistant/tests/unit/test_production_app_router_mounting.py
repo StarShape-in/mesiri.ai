@@ -60,6 +60,15 @@ def test_every_previously_fixed_router_gap_stays_fixed():
         assert expected in paths, f"{expected} not mounted -- same bug class as labour's"
 
 
+def test_progress_routes_are_mounted():
+    """Daily Reporting's router (mesiri.domains.progress.router) was added to
+    both create_app() locations in the same change, precisely to avoid
+    becoming the fifth occurrence of this bug class."""
+    paths = _production_app_paths()
+    for expected in ("/progress/activities", "/progress/activities/{activity_id}"):
+        assert expected in paths, f"{expected} not mounted on the production app"
+
+
 def test_a_domain_router_failing_to_import_does_not_crash_the_whole_app():
     """Each router is mounted inside its own try/except (see
     runtime/lifecycle.py) precisely so one broken domain can't take the

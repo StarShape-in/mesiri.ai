@@ -1,0 +1,74 @@
+"""Response shapes for the Progress (Daily Reporting) REST API."""
+
+from __future__ import annotations
+
+import datetime
+import uuid
+from decimal import Decimal
+
+from pydantic import BaseModel
+
+
+class ActivityQuantityResponse(BaseModel):
+    id: uuid.UUID
+    work_type: str | None = None
+    unit_id: uuid.UUID | None = None
+    unit: str | None = None
+    quantity: Decimal
+    measurement_type: str
+
+
+class ProgressUpdateResponse(BaseModel):
+    id: uuid.UUID
+    occurred_at: datetime.datetime
+    update_kind: str
+    narrative: str | None = None
+    quantity: Decimal | None = None
+    unit_id: uuid.UUID | None = None
+    unit: str | None = None
+    reported_by_user_id: uuid.UUID | None = None
+    source: str
+    created_at: datetime.datetime
+
+
+class ActivityAttachmentResponse(BaseModel):
+    id: uuid.UUID
+    media_object_key: str
+    attachment_type: str
+    mime_type: str | None = None
+    caption: str | None = None
+    ai_caption: str | None = None
+    role: str | None = None
+    captured_at: datetime.datetime | None = None
+    created_at: datetime.datetime
+
+
+class ActivitySummaryResponse(BaseModel):
+    id: uuid.UUID
+    organization_id: uuid.UUID
+    project_id: uuid.UUID
+    site_id: uuid.UUID
+    work_package_id: uuid.UUID | None = None
+    location_id: uuid.UUID | None = None
+    work_type: str | None = None
+    activity_date: datetime.date
+    started_at: datetime.time | None = None
+    ended_at: datetime.time | None = None
+    status: str
+    narrative: str | None = None
+    contractor: str | None = None
+    reported_by_user_id: uuid.UUID | None = None
+    source: str
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
+
+
+class ActivitiesListResponse(BaseModel):
+    items: list[ActivitySummaryResponse]
+    total: int
+
+
+class ActivityDetailResponse(ActivitySummaryResponse):
+    quantities: list[ActivityQuantityResponse]
+    progress_updates: list[ProgressUpdateResponse]
+    attachments: list[ActivityAttachmentResponse]

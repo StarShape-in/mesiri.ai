@@ -42,17 +42,66 @@ down_revision = "0430"
 branch_labels = None
 depends_on = None
 
-_dpr_level = sa.Enum("SITE", "PROJECT", name="daily_report_level")
+# create_type=False -- see 0420/0430's identical convention; the type is
+# created explicitly by _create_enum_if_not_exists below.
+_dpr_level = sa.Enum("SITE", "PROJECT", name="daily_report_level", create_type=False)
 _dpr_status = sa.Enum(
-    "DRAFT", "IN_REVIEW", "APPROVED", "PUBLISHED", "NOT_REPORTED", name="daily_report_status"
+    "DRAFT",
+    "IN_REVIEW",
+    "APPROVED",
+    "PUBLISHED",
+    "NOT_REPORTED",
+    name="daily_report_status",
+    create_type=False,
 )
+
+
+def _create_enum_if_not_exists(bind, name: str, values: tuple[str, ...]) -> None:
+    """See 0420's identical helper for the production incident this defends
+    against (idempotent `upgrade()` after a partially-applied migration).
+    Duplicated rather than imported: migration files here are self-contained."""
+    values_sql = ", ".join(f"'{v}'" for v in values)
+    bind.execute(
+        sa.text(
+            f"DO $$ BEGIN "
+            f"CREATE TYPE {name} AS ENUM ({values_sql}); "
+            f"EXCEPTION WHEN duplicate_object THEN NULL; END $$;"
+        )
+    )
 
 
 def upgrade() -> None:
     bind = op.get_bind()
-    _dpr_level.create(bind, checkfirst=True)
-    _dpr_status.create(bind, checkfirst=True)
+    _create_enum_if_not_exists(bind, "daily_report_level", ("SITE", "PROJECT"))
+    _create_enum_if_not_exists(
+        bind,
+        "daily_report_status",
+        ("DRAFT", "IN_REVIEW", "APPROVED", "PUBLISHED", "NOT_REPORTED"),
+    )
 
+    inspector = sa.inspect(bind)
+    existing_tables = inspector.get_table_names()
+
+    if "daily_reports" not in existing_tables:
+        _create_daily_reports_table()
+    if "daily_report_versions" not in existing_tables:
+        _create_daily_report_versions_table()
+
+    existing_fks = {fk["name"] for fk in inspector.get_foreign_keys("daily_reports")}
+    if "fk_daily_reports_current_version" not in existing_fks:
+        op.create_foreign_key(
+            "fk_daily_reports_current_version",
+            "daily_reports",
+            "daily_report_versions",
+            ["current_version_id"],
+            ["id"],
+        )
+
+    if "daily_report_sources" not in existing_tables:
+        _create_daily_report_sources_table()
+
+
+def _create_daily_reports_table() -> None:
     op.create_table(
         "daily_reports",
         sa.Column("id", sa.UUID(as_uuid=True), primary_key=True),
@@ -105,6 +154,8 @@ def upgrade() -> None:
     op.create_index("ix_daily_reports_site_id", "daily_reports", ["site_id"])
     op.create_index("ix_daily_reports_report_date", "daily_reports", ["report_date"])
 
+
+def _create_daily_report_versions_table() -> None:
     op.create_table(
         "daily_report_versions",
         sa.Column("id", sa.UUID(as_uuid=True), primary_key=True),
@@ -145,14 +196,8 @@ def upgrade() -> None:
         "ix_daily_report_versions_report_id", "daily_report_versions", ["daily_report_id"]
     )
 
-    op.create_foreign_key(
-        "fk_daily_reports_current_version",
-        "daily_reports",
-        "daily_report_versions",
-        ["current_version_id"],
-        ["id"],
-    )
 
+def _create_daily_report_sources_table() -> None:
     op.create_table(
         "daily_report_sources",
         sa.Column("id", sa.UUID(as_uuid=True), primary_key=True),

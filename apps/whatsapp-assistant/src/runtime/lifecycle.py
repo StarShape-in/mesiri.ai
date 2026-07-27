@@ -281,4 +281,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         logging.getLogger(__name__).warning("Workforce router not loaded: %s", exc)
 
+    # Progress/Daily Reporting routes (dashboard Field Reports/Activities
+    # pages -- GET /progress/activities, GET /progress/activities/{id}).
+    # Mounted here too, not just in backend/src/mesiri/http/app.py, per the
+    # lesson immediately above this block: a router that only exists in that
+    # file 404s in production, since this file builds the app that actually
+    # runs.
+    try:
+        from mesiri.domains.progress.router import router as progress_router
+
+        app.include_router(progress_router)
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("Progress router not loaded: %s", exc)
+
     return app

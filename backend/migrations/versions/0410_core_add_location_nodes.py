@@ -37,6 +37,14 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Guarded: `alembic upgrade head` must converge cleanly even after a
+    # deploy run that already committed this table but failed later in the
+    # same invocation (see 0420's `_create_enum_if_not_exists` docstring for
+    # the production incident this defends against across this whole batch
+    # of migrations).
+    if "location_nodes" in sa.inspect(op.get_bind()).get_table_names():
+        return
+
     op.create_table(
         "location_nodes",
         sa.Column("id", sa.UUID(as_uuid=True), primary_key=True),

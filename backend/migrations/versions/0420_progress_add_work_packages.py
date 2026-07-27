@@ -39,18 +39,70 @@ down_revision = "0410"
 branch_labels = None
 depends_on = None
 
+# create_type=False: the type is created explicitly below via a guarded DO
+# block (idempotent regardless of partial-apply history — see module
+# docstring addendum), so SQLAlchemy must never attempt to (re)create it
+# implicitly while emitting CREATE TABLE DDL for a column using this type.
 _completion_mode = sa.Enum(
-    "NONE", "QUANTITY", "MILESTONE", "MANUAL", name="work_package_completion_mode"
+    "NONE",
+    "QUANTITY",
+    "MILESTONE",
+    "MANUAL",
+    name="work_package_completion_mode",
+    create_type=False,
 )
 _work_package_status = sa.Enum(
-    "NOT_STARTED", "IN_PROGRESS", "ON_HOLD", "COMPLETED", name="work_package_status"
+    "NOT_STARTED",
+    "IN_PROGRESS",
+    "ON_HOLD",
+    "COMPLETED",
+    name="work_package_status",
+    create_type=False,
 )
+
+
+def _create_enum_if_not_exists(bind, name: str, values: tuple[str, ...]) -> None:
+    """Guarded CREATE TYPE — Postgres has no native `IF NOT EXISTS` for
+    enums, so this catches the DuplicateObject error instead. Needed after a
+    real production incident (2026-07-27): a deploy run partially applied
+    this migration (this enum committed, table creation failed later in the
+    same run), and `Enum.create(bind, checkfirst=True)`'s existence check did
+    not reliably prevent every retry from re-attempting the CREATE TYPE and
+    failing on it forever after. This is unconditionally safe to re-run."""
+    values_sql = ", ".join(f"'{v}'" for v in values)
+    bind.execute(
+        sa.text(
+            f"DO $$ BEGIN "
+            f"CREATE TYPE {name} AS ENUM ({values_sql}); "
+            f"EXCEPTION WHEN duplicate_object THEN NULL; END $$;"
+        )
+    )
 
 
 def upgrade() -> None:
-    _completion_mode.create(op.get_bind(), checkfirst=True)
-    _work_package_status.create(op.get_bind(), checkfirst=True)
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
 
+    _create_enum_if_not_exists(
+        bind, "work_package_completion_mode", ("NONE", "QUANTITY", "MILESTONE", "MANUAL")
+    )
+    _create_enum_if_not_exists(
+        bind, "work_package_status", ("NOT_STARTED", "IN_PROGRESS", "ON_HOLD", "COMPLETED")
+    )
+
+    # Each table (and its indexes) is guarded independently too — a prior
+    # partial run may have committed one table but not the other, and
+    # `alembic upgrade head` must converge cleanly regardless of which
+    # combination of these already exists.
+    existing_tables = inspector.get_table_names()
+
+    if "work_packages" not in existing_tables:
+        _create_work_packages_table()
+    if "work_package_planned_items" not in existing_tables:
+        _create_work_package_planned_items_table()
+
+
+def _create_work_packages_table() -> None:
     op.create_table(
         "work_packages",
         sa.Column("id", sa.UUID(as_uuid=True), primary_key=True),
@@ -123,6 +175,8 @@ def upgrade() -> None:
     op.create_index("ix_work_packages_site_id", "work_packages", ["site_id"])
     op.create_index("ix_work_packages_parent_id", "work_packages", ["parent_id"])
 
+
+def _create_work_package_planned_items_table() -> None:
     op.create_table(
         "work_package_planned_items",
         sa.Column("id", sa.UUID(as_uuid=True), primary_key=True),
