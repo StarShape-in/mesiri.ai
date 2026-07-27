@@ -735,20 +735,24 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
                     sent = await sender.send_image(wa_id, image_bytes, caption=None)
                     if not sent:
                         pass  # image already tried; text was already sent above
-            await message_logger.log_reply(
-                correlation_id=message.correlation_id, reply=handled.reply_text
-            )
-            if handled.result.workflow_instance_id:
-                await message_logger.link_workflow_instance(
+            # Phase 8 perf: user reply is already sent above. These 4 writes
+            # are order-independent audit rows -- run them concurrently.
+            await asyncio.gather(
+                message_logger.log_reply(
+                    correlation_id=message.correlation_id, reply=handled.reply_text
+                ),
+                message_logger.link_workflow_instance(
                     correlation_id=message.correlation_id,
                     workflow_instance_id=handled.result.workflow_instance_id,
-                )
-            await message_logger.update_context(
-                correlation_id=message.correlation_id,
-                project_id=handled.project_id,
-                site_id=handled.site_id,
+                ) if handled.result.workflow_instance_id else asyncio.sleep(0),
+                message_logger.update_context(
+                    correlation_id=message.correlation_id,
+                    project_id=handled.project_id,
+                    site_id=handled.site_id,
+                ),
+                message_logger.mark_completed(correlation_id=message.correlation_id),
+                return_exceptions=True,
             )
-            await message_logger.mark_completed(correlation_id=message.correlation_id)
             return
 
         # Finance Module Slice 1: if the user has a workflow awaiting a slot
@@ -780,20 +784,22 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
                 send_list=sender.send_list,
                 send_button=sender.send_button,
             )
-            await message_logger.log_reply(
-                correlation_id=message.correlation_id, reply=reply.text
-            )
-            if slot_handled.result.workflow_instance_id:
-                await message_logger.link_workflow_instance(
+            await asyncio.gather(
+                message_logger.log_reply(
+                    correlation_id=message.correlation_id, reply=reply.text
+                ),
+                message_logger.link_workflow_instance(
                     correlation_id=message.correlation_id,
                     workflow_instance_id=slot_handled.result.workflow_instance_id,
-                )
-            await message_logger.update_context(
-                correlation_id=message.correlation_id,
-                project_id=slot_handled.project_id,
-                site_id=slot_handled.site_id,
+                ) if slot_handled.result.workflow_instance_id else asyncio.sleep(0),
+                message_logger.update_context(
+                    correlation_id=message.correlation_id,
+                    project_id=slot_handled.project_id,
+                    site_id=slot_handled.site_id,
+                ),
+                message_logger.mark_completed(correlation_id=message.correlation_id),
+                return_exceptions=True,
             )
-            await message_logger.mark_completed(correlation_id=message.correlation_id)
             return
 
         # Deterministic "create/rename/deactivate account" command (Finance
@@ -810,16 +816,18 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             account_admin_handled = None
         if account_admin_handled is not None:
             await sender.send_text(wa_id, account_admin_handled.reply_text)
-            await message_logger.log_reply(
-                correlation_id=message.correlation_id, reply=account_admin_handled.reply_text
-            )
             run = account_admin_handled.workflow_run
-            if run is not None and run.workflow_instance_id:
-                await message_logger.link_workflow_instance(
+            await asyncio.gather(
+                message_logger.log_reply(
+                    correlation_id=message.correlation_id, reply=account_admin_handled.reply_text
+                ),
+                message_logger.link_workflow_instance(
                     correlation_id=message.correlation_id,
                     workflow_instance_id=run.workflow_instance_id,
-                )
-            await message_logger.mark_completed(correlation_id=message.correlation_id)
+                ) if (run is not None and run.workflow_instance_id) else asyncio.sleep(0),
+                message_logger.mark_completed(correlation_id=message.correlation_id),
+                return_exceptions=True,
+            )
             return
 
         # Category-menu tap (from render_direct_reply's greeting list): a
