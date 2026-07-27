@@ -26,12 +26,14 @@ api.interceptors.request.use((config) => {
 })
 
 // A token in localStorage is not proof of a valid session — it may be
-// expired, malformed, or revoked. Any 401/403 from the backend (the real
-// authorization boundary) clears the stale token and bounces to /login.
+// expired, malformed, or revoked. Only a 401 (the backend rejecting the
+// token itself) means the session is stale; a 403 means the session is
+// valid but this particular resource is off-limits for the user's role,
+// and must not log out a user who is otherwise legitimately signed in.
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401 || error.response?.status === 403) {
+    if (error.response?.status === 401) {
       clearToken()
       if (window.location.pathname !== '/login') {
         window.location.href = '/login'
