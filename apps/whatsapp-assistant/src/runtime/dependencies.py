@@ -175,8 +175,20 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
 
     # Object storage: FakeObjectStorage locally, R2 when
     # MESIRI_OBJECT_STORAGE__PROVIDER=r2 is set.
+    #
+    # Wrapped so a photo isn't fetched back out of R2 immediately after being
+    # written to it: ingress downloads the bytes from Meta, uploads them, and
+    # then understanding/pipeline.py's _read_media reads the very same key
+    # again to hand to the vision/speech provider. The decorator answers that
+    # one read from memory and drops the entry; every other call, and any
+    # later read (e.g. the admin replay path), goes straight through to the
+    # real adapter. See recent_writes_cache.py.
+    from mesiri.infrastructure.objectstorage.recent_writes_cache import (
+        RecentWritesCachingObjectStorage,
+    )
+
     _backend_settings = _get_backend_settings()
-    object_storage = build_object_storage(_backend_settings)
+    object_storage = RecentWritesCachingObjectStorage(build_object_storage(_backend_settings))
 
     # Redis for the active context store.  Use a real RedisClient when
     # MESIRI_REDIS__HOST is explicitly configured; fall back to FakeRedis.

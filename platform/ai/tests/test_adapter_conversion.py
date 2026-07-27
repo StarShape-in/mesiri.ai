@@ -15,6 +15,22 @@ from mesiri_ai.adapters.sarvam.adapter import SarvamSpeechProvider
 from mesiri_contracts.common.errors import MesiriError
 
 
+def _aio(models: object) -> SimpleNamespace:
+    """Shape a fake `models` object like the genai client's async surface.
+
+    The adapter calls ``client.aio.models.generate_content`` (native async --
+    it used to wrap the sync method in asyncio.to_thread, which serialized
+    concurrent calls behind the default thread pool). The fakes below stay
+    plain sync functions; this only adapts them to the awaited call shape.
+    """
+
+    class _AioModels:
+        async def generate_content(self, **kwargs):
+            return models.generate_content(**kwargs)  # type: ignore[attr-defined]
+
+    return SimpleNamespace(aio=SimpleNamespace(models=_AioModels()))
+
+
 def test_sarvam_converts_dict_response_to_speech_result():
     provider = SarvamSpeechProvider.__new__(SarvamSpeechProvider)  # skip SDK init
     raw = {"transcript": "The JCB ran for 4 hours", "language_code": "ml-IN"}
@@ -98,7 +114,7 @@ async def test_gemini_json_mode_sets_response_mime_type():
     provider._settings = SimpleNamespace(
         model="gemini-test", timeout_seconds=5, max_retries=0
     )
-    provider._client = SimpleNamespace(models=_FakeModels())
+    provider._client = _aio(_FakeModels())
 
     await provider.translate_to_english("hello", correlation_id="cor_1")
 
@@ -192,7 +208,7 @@ async def test_gemini_analyze_image_downscales_before_sending():
     provider._settings = SimpleNamespace(
         model="gemini-test", timeout_seconds=5, max_retries=0, max_image_edge=1024
     )
-    provider._client = SimpleNamespace(models=_FakeModels())
+    provider._client = _aio(_FakeModels())
 
     with pytest.MonkeyPatch.context() as mp:
         import google.genai
@@ -232,7 +248,7 @@ async def test_gemini_understand_voice_returns_combined_result_in_one_call():
 
     provider = GeminiProvider.__new__(GeminiProvider)
     provider._settings = SimpleNamespace(model="gemini-test", timeout_seconds=5, max_retries=0)
-    provider._client = SimpleNamespace(models=_FakeModels())
+    provider._client = _aio(_FakeModels())
 
     result = await provider.understand_voice(b"audio-bytes", correlation_id="cor_1")
 
@@ -273,7 +289,7 @@ async def test_gemini_transcribe_requests_json_with_translation_and_language():
     provider._settings = SimpleNamespace(
         model="gemini-test", timeout_seconds=5, max_retries=0
     )
-    provider._client = SimpleNamespace(models=_FakeModels())
+    provider._client = _aio(_FakeModels())
 
     result = await provider.transcribe(b"audio-bytes", correlation_id="cor_1")
 
@@ -296,7 +312,7 @@ async def test_gemini_transcribe_falls_back_to_transcript_when_translation_missi
     provider._settings = SimpleNamespace(
         model="gemini-test", timeout_seconds=5, max_retries=0
     )
-    provider._client = SimpleNamespace(models=_FakeModels())
+    provider._client = _aio(_FakeModels())
 
     result = await provider.transcribe(b"audio-bytes", correlation_id="cor_1")
 
@@ -319,7 +335,7 @@ async def test_gemini_translate_raises_when_translated_text_missing():
 
     provider = GeminiProvider.__new__(GeminiProvider)
     provider._settings = SimpleNamespace(model="gemini-test", timeout_seconds=5, max_retries=0)
-    provider._client = SimpleNamespace(models=_FakeModels())
+    provider._client = _aio(_FakeModels())
 
     with pytest.raises(MesiriError) as exc:
         await provider.translate_to_english(
@@ -339,7 +355,7 @@ async def test_gemini_translate_raises_when_translated_text_blank():
 
     provider = GeminiProvider.__new__(GeminiProvider)
     provider._settings = SimpleNamespace(model="gemini-test", timeout_seconds=5, max_retries=0)
-    provider._client = SimpleNamespace(models=_FakeModels())
+    provider._client = _aio(_FakeModels())
 
     with pytest.raises(MesiriError):
         await provider.translate_to_english("hello", correlation_id=None)
@@ -366,7 +382,7 @@ async def test_gemini_translate_raises_when_text_unchanged_for_non_english_sourc
 
     provider = GeminiProvider.__new__(GeminiProvider)
     provider._settings = SimpleNamespace(model="gemini-test", timeout_seconds=5, max_retries=0)
-    provider._client = SimpleNamespace(models=_FakeModels())
+    provider._client = _aio(_FakeModels())
 
     with pytest.raises(MesiriError) as exc:
         await provider.translate_to_english(malayalam_text, correlation_id="cor_z")
@@ -396,7 +412,7 @@ async def test_gemini_translate_raises_when_reformatted_but_still_untranslated()
 
     provider = GeminiProvider.__new__(GeminiProvider)
     provider._settings = SimpleNamespace(model="gemini-test", timeout_seconds=5, max_retries=0)
-    provider._client = SimpleNamespace(models=_FakeModels())
+    provider._client = _aio(_FakeModels())
 
     with pytest.raises(MesiriError) as exc:
         await provider.translate_to_english(original, correlation_id="cor_v")
@@ -423,7 +439,7 @@ async def test_gemini_translate_allows_genuine_translation_with_small_untranslat
 
     provider = GeminiProvider.__new__(GeminiProvider)
     provider._settings = SimpleNamespace(model="gemini-test", timeout_seconds=5, max_retries=0)
-    provider._client = SimpleNamespace(models=_FakeModels())
+    provider._client = _aio(_FakeModels())
 
     result = await provider.translate_to_english(
         "ഗ്രീൻവാലിയിൽ എത്ര സിമന്റ് ഉണ്ട്?", correlation_id=None
@@ -444,7 +460,7 @@ async def test_gemini_translate_allows_unchanged_text_when_source_is_already_eng
 
     provider = GeminiProvider.__new__(GeminiProvider)
     provider._settings = SimpleNamespace(model="gemini-test", timeout_seconds=5, max_retries=0)
-    provider._client = SimpleNamespace(models=_FakeModels())
+    provider._client = _aio(_FakeModels())
 
     result = await provider.translate_to_english("50 bags of cement arrived", correlation_id=None)
     assert result.translated_text == "50 bags of cement arrived"
