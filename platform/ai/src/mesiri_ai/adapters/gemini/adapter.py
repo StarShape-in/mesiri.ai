@@ -81,6 +81,12 @@ _EXTRACTION_PROMPT = (
     'number stated (e.g. "almost 70 bags" -> quantity 70).\n\n'
     "Field schema per semantic_type (only include keys you actually found):\n"
     "Note: For ALL semantic types, if the text mentions a specific project, site, or location by name (e.g. 'project alpha', 'at the main site'), extract it as 'project_name'.\n"
+    "Note: For expense, material_update and labour_update, occurred_on is the day the "
+    "event happened, ONLY when the message says so: either \"yesterday\" / \"today\" / "
+    "\"day before yesterday\" verbatim, or an exact ISO date \"YYYY-MM-DD\" when a full "
+    "date is written (e.g. \"on 25 July\" -> \"2026-07-25\"). Omit occurred_on entirely "
+    "when no day is mentioned -- never guess it, and never emit a bare weekday like "
+    "\"Friday\", which is ambiguous.\n"
     "- expense: amount, currency, vendor, category, description, paid_to, occurred_on, "
     "project_name, tax_rate, tax_amount, is_tax_inclusive. tax_rate/tax_amount are only "
     "for a bill/receipt that itemizes a specific tax line (e.g. \"GST 18%\", \"CGST 9% + "
@@ -93,7 +99,8 @@ _EXTRACTION_PROMPT = (
     "inclusive; a quote/invoice listing \"subtotal + tax = total\" separately means "
     "amount is the subtotal, exclusive) and omit entirely if genuinely unclear.\n"
     "- equipment_usage: equipment_name, duration_hours, operator, activity, project_name\n"
-    "- material_update: material_name, quantity, unit, direction, work_item, project_name. "
+    "- material_update: material_name, quantity, unit, direction, work_item, project_name, "
+    "occurred_on. "
     'direction MUST be exactly "received" or "used" -- never any other word. '
     'Use "received" when material arrived, was delivered, or was brought to site '
     '(e.g. "50 bags of cement arrived", "cement delivered today"). '
@@ -104,12 +111,6 @@ _EXTRACTION_PROMPT = (
     '(e.g. "slabing the footing area", "column casting"). Omit work_item entirely '
     "for received material.\n"
     "- labour_update: workers (array), contractor, hours, project_name, occurred_on. "
-    'occurred_on is the day the work happened, ONLY when the message says so: '
-    'either "yesterday" / "today" / "day before yesterday" verbatim, or an '
-    'exact ISO date "YYYY-MM-DD" when a full date is written (e.g. "on 25 July" '
-    '-> "2026-07-25"). Omit occurred_on entirely when no day is mentioned -- '
-    "never guess it, and never emit a bare weekday like \"Friday\", which is "
-    "ambiguous. "
     "Each item in workers is ONE line of the attendance report, with keys: "
     '"name" (the person\'s name -- omit entirely for an unnamed group), '
     '"trade" (mason, helper, painter, carpenter, electrician, plumber, welder, '

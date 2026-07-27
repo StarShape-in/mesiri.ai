@@ -1,15 +1,23 @@
 """Maps a confirmed workflow action into a typed Material Application Command (M8).
 
 Shape-mapping only — no business validation here (that's domains/materials/
-validation.py, run separately by the Handler). occurred_date is defaulted to
-today because nothing upstream (CanonicalEvent/DraftAction) ever carries a
-stated date; occurred_date_source records that this is an inferred value,
-not a user-reported one (see migration 0220).
+validation.py, run separately by the Handler).
+
+occurred_date/occurred_date_source are decided upstream, in canonicalization
+(canonicalization/occurred_date.py) — that is the only point holding both
+what the message said and the sender's timezone. This mapper only reads the
+answer. Backported from Labour (STA-166): until this changed, a stated
+"yesterday" was silently overwritten with today, and "today" meant the
+server's UTC today rather than the site's -- for a site in India, any report
+before 05:30 local landed on the wrong date. The `date.today()` fallback
+below exists only so a draft persisted before this shipped (still sitting at
+AWAITING_CONFIRMATION, never having passed through the new canonicalization
+path) stays confirmable rather than failing on a field it never carried.
 """
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
 from mesiri_contracts.application.commands.material import (
@@ -27,6 +35,23 @@ def _decimal(value: object) -> Decimal:
         return Decimal(str(value))
     except (InvalidOperation, TypeError):
         return Decimal("0")
+
+
+def _occurred_date(fields: dict) -> date:
+    """The day the material moved, as decided upstream. See this module's
+    docstring -- falls back to today only for a draft that predates
+    canonicalization owning this decision."""
+    raw = fields.get("occurred_date")
+    if isinstance(raw, date) and not isinstance(raw, datetime):
+        return raw
+    if isinstance(raw, datetime):
+        return raw.date()
+    if raw:
+        try:
+            return date.fromisoformat(str(raw))
+        except ValueError:
+            pass
+    return date.today()
 
 
 def build_command(
@@ -47,8 +72,8 @@ def build_command(
         "unit": str(fields.get("unit", "")),
         "material_id": fields.get("material_id"),
         "unit_id": fields.get("unit_id"),
-        "occurred_date": date.today(),
-        "occurred_date_source": "inferred_at_confirmation",
+        "occurred_date": _occurred_date(fields),
+        "occurred_date_source": str(fields.get("occurred_date_source") or "inferred_at_confirmation"),
         "created_by": confirmed.confirmed_by_user_id,
     }
 

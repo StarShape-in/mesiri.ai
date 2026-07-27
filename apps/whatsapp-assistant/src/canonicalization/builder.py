@@ -291,11 +291,20 @@ def build_canonical_event(
 
     if understanding.semantic_type is SemanticType.LABOUR_UPDATE:
         fields = _normalize_labour_fields(fields, input_modality=understanding.input_modality)
+
+    if understanding.semantic_type in (
+        SemanticType.LABOUR_UPDATE,
+        SemanticType.MATERIAL_UPDATE,
+        SemanticType.EXPENSE,
+    ):
         # Dated here, not in the mapper: this is the only point that holds
-        # both what the message said and where the sender is. See
-        # canonicalization/occurred_date.py. Material and Expense still date
-        # their records at save time and inherit both bugs it fixes -- adding
-        # the same one line here is all their adoption needs.
+        # both what the message said and where the sender is (see
+        # canonicalization/occurred_date.py). Originally built for Labour
+        # alone (STA-161); Material and Expense had the identical pair of
+        # bugs -- a stated date silently overwritten with today, and "today"
+        # meaning the server's UTC today rather than the site's -- so this is
+        # the one-line backport STA-166 asks for (STA-161's docstring on
+        # resolve_occurred_date was written expecting exactly this).
         fields = resolve_occurred_date(fields, timezone_name=context.timezone)
 
     if understanding.semantic_type is SemanticType.MATERIAL_UPDATE:

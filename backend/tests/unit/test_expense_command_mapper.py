@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 
 from mesiri.application.expenses.mapper import build_command
@@ -138,3 +139,28 @@ def test_unparseable_tax_amount_stays_none_not_zero():
     confirmed = _confirmed({"amount": 100, "tax_amount": "not a number"})
     cmd = build_command(confirmed)
     assert cmd.tax_amount is None
+
+
+# --- date backport (STA-166) -------------------------------------------------
+
+
+def test_the_date_decided_upstream_is_used_not_overwritten():
+    """STA-166: the mapper used to stamp date.today() over whatever the
+    message said, so "paid yesterday" was filed under today."""
+    confirmed = _confirmed(
+        {"amount": 250, "category": "fuel", "occurred_date": "2026-07-20"}
+    )
+    cmd = build_command(confirmed)
+    assert cmd.occurred_date == date(2026, 7, 20)
+
+
+def test_occurred_date_defaults_to_today_when_a_draft_predates_dating():
+    confirmed = _confirmed({"amount": 250, "category": "fuel"})
+    cmd = build_command(confirmed)
+    assert cmd.occurred_date == date.today()
+
+
+def test_a_corrupt_stored_date_falls_back_rather_than_failing_the_save():
+    confirmed = _confirmed({"amount": 250, "category": "fuel", "occurred_date": "not-a-date"})
+    cmd = build_command(confirmed)
+    assert cmd.occurred_date == date.today()

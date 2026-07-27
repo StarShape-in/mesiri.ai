@@ -48,6 +48,7 @@ before.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from mesiri_contracts.assistant.draft_action import DraftActionType
@@ -292,8 +293,26 @@ def build_draft(state: WorkflowGraphState) -> dict:
 
 # Kept in draft.fields (the backend needs it -- see RecordExpenseCommand.
 # media_object_key) but never shown as a raw key:value line; a "📎 Receipt
-# attached" note is shown instead, below.
-_DISPLAY_HIDDEN_FIELD_KEYS = frozenset({"media_object_key"})
+# attached" note is shown instead, below. occurred_date/occurred_date_source
+# are rendered by _date_line instead of as raw lines, same reasoning.
+_DISPLAY_HIDDEN_FIELD_KEYS = frozenset(
+    {"media_object_key", "occurred_date", "occurred_date_source"}
+)
+
+
+def _date_line(fields: dict) -> str | None:
+    """The day being recorded, marked when Mesiri guessed it. Backported from
+    Labour's workflows/labour_update/nodes.py (STA-166)."""
+    raw = str(fields.get("occurred_date") or "").strip()
+    if not raw:
+        return None
+    try:
+        shown = date.fromisoformat(raw).strftime("%d %b %Y")
+    except ValueError:
+        shown = raw
+    if str(fields.get("occurred_date_source") or "") == "inferred_at_confirmation":
+        return f"   • Date: {shown} (assumed today)"
+    return f"   • Date: {shown}"
 
 
 def request_confirmation(state: WorkflowGraphState) -> dict:
@@ -301,6 +320,9 @@ def request_confirmation(state: WorkflowGraphState) -> dict:
     localization/templates/AI generation here (see workflows/material/nodes.py)."""
     draft: DraftActionV2 = state["draft_action"]
     lines = ["*Confirm this record?*", "", "💸 Expense"]
+    date_line = _date_line(draft.fields)
+    if date_line:
+        lines.append(date_line)
     for key, value in draft.fields.items():
         if key in _DISPLAY_HIDDEN_FIELD_KEYS:
             continue

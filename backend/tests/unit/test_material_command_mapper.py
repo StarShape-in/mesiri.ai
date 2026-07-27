@@ -110,7 +110,31 @@ def test_project_id_none_is_preserved_not_invented():
     assert cmd.project_id is None
 
 
-def test_occurred_date_defaults_to_today_with_inferred_source():
+def test_the_date_decided_upstream_is_used_not_overwritten():
+    """STA-166: the mapper used to stamp date.today() over whatever the
+    message said, so "cement delivered yesterday" was filed under today.
+    Canonicalization now owns the decision -- it is the only point holding
+    both the message and the sender's timezone (see
+    canonicalization/occurred_date.py)."""
+    confirmed = _confirmed(
+        DraftActionType.RECORD_MATERIAL_RECEIPT,
+        {
+            "material_name": "cement",
+            "quantity": 20,
+            "unit": "bags",
+            "occurred_date": "2026-07-20",
+            "occurred_date_source": "stated_by_user",
+        },
+    )
+    cmd = build_command(confirmed)
+    assert cmd.occurred_date == date(2026, 7, 20)
+    assert cmd.occurred_date_source == "stated_by_user"
+
+
+def test_occurred_date_defaults_to_today_when_a_draft_predates_dating():
+    """An older draft, persisted at AWAITING_CONFIRMATION before this
+    shipped, must stay confirmable rather than failing on a field it never
+    carried."""
     confirmed = _confirmed(
         DraftActionType.RECORD_MATERIAL_RECEIPT,
         {"material_name": "cement", "quantity": 20, "unit": "bags"},
@@ -118,6 +142,15 @@ def test_occurred_date_defaults_to_today_with_inferred_source():
     cmd = build_command(confirmed)
     assert cmd.occurred_date == date.today()
     assert cmd.occurred_date_source == "inferred_at_confirmation"
+
+
+def test_a_corrupt_stored_date_falls_back_rather_than_failing_the_save():
+    confirmed = _confirmed(
+        DraftActionType.RECORD_MATERIAL_RECEIPT,
+        {"material_name": "cement", "quantity": 20, "unit": "bags", "occurred_date": "not-a-date"},
+    )
+    cmd = build_command(confirmed)
+    assert cmd.occurred_date == date.today()
 
 
 def test_missing_quantity_coerces_to_zero_not_a_crash():

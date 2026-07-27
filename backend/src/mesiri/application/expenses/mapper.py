@@ -1,14 +1,27 @@
 """Maps a confirmed workflow action into a RecordExpenseCommand (M8-style).
 
 Shape-mapping only — no business validation here (that's validation.py, run
-separately by the Handler). occurred_date is defaulted to today because
-nothing upstream (CanonicalEvent/DraftAction) ever carries a stated date,
-mirroring application/materials/mapper.py.
+separately by the Handler).
+
+occurred_date is decided upstream, in canonicalization
+(canonicalization/occurred_date.py) — the only point holding both what the
+message said and the sender's timezone. Backported from Labour (STA-166):
+until this changed, a stated "yesterday" was silently overwritten with
+today, and "today" meant the server's UTC today rather than the site's. The
+`date.today()` fallback below exists only so a draft persisted before this
+shipped stays confirmable.
+
+Unlike Material, RecordExpenseCommand carries no occurred_date_source field
+at all -- there is no `expenses` table column for it (checked before adding
+one; none exists) and the "(assumed today)" wording only ever needs to reach
+the confirmation preview, which reads `occurred_date_source` straight off
+`draft.fields` before this mapper ever runs. Adding an unused column would
+be schema change for no reader.
 """
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
 from mesiri_contracts.assistant.v2.confirmed_action import ConfirmedActionV2
@@ -37,6 +50,23 @@ def _optional_decimal(value: object) -> Decimal | None:
         return None
 
 
+def _occurred_date(fields: dict) -> date:
+    """The day the expense happened, as decided upstream. See this module's
+    docstring -- falls back to today only for a draft that predates
+    canonicalization owning this decision."""
+    raw = fields.get("occurred_date")
+    if isinstance(raw, date) and not isinstance(raw, datetime):
+        return raw
+    if isinstance(raw, datetime):
+        return raw.date()
+    if raw:
+        try:
+            return date.fromisoformat(str(raw))
+        except ValueError:
+            pass
+    return date.today()
+
+
 def build_command(confirmed: ConfirmedActionV2) -> RecordExpenseCommand:
     """Map a ConfirmedActionV2 into a RecordExpenseCommand.
 
@@ -63,7 +93,7 @@ def build_command(confirmed: ConfirmedActionV2) -> RecordExpenseCommand:
         paid_from_own_pocket=bool(fields.get("paid_from_own_pocket", False)),
         media_object_key=fields.get("media_object_key"),
         description=fields.get("description"),
-        occurred_date=date.today(),
+        occurred_date=_occurred_date(fields),
         source="whatsapp",
         correlation_id=confirmed.correlation_id,
         created_by=confirmed.confirmed_by_user_id,

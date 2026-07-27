@@ -121,3 +121,66 @@ def test_receipt_never_gets_a_low_stock_warning():
     state.update(build_draft(state))
     prompt = request_confirmation(state)["pending_prompt"]
     assert "in stock" not in prompt
+
+
+# --- date display (STA-166 backport) ---------------------------------------
+
+
+def test_confirmation_shows_a_stated_date_without_the_assumed_marker():
+    state = _base_state(
+        WorkflowKey.MATERIAL_RECEIPT,
+        {
+            "material_name": "cement",
+            "quantity": 20,
+            "unit": "bags",
+            "occurred_date": "2026-07-20",
+            "occurred_date_source": "stated_by_user",
+        },
+    )
+    state.update(build_draft(state))
+    prompt = request_confirmation(state)["pending_prompt"]
+    assert "Date: 20 Jul 2026" in prompt
+    assert "assumed" not in prompt
+
+
+def test_confirmation_admits_when_the_date_was_guessed():
+    state = _base_state(
+        WorkflowKey.MATERIAL_RECEIPT,
+        {
+            "material_name": "cement",
+            "quantity": 20,
+            "unit": "bags",
+            "occurred_date": "2026-07-27",
+            "occurred_date_source": "inferred_at_confirmation",
+        },
+    )
+    state.update(build_draft(state))
+    prompt = request_confirmation(state)["pending_prompt"]
+    assert "Date: 27 Jul 2026 (assumed today)" in prompt
+
+
+def test_confirmation_never_shows_the_raw_date_plumbing():
+    state = _base_state(
+        WorkflowKey.MATERIAL_RECEIPT,
+        {
+            "material_name": "cement",
+            "quantity": 20,
+            "unit": "bags",
+            "occurred_date": "2026-07-27",
+            "occurred_date_source": "inferred_at_confirmation",
+        },
+    )
+    state.update(build_draft(state))
+    prompt = request_confirmation(state)["pending_prompt"]
+    assert "occurred_date_source" not in prompt
+    assert "inferred_at_confirmation" not in prompt
+
+
+def test_confirmation_omits_the_date_line_when_there_is_no_date():
+    """An older draft persisted before dating shipped must still render."""
+    state = _base_state(
+        WorkflowKey.MATERIAL_RECEIPT, {"material_name": "cement", "quantity": 20, "unit": "bags"}
+    )
+    state.update(build_draft(state))
+    prompt = request_confirmation(state)["pending_prompt"]
+    assert "Date:" not in prompt
