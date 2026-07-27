@@ -17,7 +17,7 @@ id-capturing -- extending send_list/send_button the same way is a
 mechanical follow-up, not a design gap.
 
 Revision ID: 0452
-Revises: 0451
+Revises: 0450
 Create Date: 2026-07-27
 """
 
@@ -27,7 +27,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0452"
-down_revision = "0451"
+down_revision = "0450"
 branch_labels = None
 depends_on = None
 
