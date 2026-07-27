@@ -86,6 +86,27 @@ _labour_attendance_reports = sa.Table(
     sa.Column("occurred_date", sa.Date),
 )
 
+# activities uses activity_date/started_at (its own schema's names, set by
+# migration 0430) rather than the occurred_date/occurred_time names every
+# other aggregate here uses -- aliased via Column(..., key=...) so
+# source_table.c.occurred_date below resolves for every aggregate uniformly,
+# without the batch loop needing to know this table is spelled differently.
+# This was flagged as a known gap in progress_execution.py's own docstring
+# ("Not yet registered... Phase 6.0") -- until this entry existed, every
+# ActivityCreated/ActivityProgressUpdateAdded/ActivityEvidenceAttached
+# outbox row hit the "source row not found" orphan path below and was
+# marked published without ever reaching timeline_entries.
+_activities = sa.Table(
+    "activities",
+    sa.MetaData(),
+    sa.Column("id", sa.UUID(as_uuid=True)),
+    sa.Column("organization_id", sa.UUID(as_uuid=True)),
+    sa.Column("project_id", sa.UUID(as_uuid=True)),
+    sa.Column("site_id", sa.UUID(as_uuid=True)),
+    sa.Column("activity_date", sa.Date, key="occurred_date"),
+    sa.Column("started_at", sa.Time, key="occurred_time"),
+)
+
 # Extension point: a new domain's aggregate is one entry here — the table
 # must expose organization_id, project_id, site_id, occurred_date.
 # occurred_time is optional (see _labour_attendance_reports above); the batch
@@ -94,6 +115,7 @@ AGGREGATE_TABLES: dict[str, sa.Table] = {
     "material_receipt": _material_receipts,
     "material_usage": _material_usage,
     "labour_attendance_report": _labour_attendance_reports,
+    "activity": _activities,
 }
 
 
@@ -124,6 +146,13 @@ EVENT_SUMMARY_BUILDERS: dict[str, Callable[[dict[str, Any]], str]] = {
         f"Material movement corrected ({p.get('movement_reason')})"
     ),
     "LabourAttendanceRecorded": _labour_attendance_summary,
+    "ActivityCreated": lambda p: (
+        f"{p.get('work_type')} activity started" if p.get("work_type") else "Activity started"
+    ),
+    "ActivityProgressUpdateAdded": lambda p: (
+        f"Progress update: {p.get('update_kind', 'PROGRESS').title()}"
+    ),
+    "ActivityEvidenceAttached": lambda p: "Photo evidence attached",
 }
 
 
