@@ -7,6 +7,7 @@ failure is swallowed and never breaks the pipeline.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -1301,31 +1302,36 @@ async def process_inbound_message(
                 # --- Workflow stage ---
                 t0 = time.perf_counter()
                 try:
-                    await _seed_account_candidates(
-                        canonical_event, planner_decision, money_account_query, actor
+                    # Run all 7 seed functions in parallel — each targets a
+                    # different table and is fully independent of the others.
+                    await asyncio.gather(
+                        _seed_account_candidates(
+                            canonical_event, planner_decision, money_account_query, actor
+                        ),
+                        _seed_petty_cash_recipient(
+                            canonical_event, planner_decision, petty_cash_query, actor
+                        ),
+                        _seed_reversal_target(
+                            canonical_event, planner_decision, reversal_query, actor
+                        ),
+                        _seed_worker_candidates(
+                            canonical_event, planner_decision, workforce_query, actor
+                        ),
+                        _seed_duplicate_check(
+                            canonical_event, planner_decision, duplicate_expense_query, actor
+                        ),
+                        _seed_vendor_check(
+                            canonical_event, planner_decision, vendor_query, actor
+                        ),
+                        _seed_finance_query_context(
+                            canonical_event,
+                            planner_decision,
+                            money_account_query,
+                            expense_query_service,
+                            actor,
+                        ),
                     )
-                    await _seed_petty_cash_recipient(
-                        canonical_event, planner_decision, petty_cash_query, actor
-                    )
-                    await _seed_reversal_target(
-                        canonical_event, planner_decision, reversal_query, actor
-                    )
-                    await _seed_worker_candidates(
-                        canonical_event, planner_decision, workforce_query, actor
-                    )
-                    await _seed_duplicate_check(
-                        canonical_event, planner_decision, duplicate_expense_query, actor
-                    )
-                    await _seed_vendor_check(
-                        canonical_event, planner_decision, vendor_query, actor
-                    )
-                    await _seed_finance_query_context(
-                        canonical_event,
-                        planner_decision,
-                        money_account_query,
-                        expense_query_service,
-                        actor,
-                    )
+                    # Synchronous — not a coroutine, runs after the gather.
                     _seed_account_admin_role(canonical_event, planner_decision, actor)
 
                     # Account-admin role gate: refused before the workflow

@@ -8,6 +8,7 @@ a START_WORKFLOW decision may reach ``start()``) rather than trusting callers.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass
@@ -271,7 +272,12 @@ class WorkflowRuntime:
         # (see workflows/ports.py's get_awaiting_input docstring), so this
         # pre-check is the only thing enforcing it.
         if not is_informational(workflow_key):
-            existing = await self._repo.get_awaiting_confirmation(event.user_id)
+            # Fetch both pending-state types concurrently — they are
+            # independent reads on different workflow phases.
+            existing, existing_input = await asyncio.gather(
+                self._repo.get_awaiting_confirmation(event.user_id),
+                self._repo.get_awaiting_input(event.user_id),
+            )
             if existing is not None and existing.state.pending_prompt:
                 logger.info(
                     "workflow.blocked_pending_confirmation user=%s existing=%s",
@@ -283,7 +289,6 @@ class WorkflowRuntime:
                     correlation_id=event.correlation_id,
                     pending_prompt=existing.state.pending_prompt,
                 )
-            existing_input = await self._repo.get_awaiting_input(event.user_id)
             if existing_input is not None and existing_input.state.pending_prompt:
                 logger.info(
                     "workflow.blocked_pending_input user=%s existing=%s",
