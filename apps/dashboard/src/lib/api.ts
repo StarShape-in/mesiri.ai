@@ -1114,3 +1114,91 @@ export async function fetchLabourReportApi(params?: {
     rows,
   }
 }
+
+// ---------------------------------------------------------------------------
+// Progress Activities API Types & Functions
+// ---------------------------------------------------------------------------
+
+export interface ActivityQuantity {
+  id: string
+  work_type?: string | null
+  unit_id?: string | null
+  unit?: string | null
+  quantity: number | string
+  measurement_type: string
+}
+
+export interface ProgressUpdate {
+  id: string
+  occurred_at: string
+  update_kind: string
+  narrative?: string | null
+  quantity?: number | string | null
+  unit_id?: string | null
+  unit?: string | null
+  reported_by_user_id?: string | null
+  source: string
+  created_at: string
+}
+
+export interface ActivityAttachment {
+  id: string
+  media_object_key: string
+  attachment_type: string
+  mime_type?: string | null
+  caption?: string | null
+  ai_caption?: string | null
+  role?: string | null
+  captured_at?: string | null
+  created_at: string
+}
+
+export interface ActivitySummary {
+  id: string
+  organization_id: string
+  project_id: string
+  site_id: string
+  work_package_id?: string | null
+  location_id?: string | null
+  work_type?: string | null
+  activity_date: string
+  started_at?: string | null
+  ended_at?: string | null
+  status: string
+  narrative?: string | null
+  contractor?: string | null
+  reported_by_user_id?: string | null
+  source: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ActivitiesListResponse {
+  items: ActivitySummary[]
+  total: number
+}
+
+export interface ActivityDetailResponse extends ActivitySummary {
+  quantities: ActivityQuantity[]
+  progress_updates: ProgressUpdate[]
+  attachments: ActivityAttachment[]
+}
+
+export async function fetchActivitiesApi(params?: {
+  project_id?: string
+  site_id?: string
+  status?: string
+  date_from?: string
+  date_to?: string
+  limit?: number
+  offset?: number
+}): Promise<ActivitiesListResponse> {
+  const res = await api.get<ActivitiesListResponse>('/progress/activities', { params })
+  return res.data
+}
+
+export async function fetchActivityDetailApi(activityId: string): Promise<ActivityDetailResponse> {
+  const res = await api.get<ActivityDetailResponse>(`/progress/activities/${activityId}`)
+  return res.data
+}
+

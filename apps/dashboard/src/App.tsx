@@ -8,6 +8,7 @@ import CompanyDetails from '@/pages/CompanyDetails'
 import Projects from '@/pages/Projects'
 import ProjectDetails from '@/pages/ProjectDetails'
 import DailyReportsPage from '@/pages/DailyReportsPage'
+import ActivitiesPage from '@/pages/ActivitiesPage'
 import MaterialsPage from '@/pages/MaterialsPage'
 import ExpensesPage from '@/pages/ExpensesPage'
 import ReceiptsPage from '@/pages/ReceiptsPage'
@@ -60,7 +61,7 @@ export default function App() {
         {/* Operations Section */}
         <Route path="operations" element={<OperationsIndexRedirect />} />
         <Route path="operations/dashboard" element={<Overview />} />
-        <Route path="operations/activities" element={<OperationalPlaceholder title="Operations Activities" />} />
+        <Route path="operations/activities" element={<ActivitiesPage />} />
         <Route path="operations/timeline" element={<OperationalPlaceholder title="Operations Timeline" />} />
         <Route path="operations/daily-reports" element={<DailyReportsPage />} />
         <Route path="operations/issues" element={<OperationalPlaceholder title="Operations Issues" />} />
