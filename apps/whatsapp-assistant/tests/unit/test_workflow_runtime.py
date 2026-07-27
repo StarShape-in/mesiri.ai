@@ -587,6 +587,10 @@ def test_informational_and_no_draft_keys_are_pinned() -> None:
         WorkflowKey.MATERIAL_INVENTORY_QUERY,
         WorkflowKey.ACCOUNT_BALANCE_QUERY,
         WorkflowKey.EXPENSE_QUERY,
+        # Labour's read side: "how many workers today?" answers and stops.
+        # Being informational is what stops an unrelated pending confirmation
+        # blocking a question that changes nothing.
+        WorkflowKey.LABOUR_QUERY,
     }
     assert no_draft == informational | {
         WorkflowKey.REVERSE,

@@ -71,7 +71,7 @@ _EXTRACTION_PROMPT = (
     '"Malayalam", "English"), '
     '"semantic_type" (expense|equipment_usage|material_update|labour_update|'
     "general_site_update|general_question|whoami_question|inventory_query|"
-    "finance_query|transfer|petty_cash|reversal|account_admin|unknown), "
+    "labour_query|finance_query|transfer|petty_cash|reversal|account_admin|unknown), "
     '"fields" (object, values in English except proper nouns/names -- see '
     "per-type rules below for how to handle names), "
     '"missing_fields" (array), '
@@ -138,6 +138,16 @@ _EXTRACTION_PROMPT = (
     'much of a material is currently in stock (e.g. "how much cement is left?", '
     '"current stock of steel") or its movement history '
     '(e.g. "show today\'s cement history"). This is a question, never an update.\n'
+    "- labour_query: date_range, trade, project_name. Use this type for QUESTIONS "
+    'about who worked and what labour cost (e.g. "how many workers today?", '
+    '"who worked yesterday?", "labour cost this week", "how many masons on site?"). '
+    "date_range is exactly one of \"today\", \"this_week\", \"this_month\" if a period "
+    "is stated or implied; omit if none is. trade narrows to one trade when asked "
+    '(e.g. "how many masons today" -> trade "mason"); omit for all trades. '
+    "CRITICAL: this is a question ABOUT existing records, never a new attendance "
+    'report. "14 workers today" is a labour_update (recording who worked); '
+    '"how many workers today?" is a labour_query (asking). Getting this backwards '
+    "would record workers instead of counting them.\n"
     "- finance_query: query_kind, account_name, category_name, date_range, missing_receipts, "
     "project_name. "
     'query_kind MUST be exactly "balance" or "expenses" -- never any other word. '

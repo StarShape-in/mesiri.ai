@@ -46,6 +46,13 @@ class SemanticType(str, Enum):
     # MATERIAL_UPDATE the same way WHOAMI_QUESTION is distinct from a report:
     # it carries no business record to save, only a query to answer.
     INVENTORY_QUERY = "inventory_query"
+    # A question about who worked (e.g. "how many workers today?", "labour
+    # cost this week") -- read-only, never an update. Distinct from
+    # LABOUR_UPDATE for the same reason INVENTORY_QUERY is distinct from
+    # MATERIAL_UPDATE, and the distinction is load-bearing here: misreading
+    # "14 workers today?" as a report would try to *record* 14 workers
+    # instead of counting them.
+    LABOUR_QUERY = "labour_query"
     # A question about cash/account balances or past expenses (e.g. "how much
     # cash do I have?", "balance of Site Cash", "how much did we spend on
     # diesel?") -- read-only, never an update. Splits into two

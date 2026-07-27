@@ -16,6 +16,7 @@ from typing import Any
 
 from backend.ports import ActorIdentity
 from canonicalization import build_canonical_event, log_canonical_event
+from canonicalization.occurred_date import today_for
 from channel.replies import (
     ALL_SITES_ROW_ID,
     CONFIRM_BUTTONS,
@@ -57,6 +58,12 @@ from runtime.duplicate_expense_query import DuplicateExpenseQueryService
 from runtime.expense_category_query import ExpenseCategoryQueryService
 from runtime.expense_query_service import ExpenseQueryService, resolve_date_range
 from runtime.inventory_query import MaterialInventoryQueryService
+from runtime.labour_query_service import (
+    LabourQueryService,
+)
+from runtime.labour_query_service import (
+    resolve_date_range as resolve_labour_date_range,
+)
 from runtime.logging_ports import MessageLogger, TraceLogger
 from runtime.material_catalog_query import MaterialCatalogQueryService
 from runtime.money_account_query import MoneyAccountQueryService
@@ -718,6 +725,46 @@ def _seed_account_admin_role(event: CanonicalEventV2, decision: PlannerDecisionV
     event.fields["created_by_role"] = actor.role
 
 
+async def _seed_labour_query(
+    event: CanonicalEventV2,
+    decision: PlannerDecisionV2,
+    labour_query_service: LabourQueryService | None,
+    actor: ActorIdentity | None,
+    timezone_name: str | None,
+) -> None:
+    """Answer the attendance question before the graph runs -- a node must
+    never query a repository itself, same principle as
+    _seed_finance_query_context above. Only ever runs for LABOUR_QUERY.
+
+    The date range defaults to *today* rather than expense's "this month":
+    the question a supervisor actually asks is "how many workers today", and
+    attendance is a daily rhythm in a way spending is not.
+    """
+    if labour_query_service is None or actor is None or not actor.organization_id:
+        return
+    if decision.workflow_key is not WorkflowKey.LABOUR_QUERY:
+        return
+
+    # The sender's today, not the server's -- same UTC-vs-site-timezone trap
+    # canonicalization/occurred_date.py exists to close. Asking "how many
+    # workers today" at 2am in India must not answer for yesterday. The
+    # timezone comes from resolved context (ActorIdentity doesn't carry one).
+    today = today_for(timezone_name)
+    start_date, end_date, date_range_label = resolve_labour_date_range(
+        event.fields.get("date_range"), today=today
+    )
+    results = await labour_query_service.summarize_attendance(
+        organization_id=actor.organization_id,
+        project_id=event.project_id,
+        site_id=event.site_id,
+        start_date=start_date,
+        end_date=end_date,
+        trade=event.fields.get("trade"),
+    )
+    results["date_range_label"] = date_range_label
+    event.fields["labour_results"] = results
+
+
 async def _seed_worker_candidates(
     event: CanonicalEventV2,
     decision: PlannerDecisionV2,
@@ -946,6 +993,7 @@ async def process_inbound_message(
     reversal_query: ReversalTargetQueryService | None = None,
     duplicate_expense_query: DuplicateExpenseQueryService | None = None,
     workforce_query: WorkforceQueryService | None = None,
+    labour_query_service: LabourQueryService | None = None,
     vendor_query: VendorQueryService | None = None,
     expense_query_service: ExpenseQueryService | None = None,
     semantic_hint: str | None = None,

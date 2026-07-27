@@ -68,6 +68,13 @@ class LabourUpdateCandidate(Candidate):
     # Conventional keys: headcount, trade, hours, contractor.
 
 
+class LabourQueryCandidate(Candidate):
+    semantic_type: SemanticType = SemanticType.LABOUR_QUERY
+    # Conventional keys: date_range (today/this_week/this_month), trade
+    # (optional -- absent means "all trades"). Read-only; carries no business
+    # record, only a question to answer.
+
+
 class GeneralSiteUpdateCandidate(Candidate):
     semantic_type: SemanticType = SemanticType.GENERAL_SITE_UPDATE
     # Conventional keys: summary, activity, location, weather.
@@ -136,6 +143,7 @@ CANDIDATE_TYPES: dict[SemanticType, type[Candidate]] = {
     SemanticType.GENERAL_SITE_UPDATE: GeneralSiteUpdateCandidate,
     SemanticType.GENERAL_QUESTION: GeneralQuestionCandidate,
     SemanticType.INVENTORY_QUERY: InventoryQueryCandidate,
+    SemanticType.LABOUR_QUERY: LabourQueryCandidate,
     SemanticType.FINANCE_QUERY: FinanceQueryCandidate,
     SemanticType.TRANSFER: TransferCandidate,
     SemanticType.PETTY_CASH: PettyCashCandidate,
