@@ -86,6 +86,23 @@ class RedisClient:
             raise map_redis_error(exc) from exc
         return json.loads(raw) if raw is not None else None
 
+    async def set_if_absent(self, key: str, value: str, *, ttl_seconds: int | None = None) -> bool:
+        """Atomically claim ``key``, returning True only for the first caller.
+
+        SET NX in one round trip — deliberately not get-then-set, which has a
+        race window two concurrent webhook deliveries of the same message_id
+        would fall straight through (Meta retries aggressively, and the two
+        retries can land on different workers). This is the primitive behind
+        RedisDeduplicationStore; the TTL is what bounds the key set, since
+        nothing ever deletes a claim explicitly.
+        """
+        client = self._require_client
+        try:
+            claimed = await client.set(self.namespaced(key), value, nx=True, ex=ttl_seconds)
+        except Exception as exc:  # noqa: BLE001
+            raise map_redis_error(exc) from exc
+        return bool(claimed)
+
     async def check_health(self) -> None:
         client = self._require_client
         try:
@@ -134,6 +151,13 @@ class FakeRedis:
     async def get_json(self, key: str) -> Any | None:
         raw = self._store.get(self.namespaced(key))
         return json.loads(raw) if raw is not None else None
+
+    async def set_if_absent(self, key: str, value: str, *, ttl_seconds: int | None = None) -> bool:
+        namespaced = self.namespaced(key)
+        if namespaced in self._store:
+            return False
+        self._store[namespaced] = value
+        return True
 
     async def check_health(self) -> None:
         if self.fail_health or not self._connected:

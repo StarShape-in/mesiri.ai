@@ -40,6 +40,8 @@ import {
   fetchDailyReportsApi,
   fetchDailyReportDetailApi,
   approveDailyReportApi,
+  createDailyReportApi,
+  fetchWorkersApi,
   type DailyReportSummary,
   type DailyReportDetailResponse,
   type DailyReportWorkItem,
@@ -145,124 +147,6 @@ function DPRStatusBadge({ status }: { status: string }) {
   }
 }
 
-// ─── Demonstration Sample Data ───────────────────────────────────────────────
-
-const SAMPLE_DPRS: DailyReportDetailResponse[] = [
-  {
-    id: 'dpr_01',
-    dpr_number: 'DPR-2026-0727-01',
-    report_date: '2026-07-27',
-    project_name: 'Metro Line Extension - Sector 4',
-    site_name: 'Tower A Foundation',
-    prepared_by_name: 'Vikram Singh',
-    prepared_by_role: 'Site Senior Engineer',
-    weather: 'sunny',
-    temperature_celsius: 34,
-    shift: 'day',
-    workflow_status: 'under_review',
-    activities_count: 5,
-    labour_count: 42,
-    issues_count: 1,
-    narrative_summary: 'Poured 120m3 grade C30 concrete for raft slab. Rebar tying completed for column C1-C8. Minor delay due to transit mixer queueing.',
-    created_at: '2026-07-27T17:30:00Z',
-    general_notes: 'All safety guidelines followed. Site clean-up completed at 18:00 hrs.',
-    work_items: [
-      { id: 'w1', work_package: 'Concrete Works', activity_name: 'Raft Slab Concrete Pouring', location: 'Grid B-4 to B-8', contractor: 'UltraTech ReadyMix', quantity_planned: 150, quantity_executed: 120, unit: 'm3', percent_complete: 80, status: 'on_track' },
-      { id: 'w2', work_package: 'Rebar Tying', activity_name: 'Column Reinforcement Mesh', location: 'Column Line 1-8', contractor: 'Direct Steel Crew', quantity_planned: 8, quantity_executed: 8, unit: 'MT', percent_complete: 100, status: 'completed' },
-      { id: 'w3', work_package: 'Shuttering', activity_name: 'Formwork Assembly', location: 'Retaining Wall North', contractor: 'Star Formworks', quantity_planned: 60, quantity_executed: 45, unit: 'sqm', percent_complete: 75, status: 'delayed' },
-    ],
-    labour_items: [
-      { trade_category: 'Masons & Concrete Finishers', subcontractor: 'Rajput Construction', headcount: 14, hours_worked: 8, daily_cost_inr: 12600 },
-      { trade_category: 'Bar Benders & Rebar Crew', subcontractor: 'Direct Payroll', headcount: 12, hours_worked: 8, daily_cost_inr: 10800 },
-      { trade_category: 'Helpers & General Labour', subcontractor: 'City Manpower Ltd', headcount: 16, hours_worked: 8, daily_cost_inr: 11200 },
-    ],
-    equipment_items: [
-      { equipment_name: 'Concrete Boom Pump (36m)', category: 'Concrete Equipment', hours_operated: 6, idle_hours: 1.5, fuel_litres_consumed: 65 },
-      { equipment_name: 'Tower Crane TC-01', category: 'Lifting', hours_operated: 8, idle_hours: 0, fuel_litres_consumed: 0 },
-      { equipment_name: 'JCB 3DX Excavator', category: 'Earthmoving', hours_operated: 4, idle_hours: 2, fuel_litres_consumed: 38 },
-    ],
-    issues: [
-      { id: 'i1', title: 'Transit Mixer Bottleneck at Entry Gate', severity: 'medium', category: 'weather_delay', narrative: 'Traffic jam at Sector 4 main artery delayed 3 transit mixers by 45 mins.', is_resolved: true },
-    ],
-    attachments: [
-      { id: 'a1', caption: 'Raft Slab Pouring in Progress', ai_analysis: 'Concrete pour verified at Grid B-4. Slump Test visual check clean.', uploaded_at: '2026-07-27T14:20:00Z' },
-      { id: 'a2', caption: 'Rebar Tying Inspection Column C3', ai_analysis: '16mm TMT bars tied with 150mm spacing. Clear cover blocks verified.', uploaded_at: '2026-07-27T16:10:00Z' },
-    ],
-  },
-  {
-    id: 'dpr_02',
-    dpr_number: 'DPR-2026-0726-02',
-    report_date: '2026-07-26',
-    project_name: 'Metro Line Extension - Sector 4',
-    site_name: 'Tower A Foundation',
-    prepared_by_name: 'Rajesh Sharma',
-    prepared_by_role: 'Assistant Site Engineer',
-    weather: 'rainy',
-    temperature_celsius: 28,
-    shift: 'day',
-    workflow_status: 'approved',
-    activities_count: 4,
-    labour_count: 28,
-    issues_count: 1,
-    narrative_summary: 'Heavy rainfall from 11:00 to 14:00. Dewatering pumps operated continuously. Shuttering work continued indoors.',
-    created_at: '2026-07-26T18:00:00Z',
-    reviewer_name: 'Ilan Usman (PM)',
-    reviewed_at: '2026-07-26T19:30:00Z',
-    approval_notes: 'Approved. Dewatering log verified.',
-    work_items: [
-      { id: 'w4', work_package: 'Dewatering', activity_name: 'Site Pit Pumping', location: 'Foundation Pit', contractor: 'Direct Crew', quantity_planned: 1, quantity_executed: 1, unit: 'shift', percent_complete: 100, status: 'completed' },
-      { id: 'w5', work_package: 'Shuttering', activity_name: 'Indoor Prefabrication', location: 'Yard Workshop', contractor: 'Star Formworks', quantity_planned: 50, quantity_executed: 50, unit: 'sqm', percent_complete: 100, status: 'completed' },
-    ],
-    labour_items: [
-      { trade_category: 'Carpenters & Shuttering Staff', headcount: 10, hours_worked: 7, daily_cost_inr: 9000 },
-      { trade_category: 'Helpers', headcount: 18, hours_worked: 7, daily_cost_inr: 12600 },
-    ],
-    equipment_items: [
-      { equipment_name: '5HP Diesel Dewatering Pump', category: 'Pumps', hours_operated: 7, idle_hours: 0, fuel_litres_consumed: 22 },
-    ],
-    issues: [
-      { id: 'i2', title: 'Rain Interruption - 3 Hours Lost', severity: 'high', category: 'weather_delay', narrative: 'Outdoors excavation suspended due to water accumulation.', is_resolved: true },
-    ],
-    attachments: [
-      { id: 'a3', caption: 'Dewatering Pump Operating at Full Load', ai_analysis: 'Water level reduced by 40cm in pit.', uploaded_at: '2026-07-26T13:00:00Z' },
-    ],
-  },
-  {
-    id: 'dpr_03',
-    dpr_number: 'DPR-2026-0725-03',
-    report_date: '2026-07-25',
-    project_name: 'Highway Overpass Package B',
-    site_name: 'Pier 12 & 13 Construction',
-    prepared_by_name: 'Amit Verma',
-    prepared_by_role: 'Site Supervisor',
-    weather: 'sunny',
-    temperature_celsius: 36,
-    shift: 'full_day',
-    workflow_status: 'frozen',
-    activities_count: 6,
-    labour_count: 55,
-    issues_count: 0,
-    narrative_summary: 'Pier cap casting completed at Pier 12. Pre-stressing strand insertion initiated for girder G-04.',
-    created_at: '2026-07-25T19:00:00Z',
-    reviewer_name: 'Anil Kumar (Project Director)',
-    reviewed_at: '2026-07-25T20:15:00Z',
-    approval_notes: 'Frozen and locked for monthly billing cycle.',
-    work_items: [
-      { id: 'w6', work_package: 'Bridge Infrastructure', activity_name: 'Pier Cap Casting', location: 'Pier 12', contractor: 'L&T Subcontract', quantity_planned: 85, quantity_executed: 85, unit: 'm3', percent_complete: 100, status: 'completed' },
-    ],
-    labour_items: [
-      { trade_category: 'Bridge Specialists & Masons', headcount: 25, hours_worked: 10, daily_cost_inr: 25000 },
-      { trade_category: 'Riggers & Crane Operators', headcount: 10, hours_worked: 10, daily_cost_inr: 15000 },
-      { trade_category: 'Helpers', headcount: 20, hours_worked: 10, daily_cost_inr: 14000 },
-    ],
-    equipment_items: [
-      { equipment_name: '100T Hydraulic Mobile Crane', category: 'Heavy Cranes', hours_operated: 9, idle_hours: 1, fuel_litres_consumed: 110 },
-    ],
-    issues: [],
-    attachments: [],
-  },
-]
-
 // ─── DPR Calendar Component ───────────────────────────────────────────────────
 
 function DPRCalendarView({
@@ -274,7 +158,7 @@ function DPRCalendarView({
   onSelectReport: (id: string) => void
   onCreateDraftForDate: (dateStr: string) => void
 }) {
-  const [currentDate, setCurrentDate] = React.useState<Date>(new Date(2026, 6, 1))
+  const [currentDate, setCurrentDate] = React.useState<Date>(new Date())
 
   const year = currentDate.getFullYear()
   const month = currentDate.getMonth()
@@ -500,20 +384,13 @@ export default function DailyReportsPage() {
   const [draftNarrative, setDraftNarrative] = React.useState<string>('')
 
   // Form Work items state
-  const [draftWorkItems, setDraftWorkItems] = React.useState<DailyReportWorkItem[]>([
-    { id: 'w1', work_package: 'Concrete Works', activity_name: 'Slab Pouring', location: 'Grid A-1', contractor: 'UltraTech', quantity_planned: 100, quantity_executed: 80, unit: 'm3', percent_complete: 80, status: 'on_track' },
-  ])
+  const [draftWorkItems, setDraftWorkItems] = React.useState<DailyReportWorkItem[]>([])
 
   // Form Labour items state
-  const [draftLabourItems, setDraftLabourItems] = React.useState<DailyReportLabourItem[]>([
-    { trade_category: 'Masons & Finishers', subcontractor: 'Rajput Paving', headcount: 14, hours_worked: 8, daily_cost_inr: 12600 },
-    { trade_category: 'General Helpers', subcontractor: 'City Labour Ltd', headcount: 18, hours_worked: 8, daily_cost_inr: 12600 },
-  ])
+  const [draftLabourItems, setDraftLabourItems] = React.useState<DailyReportLabourItem[]>([])
 
   // Form Equipment items state
-  const [draftEquipmentItems, setDraftEquipmentItems] = React.useState<DailyReportEquipmentItem[]>([
-    { equipment_name: 'Concrete Boom Pump', category: 'Concrete Equipment', hours_operated: 6, idle_hours: 1, fuel_litres_consumed: 55 },
-  ])
+  const [draftEquipmentItems] = React.useState<DailyReportEquipmentItem[]>([])
 
   // Form Issues state
   const [draftIssues, setDraftIssues] = React.useState<DailyReportIssue[]>([])
@@ -539,6 +416,7 @@ export default function DailyReportsPage() {
     }
   }
 
+  // 100% Real API integration - No mock data
   const fetchList = React.useCallback(async () => {
     setLoading(true)
     try {
@@ -555,13 +433,9 @@ export default function DailyReportsPage() {
       if (dateTo) params.date_to = dateTo
 
       const data = await fetchDailyReportsApi(params)
-      if (data.items && data.items.length > 0) {
-        setReports(data.items)
-      } else {
-        setReports(SAMPLE_DPRS)
-      }
+      setReports(data.items || [])
     } catch {
-      setReports(SAMPLE_DPRS)
+      setReports([])
     } finally {
       setLoading(false)
     }
@@ -569,34 +443,45 @@ export default function DailyReportsPage() {
 
   React.useEffect(() => { fetchList() }, [fetchList])
 
-  // Auto-sync function to pull live data from other modules for the chosen date
-  const handleAutoSyncFromLedgers = () => {
-    toast.info('Auto-Syncing Module Ledgers', `Pulling Workforce, Expenses & Materials for ${draftDate}`)
-    setDraftLabourItems([
-      { trade_category: 'Masons & Concrete Finishers', subcontractor: 'Rajput Construction', headcount: 16, hours_worked: 8, daily_cost_inr: 14400 },
-      { trade_category: 'Bar Benders & Rebar Crew', subcontractor: 'Direct Payroll', headcount: 14, hours_worked: 8, daily_cost_inr: 12600 },
-      { trade_category: 'Helpers & General Labour', subcontractor: 'City Manpower Ltd', headcount: 20, hours_worked: 8, daily_cost_inr: 14000 },
-    ])
-    setDraftEquipmentItems([
-      { equipment_name: 'Concrete Boom Pump (36m)', category: 'Concrete Equipment', hours_operated: 7, idle_hours: 0.5, fuel_litres_consumed: 70 },
-      { equipment_name: 'Tower Crane TC-01', category: 'Lifting Equipment', hours_operated: 8, idle_hours: 0, fuel_litres_consumed: 0 },
-    ])
-    toast.success('Sync Complete', 'Populated 50 headcount & 2 equipment logs from ledgers')
+  // Real Auto-sync function pulling from live backend ledgers
+  const handleAutoSyncFromLedgers = async () => {
+    toast.info('Auto-Syncing Ledgers', `Fetching active workers & expenses for ${draftDate}`)
+    try {
+      const workersRes = await fetchWorkersApi({ limit: 100 })
+
+      let syncedLabour: DailyReportLabourItem[] = []
+      if (workersRes.items) {
+        const workers = workersRes.items
+        const tradeMap: Record<string, number> = {}
+        workers.forEach((w) => {
+          const trade = w.trade || 'General Labour'
+          tradeMap[trade] = (tradeMap[trade] || 0) + 1
+        })
+        syncedLabour = Object.entries(tradeMap).map(([trade, count]) => ({
+          trade_category: trade,
+          headcount: count,
+          hours_worked: 8,
+        }))
+      }
+
+      if (syncedLabour.length > 0) {
+        setDraftLabourItems(syncedLabour)
+      }
+
+      toast.success('Ledgers Synced', `Updated live workforce for ${draftDate}`)
+    } catch {
+      toast.error('Sync Error', 'Could not reach backend ledgers')
+    }
   }
 
-  // Fetch detail for selected report
+  // Fetch detail for selected report via real API
   React.useEffect(() => {
     if (!selectedReportId) { setDetailData(null); return }
-    const sampleMatch = SAMPLE_DPRS.find((r) => r.id === selectedReportId)
-    if (sampleMatch) {
-      setDetailData(sampleMatch)
-      return
-    }
     let active = true
     setDetailLoading(true)
     fetchDailyReportDetailApi(selectedReportId)
       .then((res) => { if (active) setDetailData(res) })
-      .catch(() => { if (active && sampleMatch) setDetailData(sampleMatch) })
+      .catch(() => { if (active) setDetailData(null) })
       .finally(() => { if (active) setDetailLoading(false) })
     return () => { active = false }
   }, [selectedReportId])
@@ -640,7 +525,7 @@ export default function DailyReportsPage() {
     const count = selectedIds.length
     for (const id of selectedIds) {
       try {
-        await approveDailyReportApi(id, 'Bulk approved')
+        await approveDailyReportApi(id, 'Bulk approved via dashboard')
       } catch {
         // ignore fallback
       }
@@ -675,16 +560,6 @@ export default function DailyReportsPage() {
     return `Site Scope: ${scope.projectName} / ${scope.siteName}`
   }, [scope])
 
-  const currentProjectName = React.useMemo(() => {
-    if (scope.mode === 'portfolio') return 'Active Metro Project'
-    return scope.projectName
-  }, [scope])
-
-  const currentSiteName = React.useMemo(() => {
-    if (scope.mode === 'site') return scope.siteName
-    return 'Tower A Foundation'
-  }, [scope])
-
   const hasActiveFilters =
     activeStatusParam !== 'ALL' ||
     activeCategoryParam !== 'all' ||
@@ -711,35 +586,30 @@ export default function DailyReportsPage() {
     })
   }
 
-  const handleCreateDprSubmit = (e: React.FormEvent) => {
+  const handleCreateDprSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    const newReport: DailyReportDetailResponse = {
-      id: `dpr_new_${Date.now()}`,
-      dpr_number: `DPR-${draftDate.replace(/-/g, '')}-0${reports.length + 1}`,
-      report_date: draftDate,
-      project_name: currentProjectName,
-      site_name: currentSiteName,
-      prepared_by_name: 'Current Engineer',
-      prepared_by_role: 'Site Engineer',
-      weather: draftWeather as any,
-      temperature_celsius: draftTemp,
-      shift: draftShift as any,
-      workflow_status: 'under_review',
-      activities_count: draftWorkItems.length,
-      labour_count: draftLabourItems.reduce((acc, l) => acc + l.headcount, 0),
-      issues_count: draftIssues.length,
-      narrative_summary: draftNarrative || 'Daily progress logged across site activities and manpower.',
-      created_at: new Date().toISOString(),
-      work_items: draftWorkItems,
-      labour_items: draftLabourItems,
-      equipment_items: draftEquipmentItems,
-      issues: draftIssues,
-      attachments: [],
-    }
+    try {
+      const payload = {
+        report_date: draftDate,
+        project_id: scope.mode !== 'portfolio' ? scope.projectId : undefined,
+        site_id: scope.mode === 'site' ? scope.siteId : undefined,
+        weather: draftWeather,
+        temperature_celsius: draftTemp,
+        shift: draftShift,
+        narrative_summary: draftNarrative,
+        work_items: draftWorkItems,
+        labour_items: draftLabourItems,
+        equipment_items: draftEquipmentItems,
+        issues: draftIssues,
+      }
 
-    setReports((prev) => [newReport, ...prev])
-    toast.success('DPR Created & Submitted', `Generated ${newReport.dpr_number} for site review`)
-    setCreateDialogOpen(false)
+      await createDailyReportApi(payload)
+      toast.success('DPR Created & Submitted', `Generated report for ${draftDate}`)
+      setCreateDialogOpen(false)
+      fetchList()
+    } catch {
+      toast.error('Submission Error', 'Failed to submit DPR to backend')
+    }
   }
 
   return (
@@ -1699,14 +1569,22 @@ export default function DailyReportsPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody className="text-xs">
-                      {draftLabourItems.map((l, idx) => (
-                        <TableRow key={idx}>
-                          <TableCell className="font-semibold">{l.trade_category}</TableCell>
-                          <TableCell className="text-muted-foreground">{l.subcontractor || 'Direct'}</TableCell>
-                          <TableCell className="text-right font-mono font-bold">{l.headcount}</TableCell>
-                          <TableCell className="text-right font-mono">{l.hours_worked} hrs</TableCell>
+                      {draftLabourItems.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={4} className="text-center py-4 text-muted-foreground italic">
+                            No labour headcount added. Click "Sync Ledger" to pull live workers.
+                          </TableCell>
                         </TableRow>
-                      ))}
+                      ) : (
+                        draftLabourItems.map((l, idx) => (
+                          <TableRow key={idx}>
+                            <TableCell className="font-semibold">{l.trade_category}</TableCell>
+                            <TableCell className="text-muted-foreground">{l.subcontractor || 'Direct'}</TableCell>
+                            <TableCell className="text-right font-mono font-bold">{l.headcount}</TableCell>
+                            <TableCell className="text-right font-mono">{l.hours_worked} hrs</TableCell>
+                          </TableRow>
+                        ))
+                      )}
                     </TableBody>
                   </Table>
                 </TabsContent>
@@ -1719,7 +1597,7 @@ export default function DailyReportsPage() {
                         <DollarSign className="size-4 text-emerald-500" /> Site Expenses Logged ({draftDate})
                       </span>
                       <Badge variant="outline" className="text-[10px] font-mono border-emerald-500/30 text-emerald-600">
-                        Live Sync
+                        Live Backend
                       </Badge>
                     </div>
                     <p className="text-muted-foreground text-xs">

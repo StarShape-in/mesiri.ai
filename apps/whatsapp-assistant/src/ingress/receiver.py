@@ -57,6 +57,86 @@ class MessageIngressContext:
     display_phone_number: str | None
 
 
+def _sort_key(context: MessageIngressContext) -> tuple[int, str]:
+    """Order a batch the way the sender actually sent it.
+
+    Construction sites lose signal constantly; when the phone reconnects Meta
+    delivers the whole backlog at once, and nothing guarantees the array is in
+    send order. Processing "completed" before the "started" it refers to
+    silently corrupts the timeline, so the send timestamp -- not arrival
+    position -- is the ordering authority.
+
+    Meta sends `timestamp` as unix seconds in a string. A malformed or absent
+    value sorts to 0 (earliest) rather than raising: a message with a broken
+    timestamp must still be processed, just without an ordering guarantee.
+    `id` only breaks ties, so same-second messages stay deterministic.
+    """
+    raw = context.message.get("timestamp")
+    try:
+        seconds = int(str(raw))
+    except (TypeError, ValueError):
+        seconds = 0
+    return seconds, str(context.message.get("id") or "")
+
+
+class _SenderSerializer:
+    """One processing lane per sender: strict FIFO within a conversation,
+    full parallelism across conversations.
+
+    Without this, `asyncio.create_task` per message means a burst races --
+    message N+1's reply can land before N's, and worse, N+1 can resolve
+    context (or a pending confirmation) against state N hasn't written yet.
+    Ordering per sender is the invariant that makes replayed backlogs safe;
+    ordering *across* senders was never needed and serializing it would make
+    one slow voice note block an entire site.
+
+    Locks are reference-counted and dropped at zero so a long-running process
+    doesn't accumulate one lock per phone number that ever messaged it.
+    """
+
+    def __init__(self) -> None:
+        self._lanes: dict[str, tuple[asyncio.Lock, int]] = {}
+
+    def _acquire_lane(self, sender: str) -> asyncio.Lock:
+        lock, waiters = self._lanes.get(sender, (asyncio.Lock(), 0))
+        self._lanes[sender] = (lock, waiters + 1)
+        return lock
+
+    def _release_lane(self, sender: str) -> None:
+        entry = self._lanes.get(sender)
+        if entry is None:
+            return
+        lock, waiters = entry
+        if waiters <= 1:
+            del self._lanes[sender]
+        else:
+            self._lanes[sender] = (lock, waiters - 1)
+
+    def lane(self, sender: str) -> _SenderLane:
+        return _SenderLane(self, sender)
+
+
+class _SenderLane:
+    """Async context manager for one sender's serialized lane."""
+
+    def __init__(self, serializer: _SenderSerializer, sender: str) -> None:
+        self._serializer = serializer
+        self._sender = sender
+        self._lock: asyncio.Lock | None = None
+
+    async def __aenter__(self) -> None:
+        # Registered synchronously at task-creation order, awaited after --
+        # asyncio.Lock wakes waiters FIFO, so tasks created in sorted order
+        # run in sorted order.
+        self._lock = self._serializer._acquire_lane(self._sender)
+        await self._lock.acquire()
+
+    async def __aexit__(self, *exc: object) -> None:
+        if self._lock is not None:
+            self._lock.release()
+        self._serializer._release_lane(self._sender)
+
+
 class WhatsAppReceiver:
     """Orchestrate deduplication, media retrieval, and normalization for ingress."""
 
@@ -97,12 +177,20 @@ class WhatsAppReceiver:
         # that would otherwise vanish into stdout with no persisted row.
         self._trace_logger: TraceLogger = trace_logger or NoopTraceLogger()
         self._background_tasks: set[asyncio.Task[None]] = set()
+        self._serializer = _SenderSerializer()
 
     async def handle_payload(self, payload: Mapping[str, Any]) -> int:
-        """Schedule ingress work for all messages in a verified webhook payload."""
+        """Schedule ingress work for all messages in a verified webhook payload.
+
+        Messages are sorted by send timestamp before scheduling (see
+        `_sort_key`) and each sender's messages then run in a strict FIFO lane
+        (see `_SenderSerializer`), so a reconnecting phone's backlog replays in
+        the order it was actually sent rather than the order it happened to
+        arrive.
+        """
         scheduled_count = 0
 
-        for context in self._extract_message_contexts(payload):
+        for context in sorted(self._extract_message_contexts(payload), key=_sort_key):
             message_id = str(context.message["id"])
             if not await self._deduplication_store.try_claim(message_id):
                 continue
@@ -194,6 +282,21 @@ class WhatsAppReceiver:
         }
 
     async def _process_message(
+        self, context: MessageIngressContext, *, retry_of_id: str | None = None
+    ) -> NormalizedMessage | None:
+        """Process one message inside its sender's FIFO lane.
+
+        The lane wraps the *entire* journey, not just normalization: message
+        N+1 must not resolve context, or answer a pending confirmation,
+        against state that message N has not finished writing. Different
+        senders never share a lane, so one slow voice note cannot block a
+        whole site.
+        """
+        sender = str(context.message.get("from") or "unknown")
+        async with self._serializer.lane(sender):
+            return await self._process_message_locked(context, retry_of_id=retry_of_id)
+
+    async def _process_message_locked(
         self, context: MessageIngressContext, *, retry_of_id: str | None = None
     ) -> NormalizedMessage | None:
         message_id = str(context.message["id"])

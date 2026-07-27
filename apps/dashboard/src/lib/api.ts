@@ -1316,4 +1316,24 @@ export async function approveDailyReportApi(reportId: string, notes?: string): P
   await api.post(`/dpr/daily-reports/${reportId}/approve`, { notes })
 }
 
+export interface CreateDailyReportPayload {
+  report_date: string
+  project_id?: string
+  site_id?: string
+  weather: string
+  temperature_celsius?: number
+  shift: string
+  narrative_summary?: string
+  work_items?: DailyReportWorkItem[]
+  labour_items?: DailyReportLabourItem[]
+  equipment_items?: DailyReportEquipmentItem[]
+  issues?: DailyReportIssue[]
+}
+
+export async function createDailyReportApi(payload: CreateDailyReportPayload): Promise<DailyReportSummary> {
+  const res = await api.post<DailyReportSummary>('/dpr/daily-reports', payload)
+  return res.data
+}
+
+
 
