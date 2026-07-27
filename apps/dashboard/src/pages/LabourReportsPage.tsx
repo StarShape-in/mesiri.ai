@@ -17,6 +17,7 @@ import { KpiCard } from '@/components/ui/kpi-card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
+import { toLocalISODate } from '@/lib/utils'
 import {
   Table,
   TableHeader,
@@ -104,7 +105,7 @@ export default function LabourReportsPage() {
     const encodedUri = encodeURI(csvContent)
     const link = document.createElement('a')
     link.setAttribute('href', encodedUri)
-    link.setAttribute('download', `Labour_Report_${activeReport}_${new Date().toISOString().split('T')[0]}.csv`)
+    link.setAttribute('download', `Labour_Report_${activeReport}_${toLocalISODate()}.csv`)
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)

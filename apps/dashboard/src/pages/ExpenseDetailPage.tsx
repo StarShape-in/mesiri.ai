@@ -50,6 +50,7 @@ import { VendorDetailSheet } from '@/components/vendors/vendor-detail-sheet'
 import { CategoryDetailSheet } from '@/components/categories/category-detail-sheet'
 import { CustodianProfileSheet } from '@/components/accounts/custodian-profile-sheet'
 import { WhatsAppTraceModal } from '@/components/whatsapp/whatsapp-trace-modal'
+import { toLocalISODate } from '@/lib/utils'
 
 export interface ExpenseDetailRecord {
   id: string
@@ -170,7 +171,7 @@ export default function ExpenseDetailPage() {
       }
     } catch (err) {
       console.warn('Failed to fetch expense details from API:', err)
-      const today = new Date().toISOString().split('T')[0]
+      const today = toLocalISODate()
       const fallbackUser = userList.length > 0 ? userList[0] : (meUser || { full_name: 'Authorized Staff', role: 'ADMIN', email: 'admin@mesiri.ai' })
       const fallbackProject = projectList.length > 0 ? projectList[0] : { name: 'Main Operations Project', code: 'PROJ-01' }
       const fallbackCategory = categoryList.length > 0 ? categoryList[0] : { name: 'General Operations' }

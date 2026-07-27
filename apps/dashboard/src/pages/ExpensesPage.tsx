@@ -90,6 +90,7 @@ type SortOrder = 'asc' | 'desc'
 
 import { fetchExpensesApi, reverseExpenseApi, fetchAllExpenseAttachmentsApi } from '@/lib/api'
 import { useToast } from '@/components/ui/toast-notification'
+import { toLocalISODate } from '@/lib/utils'
 
 export default function ExpensesPage() {
   const { scope } = useScope()
@@ -124,7 +125,7 @@ export default function ExpensesPage() {
             category_id: String(item.category_id || 'general'),
             description: item.description || 'Recorded Expense',
             vendor_name: 'Direct Payee',
-            occurred_date: item.occurred_date || new Date().toISOString().split('T')[0],
+            occurred_date: item.occurred_date || toLocalISODate(),
             payment_status: item.payment_status === 'paid' ? 'paid' : item.payment_status === 'partially_paid' ? 'partially_paid' : 'unpaid',
             workflow_status: item.workflow_status === 'reversed' ? 'reversed' : item.workflow_status === 'pending' ? 'pending' : 'confirmed',
             source: item.source === 'whatsapp' ? 'whatsapp' : 'web',
@@ -226,7 +227,7 @@ export default function ExpensesPage() {
 
   // Filtered & Sorted expenses
   const filteredExpenses = React.useMemo(() => {
-    const today = new Date().toISOString().split('T')[0]
+    const today = toLocalISODate()
 
     return expenses
       .filter((item) => {

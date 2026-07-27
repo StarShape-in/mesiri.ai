@@ -1219,7 +1219,14 @@ async def process_inbound_message(
         t0 = time.perf_counter()
         try:
             canonical_event = build_canonical_event(
-                understanding, resolved, direction_hint=direction_hint
+                understanding,
+                resolved,
+                direction_hint=direction_hint,
+                # Meta's forwarding markers, recorded at ingress. Read from
+                # metadata rather than re-derived: normalization is the only
+                # layer that sees Meta's raw `context` object.
+                forwarded=bool(message.metadata.get("forwarded")),
+                frequently_forwarded=bool(message.metadata.get("frequently_forwarded")),
             )
 
             # Inject the loaded actor profile into the canonical event so the

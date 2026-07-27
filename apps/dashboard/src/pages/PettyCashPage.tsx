@@ -86,6 +86,7 @@ type SortField = 'date' | 'amount' | 'voucher_number'
 type SortOrder = 'asc' | 'desc'
 
 import { fetchAccountsApi, fetchVouchersApi } from '@/lib/api'
+import { toLocalISODate } from '@/lib/utils'
 
 export default function PettyCashPage() {
   const { scope } = useScope()
@@ -129,7 +130,7 @@ export default function PettyCashPage() {
             category_name: v.description || 'General Expense',
             vendor_name: v.source_type || 'Direct Payee',
             description: v.description || 'Petty Cash Voucher',
-            date: v.occurred_date || new Date().toISOString().split('T')[0],
+            date: v.occurred_date || toLocalISODate(),
             custodian_name: 'Site Supervisor',
             project_name: 'Project Site',
             status: 'verified',

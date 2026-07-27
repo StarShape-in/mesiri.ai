@@ -48,6 +48,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { fetchWorkersApi, updateWorkerApi, type WorkforceWorkerItem } from '@/lib/api'
 import { AddWorkerDialog } from '@/components/workforce/add-worker-dialog'
 import { EditWorkerSheet } from '@/components/workforce/edit-worker-sheet'
+import { toLocalISODate } from '@/lib/utils'
 
 type SortField = 'name' | 'trade' | 'type' | 'wage' | 'status'
 type SortOrder = 'asc' | 'desc'
@@ -187,7 +188,7 @@ export default function WorkersPage() {
     const encodedUri = encodeURI(csvContent)
     const link = document.createElement('a')
     link.setAttribute('href', encodedUri)
-    link.setAttribute('download', `Worker_Roster_${new Date().toISOString().split('T')[0]}.csv`)
+    link.setAttribute('download', `Worker_Roster_${toLocalISODate()}.csv`)
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)

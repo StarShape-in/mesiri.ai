@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { fetchAllExpenseAttachmentsApi, type ExpenseAttachmentGalleryApiItem } from '@/lib/api'
+import { toLocalISODate } from '@/lib/utils'
 
 export default function ReceiptsPage() {
   const { scope } = useScope()
@@ -30,7 +31,7 @@ export default function ReceiptsPage() {
         limit: 100,
       }
       if (datePreset === 'TODAY') {
-        const iso = today.toISOString().split('T')[0]
+        const iso = toLocalISODate(today)
         params.start_date = iso
         params.end_date = iso
       } else if (datePreset === 'THIS_MONTH') {

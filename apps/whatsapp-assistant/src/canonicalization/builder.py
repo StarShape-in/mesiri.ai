@@ -263,6 +263,8 @@ def build_canonical_event(
     context: ResolvedContextV2,
     *,
     direction_hint: str | None = None,
+    forwarded: bool = False,
+    frequently_forwarded: bool = False,
 ) -> CanonicalEventV2:
     """Normalize AI output + resolved context into a CanonicalEvent v2.
 
@@ -271,6 +273,14 @@ def build_canonical_event(
     BUTTONS) before reporting. It's applied only if the message's own words
     didn't already resolve to a clear "received"/"used"; an explicit spoken/
     typed direction always wins over a stale or mismatched hint.
+
+    ``forwarded`` / ``frequently_forwarded`` come from Meta's own message
+    context (see ingress/normalization.py's `_resolve_forwarding`). They are
+    carried as fields rather than acted on here: canonicalization decides
+    business intent, not presentation, and every workflow already gates on a
+    Yes/No confirmation. What they change is what that confirmation *says* --
+    a second-hand report gets flagged as such so the sender re-reads it
+    instead of tapping Yes reflexively (see interactions/response_handler.py).
     """
     candidate = _select_candidate(understanding)
     fields: dict = {}
@@ -278,6 +288,11 @@ def build_canonical_event(
     if candidate is not None:
         fields = {**candidate.fields, **candidate.unknown_fields}
         warnings = list(candidate.warnings)
+
+    if forwarded:
+        fields["is_forwarded"] = True
+        if frequently_forwarded:
+            fields["is_frequently_forwarded"] = True
 
     if understanding.original_content_reference:
         # The media (image/voice/document) this event was extracted from --
