@@ -18,7 +18,11 @@ Page pool (Phase 4 perf):
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 _CARD_SELECTOR = ".card"
 _PRE_WARMED_PAGES = 2
@@ -44,8 +48,21 @@ class ReceiptRenderer:
             if self._browser is None:
                 from playwright.async_api import async_playwright
 
+                # Logged loudly and separately from render time: this is a
+                # full Chromium launch on the reply path, and because it sits
+                # behind the lock above, every other reply that needs a
+                # receipt while it's starting waits for it too. It's lazy by
+                # design (so container construction needs no browser), which
+                # means the first receipt after a deploy pays for it -- worth
+                # knowing whether that is 300ms or 5s before deciding whether
+                # to pre-warm it at startup instead.
+                started = time.perf_counter()
                 self._playwright = await async_playwright().start()
                 self._browser = await self._playwright.chromium.launch(headless=True)
+                logger.info(
+                    "receipt.browser_launched launch_ms=%s",
+                    round((time.perf_counter() - started) * 1000, 1),
+                )
         return self._browser
 
     async def _ensure_pool(self) -> asyncio.Queue[Any]:
@@ -91,12 +108,25 @@ class ReceiptRenderer:
         external network resources -- faster than the previous ``load``),
         takes the screenshot, and returns the page to the pool.
         """
+        started = time.perf_counter()
         page = await self._acquire_page()
+        # Acquisition is timed apart from the render, and matters more with a
+        # pool than it did with a page per render: on a warm pool this is ~0,
+        # but _acquire_page() *blocks* once all _PRE_WARMED_PAGES are checked
+        # out, and from the outside that queueing is indistinguishable from a
+        # slow screenshot.
+        acquire_ms = round((time.perf_counter() - started) * 1000, 1)
         try:
             await page.set_content(html, wait_until="domcontentloaded")
             card = page.locator(_CARD_SELECTOR)
             result = await card.screenshot(type="png")
             await self._release_page(page, healthy=True)
+            logger.info(
+                "receipt.rendered acquire_ms=%s render_ms=%s bytes=%s",
+                acquire_ms,
+                round((time.perf_counter() - started) * 1000, 1) - acquire_ms,
+                len(result),
+            )
             return result
         except Exception:
             await self._release_page(page, healthy=False)

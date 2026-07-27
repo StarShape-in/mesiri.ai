@@ -9,6 +9,7 @@ simple text acknowledgement.
 from __future__ import annotations
 
 import logging
+import time
 
 import httpx
 
@@ -256,6 +257,11 @@ class WhatsAppSender:
             "to": to_wa_id,
             **message_fields,
         }
+        # Timed because every outbound send sits between the last traced
+        # pipeline stage and inbound_messages.processed_at, so its cost was
+        # invisible in the per-stage breakdown -- and a reply is often two or
+        # three sends (text, then a list, then a receipt image).
+        started = time.perf_counter()
         try:
             resp = await self._client.post(
                 url,
@@ -263,12 +269,25 @@ class WhatsAppSender:
                 headers={"Authorization": f"Bearer {self._access_token}"},
             )
         except httpx.HTTPError as exc:
-            logger.error("WhatsApp send failed to %s: %s", to_wa_id, exc)
+            logger.error(
+                "WhatsApp send failed to %s after %sms: %s",
+                to_wa_id,
+                round((time.perf_counter() - started) * 1000, 1),
+                exc,
+            )
             return False
 
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
         if resp.status_code >= 400:
-            logger.error("WhatsApp send rejected (%s): %s", resp.status_code, resp.text[:300])
+            logger.error(
+                "WhatsApp send rejected (%s) after %sms: %s",
+                resp.status_code,
+                elapsed_ms,
+                resp.text[:300],
+            )
             return False
 
-        logger.info("WhatsApp %s sent to %s", message_fields["type"], to_wa_id)
+        logger.info(
+            "whatsapp.sent type=%s to=%s send_ms=%s", message_fields["type"], to_wa_id, elapsed_ms
+        )
         return True

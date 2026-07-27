@@ -49,8 +49,18 @@ class StepTimer:
     @property
     def steps(self) -> dict[str, Any]:
         """Recorded laps, ordered worst-first so the payload reads as a
-        ranking in the logs viewer."""
-        return dict(sorted(self._steps.items(), key=lambda kv: kv[1], reverse=True))
+        ranking in the logs viewer.
+
+        ``_unaccounted_ms`` is included deliberately: it's the wall time not
+        claimed by any lap. Finding the last gap took manually subtracting
+        trace timestamps by hand, so the number that matters most is stated
+        outright rather than left to be derived -- if it's large, the cost is
+        somewhere nothing is measuring yet, which is exactly when it's
+        easiest to look in the wrong place.
+        """
+        ranked = dict(sorted(self._steps.items(), key=lambda kv: kv[1], reverse=True))
+        unaccounted = round(self.total_ms - sum(self._steps.values()), 1)
+        return {"_unaccounted_ms": unaccounted, **ranked}
 
     @property
     def total_ms(self) -> int:
