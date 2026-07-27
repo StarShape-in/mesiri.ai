@@ -8,7 +8,10 @@ foundation every later stage (project/site authorization) builds on.
 
 from __future__ import annotations
 
+import asyncio
+import json
 from dataclasses import dataclass, field
+from typing import Any, Protocol
 
 from mesiri_contracts.common.errors import MesiriError
 
@@ -18,6 +21,16 @@ from .ports import (
     OrganizationMembershipRepository,
     RolePermissionRepository,
 )
+
+_IDENTITY_CACHE_TTL = 60  # seconds
+
+
+class _RedisLike(Protocol):
+    """Minimal Redis interface required for identity caching."""
+
+    def namespaced(self, *parts: str) -> str: ...
+    async def set_json(self, key: str, value: Any, *, ttl_seconds: int | None = None) -> None: ...
+    async def get_json(self, key: str) -> Any | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,13 +53,40 @@ async def resolve_principal(
     identities: ExternalIdentityRepository,
     memberships: OrganizationMembershipRepository,
     roles: RolePermissionRepository,
+    redis: _RedisLike | None = None,
 ) -> Principal:
     """Resolve the authoritative principal or raise a typed ``MesiriError``.
 
     Order: external identity -> active user -> single active membership ->
     active organization -> roles/permissions. Multiple active organizations is
     an explicit ambiguity (never silently chosen).
+
+    When ``redis`` is supplied the resolved ``Principal`` is cached for
+    ``_IDENTITY_CACHE_TTL`` seconds (60 s) keyed by provider + external_subject.
+    Subsequent calls within that window skip all 6 Postgres queries. Cache
+    invalidation is natural: a role change takes effect for WhatsApp within
+    one TTL window, which is an accepted trade-off.
     """
+    # --- Cache read ---
+    cache_key: str | None = None
+    if redis is not None:
+        cache_key = redis.namespaced("identity", provider, external_subject)
+        cached = await redis.get_json(cache_key)
+        if cached is not None:
+            try:
+                return Principal(
+                    organization_id=cached["organization_id"],
+                    user_id=cached["user_id"],
+                    membership_id=cached["membership_id"],
+                    role_ids=cached.get("role_ids", []),
+                    permissions=cached.get("permissions", []),
+                    locale=cached.get("locale"),
+                    timezone=cached.get("timezone"),
+                )
+            except (KeyError, TypeError):
+                pass  # malformed cache entry — fall through to Postgres
+
+    # --- Postgres resolution (6 queries, last 2 in parallel) ---
     identity = await identities.find_identity(provider=provider, external_subject=external_subject)
     if identity is None:
         raise errors.unknown_external_identity(external_subject, provider=provider)
@@ -72,10 +112,13 @@ async def resolve_principal(
     if not org.is_active:
         raise errors.organization_disabled(org.organization_id)
 
-    role_ids = await roles.role_ids_for_membership(membership.membership_id)
-    permissions = await roles.permissions_for_membership(membership.membership_id)
+    # role_ids and permissions are independent lookups on the same membership.
+    role_ids, permissions = await asyncio.gather(
+        roles.role_ids_for_membership(membership.membership_id),
+        roles.permissions_for_membership(membership.membership_id),
+    )
 
-    return Principal(
+    principal = Principal(
         organization_id=org.organization_id,
         user_id=user.user_id,
         membership_id=membership.membership_id,
@@ -84,6 +127,24 @@ async def resolve_principal(
         locale=user.locale,
         timezone=user.timezone,
     )
+
+    # --- Cache write ---
+    if redis is not None and cache_key is not None:
+        await redis.set_json(
+            cache_key,
+            {
+                "organization_id": principal.organization_id,
+                "user_id": principal.user_id,
+                "membership_id": principal.membership_id,
+                "role_ids": principal.role_ids,
+                "permissions": principal.permissions,
+                "locale": principal.locale,
+                "timezone": principal.timezone,
+            },
+            ttl_seconds=_IDENTITY_CACHE_TTL,
+        )
+
+    return principal
 
 
 def is_context_error(error: MesiriError) -> bool:

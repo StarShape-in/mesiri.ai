@@ -92,6 +92,7 @@ def build_context_resolver(redis=None) -> ContextResolver:
         reply_context=NullReplyContextProvider(),
         workflow_context=NullWorkflowContextProvider(),
         bridge=PostgresIdentityBridgeRepository(engine),
+        redis=redis,  # identity cache TTL=60s
     )
     return ContextResolver(deps)
 

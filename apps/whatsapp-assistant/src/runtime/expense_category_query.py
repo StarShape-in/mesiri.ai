@@ -20,23 +20,48 @@ Categories page.
 
 from __future__ import annotations
 
+import json
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from mesiri.infrastructure.postgres.database import PostgresDatabase
 
+_CATEGORY_CACHE_TTL = 300  # 5 minutes
+
+
+class _RedisLike(Protocol):
+    def namespaced(self, *parts: str) -> str: ...
+    async def set_json(self, key: str, value: Any, *, ttl_seconds: int | None = None) -> None: ...
+    async def get_json(self, key: str) -> Any | None: ...
+
 
 class ExpenseCategoryQueryService:
     """Reads active expense category names; only ever creates the org's
-    default starter set, never mutates an existing category."""
+    default starter set, never mutates an existing category.
 
-    def __init__(self, db: PostgresDatabase) -> None:
+    When ``redis`` is supplied the category list is cached per-org for
+    ``_CATEGORY_CACHE_TTL`` seconds (5 min). Category lists change rarely;
+    a short TTL is safe and eliminates Postgres round-trips for the vast
+    majority of messages.
+    """
+
+    def __init__(self, db: PostgresDatabase, redis: _RedisLike | None = None) -> None:
         self._db = db
+        self._redis = redis
 
     async def list_active_category_names(
         self, *, organization_id: str, created_by: str
     ) -> list[str]:
+        # --- Cache read ---
+        cache_key: str | None = None
+        if self._redis is not None:
+            cache_key = self._redis.namespaced("expense_categories", organization_id)
+            cached = await self._redis.get_json(cache_key)
+            if isinstance(cached, list):
+                return cached
+
+        # --- Postgres read ---
         from mesiri.infrastructure.postgres.repositories.expenses import (
             PostgresExpenseCategoryRepository,
         )
@@ -46,4 +71,10 @@ class ExpenseCategoryQueryService:
             categories = await repo.seed_defaults_if_empty(
                 uuid.UUID(organization_id), created_by=uuid.UUID(created_by)
             )
-            return [c.name for c in categories]
+        names = [c.name for c in categories]
+
+        # --- Cache write ---
+        if self._redis is not None and cache_key is not None:
+            await self._redis.set_json(cache_key, names, ttl_seconds=_CATEGORY_CACHE_TTL)
+
+        return names

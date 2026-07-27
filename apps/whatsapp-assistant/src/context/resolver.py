@@ -61,6 +61,9 @@ class ContextDependencies:
     reply_context: ReplyContextProvider
     workflow_context: WorkflowContextProvider
     bridge: IdentityBridgeRepository
+    # Optional Redis client for identity caching (TTL=60s). When None, identity
+    # resolution always hits Postgres (safe default for tests / no-Redis envs).
+    redis: object | None = None
 
 
 class ContextResolver:
@@ -101,6 +104,7 @@ class ContextResolver:
             identities=self._d.identities,
             memberships=self._d.memberships,
             roles=self._d.roles,
+            redis=self._d.redis,
         )
         _log.info("context.identity_resolved", user_id=principal.user_id)
         _log.info("context.organization_resolved", organization_id=principal.organization_id)

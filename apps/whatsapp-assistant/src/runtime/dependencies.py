@@ -364,7 +364,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     # material_db as catalog_query above. See runtime/expense_category_query.py.
     from runtime.expense_category_query import ExpenseCategoryQueryService
 
-    expense_category_query = ExpenseCategoryQueryService(material_db)
+    expense_category_query = ExpenseCategoryQueryService(material_db, redis=redis_client)
     # Read-only money-account lookups + lazy default-account bootstrap, fed
     # into expense_capture's "which account?" slot (Finance Module Slice 1)
     # -- same reasoning and same material_db as catalog_query above. See
@@ -400,6 +400,12 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from runtime.workforce_query import PostgresWorkforceQueryService
 
     workforce_query = PostgresWorkforceQueryService(material_db)
+    # Read-only attendance lookups for the labour.query workflow ("how many
+    # workers today?"). Reuses the same pool; never opens a write
+    # transaction. See runtime/labour_query_service.py.
+    from runtime.labour_query_service import LabourQueryService
+
+    labour_query_service = LabourQueryService(material_db)
     # Flags a vendor name that doesn't match any existing active vendor, fed
     # into expense_capture's "create this vendor?" slot -- same reasoning and
     # same material_db as catalog_query above. See runtime/vendor_query.py.
@@ -830,6 +836,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
                 reversal_query=reversal_query,
                 duplicate_expense_query=duplicate_expense_query,
                 workforce_query=workforce_query,
+                labour_query_service=labour_query_service,
                 vendor_query=vendor_query,
                 expense_query_service=expense_query_service,
                 pending_report_store=pending_report_store,
@@ -1119,6 +1126,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             reversal_query=reversal_query,
             duplicate_expense_query=duplicate_expense_query,
             workforce_query=workforce_query,
+            labour_query_service=labour_query_service,
             vendor_query=vendor_query,
             expense_query_service=expense_query_service,
             pending_report_store=pending_report_store,
