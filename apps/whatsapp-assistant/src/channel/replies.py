@@ -150,6 +150,15 @@ def render_image_purpose_picker() -> ReplySpec:
     )
 
 
+def render_completion_photo_followup() -> str:
+    """#25 AI Follow-up: appended to the confirmation reply once an Activity
+    is marked COMPLETED. Deliberately a plain question, not an interactive
+    picker -- the expected answer is "send a photo" or "send nothing",
+    neither of which benefits from a tappable list the way a multi-choice
+    question would."""
+    return "📷 Want to attach a completion photo?"
+
+
 def render_evidence_attached_reply(*, count: int, activity_summary: str | None) -> str:
     """#2 Batch Media: confirmation after attaching a whole batch of "Site
     Update" photos to the open activity in ONE reply -- never one reply per

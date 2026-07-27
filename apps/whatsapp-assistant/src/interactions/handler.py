@@ -30,6 +30,7 @@ from channel.replies import (
     IMAGE_PURPOSE_SEMANTIC_HINT,
     ReplySpec,
     render_category_prompt,
+    render_completion_photo_followup,
     render_greeting_menu,
     render_material_direction_followup,
 )
@@ -54,6 +55,7 @@ from workflows.who_am_i import is_whoami_trigger
 
 from .classifier import classify_reply
 from .classifier_port import InteractionClassifierPort
+from .completion_photo_hint import CompletionPhotoHintStore
 from .policy import InteractionRoute, decide
 from .ports import ExecutionDispatcher, ReceiptBuilder
 from .response_handler import render_execution_reply, render_resume_reply, render_workflow_run_reply
@@ -96,6 +98,7 @@ class InteractionHandler:
         memory_coordinator: ConversationMemoryCoordinator | None = None,
         planner: Planner | None = None,
         batch_store: PendingBatchStore | None = None,
+        completion_photo_hint_store: CompletionPhotoHintStore | None = None,
     ) -> None:
         self._runtime = workflow_runtime
         self._classifier = classifier
@@ -104,6 +107,7 @@ class InteractionHandler:
         self._memory_coordinator = memory_coordinator
         self._planner = planner
         self._batch_store = batch_store
+        self._completion_photo_hint_store = completion_photo_hint_store
 
     async def _resume_and_render(
         self, user_id: str, loaded, resume_action, *, log_prefix: str, actor: ActorIdentity | None = None
@@ -139,22 +143,23 @@ class InteractionHandler:
                 result.workflow_instance_id,
             )
             reply_text = render_execution_reply(execution_result)
+            # Both the M19 memory hook and the #25 completion-photo follow-up
+            # need "which activity did this touch" -- computed once here,
+            # independent of either being wired, so neither accidentally
+            # depends on the other being enabled (a real bug caught by
+            # test_completion_photo_followup_trigger.py: this used to sit
+            # inside the memory_coordinator-only branch, so the follow-up
+            # silently never fired when memory_coordinator was None).
+            activity_id: str | None = None
             if (
-                self._memory_coordinator is not None
-                and execution_result.status is ExecutionStatus.SUCCEEDED
+                execution_result.status is ExecutionStatus.SUCCEEDED
                 and execution_result.material_row_id is not None
                 and result.confirmed_action.draft_action.action_type
                 in (DraftActionType.CREATE_ACTIVITY, DraftActionType.ADD_PROGRESS_UPDATE)
             ):
-                # M19: remember the activity THIS conversation just touched --
-                # see memory/conversation_scope.py's CurrentActivityStore and
-                # runtime/inbound_journey.py's _seed_open_activity, which
-                # prefers this over the site-wide "most recently updated"
-                # guess on the next continuation message. Fire-and-forget:
-                # memory bookkeeping must never delay or fail a reply.
                 # ADD_PROGRESS_UPDATE's execution result carries the
-                # Activity's own id, not the new Progress Update's, since the
-                # thing worth remembering for a future continuation is the
+                # Activity's own id, not the new Progress Update's, since
+                # the thing worth remembering/following-up on is the
                 # activity, not the append-only row this one produced.
                 activity_id = (
                     execution_result.material_row_id
@@ -162,12 +167,43 @@ class InteractionHandler:
                     is DraftActionType.CREATE_ACTIVITY
                     else result.confirmed_action.draft_action.fields.get("activity_id")
                 )
-                if activity_id:
-                    asyncio.ensure_future(
-                        self._memory_coordinator.record_activity(
-                            user_id=user_id, activity_id=str(activity_id)
-                        )
+
+            if activity_id and self._memory_coordinator is not None:
+                # M19: remember the activity THIS conversation just touched --
+                # see memory/conversation_scope.py's CurrentActivityStore and
+                # runtime/inbound_journey.py's _seed_open_activity, which
+                # prefers this over the site-wide "most recently updated"
+                # guess on the next continuation message. Fire-and-forget:
+                # memory bookkeeping must never delay or fail a reply.
+                asyncio.ensure_future(
+                    self._memory_coordinator.record_activity(
+                        user_id=user_id, activity_id=str(activity_id)
                     )
+                )
+
+            if (
+                activity_id
+                and self._completion_photo_hint_store is not None
+                and result.confirmed_action.draft_action.action_type
+                is DraftActionType.ADD_PROGRESS_UPDATE
+                and str(
+                    result.confirmed_action.draft_action.fields.get("update_kind") or ""
+                ).upper()
+                == "COMPLETED"
+            ):
+                # #25 AI Follow-up: an Activity just marked COMPLETED is
+                # exactly the moment a completion photo is most useful and
+                # least likely to be sent unprompted. The hint set here lets
+                # the NEXT photo skip the normal "what is this for?" picker
+                # entirely (see runtime/dependencies.py's image-arrival
+                # block) -- the user is plainly answering the question
+                # Mesiri just asked.
+                asyncio.ensure_future(
+                    self._completion_photo_hint_store.set_hint(
+                        user_id=user_id, activity_id=str(activity_id)
+                    )
+                )
+                reply_text = f"{reply_text}\n\n{render_completion_photo_followup()}"
             if self._receipt_builder is not None:
                 # Return the coroutine without awaiting it — the caller sends
                 # reply_text first so the user sees confirmation immediately,

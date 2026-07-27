@@ -477,6 +477,12 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from workflows.batch_store import PendingBatchStore
 
     batch_store = PendingBatchStore(redis_client)
+    # #25 AI Follow-up: remembers which Activity a proactive "want to
+    # attach a completion photo?" offer was about, so the next photo skips
+    # the normal purpose picker. See interactions/completion_photo_hint.py.
+    from interactions.completion_photo_hint import CompletionPhotoHintStore
+
+    completion_photo_hint_store = CompletionPhotoHintStore(redis_client)
     # M19 conversation memory -- current project/site (existing
     # RedisActiveContextStore), current activity/date (new), and a capped
     # recent-turns history, composed behind one loader/coordinator pair. See
@@ -548,6 +554,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         memory_coordinator=memory_coordinator,
         planner=planner,
         batch_store=batch_store,
+        completion_photo_hint_store=completion_photo_hint_store,
     )
     sender = WhatsAppSender(
         client=http_client,
@@ -1315,6 +1322,37 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
                 )
                 return
 
+
+        # #25 AI Follow-up: if Mesiri just asked "want to attach a
+        # completion photo?" (interactions/handler.py, after an Activity is
+        # marked COMPLETED), the very next photo answers that question --
+        # skip the normal "what is this for?" picker entirely and attach
+        # directly. Checked BEFORE the picker gate below on purpose: this
+        # hint is pop-once and must not be silently skipped past for an
+        # unrelated later photo.
+        if message.modality is InputModality.IMAGE and message.media is not None:
+            completion_activity_id = await completion_photo_hint_store.pop_hint(
+                user_id=ctx.user_id
+            )
+            if completion_activity_id is not None:
+                from channel.replies import render_evidence_attached_reply
+
+                created_ids = await evidence_query.attach_photos(
+                    organization_id=ctx.organization_id,
+                    activity_id=completion_activity_id,
+                    media_object_keys=[message.media.object_key],
+                    uploaded_by=ctx.user_id,
+                    correlation_id=message.correlation_id,
+                )
+                reply_text = render_evidence_attached_reply(
+                    count=len(created_ids), activity_summary=None
+                )
+                await sender.send_text(wa_id, reply_text)
+                await message_logger.log_reply(
+                    correlation_id=message.correlation_id, reply=reply_text
+                )
+                await message_logger.mark_completed(correlation_id=message.correlation_id)
+                return
 
         # A genuinely new image (not a tap answering the picker above) is
         # held while we ask "what is this photo for?" instead of running
