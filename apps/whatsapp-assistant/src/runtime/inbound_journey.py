@@ -1089,14 +1089,16 @@ async def process_inbound_message(
             actor_user_id, message, original_text, translated_text, actor=actor
         )
         if handled:
-            if handled.reply_image is not None and send_image is not None:
-                sent = await send_image(
-                    message.sender.wa_id, handled.reply_image, caption=handled.reply_text
-                )
-                if not sent:
-                    await send_text(message.sender.wa_id, handled.reply_text)
-            else:
-                await send_text(message.sender.wa_id, handled.reply_text)
+            # Phase 4: send confirmation text FIRST so the user sees it
+            # immediately, then render the receipt PNG and send the image.
+            await send_text(message.sender.wa_id, handled.reply_text)
+            if handled.receipt_coro is not None and send_image is not None:
+                try:
+                    image_bytes = await handled.receipt_coro
+                except Exception:  # noqa: BLE001 -- receipt failure must never drop the message
+                    image_bytes = None
+                if image_bytes is not None:
+                    await send_image(message.sender.wa_id, image_bytes, caption=None)
             await _safe(mlog.log_reply(correlation_id=correlation_id, reply=handled.reply_text))
             if handled.result.workflow_instance_id:
                 await _safe(

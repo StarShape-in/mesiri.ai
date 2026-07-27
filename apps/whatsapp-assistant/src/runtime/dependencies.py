@@ -635,14 +635,20 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             _log.exception("interaction.handle_failed user=%s", ctx.user_id)
             handled = None
         if handled is not None:
-            if handled.reply_image is not None:
-                sent = await sender.send_image(
-                    wa_id, handled.reply_image, caption=handled.reply_text
-                )
-                if not sent:
-                    await sender.send_text(wa_id, handled.reply_text)
-            else:
-                await sender.send_text(wa_id, handled.reply_text)
+            # Phase 4: send confirmation text FIRST so the user sees it
+            # immediately, then await the receipt PNG (Playwright render) and
+            # send the image. This keeps the reply feeling instant even when
+            # the page-pool is cold.
+            await sender.send_text(wa_id, handled.reply_text)
+            if handled.receipt_coro is not None:
+                try:
+                    image_bytes = await handled.receipt_coro
+                except Exception:  # noqa: BLE001 -- receipt failure must never drop the message
+                    image_bytes = None
+                if image_bytes is not None:
+                    sent = await sender.send_image(wa_id, image_bytes, caption=None)
+                    if not sent:
+                        pass  # image already tried; text was already sent above
             await message_logger.log_reply(
                 correlation_id=message.correlation_id, reply=handled.reply_text
             )

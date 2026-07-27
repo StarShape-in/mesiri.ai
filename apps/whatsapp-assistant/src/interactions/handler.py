@@ -20,7 +20,9 @@ built to fix.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from collections.abc import Coroutine
+from dataclasses import dataclass, field
+from typing import Any
 
 from backend.ports import ActorIdentity
 from channel.replies import (
@@ -56,11 +58,19 @@ class InteractionHandled:
     reply_text: str
     execution_result: ExecutionResult | None = None
     unrelated_text: str | None = None
-    # The post-confirmation receipt image (see channel/receipt/). None for
-    # every outcome except a successful execution -- and even then, only
-    # when rendering actually produced bytes (ReceiptBuilder degrades to
-    # None on any failure rather than raising).
+    # Post-confirmation receipt image (see channel/receipt/). None for every
+    # outcome except a successful execution -- and even then, only when
+    # rendering actually produced bytes (ReceiptBuilder degrades to None on
+    # any failure rather than raising).
+    #
+    # Phase 4: this field carries the pre-built bytes only when the caller
+    # has already awaited receipt_coro. Prefer receipt_coro for new call sites
+    # so text can be sent first without waiting for the Playwright render.
     reply_image: bytes | None = None
+    # Coroutine that produces the receipt PNG (or None on failure). Awaiting
+    # this after sending reply_text lets the user see the confirmation text
+    # immediately while the image renders in the background.
+    receipt_coro: Coroutine[Any, Any, bytes | None] | None = field(default=None, repr=False)
     project_id: str | None = None
     site_id: str | None = None
 
@@ -80,12 +90,16 @@ class InteractionHandler:
 
     async def _resume_and_render(
         self, user_id: str, loaded, resume_action, *, log_prefix: str, actor: ActorIdentity | None = None
-    ) -> tuple[WorkflowResumeResult, str, ExecutionResult | None, bytes | None]:
+    ) -> tuple[WorkflowResumeResult, str, ExecutionResult | None, "Coroutine[Any, Any, bytes | None] | None"]:
         """Resume the workflow and, if it lands on CONFIRMED and a dispatcher is
         wired (M8), execute the domain write synchronously and reflect the real
         outcome in the reply. Shared by the fast and slow paths so a confirm
-        resolved either way gets the same execution guarantee (and the same
-        receipt-image behavior)."""
+        resolved either way gets the same execution guarantee.
+
+        Phase 4: the receipt PNG is no longer awaited here. The coroutine to
+        produce it is returned as the 4th element so callers can send
+        ``reply_text`` immediately and render the image afterwards.
+        """
         result = await self._runtime.resume(loaded, resume_action)
         logger.info(
             "%s.resumed user=%s status=%s instance=%s",
@@ -96,7 +110,7 @@ class InteractionHandler:
         )
 
         execution_result: ExecutionResult | None = None
-        reply_image: bytes | None = None
+        receipt_coro: Coroutine[Any, Any, bytes | None] | None = None
         if result.status is WorkflowResumeStatus.CONFIRMED and self._dispatcher is not None:
             assert result.confirmed_action is not None
             execution_result = await self._dispatcher.dispatch(result.confirmed_action)
@@ -109,13 +123,16 @@ class InteractionHandler:
             )
             reply_text = render_execution_reply(execution_result)
             if self._receipt_builder is not None:
-                reply_image = await self._receipt_builder.build(
+                # Return the coroutine without awaiting it — the caller sends
+                # reply_text first so the user sees confirmation immediately,
+                # then awaits this to get the image bytes.
+                receipt_coro = self._receipt_builder.build(
                     result.confirmed_action, execution_result, actor
                 )
         else:
             reply_text = render_resume_reply(result)
 
-        return result, reply_text, execution_result, reply_image
+        return result, reply_text, execution_result, receipt_coro
 
     async def handle_fast_path(
         self, user_id: str, message: NormalizedMessage, actor: ActorIdentity | None = None
@@ -137,14 +154,14 @@ class InteractionHandler:
             )
             return None
 
-        result, reply_text, execution_result, reply_image = await self._resume_and_render(
+        result, reply_text, execution_result, receipt_coro = await self._resume_and_render(
             user_id, loaded, decision.resume_action, log_prefix="interaction", actor=actor
         )
         return InteractionHandled(
             result=result,
             reply_text=reply_text,
             execution_result=execution_result,
-            reply_image=reply_image,
+            receipt_coro=receipt_coro,
             project_id=str(loaded.state.project_id) if loaded.state.project_id else None,
             site_id=str(loaded.state.site_id) if loaded.state.site_id else None,
         )
@@ -352,7 +369,7 @@ class InteractionHandler:
         handled_result: WorkflowRunResult | WorkflowResumeResult | None = None
         execution_result: ExecutionResult | None = None
         reply_text: str | None = None
-        reply_image: bytes | None = None
+        receipt_coro: Coroutine[Any, Any, bytes | None] | None = None
 
         for segment in spec.segments:
             if segment.intent == InteractionIntent.UNRELATED:
@@ -392,7 +409,7 @@ class InteractionHandler:
                 continue
 
             if handled_result is None:
-                result, reply_text, execution_result, reply_image = await self._resume_and_render(
+                result, reply_text, execution_result, receipt_coro = await self._resume_and_render(
                     user_id,
                     loaded,
                     decision.resume_action,
@@ -410,7 +427,7 @@ class InteractionHandler:
                 reply_text=reply_text,
                 execution_result=execution_result,
                 unrelated_text=unrelated_text,
-                reply_image=reply_image,
+                receipt_coro=receipt_coro,
                 project_id=str(loaded.state.project_id) if loaded.state.project_id else None,
                 site_id=str(loaded.state.site_id) if loaded.state.site_id else None,
             )
