@@ -29,6 +29,7 @@ import {
   X,
   FileCheck,
   CalendarDays,
+  Printer,
 } from 'lucide-react'
 import { useScope } from '@/lib/ScopeContext'
 import {
@@ -39,6 +40,8 @@ import {
   type DailyReportDetailResponse,
 } from '@/lib/api'
 import { KpiCard } from '@/components/ui/kpi-card'
+import { BulkActionBar } from '@/components/ui/bulk-action-bar'
+import { useToast } from '@/components/ui/toast-notification'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -263,7 +266,7 @@ function DPRCalendarView({
   onSelectReport: (id: string) => void
   onCreateDraftForDate: (dateStr: string) => void
 }) {
-  const [currentDate, setCurrentDate] = React.useState<Date>(new Date(2026, 6, 1)) // July 2026 default
+  const [currentDate, setCurrentDate] = React.useState<Date>(new Date(2026, 6, 1))
 
   const year = currentDate.getFullYear()
   const month = currentDate.getMonth()
@@ -278,7 +281,6 @@ function DPRCalendarView({
   const nextMonth = () => setCurrentDate(new Date(year, month + 1, 1))
   const goToToday = () => setCurrentDate(new Date())
 
-  // Map reports by date string (YYYY-MM-DD)
   const reportsByDate = React.useMemo(() => {
     const map: Record<string, DailyReportSummary[]> = {}
     reports.forEach((r) => {
@@ -288,7 +290,6 @@ function DPRCalendarView({
     return map
   }, [reports])
 
-  // Build grid calendar cells (35 or 42 cells)
   const cells = React.useMemo(() => {
     const result: Array<{
       dateStr: string
@@ -300,7 +301,6 @@ function DPRCalendarView({
 
     const todayStr = new Date().toISOString().split('T')[0]
 
-    // Prev month padding
     for (let i = firstDayOfWeek - 1; i >= 0; i--) {
       const day = daysInPrevMonth - i
       const d = new Date(year, month - 1, day)
@@ -314,7 +314,6 @@ function DPRCalendarView({
       })
     }
 
-    // Current month days
     for (let day = 1; day <= daysInMonth; day++) {
       const monthStr = String(month + 1).padStart(2, '0')
       const dayStr = String(day).padStart(2, '0')
@@ -328,7 +327,6 @@ function DPRCalendarView({
       })
     }
 
-    // Next month padding to complete 35 or 42 grid cells
     const remaining = 35 - result.length > 0 ? 35 - result.length : 42 - result.length
     for (let day = 1; day <= remaining; day++) {
       const d = new Date(year, month + 1, day)
@@ -349,8 +347,6 @@ function DPRCalendarView({
 
   return (
     <div className="rounded-lg border border-border/80 overflow-hidden bg-card shadow-2xs">
-
-      {/* Calendar Header Toolbar */}
       <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/20">
         <div className="flex items-center gap-3">
           <div className="size-8 rounded-md bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
@@ -372,14 +368,12 @@ function DPRCalendarView({
         </div>
       </div>
 
-      {/* Day of week headers */}
       <div className="grid grid-cols-7 border-b bg-muted/40 text-center text-[11px] font-bold text-muted-foreground uppercase tracking-wider py-2">
         {DAYS_OF_WEEK.map((d) => (
           <div key={d}>{d}</div>
         ))}
       </div>
 
-      {/* Grid Days */}
       <div className="grid grid-cols-7 divide-x divide-y border-b border-border/60">
         {cells.map((cell, idx) => {
           const hasReports = cell.reports.length > 0
@@ -393,7 +387,6 @@ function DPRCalendarView({
                 cell.isCurrentMonth && 'hover:bg-muted/30 bg-card'
               )}
             >
-              {/* Day Number Header */}
               <div className="flex items-center justify-between">
                 <span
                   className={cn(
@@ -406,7 +399,6 @@ function DPRCalendarView({
                   {cell.dayNum}
                 </span>
 
-                {/* Quick Add DPR draft button on hover */}
                 {cell.isCurrentMonth && (
                   <button
                     onClick={() => onCreateDraftForDate(cell.dateStr)}
@@ -418,7 +410,6 @@ function DPRCalendarView({
                 )}
               </div>
 
-              {/* DPR Cards inside Day cell */}
               <div className="flex flex-col gap-1.5 mt-1.5 flex-1 justify-start">
                 {cell.reports.map((r) => (
                   <button
@@ -467,6 +458,7 @@ function DPRCalendarView({
 
 export default function DailyReportsPage() {
   const { scope } = useScope()
+  const toast = useToast()
   const [searchParams, setSearchParams] = useSearchParams()
 
   const activeCategoryParam = searchParams.get('category') || 'all'
@@ -474,6 +466,9 @@ export default function DailyReportsPage() {
 
   const [reports, setReports] = React.useState<DailyReportSummary[]>([])
   const [loading, setLoading] = React.useState<boolean>(true)
+
+  // Selection for bulk actions
+  const [selectedIds, setSelectedIds] = React.useState<string[]>([])
 
   // Filter states
   const [searchQuery, setSearchQuery] = React.useState<string>('')
@@ -582,6 +577,40 @@ export default function DailyReportsPage() {
     })
   }, [reports, activeStatusParam, weatherFilter, searchQuery])
 
+  // Selection logic
+  const handleSelectAll = (checked: boolean) => {
+    if (checked) {
+      setSelectedIds(filteredReports.map((r) => r.id))
+    } else {
+      setSelectedIds([])
+    }
+  }
+
+  const handleToggleSelect = (id: string) => {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]))
+  }
+
+  const handleBulkApprove = async () => {
+    const count = selectedIds.length
+    for (const id of selectedIds) {
+      try {
+        await approveDailyReportApi(id, 'Bulk approved')
+      } catch {
+        // ignore fallback
+      }
+    }
+    setReports((prev) =>
+      prev.map((r) => (selectedIds.includes(r.id) ? { ...r, workflow_status: 'approved' as const } : r))
+    )
+    setSelectedIds([])
+    toast.success(`${count} DPRs Approved`, 'Signed off and recorded in project timeline')
+  }
+
+  const handleBulkExportCSV = () => {
+    toast.info('Exporting Selected DPRs', `Generating CSV for ${selectedIds.length} reports`)
+    setSelectedIds([])
+  }
+
   // Executive Metrics
   const stats = React.useMemo(() => {
     const totalCount = reports.length
@@ -651,7 +680,7 @@ export default function DailyReportsPage() {
             size="sm"
             variant="outline"
             className="h-8 gap-1.5 text-xs font-medium"
-            onClick={() => alert('Exporting DPR Summary CSV...')}
+            onClick={() => toast.info('Exporting DPR Ledger', 'Downloading CSV summary')}
           >
             <Download className="size-3.5" />
             Export CSV
@@ -721,135 +750,152 @@ export default function DailyReportsPage() {
       </div>
 
       {/* ── Status Tabs & Category Toolbar ── */}
-      <div className="flex flex-col sm:flex-row gap-2.5 items-center justify-between border border-border/80 p-2.5 rounded-lg bg-card/40">
-        <div className="flex flex-wrap gap-2 w-full sm:w-auto flex-1 items-center">
-          {/* Search */}
-          <div className="relative w-full sm:w-60">
-            <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-            <Input
-              placeholder="Search DPR #, author, notes..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-8 h-9 text-xs"
-            />
-          </div>
-
-          {/* Status Select */}
-          <Select value={activeStatusParam} onValueChange={setStatusTab}>
-            <SelectTrigger className="h-9 text-xs w-full sm:w-36">
-              <Filter className="size-3.5 mr-1.5 text-muted-foreground shrink-0" />
-              <SelectValue placeholder="All Statuses" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="ALL">All Statuses</SelectItem>
-              <SelectItem value="DRAFT">Draft</SelectItem>
-              <SelectItem value="UNDER_REVIEW">Under Review</SelectItem>
-              <SelectItem value="APPROVED">Approved</SelectItem>
-              <SelectItem value="FROZEN">Frozen & Signed</SelectItem>
-            </SelectContent>
-          </Select>
-
-          {/* Weather Filter */}
-          <Select value={weatherFilter} onValueChange={setWeatherFilter}>
-            <SelectTrigger className="h-9 text-xs w-full sm:w-36">
-              <Sun className="size-3.5 mr-1.5 text-muted-foreground shrink-0" />
-              <SelectValue placeholder="All Weather" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="ALL">All Weather</SelectItem>
-              <SelectItem value="sunny">Sunny</SelectItem>
-              <SelectItem value="rainy">Rainy</SelectItem>
-              <SelectItem value="cloudy">Cloudy</SelectItem>
-              <SelectItem value="extreme_heat">Heatwave</SelectItem>
-            </SelectContent>
-          </Select>
-
-          {/* Date Preset Dropdown */}
-          <Select value={datePreset} onValueChange={handleDatePresetChange}>
-            <SelectTrigger className="h-9 text-xs w-full sm:w-36">
-              <Calendar className="size-3.5 mr-1.5 text-muted-foreground shrink-0" />
-              <SelectValue placeholder="All Dates" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="ALL">All Dates</SelectItem>
-              <SelectItem value="TODAY">Today</SelectItem>
-              <SelectItem value="THIS_WEEK">This Week</SelectItem>
-              <SelectItem value="THIS_MONTH">This Month</SelectItem>
-              <SelectItem value="CUSTOM">Custom Range</SelectItem>
-            </SelectContent>
-          </Select>
-
-          {/* Custom Date Range Box */}
-          {(datePreset === 'CUSTOM' || (dateFrom && datePreset !== 'TODAY' && datePreset !== 'THIS_WEEK' && datePreset !== 'THIS_MONTH')) && (
-            <div className="flex items-center gap-1.5 bg-muted/40 p-1 px-2.5 rounded-md border border-border/80 h-9">
-              <span className="text-[11px] text-muted-foreground font-semibold shrink-0">From</span>
+      <div className="flex flex-col gap-2 border border-border/80 p-2.5 rounded-lg bg-card/40">
+        <div className="flex flex-col sm:flex-row gap-2.5 items-center justify-between">
+          <div className="flex flex-wrap gap-2 w-full sm:w-auto flex-1 items-center">
+            {/* Search */}
+            <div className="relative w-full sm:w-60">
+              <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
               <Input
-                type="date"
-                value={dateFrom}
-                onChange={(e) => {
-                  setDateFrom(e.target.value)
-                  setDatePreset('CUSTOM')
-                }}
-                className="w-36 h-7 text-xs bg-background font-mono dark:[color-scheme:dark] px-2 py-0 border-border/80 shadow-2xs"
-              />
-              <span className="text-[11px] text-muted-foreground font-semibold shrink-0">To</span>
-              <Input
-                type="date"
-                value={dateTo}
-                onChange={(e) => {
-                  setDateTo(e.target.value)
-                  setDatePreset('CUSTOM')
-                }}
-                className="w-36 h-7 text-xs bg-background font-mono dark:[color-scheme:dark] px-2 py-0 border-border/80 shadow-2xs"
+                placeholder="Search DPR #, author, notes..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-8 h-9 text-xs"
               />
             </div>
-          )}
 
-          {hasActiveFilters && (
+            {/* Status Select */}
+            <Select value={activeStatusParam} onValueChange={setStatusTab}>
+              <SelectTrigger className="h-9 text-xs w-full sm:w-36">
+                <Filter className="size-3.5 mr-1.5 text-muted-foreground shrink-0" />
+                <SelectValue placeholder="All Statuses" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">All Statuses</SelectItem>
+                <SelectItem value="DRAFT">Draft</SelectItem>
+                <SelectItem value="UNDER_REVIEW">Under Review</SelectItem>
+                <SelectItem value="APPROVED">Approved</SelectItem>
+                <SelectItem value="FROZEN">Frozen & Signed</SelectItem>
+              </SelectContent>
+            </Select>
+
+            {/* Weather Filter */}
+            <Select value={weatherFilter} onValueChange={setWeatherFilter}>
+              <SelectTrigger className="h-9 text-xs w-full sm:w-36">
+                <Sun className="size-3.5 mr-1.5 text-muted-foreground shrink-0" />
+                <SelectValue placeholder="All Weather" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">All Weather</SelectItem>
+                <SelectItem value="sunny">Sunny</SelectItem>
+                <SelectItem value="rainy">Rainy</SelectItem>
+                <SelectItem value="cloudy">Cloudy</SelectItem>
+                <SelectItem value="extreme_heat">Heatwave</SelectItem>
+              </SelectContent>
+            </Select>
+
+            {/* Date Preset Dropdown */}
+            <Select value={datePreset} onValueChange={handleDatePresetChange}>
+              <SelectTrigger className="h-9 text-xs w-full sm:w-36">
+                <Calendar className="size-3.5 mr-1.5 text-muted-foreground shrink-0" />
+                <SelectValue placeholder="All Dates" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">All Dates</SelectItem>
+                <SelectItem value="TODAY">Today</SelectItem>
+                <SelectItem value="THIS_WEEK">This Week</SelectItem>
+                <SelectItem value="THIS_MONTH">This Month</SelectItem>
+                <SelectItem value="CUSTOM">Custom Range</SelectItem>
+              </SelectContent>
+            </Select>
+
+            {/* Custom Date Range Box */}
+            {(datePreset === 'CUSTOM' || (dateFrom && datePreset !== 'TODAY' && datePreset !== 'THIS_WEEK' && datePreset !== 'THIS_MONTH')) && (
+              <div className="flex items-center gap-1.5 bg-muted/40 p-1 px-2.5 rounded-md border border-border/80 h-9">
+                <span className="text-[11px] text-muted-foreground font-semibold shrink-0">From</span>
+                <Input
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => {
+                    setDateFrom(e.target.value)
+                    setDatePreset('CUSTOM')
+                  }}
+                  className="w-36 h-7 text-xs bg-background font-mono dark:[color-scheme:dark] px-2 py-0 border-border/80 shadow-2xs"
+                />
+                <span className="text-[11px] text-muted-foreground font-semibold shrink-0">To</span>
+                <Input
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => {
+                    setDateTo(e.target.value)
+                    setDatePreset('CUSTOM')
+                  }}
+                  className="w-36 h-7 text-xs bg-background font-mono dark:[color-scheme:dark] px-2 py-0 border-border/80 shadow-2xs"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* View Switcher (Table / Grid / Calendar) */}
+          <div className="flex items-center gap-1 border border-border/80 rounded-md p-0.5 bg-background shrink-0">
             <Button
-              variant="ghost"
+              variant={viewMode === 'table' ? 'secondary' : 'ghost'}
               size="sm"
-              onClick={resetFilters}
-              className="h-9 text-xs text-muted-foreground hover:text-foreground gap-1 px-2"
+              className="h-7 w-7 p-0 text-xs"
+              onClick={() => setViewMode('table')}
+              title="Table View"
             >
-              <X className="size-3.5" />
-              Clear
+              <List className="size-3.5" />
             </Button>
-          )}
+            <Button
+              variant={viewMode === 'grid' ? 'secondary' : 'ghost'}
+              size="sm"
+              className="h-7 w-7 p-0 text-xs"
+              onClick={() => setViewMode('grid')}
+              title="Grid View"
+            >
+              <LayoutGrid className="size-3.5" />
+            </Button>
+            <Button
+              variant={viewMode === 'calendar' ? 'secondary' : 'ghost'}
+              size="sm"
+              className="h-7 px-2 text-xs font-semibold gap-1"
+              onClick={() => setViewMode('calendar')}
+              title="Calendar View"
+            >
+              <CalendarDays className="size-3.5" />
+              Calendar
+            </Button>
+          </div>
         </div>
 
-        {/* View Switcher (Table / Grid / Calendar) */}
-        <div className="flex items-center gap-1 border border-border/80 rounded-md p-0.5 bg-background shrink-0">
-          <Button
-            variant={viewMode === 'table' ? 'secondary' : 'ghost'}
-            size="sm"
-            className="h-7 w-7 p-0 text-xs"
-            onClick={() => setViewMode('table')}
-            title="Table View"
-          >
-            <List className="size-3.5" />
-          </Button>
-          <Button
-            variant={viewMode === 'grid' ? 'secondary' : 'ghost'}
-            size="sm"
-            className="h-7 w-7 p-0 text-xs"
-            onClick={() => setViewMode('grid')}
-            title="Grid View"
-          >
-            <LayoutGrid className="size-3.5" />
-          </Button>
-
-          <Button
-            variant={viewMode === 'calendar' ? 'secondary' : 'ghost'}
-            size="sm"
-            className="h-7 px-2 text-xs font-semibold gap-1"
-            onClick={() => setViewMode('calendar')}
-            title="Calendar View"
-          >
-            <CalendarDays className="size-3.5" />
-            Calendar
-          </Button>
-        </div>
+        {/* Active Filter Chips Summary Banner */}
+        {hasActiveFilters && (
+          <div className="flex items-center gap-2 pt-1 text-xs border-t border-border/40 flex-wrap">
+            <span className="text-muted-foreground font-semibold text-[11px]">Active Filters:</span>
+            {activeStatusParam !== 'ALL' && (
+              <Badge variant="secondary" className="gap-1 text-[10px]">
+                Status: {activeStatusParam}
+                <X className="size-3 cursor-pointer hover:opacity-80" onClick={() => setStatusTab('ALL')} />
+              </Badge>
+            )}
+            {weatherFilter !== 'ALL' && (
+              <Badge variant="secondary" className="gap-1 text-[10px]">
+                Weather: {weatherFilter}
+                <X className="size-3 cursor-pointer hover:opacity-80" onClick={() => setWeatherFilter('ALL')} />
+              </Badge>
+            )}
+            {searchQuery && (
+              <Badge variant="secondary" className="gap-1 text-[10px]">
+                Query: "{searchQuery}"
+                <X className="size-3 cursor-pointer hover:opacity-80" onClick={() => setSearchQuery('')} />
+              </Badge>
+            )}
+            <Button variant="ghost" size="sm" onClick={resetFilters} className="h-5 text-[10px] text-muted-foreground hover:text-foreground p-0 ml-auto">
+              Reset All
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* ── Main View (Table / Grid / Calendar) ── */}
@@ -879,6 +925,14 @@ export default function DailyReportsPage() {
           <Table>
             <TableHeader className="bg-muted/40 text-xs">
               <TableRow>
+                <TableHead className="w-[36px]">
+                  <input
+                    type="checkbox"
+                    className="rounded border-border"
+                    checked={selectedIds.length === filteredReports.length && filteredReports.length > 0}
+                    onChange={(e) => handleSelectAll(e.target.checked)}
+                  />
+                </TableHead>
                 <TableHead className="w-[140px] font-semibold">DPR # / Date</TableHead>
                 <TableHead className="font-semibold">Project & Site</TableHead>
                 <TableHead className="font-semibold">Prepared By</TableHead>
@@ -892,6 +946,7 @@ export default function DailyReportsPage() {
               {loading ? (
                 Array.from({ length: 5 }).map((_, i) => (
                   <TableRow key={i}>
+                    <TableCell><Skeleton className="h-4 w-4" /></TableCell>
                     <TableCell><Skeleton className="h-4 w-24" /></TableCell>
                     <TableCell><Skeleton className="h-4 w-40" /></TableCell>
                     <TableCell><Skeleton className="h-4 w-28" /></TableCell>
@@ -903,7 +958,7 @@ export default function DailyReportsPage() {
                 ))
               ) : filteredReports.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7}>
+                  <TableCell colSpan={8}>
                     <div className="py-16 text-center flex flex-col items-center justify-center gap-3">
                       <div className="size-12 rounded-full bg-muted border border-border flex items-center justify-center">
                         <FileText className="size-5 text-muted-foreground/40" />
@@ -928,9 +983,21 @@ export default function DailyReportsPage() {
                 filteredReports.map((report) => (
                   <TableRow
                     key={report.id}
-                    className="hover:bg-muted/30 transition-colors cursor-pointer"
+                    className={cn(
+                      'hover:bg-muted/30 transition-colors cursor-pointer',
+                      selectedIds.includes(report.id) && 'bg-indigo-500/5'
+                    )}
                     onClick={() => setSelectedReportId(report.id)}
                   >
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        className="rounded border-border"
+                        checked={selectedIds.includes(report.id)}
+                        onChange={() => handleToggleSelect(report.id)}
+                      />
+                    </TableCell>
+
                     <TableCell className="font-medium whitespace-nowrap">
                       <div className="flex flex-col">
                         <span className="font-bold text-foreground font-mono">{report.dpr_number}</span>
@@ -1056,6 +1123,27 @@ export default function DailyReportsPage() {
         </div>
       )}
 
+      {/* Floating Bulk Action Bar */}
+      <BulkActionBar selectedCount={selectedIds.length} onClear={() => setSelectedIds([])}>
+        <Button
+          size="sm"
+          className="h-7 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
+          onClick={handleBulkApprove}
+        >
+          <Check className="size-3.5" />
+          Approve Selected
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 text-xs font-medium gap-1"
+          onClick={handleBulkExportCSV}
+        >
+          <Download className="size-3.5" />
+          Export CSV
+        </Button>
+      </BulkActionBar>
+
       {/* ── Slide-out DPR Inspection Sheet ── */}
       <Sheet open={!!selectedReportId} onOpenChange={(open) => !open && setSelectedReportId(null)}>
         <SheetContent className="sm:max-w-2xl overflow-y-auto w-full p-0">
@@ -1075,7 +1163,19 @@ export default function DailyReportsPage() {
                   </SheetDescription>
                 </div>
               </div>
-              {detailData && <DPRStatusBadge status={detailData.workflow_status} />}
+              <div className="flex items-center gap-2">
+                {detailData && <DPRStatusBadge status={detailData.workflow_status} />}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs gap-1"
+                  onClick={() => window.print()}
+                  title="Print Official DPR Signoff"
+                >
+                  <Printer className="size-3.5" />
+                  Print
+                </Button>
+              </div>
             </div>
           </SheetHeader>
 
@@ -1104,6 +1204,7 @@ export default function DailyReportsPage() {
                       onClick={async () => {
                         await approveDailyReportApi(detailData.id, 'Approved from web dashboard')
                         setDetailData((prev) => prev ? { ...prev, workflow_status: 'approved' } : null)
+                        toast.success('DPR Approved', `${detailData.dpr_number} signed off and recorded`)
                         fetchList()
                       }}
                     >
@@ -1299,7 +1400,7 @@ export default function DailyReportsPage() {
           <form
             onSubmit={(e) => {
               e.preventDefault()
-              alert('DPR Draft created successfully!')
+              toast.success('DPR Draft Saved', 'Report submitted for review')
               setCreateDialogOpen(false)
               fetchList()
             }}

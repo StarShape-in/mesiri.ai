@@ -54,6 +54,7 @@ from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
 from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
 from mesiri_contracts.assistant.v2.resolved_context import ResolvedContextV2
 from planner import Planner, log_planner_decision
+from runtime.activity_query import ActivityQueryService
 from runtime.duplicate_expense_query import DuplicateExpenseQueryService
 from runtime.expense_category_query import ExpenseCategoryQueryService
 from runtime.expense_query_service import ExpenseQueryService, resolve_date_range
@@ -64,7 +65,6 @@ from runtime.labour_query_service import (
 from runtime.labour_query_service import (
     resolve_date_range as resolve_labour_date_range,
 )
-from runtime.activity_query import ActivityQueryService
 from runtime.logging_ports import MessageLogger, TraceLogger
 from runtime.material_catalog_query import MaterialCatalogQueryService
 from runtime.money_account_query import MoneyAccountQueryService
