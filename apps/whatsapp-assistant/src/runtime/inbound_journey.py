@@ -1013,6 +1013,11 @@ async def process_inbound_message(
             expense_categories = await expense_category_query.list_active_category_names(
                 organization_id=actor.organization_id, created_by=actor.user_id
             )
+        # Recorded separately from the AI work below: a traced image message
+        # showed a 10.2s `understanding` stage whose provider calls only
+        # accounted for ~7.1s, and this category lookup is the one database
+        # round trip hiding inside the same measurement.
+        categories_ms = int((time.perf_counter() - t0) * 1000)
         understanding = await pipeline.understand(
             message, semantic_hint=semantic_hint, expense_categories=expense_categories
         )
@@ -1020,7 +1025,10 @@ async def process_inbound_message(
             tlog.log_stage(
                 correlation_id=correlation_id,
                 stage="understanding",
-                stage_payload=understanding.model_dump(mode="json"),
+                stage_payload={
+                    **understanding.model_dump(mode="json"),
+                    "expense_categories_ms": categories_ms,
+                },
                 duration_ms=int((time.perf_counter() - t0) * 1000),
                 succeeded=True,
             )

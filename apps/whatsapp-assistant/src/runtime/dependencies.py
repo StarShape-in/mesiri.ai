@@ -17,6 +17,7 @@ from ingress.receiver import InMemoryNormalizedMessageStore, WhatsAppReceiver
 from interactions.image_purpose import try_hold_new_image_for_purpose_picker
 from runtime.account_admin_journey import try_handle_account_admin_command
 from runtime.logging_ports import MessageLogger, TraceLogger
+from runtime.step_timing import StepTimer
 
 if TYPE_CHECKING:
     from backend.ports import ActorReader
@@ -526,6 +527,28 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         await sender.mark_as_read(message_id)
 
     async def _run_journey(message, raw_payload, retry_of_id=None) -> None:  # type: ignore[no-untyped-def]
+        timer = StepTimer()
+        try:
+            await _run_journey_steps(message, raw_payload, retry_of_id, timer)
+        finally:
+            # Emitted in `finally` so every path is covered by one write --
+            # this block has a dozen early returns (unregistered sender,
+            # suspended org, a fast path that handled the message outright),
+            # and a per-return emit would be a dozen chances to miss one.
+            # duration_ms is the whole journey; subtract the
+            # process_inbound_message lap for the pre-pipeline cost alone.
+            try:
+                await trace_logger.log_stage(
+                    correlation_id=message.correlation_id,
+                    stage="prepipeline",
+                    stage_payload=timer.steps,
+                    duration_ms=timer.total_ms,
+                    succeeded=True,
+                )
+            except Exception:  # noqa: BLE001 -- diagnostics must never break a message
+                _log.exception("prepipeline.trace_failed correlation_id=%s", message.correlation_id)
+
+    async def _run_journey_steps(message, raw_payload, retry_of_id, timer) -> None:  # type: ignore[no-untyped-def]
         wa_id = message.sender.wa_id
 
         # M4: resolve the sender before spending on understanding.
@@ -535,6 +558,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             _log.exception("context.identity_lookup_failed wa_id=%s", wa_id)
             ctx = None
 
+        timer.lap("resolve_sender")
         org_id = ctx.organization_id if ctx else None
 
         # Best-effort inbound message log (for debugging/replay). raw_payload
@@ -562,6 +586,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             retry_of_id=retry_of_id,
             organization_id=org_id,
         )
+        timer.lap("log_received")
 
         if ctx is None:
             _log.info("context.sender_unregistered wa_id=%s", wa_id)
@@ -631,6 +656,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         # token cost) is never touched. A plain "yes" ends here.
         try:
             handled = await interaction_handler.handle_fast_path(ctx.user_id, message, actor=ctx)
+            timer.lap("handle_fast_path")
         except Exception:  # noqa: BLE001 — a resume error must not drop the message
             _log.exception("interaction.handle_failed user=%s", ctx.user_id)
             handled = None
@@ -672,6 +698,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         # confirmation fast path above.
         try:
             slot_handled = await interaction_handler.handle_slot_answer(ctx.user_id, message)
+            timer.lap("handle_slot_answer")
         except Exception:  # noqa: BLE001 — a resume error must not drop the message
             _log.exception("interaction.slot_answer_failed user=%s", ctx.user_id)
             slot_handled = None
@@ -717,6 +744,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             account_admin_handled = await try_handle_account_admin_command(
                 message, ctx, workflow_runtime
             )
+            timer.lap("account_admin_command")
         except Exception:  # noqa: BLE001 — a resume error must not drop the message
             _log.exception("account_admin.command_failed user=%s", ctx.user_id)
             account_admin_handled = None
@@ -797,6 +825,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             )
 
             held_message = await pending_media_store.pop_pending(user_id=ctx.user_id)
+            timer.lap("pop_pending_media")
             if held_message is None:
                 expired_reply = "That photo has expired — please resend it."
                 await sender.send_text(wa_id, expired_reply)
@@ -847,6 +876,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
                 expense_query_service=expense_query_service,
                 pending_report_store=pending_report_store,
             )
+            timer.lap("process_inbound_message_held_media")
             await message_logger.mark_completed(correlation_id=message.correlation_id)
             return
 
@@ -901,6 +931,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             inventory_query=inventory_query,
             message_logger=message_logger,
         )
+        timer.lap("resume_material")
         if material_reply is not None:
             await send_reply_spec(
                 material_reply,
@@ -930,6 +961,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             inventory_query=inventory_query,
             message_logger=message_logger,
         )
+        timer.lap("resume_material_create")
         if material_create_reply is not None:
             await send_reply_spec(
                 material_create_reply,
@@ -957,6 +989,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             inventory_query=inventory_query,
             message_logger=message_logger,
         )
+        timer.lap("resume_material_unit_choice")
         if material_unit_reply is not None:
             await send_reply_spec(
                 material_unit_reply,
@@ -984,6 +1017,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             inventory_query=inventory_query,
             message_logger=message_logger,
         )
+        timer.lap("resume_unit")
         if unit_reply is not None:
             await send_reply_spec(
                 unit_reply,
@@ -1011,6 +1045,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             inventory_query=inventory_query,
             message_logger=message_logger,
         )
+        timer.lap("resume_stock_choice")
         if stock_reply is not None:
             await send_reply_spec(
                 stock_reply,
@@ -1039,6 +1074,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             inventory_query=inventory_query,
             message_logger=message_logger,
         )
+        timer.lap("resume_project")
         if project_reply is not None:
             await send_reply_spec(
                 project_reply,
@@ -1068,6 +1104,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             inventory_query=inventory_query,
             message_logger=message_logger,
         )
+        timer.lap("resume_site")
         if site_reply is not None:
             await send_reply_spec(
                 site_reply,
@@ -1089,6 +1126,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         image_purpose_reply = await try_hold_new_image_for_purpose_picker(
             message, user_id=ctx.user_id, pending_media_store=pending_media_store
         )
+        timer.lap("image_purpose_picker")
         if image_purpose_reply is not None:
             await send_reply_spec(
                 image_purpose_reply,
@@ -1104,6 +1142,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             return
 
         category_hint = await category_hint_store.pop_hint(user_id=ctx.user_id)
+        timer.lap("pop_category_hint")
         await process_inbound_message(
             message,
             actor_user_id=ctx.user_id,
@@ -1137,6 +1176,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             expense_query_service=expense_query_service,
             pending_report_store=pending_report_store,
         )
+        timer.lap("process_inbound_message")
 
     receiver = WhatsAppReceiver(
         deduplication_store=deduplication_store,
