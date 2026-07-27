@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from dataclasses import dataclass
 from datetime import timedelta
@@ -158,6 +159,15 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     )
     from mesiri_contracts.assistant.enums import InputModality
     from planner import Planner
+
+    # See _send_processing_ack below. text/interactive deliberately absent --
+    # they already reply in under ~2s (measured), where a second message
+    # would just add noise.
+    _PROCESSING_ACK_TEXT: dict[InputModality, str] = {
+        InputModality.IMAGE: "📷 Got your photo — reading it now...",
+        InputModality.DOCUMENT: "📄 Got your document — reading it now...",
+        InputModality.VOICE: "🎤 Got your voice note — listening now...",
+    }
     from runtime.inbound_journey import (
         process_inbound_message,
         resume_pending_report_with_material,
@@ -526,6 +536,46 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         normalization had all finished first."""
         await sender.mark_as_read(message_id)
 
+    # Held so a fire-and-forget ack task can't be garbage-collected mid-flight
+    # -- asyncio only keeps a weak reference to a task nothing else holds.
+    # Same reasoning, same pattern as WhatsAppReceiver._background_tasks.
+    _ack_tasks: set[asyncio.Task[None]] = set()
+
+    def _fire_processing_ack(wa_id: str, modality: InputModality) -> None:
+        """Schedule _send_processing_ack without awaiting it -- the caller's
+        real work (the slow understanding call that follows) must start
+        immediately, not after this ~600-900ms Meta round trip."""
+        task = asyncio.create_task(_send_processing_ack(wa_id, modality))
+        _ack_tasks.add(task)
+        task.add_done_callback(_ack_tasks.discard)
+
+    async def _send_processing_ack(wa_id: str, modality: InputModality) -> None:
+        """A second, real message sent before understanding starts, not just
+        the read-receipt blue tick.
+
+        Voice/image replies still take several real seconds (traced:
+        analyze_image ~6.4s, understand_voice ~3.2s, plus a confirmed
+        expense's receipt render + a second send) -- without this the
+        sender watches "typing..." with zero information for that whole
+        window, which reads as "did this even go through?" rather than
+        "still working on it". Fire-and-forget like the read receipt:
+        nothing downstream depends on it, and a failure here must never
+        delay or replace the real reply.
+
+        Deliberately skips text/interactive -- those already reply in
+        under ~2s (measured), where a second message would arrive at
+        almost the same time as the real one and just add noise.
+        """
+        text = _PROCESSING_ACK_TEXT.get(modality)
+        if text is None:
+            return
+        try:
+            await sender.send_text(wa_id, text)
+        except Exception:  # noqa: BLE001
+            _log.exception(
+                "processing_ack_failed wa_id=%s modality=%s", wa_id, modality.value
+            )
+
     async def _run_journey(message, raw_payload, retry_of_id=None) -> None:  # type: ignore[no-untyped-def]
         timer = StepTimer()
         try:
@@ -844,6 +894,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
                 await message_logger.mark_completed(correlation_id=message.correlation_id)
                 return
 
+            _fire_processing_ack(wa_id, held_message.modality)
             await process_inbound_message(
                 held_message,
                 actor_user_id=ctx.user_id,
@@ -1143,6 +1194,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
 
         category_hint = await category_hint_store.pop_hint(user_id=ctx.user_id)
         timer.lap("pop_category_hint")
+        _fire_processing_ack(wa_id, message.modality)
         await process_inbound_message(
             message,
             actor_user_id=ctx.user_id,
