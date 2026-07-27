@@ -107,7 +107,10 @@ class ObjectStorageSettings(_Section):
 class SarvamSettings(_Section):
     api_key: SecretStr | None = None
     timeout_seconds: float = 7.0
-    max_retries: int = 2
+    # 2 retries = 3 attempts = up to 21s on a hung transcription call (7s
+    # timeout × 3). 1 retry caps the same failure mode at 14s while still
+    # absorbing a single transient blip, matching GeminiSettings' policy.
+    max_retries: int = 1
 
 
 class GeminiSettings(_Section):
