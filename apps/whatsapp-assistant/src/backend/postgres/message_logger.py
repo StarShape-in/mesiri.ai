@@ -372,6 +372,73 @@ class PostgresMessageLogger:
         except Exception:  # noqa: BLE001
             _log.exception("message_logger.log_reply failed correlation_id=%s", correlation_id)
 
+    async def get_wall_time_summary(self, since: datetime) -> list[dict[str, Any]]:
+        """Read path for the control-panel Performance page's per-modality
+        wall-clock summary (received_at -> processed_at), worst-avg first.
+
+        This is a real end-to-end number (unlike any single stage), and it's
+        also the one most likely to be inflated by something outside the
+        pipeline's own control -- e.g. a held image's wall time includes
+        however long the sender took to answer "what is this photo for?"
+        (see the image-purpose picker), not just processing. Read alongside
+        get_stage_summary, not instead of it.
+        """
+        from sqlalchemy import text
+
+        async with self._get_engine().connect() as conn:
+            rows = (
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT message_type, "
+                            "count(*) AS n, "
+                            "avg(EXTRACT(EPOCH FROM (processed_at - received_at)) * 1000) AS avg_ms, "
+                            "percentile_cont(0.5) WITHIN GROUP ("
+                            "  ORDER BY EXTRACT(EPOCH FROM (processed_at - received_at)) * 1000"
+                            ") AS p50_ms, "
+                            "percentile_cont(0.95) WITHIN GROUP ("
+                            "  ORDER BY EXTRACT(EPOCH FROM (processed_at - received_at)) * 1000"
+                            ") AS p95_ms, "
+                            "max(EXTRACT(EPOCH FROM (processed_at - received_at)) * 1000) AS max_ms "
+                            "FROM inbound_messages "
+                            "WHERE received_at > :since AND processed_at IS NOT NULL "
+                            "GROUP BY message_type "
+                            "ORDER BY avg_ms DESC NULLS LAST"
+                        ),
+                        {"since": since},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return [dict(row) for row in rows]
+
+    async def get_worst_offenders(self, since: datetime, limit: int) -> list[dict[str, Any]]:
+        """Read path for the control-panel Performance page's slowest-message
+        list -- the entry point for drilling into one correlation_id's full
+        trace via the existing per-message endpoints."""
+        from sqlalchemy import text
+
+        async with self._get_engine().connect() as conn:
+            rows = (
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT correlation_id, message_type, received_at, processed_at, "
+                            "EXTRACT(EPOCH FROM (processed_at - received_at)) * 1000 AS wall_ms "
+                            "FROM inbound_messages "
+                            "WHERE received_at > :since AND processed_at IS NOT NULL "
+                            "ORDER BY wall_ms DESC "
+                            "LIMIT :limit"
+                        ),
+                        {"since": since, "limit": limit},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return [dict(row) for row in rows]
+
     async def update_body_text(self, *, correlation_id: str, body_text: str) -> None:
         from sqlalchemy import text
 

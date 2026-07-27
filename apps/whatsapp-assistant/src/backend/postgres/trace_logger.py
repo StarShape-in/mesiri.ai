@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime
 from typing import Any
 
 _log = logging.getLogger("mesiri.trace_logger")
@@ -202,6 +203,97 @@ class PostgresTraceLogger:
                             "ORDER BY created_at ASC"
                         ),
                         {"correlation_id": correlation_id},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return [dict(row) for row in rows]
+
+    async def get_stage_summary(self, since: datetime) -> list[dict[str, Any]]:
+        """Read path for the control-panel Performance page's stage
+        breakdown -- per-stage avg/p50/p95/max duration_ms and failure
+        count, worst-avg first. Same shape as the SQL run by hand throughout
+        the M9 latency investigation, just made reusable."""
+        from sqlalchemy import text
+
+        async with self._get_engine().connect() as conn:
+            rows = (
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT stage, "
+                            "count(*) AS n, "
+                            "count(*) FILTER (WHERE NOT succeeded) AS failures, "
+                            "avg(duration_ms) AS avg_ms, "
+                            "percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms) AS p50_ms, "
+                            "percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) AS p95_ms, "
+                            "max(duration_ms) AS max_ms "
+                            "FROM journey_traces "
+                            "WHERE created_at > :since "
+                            "GROUP BY stage "
+                            "ORDER BY avg_ms DESC NULLS LAST"
+                        ),
+                        {"since": since},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return [dict(row) for row in rows]
+
+    async def get_provider_summary(self, since: datetime) -> list[dict[str, Any]]:
+        """Read path for the control-panel Performance page's provider-call
+        breakdown -- per stage/provider/operation/model avg/p50/p95/failure
+        rate, worst-avg first."""
+        from sqlalchemy import text
+
+        async with self._get_engine().connect() as conn:
+            rows = (
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT stage, provider, operation, model, "
+                            "count(*) AS n, "
+                            "count(*) FILTER (WHERE NOT succeeded) AS failures, "
+                            "avg(latency_ms) AS avg_ms, "
+                            "percentile_cont(0.5) WITHIN GROUP (ORDER BY latency_ms) AS p50_ms, "
+                            "percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) AS p95_ms, "
+                            "max(latency_ms) AS max_ms "
+                            "FROM provider_executions "
+                            "WHERE created_at > :since "
+                            "GROUP BY stage, provider, operation, model "
+                            "ORDER BY avg_ms DESC NULLS LAST"
+                        ),
+                        {"since": since},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return [dict(row) for row in rows]
+
+    async def get_prepipeline_recent(self, since: datetime, limit: int) -> list[dict[str, Any]]:
+        """Read path for the control-panel Performance page's per-message
+        prepipeline step ranking (see runtime/step_timing.py) -- newest
+        first. stage_payload is intentionally included here (unlike
+        get_by_correlation_id): it's the per-step lap breakdown
+        (_unaccounted_ms plus each named step), not user content."""
+        from sqlalchemy import text
+
+        async with self._get_engine().connect() as conn:
+            rows = (
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT correlation_id, stage_payload, duration_ms, succeeded, "
+                            "created_at "
+                            "FROM journey_traces "
+                            "WHERE stage = 'prepipeline' AND created_at > :since "
+                            "ORDER BY created_at DESC "
+                            "LIMIT :limit"
+                        ),
+                        {"since": since, "limit": limit},
                     )
                 )
                 .mappings()
