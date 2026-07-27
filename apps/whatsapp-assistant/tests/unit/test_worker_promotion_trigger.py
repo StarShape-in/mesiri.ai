@@ -75,9 +75,10 @@ class _FakeActor:
 class _FakeWorkforceQuery:
     def __init__(self) -> None:
         self.created: list[dict] = []
+        self.candidates: list[dict] = []
 
     async def list_worker_candidates(self, **kwargs):
-        return []
+        return self.candidates
 
     async def create_worker(self, **kwargs):
         self.created.append(kwargs)
@@ -111,6 +112,8 @@ async def _send_text_recorder():
 
 
 async def test_only_named_unmatched_lines_are_offered():
+    """Headcount-only lines ("12 helpers") have nobody to promote, and a line
+    already matched to a registered worker is by definition not new."""
     handled = _handled(
         [
             {"worker_name": "Ravi", "trade": "mason", "worker_id": None, "daily_wage": "800"},
@@ -130,6 +133,45 @@ async def test_only_named_unmatched_lines_are_offered():
     _decision, event = runtime.started_with
     promotable = event.fields["promotable_workers"]
     assert [w["name"] for w in promotable] == ["Ravi"]
+
+
+async def test_the_register_is_seeded_for_the_duplicate_check():
+    """The node must never query a repository itself, so the register it
+    screens against has to arrive in the event fields."""
+    handled = _handled([{"worker_name": "Ravi", "trade": "mason", "worker_id": None}])
+    runtime = _FakeWorkflowRuntime()
+    workforce_query = _FakeWorkforceQuery()
+    workforce_query.candidates = [
+        {"worker_id": "w1", "name": "Ravi Kumar", "trade": "mason", "contractor": None}
+    ]
+    _sent, send_text = await _send_text_recorder()
+
+    await _maybe_trigger_worker_promotion(
+        handled, runtime, workforce_query, _FakeActor(), "wa123", send_text
+    )
+
+    _decision, event = runtime.started_with
+    assert event.fields["_register"] == workforce_query.candidates
+
+
+async def test_a_failing_register_read_never_blocks_the_promotion_offer():
+    """Attendance is already saved. If the register read fails, offering
+    promotion without the duplicate screen still beats offering nothing."""
+
+    class _BrokenQuery(_FakeWorkforceQuery):
+        async def list_worker_candidates(self, **kwargs):
+            raise RuntimeError("db down")
+
+    handled = _handled([{"worker_name": "Ravi", "trade": "mason", "worker_id": None}])
+    runtime = _FakeWorkflowRuntime()
+    _sent, send_text = await _send_text_recorder()
+
+    await _maybe_trigger_worker_promotion(
+        handled, runtime, _BrokenQuery(), _FakeActor(), "wa123", send_text
+    )
+
+    _decision, event = runtime.started_with
+    assert event.fields["_register"] == []
 
 
 async def test_no_named_new_workers_never_starts_the_promotion_workflow():

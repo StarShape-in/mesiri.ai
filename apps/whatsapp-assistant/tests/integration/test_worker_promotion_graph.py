@@ -27,7 +27,7 @@ pytest.importorskip("langgraph")
 from mesiri_contracts.assistant.planner_decision import WorkflowKey  # noqa: E402
 from workflows.registry import WorkflowRegistry  # noqa: E402
 from workflows.worker_promotion.graph import build_worker_promotion_graph  # noqa: E402
-from workflows.worker_promotion.nodes import PROMOTION_SLOT  # noqa: E402
+from workflows.worker_promotion.nodes import DUPLICATE_SLOT, PROMOTION_SLOT  # noqa: E402
 
 RAVI = {"name": "Ravi", "trade": "mason", "daily_wage": "800"}
 
@@ -62,7 +62,7 @@ def _threadpool_bridge_create_fn(record: list[dict]):
     return _sync_create_worker
 
 
-async def test_offer_pass_builds_the_numbered_list():
+async def test_offer_pass_builds_the_list():
     graph = build_worker_promotion_graph()
 
     result = await graph.ainvoke(_base_state({"promotable_workers": [RAVI]}))
@@ -94,6 +94,50 @@ async def test_answering_all_writes_the_worker_through_the_real_executor_thread(
     assert created == [{"name": "Ravi", "trade": "mason", "daily_wage": "800"}]
     assert "Added to your Worker Register: Ravi" in resumed["pending_prompt"]
     assert resumed["awaiting_slot"] is None
+
+
+async def test_the_duplicate_question_survives_a_third_pass_through_the_graph():
+    """The promotion run can take three messages (offer → duplicate question →
+    answer). Only the compiled graph proves the conditional edge routes back
+    to END on the *second* slot too -- a router that only recognised the first
+    would fall through and lose the held-back worker."""
+    graph = build_worker_promotion_graph()
+    created: list[dict] = []
+    register = [
+        {"worker_id": "w1", "name": "Ravi Kumar", "trade": "mason", "contractor": None}
+    ]
+
+    offered = await graph.ainvoke(
+        _base_state({"promotable_workers": [RAVI], "_register": register})
+    )
+
+    held = await graph.ainvoke(
+        _base_state(
+            {
+                **offered["collected_fields"],
+                "_slot_answer_text": "Ravi",
+                "_create_worker_fn": _threadpool_bridge_create_fn(created),
+            },
+            awaiting_slot=offered["awaiting_slot"],
+        )
+    )
+
+    assert held["awaiting_slot"] == DUPLICATE_SLOT
+    assert created == []
+
+    resolved = await graph.ainvoke(
+        _base_state(
+            {
+                **held["collected_fields"],
+                "_slot_answer_text": "Ravi",
+                "_create_worker_fn": _threadpool_bridge_create_fn(created),
+            },
+            awaiting_slot=held["awaiting_slot"],
+        )
+    )
+
+    assert [c["name"] for c in created] == ["Ravi"]
+    assert resolved["awaiting_slot"] is None
 
 
 async def test_registry_resolves_the_worker_promotion_key():

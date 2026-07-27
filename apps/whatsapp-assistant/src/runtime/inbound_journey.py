@@ -866,7 +866,6 @@ async def _maybe_trigger_worker_promotion(
     actor: Any,
     wa_id: str,
     send_text_fn: Callable[[str, str], Awaitable[Any]],
-    send_button_fn: Callable[[str, str, tuple], Awaitable[Any]] | None = None,
 ) -> None:
     """After a confirmed RECORD_LABOUR_ATTENDANCE execution, send a follow-up
     offer to add named temporary workers to the Worker Register.
@@ -920,23 +919,22 @@ async def _maybe_trigger_worker_promotion(
     if not promotable:
         return  # No new named temps — nothing to offer.
 
-    # Build an existing-worker-ids set for the final duplicate guard inside the
-    # promotion node. We reuse the candidate list from the attendance workflow's
-    # collected_fields (already loaded into memory — no extra DB read needed).
-    existing_ids: set[str] = set()
+    # Seed the register so the promotion node can screen each chosen worker
+    # against it (name + trade + contractor) before writing. A node must never
+    # query a repository itself -- same principle as _seed_worker_candidates.
+    # Read fresh rather than reusing the attendance run's copy: this one has to
+    # include anyone added since, or the check would miss exactly the duplicate
+    # it exists to catch.
+    register: list[dict] = []
     if workforce_query is not None:
-        # Fetch the register again — the attendance run may have finished within
-        # the same second so an in-memory set from before is equally fresh, but
-        # fetching again costs one read and prevents any race on a longer flow.
         try:
-            candidates = await workforce_query.list_worker_candidates(
+            register = await workforce_query.list_worker_candidates(
                 organization_id=org_id,
                 project_id=str(confirmed.draft_action.project_id or "") or None,
                 site_id=str(confirmed.draft_action.site_id or "") or None,
             )
-            existing_ids = {str(c["worker_id"]) for c in candidates}
         except Exception:  # noqa: BLE001 — promotion never blocks attendance
-            existing_ids = set()
+            register = []
 
     # Inject the create_worker callable so the promotion node never touches
     # repositories directly (same isolation principle as _seed_worker_candidates).
@@ -993,7 +991,7 @@ async def _maybe_trigger_worker_promotion(
         site_id=confirmed.draft_action.site_id,
         fields={
             "promotable_workers": promotable,
-            "_existing_worker_ids": list(existing_ids),
+            "_register": register,
             "_create_worker_fn": _sync_create_worker,
         },
     )
@@ -1432,7 +1430,6 @@ async def process_inbound_message(
                     actor,
                     message.sender.wa_id,
                     send_text,
-                    send_button_fn=send_button,
                 )
             )
             await _safe(mlog.log_reply(correlation_id=correlation_id, reply=handled.reply_text))

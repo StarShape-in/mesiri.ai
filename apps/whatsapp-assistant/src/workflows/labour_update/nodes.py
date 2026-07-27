@@ -193,12 +193,6 @@ def _slot_candidates(result: MatchResult, candidates: list[WorkerCandidate]) -> 
             trade = normalize_trade(by_id[scored.worker_id].trade) if scored.worker_id in by_id else None
             if trade:
                 label = f"{scored.name} ({_pretty_trade(trade)})"
-        # Low-confidence candidates (soft-match band) reach here via partial
-        # name overlap plus a trade mismatch -- see matching.SOFT_MATCH's
-        # docstring. Tag them so the user isn't surprised by a trade that
-        # doesn't match what was just reported.
-        if scored.low_confidence:
-            label = f"{label} (possible match)"
         options.append(SlotCandidate(value=scored.worker_id, label=label))
     options.append(SlotCandidate(value=SOMEONE_NEW_SENTINEL, label=_SOMEONE_NEW_LABEL))
     return options
