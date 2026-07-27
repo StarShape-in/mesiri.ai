@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from mesiri.authorization.context import AuthorizationContext
 from mesiri.domains.projects.router import get_auth_context
+from mesiri.domains.shared.media import assert_downloadable_url
 from mesiri.domains.workforce.matching import MatchOutcome, ReportedWorker, match_worker
 from mesiri.domains.workforce.workers import (
     VALID_WORKER_STATUSES,
@@ -457,8 +458,10 @@ async def list_attendance_attachments(
             report_id=row["report_id"],
             attachment_type=row["attachment_type"],
             created_at=row["created_at"],
-            url=await object_storage.generate_presigned_url(
-                row["media_object_key"], expires_in_seconds=_ATTACHMENT_URL_TTL_SECONDS
+            url=assert_downloadable_url(
+                await object_storage.generate_presigned_url(
+                    row["media_object_key"], expires_in_seconds=_ATTACHMENT_URL_TTL_SECONDS
+                )
             ),
             occurred_date=row["occurred_date"],
             project_id=row["project_id"],
@@ -491,8 +494,10 @@ async def get_attendance_report(
         {
             "id": a["id"],
             "attachment_type": a["attachment_type"],
-            "url": await object_storage.generate_presigned_url(
-                a["media_object_key"], expires_in_seconds=_ATTACHMENT_URL_TTL_SECONDS
+            "url": assert_downloadable_url(
+                await object_storage.generate_presigned_url(
+                    a["media_object_key"], expires_in_seconds=_ATTACHMENT_URL_TTL_SECONDS
+                )
             ),
         }
         for a in item["attachments"]

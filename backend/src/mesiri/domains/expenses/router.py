@@ -37,6 +37,7 @@ from mesiri.application.finance.reverse_resolution import PostgresReverseTargetR
 from mesiri.authorization.context import AuthorizationContext
 from mesiri.domains.expenses.responses import ExpenseResponse, RecordExpenseResponse
 from mesiri.domains.projects.router import get_auth_context
+from mesiri.domains.shared.media import assert_downloadable_url
 from mesiri.infrastructure.objectstorage.dependency import get_object_storage
 from mesiri.infrastructure.postgres.dependency import get_db_conn
 from mesiri.infrastructure.postgres.repositories.expense_execution import (
@@ -364,8 +365,10 @@ async def list_all_attachments(
             expense_id=row.expense_id,
             attachment_type=row.attachment_type,
             created_at=row.created_at,
-            url=await object_storage.generate_presigned_url(
-                row.media_object_key, expires_in_seconds=_ATTACHMENT_URL_TTL_SECONDS
+            url=assert_downloadable_url(
+                await object_storage.generate_presigned_url(
+                    row.media_object_key, expires_in_seconds=_ATTACHMENT_URL_TTL_SECONDS
+                )
             ),
             amount=row.amount,
             description=row.description,
@@ -525,8 +528,10 @@ async def list_expense_attachments(
             id=a.id,
             expense_id=a.expense_id,
             attachment_type=a.attachment_type,
-            url=await object_storage.generate_presigned_url(
-                a.media_object_key, expires_in_seconds=_ATTACHMENT_URL_TTL_SECONDS
+            url=assert_downloadable_url(
+                await object_storage.generate_presigned_url(
+                    a.media_object_key, expires_in_seconds=_ATTACHMENT_URL_TTL_SECONDS
+                )
             ),
         )
         for a in attachments
