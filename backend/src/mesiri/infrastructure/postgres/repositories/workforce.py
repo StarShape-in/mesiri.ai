@@ -228,8 +228,27 @@ class PostgresWorkforceReadRepository:
         date_to: datetime.date | None = None,
         limit: int = 50,
         offset: int = 0,
+        include_superseded: bool = False,
     ) -> tuple[list[dict[str, Any]], int]:
+        """Attendance reports for the dashboard, newest first.
+
+        Superseded reports are excluded by default. A supervisor who forgets
+        someone re-sends the whole list, which by design creates a second
+        immutable row for the same site and day (P5 -- attendance is never
+        rewritten). Counting both is what made a day of 18 workers show as
+        16 + 18 = 34 man-days, with cost inflated to match. The replacement
+        report points at the one it corrects via `corrects_report_id`, so the
+        superseded row stays fully readable for audit but no longer feeds any
+        total. Pass include_superseded=True to see the complete history.
+        """
         conditions = [_labour_attendance_reports.c.organization_id == organization_id]
+        if not include_superseded:
+            superseded = (
+                sa.select(_labour_attendance_reports.c.corrects_report_id)
+                .where(_labour_attendance_reports.c.corrects_report_id.isnot(None))
+                .scalar_subquery()
+            )
+            conditions.append(_labour_attendance_reports.c.id.notin_(superseded))
         if project_ids is not None:
             conditions.append(_labour_attendance_reports.c.project_id.in_(project_ids))
         if site_id is not None:
@@ -277,6 +296,59 @@ class PostgresWorkforceReadRepository:
                 }
             )
         return items, int(total)
+
+    async def find_existing_report_for_day(
+        self,
+        organization_id: uuid.UUID,
+        *,
+        project_id: uuid.UUID,
+        site_id: uuid.UUID | None,
+        occurred_date: datetime.date,
+    ) -> dict[str, Any] | None:
+        """The live (non-superseded) report already recorded for this site-day.
+
+        Used to warn a supervisor *before* anything is written that they have
+        already reported for this day, and to show what is on record so they
+        can decide whether the new report replaces it. Returns None when the
+        day is clear, which is the ordinary case.
+        """
+        conditions = [
+            _labour_attendance_reports.c.organization_id == organization_id,
+            _labour_attendance_reports.c.project_id == project_id,
+            _labour_attendance_reports.c.occurred_date == occurred_date,
+            _labour_attendance_reports.c.id.notin_(
+                sa.select(_labour_attendance_reports.c.corrects_report_id)
+                .where(_labour_attendance_reports.c.corrects_report_id.isnot(None))
+                .scalar_subquery()
+            ),
+        ]
+        # A NULL site_id means "the project's only/unspecified site"; match it
+        # as its own bucket rather than colliding with every named site.
+        if site_id is None:
+            conditions.append(_labour_attendance_reports.c.site_id.is_(None))
+        else:
+            conditions.append(_labour_attendance_reports.c.site_id == site_id)
+
+        report = (
+            await self._conn.execute(
+                sa.select(_labour_attendance_reports)
+                .where(*conditions)
+                .order_by(_labour_attendance_reports.c.created_at.desc())
+                .limit(1)
+            )
+        ).mappings().first()
+        if report is None:
+            return None
+
+        line_rows = (
+            await self._conn.execute(
+                sa.select(_labour_attendance_lines).where(
+                    _labour_attendance_lines.c.report_id == report["id"]
+                )
+            )
+        ).mappings().all()
+        headcount, cost = _line_totals([dict(line) for line in line_rows])
+        return {**dict(report), "total_headcount": headcount, "total_cost": cost}
 
     async def get_report(
         self, organization_id: uuid.UUID, report_id: uuid.UUID
