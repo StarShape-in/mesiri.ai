@@ -155,21 +155,30 @@ jobs:
           echo "→ Installing Python dependencies..."
           ~/.local/bin/uv pip install --python ${VENV}/bin/python -e ".[infra,providers,workflow,receipt]" --quiet
 
-          echo "→ Running database migrations..."
-          cd "${REPO}/backend"
-          ${VENV}/bin/alembic upgrade head
-
           echo "→ Clearing stale Python bytecode cache..."
-          # Every root on PYTHONPATH above, not just backend/src. The WhatsApp
-          # assistant (the whole inbound journey, every workflow and reply) and
-          # the AI adapters live in the other three, so clearing only backend
-          # left exactly the code most likely to have changed running from
-          # stale bytecode after `git reset --hard` rewrote the working tree.
+          # Moved to run BEFORE migrations (2026-07-27): `git reset --hard`
+          # only touches tracked files -- __pycache__/ is gitignored and
+          # therefore persists untouched across every deploy on this
+          # persistent checkout. `backend/migrations` was also missing from
+          # this list entirely (only backend/src was covered), so a fix to a
+          # migration file could silently keep executing as stale cached
+          # bytecode: alembic would import the old compiled version even
+          # though `git reset --hard` had already updated the .py source on
+          # disk. Root cause of a real incident where a migration fix was
+          # pushed, confirmed correct in the git history, and still failed
+          # identically on every subsequent deploy attempt. Every root on
+          # PYTHONPATH, plus migrations specifically, swept before anything
+          # imports them.
           for SRC in "${REPO}/shared/contracts/src" "${REPO}/platform/ai/src" \
-                     "${REPO}/backend/src" "${REPO}/apps/whatsapp-assistant/src"; do
+                     "${REPO}/backend/src" "${REPO}/backend/migrations" \
+                     "${REPO}/apps/whatsapp-assistant/src"; do
             find "${SRC}" -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
             find "${SRC}" -name '*.pyc' -delete 2>/dev/null || true
           done
+
+          echo "→ Running database migrations..."
+          cd "${REPO}/backend"
+          ${VENV}/bin/alembic upgrade head
 
           echo "→ Restarting backend service..."
           systemctl restart mesiri
