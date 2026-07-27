@@ -52,6 +52,12 @@ infra = [
 providers = [
     "google-genai>=0.3",
     "sarvamai>=0.1",
+    # Downscales photos before the vision call (see the Gemini adapter's
+    # _downscale_image). A full-resolution WhatsApp photo is 1-3MB and gets
+    # tiled into far more vision tokens than reading a receipt needs.
+    # Imported lazily, and the adapter falls back to sending the original
+    # bytes if it's missing, so the core test suite runs without it.
+    "pillow>=10.0",
 ]
 # LangGraph. Imported lazily inside workflows/material/graph.py so the core
 # test suite runs without it — unit/contract tests use fake graphs/registries.

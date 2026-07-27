@@ -13,11 +13,16 @@ use the fake provider.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from ...core.errors import malformed_output
 from ...core.fallback import call_with_resilience
 from ...models import ExtractionResult, SpeechResult, TranslationResult, VisionResult
+
+_log = logging.getLogger("mesiri.ai.gemini")
+
+_JPEG_QUALITY = 85
 
 try:
     from mesiri.bootstrap.settings import GeminiSettings
@@ -215,6 +220,64 @@ _TRANSLATION_PROMPT = (
 _ENGLISH_LANGUAGE_LABELS = frozenset({"english", "en", "en-us", "en-in", "en-gb"})
 
 
+def _downscale_image(
+    image: bytes, mime_type: str | None, max_edge: int
+) -> tuple[bytes, str | None]:
+    """Shrink a photo to ``max_edge`` on its longest side before the vision
+    call. A WhatsApp photo arrives at full camera resolution (1-3MB, several
+    megapixels) and Gemini tiles it into far more vision tokens than reading
+    a receipt or a roster needs -- analyze_image averaged 7.2s on real
+    traffic, the largest single latency item left in the pipeline.
+
+    Fails open in every direction: no Pillow installed, an unreadable or
+    non-image payload, an already-small image -- all return the original
+    bytes and mime type unchanged. A resize problem must never be the reason
+    a receipt can't be read.
+
+    EXIF orientation is baked in via exif_transpose before resizing, because
+    re-encoding drops the EXIF block -- without that, a phone photo taken in
+    portrait would reach Gemini rotated, which reads exactly like the model
+    failing at handwriting.
+    """
+    if max_edge <= 0:
+        return image, mime_type
+    if mime_type and not mime_type.startswith("image/"):
+        return image, mime_type
+    try:
+        from io import BytesIO
+
+        from PIL import Image, ImageOps
+    except ImportError:
+        return image, mime_type
+    try:
+        img = Image.open(BytesIO(image))
+        if max(img.size) <= max_edge:
+            # Already small enough -- return the original rather than
+            # re-encoding it, so this stays a true no-op (and keeps whatever
+            # EXIF the untouched bytes carry) for images that don't need it.
+            return image, mime_type
+        original_size = img.size
+        img = ImageOps.exif_transpose(img)
+        img.thumbnail((max_edge, max_edge), Image.LANCZOS)
+        if img.mode not in ("RGB", "L"):
+            # JPEG has no alpha channel; P/RGBA/LA modes would fail to save.
+            img = img.convert("RGB")
+        buffer = BytesIO()
+        img.save(buffer, format="JPEG", quality=_JPEG_QUALITY, optimize=True)
+        downscaled = buffer.getvalue()
+        _log.info(
+            "gemini.image_downscaled %sx%s -> %sx%s, %s -> %s bytes",
+            *original_size,
+            *img.size,
+            len(image),
+            len(downscaled),
+        )
+        return downscaled, "image/jpeg"
+    except Exception:  # noqa: BLE001 -- see the fail-open note above
+        _log.warning("gemini.image_downscale_failed, sending original", exc_info=True)
+        return image, mime_type
+
+
 def _is_english(detected_language: object) -> bool:
     """True only for a detected_language value that plainly says English --
     used to tell a legitimate no-op translation (source was already English,
@@ -360,8 +423,16 @@ class GeminiProvider:
         hint: str | None = None,
         correlation_id: str | None = None,
     ) -> VisionResult:
+        import asyncio
+
         from google.genai import types  # lazy
 
+        # Decode + resize + re-encode is blocking CPU work (~100-200ms for a
+        # 3MB phone photo), so it goes to a thread rather than stalling the
+        # event loop for every other in-flight message.
+        image, mime_type = await asyncio.to_thread(
+            _downscale_image, image, mime_type, getattr(self._settings, "max_image_edge", 1568)
+        )
         part = types.Part.from_bytes(data=image, mime_type=mime_type or "image/jpeg")
         # The hint is what the user already told us this photo is (they tapped
         # a row in the image-purpose picker -- see channel/replies.py's

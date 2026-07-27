@@ -113,6 +113,12 @@ class SarvamSettings(_Section):
 class GeminiSettings(_Section):
     api_key: SecretStr | None = None
     model: str = "gemini-2.5-flash"
+    # Photos are downscaled to this longest edge before the vision call (see
+    # the Gemini adapter's _downscale_image). Env-tunable on purpose: the
+    # right value is empirical -- lower is faster and cheaper, but handwritten
+    # attendance sheets need enough resolution to stay legible, so it can be
+    # trialled against real photos without a code change. 0 disables it.
+    max_image_edge: int = 1568
     timeout_seconds: float = 15.0
     # 2 retries = 3 attempts = up to 45s on a hung call before the user sees
     # anything -- traced worst-case messages this week hit that ceiling
