@@ -70,12 +70,47 @@ _material_usage = sa.Table(
     sa.Column("occurred_time", sa.Time),
 )
 
+# labour_attendance_reports has no occurred_time (attendance is a whole-day
+# fact, not a timestamped movement) — deliberately declared WITHOUT one, so
+# the batch loop below can tell "this table has no such column" apart from
+# "this row's time happens to be null". A fabricated midnight time would look
+# identical, to anyone reading timeline_entries later, to a genuinely recorded
+# one.
+_labour_attendance_reports = sa.Table(
+    "labour_attendance_reports",
+    sa.MetaData(),
+    sa.Column("id", sa.UUID(as_uuid=True)),
+    sa.Column("organization_id", sa.UUID(as_uuid=True)),
+    sa.Column("project_id", sa.UUID(as_uuid=True)),
+    sa.Column("site_id", sa.UUID(as_uuid=True)),
+    sa.Column("occurred_date", sa.Date),
+)
+
 # Extension point: a new domain's aggregate is one entry here — the table
-# must expose organization_id, project_id, site_id, occurred_date, occurred_time.
+# must expose organization_id, project_id, site_id, occurred_date.
+# occurred_time is optional (see _labour_attendance_reports above); the batch
+# loop checks for it rather than assuming every aggregate has one.
 AGGREGATE_TABLES: dict[str, sa.Table] = {
     "material_receipt": _material_receipts,
     "material_usage": _material_usage,
+    "labour_attendance_report": _labour_attendance_reports,
 }
+
+
+def _labour_attendance_summary(payload: dict[str, Any]) -> str:
+    """"12 workers recorded". Deliberately no project/site name in the text,
+    matching Material's own MaterialReceived/MaterialUsed summaries above:
+    timeline_entries already carries project_id/site_id as their own columns
+    (copied from the source row just below), and the consuming UI resolves
+    names for display there. Looking up a name here to embed in the string
+    would mean the projector reaching into a second table just to caption an
+    event, and would leave the summary permanently stale if a project were
+    ever renamed after the fact."""
+    headcount = payload.get("total_headcount")
+    if headcount is None:
+        return "Attendance recorded"
+    return f"{headcount} worker{'s' if headcount != 1 else ''} recorded"
+
 
 # Extension point: a new event type's human summary is one entry here.
 EVENT_SUMMARY_BUILDERS: dict[str, Callable[[dict[str, Any]], str]] = {
@@ -88,6 +123,7 @@ EVENT_SUMMARY_BUILDERS: dict[str, Callable[[dict[str, Any]], str]] = {
     "MaterialMovementCorrected": lambda p: (
         f"Material movement corrected ({p.get('movement_reason')})"
     ),
+    "LabourAttendanceRecorded": _labour_attendance_summary,
 }
 
 
@@ -135,16 +171,24 @@ async def project_pending_events(conn: AsyncConnection, batch_size: int = 100) -
         source_table = AGGREGATE_TABLES.get(row["aggregate_type"])
         source = None
         if source_table is not None:
+            # occurred_time is optional per-aggregate (labour_attendance_reports
+            # has none -- attendance is a whole-day fact). Selected only when the
+            # table actually declares it, rather than assuming every aggregate
+            # has one; occurred_at below already treats a missing time as
+            # midnight, so this only changes whether the column is asked for.
+            select_columns = [
+                source_table.c.organization_id,
+                source_table.c.project_id,
+                source_table.c.site_id,
+                source_table.c.occurred_date,
+            ]
+            has_occurred_time = "occurred_time" in source_table.c
+            if has_occurred_time:
+                select_columns.append(source_table.c.occurred_time)
             source = (
                 (
                     await conn.execute(
-                        sa.select(
-                            source_table.c.organization_id,
-                            source_table.c.project_id,
-                            source_table.c.site_id,
-                            source_table.c.occurred_date,
-                            source_table.c.occurred_time,
-                        ).where(source_table.c.id == row["aggregate_id"])
+                        sa.select(*select_columns).where(source_table.c.id == row["aggregate_id"])
                     )
                 )
                 .mappings()
@@ -167,7 +211,7 @@ async def project_pending_events(conn: AsyncConnection, batch_size: int = 100) -
         occurred_at = row["created_at"]
         if source["occurred_date"] is not None:
             occurred_at = datetime.datetime.combine(
-                source["occurred_date"], source["occurred_time"] or datetime.time.min
+                source["occurred_date"], source.get("occurred_time") or datetime.time.min
             )
 
         await conn.execute(

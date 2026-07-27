@@ -33,6 +33,8 @@ async def clean_db(test_engine: AsyncEngine):
         await conn.execute(sa.text("DELETE FROM timeline_entries"))
         await conn.execute(sa.text("DELETE FROM outbox_events"))
         await conn.execute(sa.text("DELETE FROM material_movements"))
+        await conn.execute(sa.text("DELETE FROM labour_attendance_lines"))
+        await conn.execute(sa.text("DELETE FROM labour_attendance_reports"))
         await conn.execute(sa.text("DELETE FROM material_receipts"))
         await conn.execute(sa.text("DELETE FROM material_usage"))
         await conn.execute(sa.text("DELETE FROM materials_catalog"))
@@ -199,6 +201,41 @@ async def _insert_receipt(
     return row_id
 
 
+async def _insert_labour_report(
+    engine: AsyncEngine,
+    *,
+    org_id: uuid.UUID,
+    project_id: uuid.UUID,
+    site_id: uuid.UUID | None,
+    user_id: uuid.UUID,
+    occurred_date: datetime.date = datetime.date(2026, 7, 1),
+) -> uuid.UUID:
+    """No occurred_time column -- this is the fixture that exercises the
+    projector's conditional column selection against a real database."""
+    row_id = uuid.uuid4()
+    async with engine.begin() as conn:
+        await conn.execute(
+            sa.text("""
+            INSERT INTO labour_attendance_reports (
+                id, organization_id, project_id, site_id, occurred_date,
+                occurred_date_source, recorded_via, created_by, created_at
+            ) VALUES (
+                :id, :org_id, :project_id, :site_id, :date,
+                'reported', 'whatsapp_text', :user_id, now()
+            )
+            """),
+            {
+                "id": row_id,
+                "org_id": org_id,
+                "project_id": project_id,
+                "site_id": site_id,
+                "date": occurred_date,
+                "user_id": user_id,
+            },
+        )
+    return row_id
+
+
 async def _insert_outbox_event(
     engine: AsyncEngine,
     *,
@@ -286,6 +323,60 @@ async def test_basic_projection(
     assert entry["source_aggregate_type"] == "material_receipt"
     assert entry["source_aggregate_id"] == receipt_id
     assert outbox_row["published_at"] is not None
+
+
+async def test_labour_attendance_projects_without_an_occurred_time_column(
+    test_engine: AsyncEngine,
+    test_org: uuid.UUID,
+    test_user: uuid.UUID,
+    test_project: uuid.UUID,
+    test_site: uuid.UUID,
+    clean_db,
+):
+    """The real-database counterpart to
+    test_labour_timeline_summary.py's offline column-detection tests.
+    labour_attendance_reports has no occurred_time -- this proves the
+    projector's conditional select actually works against Postgres, not just
+    against the in-memory Table object."""
+    report_id = await _insert_labour_report(
+        test_engine, org_id=test_org, project_id=test_project, site_id=test_site, user_id=test_user
+    )
+    await _insert_outbox_event(
+        test_engine,
+        aggregate_type="labour_attendance_report",
+        aggregate_id=report_id,
+        event_type="LabourAttendanceRecorded",
+        payload={"total_headcount": 12, "total_cost": "9200", "line_count": 3},
+    )
+
+    async with test_engine.begin() as conn:
+        count = await project_pending_events(conn)
+    assert count == 1
+
+    async with test_engine.begin() as conn:
+        entry = (
+            (
+                await conn.execute(
+                    sa.text(
+                        "SELECT * FROM timeline_entries WHERE source_aggregate_type = "
+                        "'labour_attendance_report'"
+                    )
+                )
+            )
+            .mappings()
+            .first()
+        )
+
+    assert entry is not None
+    assert entry["organization_id"] == test_org
+    assert entry["project_id"] == test_project
+    assert entry["site_id"] == test_site
+    assert entry["event_type"] == "LabourAttendanceRecorded"
+    assert entry["summary"] == "12 workers recorded"
+    assert entry["source_aggregate_id"] == report_id
+    # Midnight fallback -- attendance carries no time of day, same convention
+    # a missing occurred_time already gets for material aggregates.
+    assert entry["occurred_at"].time() == datetime.time.min
 
 
 async def test_already_published_rows_are_skipped(

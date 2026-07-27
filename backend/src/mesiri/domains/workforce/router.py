@@ -161,6 +161,24 @@ class LabourAttendanceReportSummaryResponse(BaseModel):
     total_cost: Decimal
 
 
+class LabourAttendanceGalleryItem(BaseModel):
+    """One attendance sheet photo, captioned enough to render a gallery
+    thumbnail without a second call per row. Mirrors expenses/router.py's
+    ExpenseAttachmentGalleryItem — same shape, same reasoning, adapted to
+    attendance's fields (headcount/cost instead of amount/vendor)."""
+
+    id: uuid.UUID
+    report_id: uuid.UUID
+    attachment_type: str
+    created_at: datetime.datetime | None = None
+    url: str
+    occurred_date: datetime.date
+    project_id: uuid.UUID
+    site_id: uuid.UUID | None = None
+    total_headcount: int
+    total_cost: Decimal
+
+
 class LabourAttendanceReportsListResponse(BaseModel):
     items: list[LabourAttendanceReportSummaryResponse]
     total: int
@@ -389,6 +407,67 @@ async def list_attendance(
         offset=offset,
     )
     return {"items": items, "total": total}
+
+
+@router.get("/attendance/attachments", response_model=list[LabourAttendanceGalleryItem])
+async def list_attendance_attachments(
+    project_id: uuid.UUID | None = None,
+    site_id: uuid.UUID | None = None,
+    start_date: datetime.date | None = None,
+    end_date: datetime.date | None = None,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+    object_storage: ObjectStoragePort = Depends(get_object_storage),
+):
+    """Every attendance sheet photo across the org, newest first — the "see
+    all attendance sheets together" gallery view (Labour plan Phase 7 /
+    ADR-L3). Declared before /{report_id} so "attachments" is never matched
+    as a report id, same reason expenses/router.py's equivalent route is
+    ordered first.
+
+    Scoped through `_resolve_project_ids`/`_site_filter_denied` the same way
+    `list_attendance` above is — a caller only sees attendance for projects
+    and sites they're actually assigned to, including a caller scoped to
+    several specific (non-portfolio) projects. This is stricter than
+    expenses/router.py's `/attachments`, which currently checks only
+    organization membership and lets any org member pass an arbitrary
+    project_id filter. Attendance carries names and wages, which is more
+    sensitive than a receipt photo, so the gap is closed here rather than
+    copied — worth backporting to expenses separately.
+    """
+    project_ids, denied = _resolve_project_ids(auth_context, project_id)
+    if denied or _site_filter_denied(auth_context, project_id, site_id):
+        return []
+
+    repo = PostgresWorkforceReadRepository(conn)
+    rows = await repo.list_attachments_for_organization(
+        auth_context.organization_id,
+        project_ids=project_ids,
+        site_id=site_id,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+        offset=offset,
+    )
+    return [
+        LabourAttendanceGalleryItem(
+            id=row["id"],
+            report_id=row["report_id"],
+            attachment_type=row["attachment_type"],
+            created_at=row["created_at"],
+            url=await object_storage.generate_presigned_url(
+                row["media_object_key"], expires_in_seconds=_ATTACHMENT_URL_TTL_SECONDS
+            ),
+            occurred_date=row["occurred_date"],
+            project_id=row["project_id"],
+            site_id=row["site_id"],
+            total_headcount=row["total_headcount"],
+            total_cost=row["total_cost"],
+        )
+        for row in rows
+    ]
 
 
 @router.get("/attendance/{report_id}", response_model=LabourAttendanceReportResponse)

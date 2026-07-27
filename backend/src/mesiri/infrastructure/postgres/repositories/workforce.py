@@ -301,3 +301,96 @@ class PostgresWorkforceReadRepository:
             "total_headcount": headcount,
             "total_cost": cost,
         }
+
+    async def list_attachments_for_organization(
+        self,
+        organization_id: uuid.UUID,
+        *,
+        project_ids: set[uuid.UUID] | None = None,
+        site_id: uuid.UUID | None = None,
+        start_date: datetime.date | None = None,
+        end_date: datetime.date | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Every attendance sheet photo across the org, newest first -- the
+        "see all attendance sheets together" gallery view. Mirrors
+        expenses.py's PostgresExpenseAttachmentRepository.list_for_organization
+        for shape, but takes a `project_ids` SET rather than a single
+        project_id -- matching list_reports's own signature above, not
+        expense's. A caller with access to several specific projects (but not
+        the whole org) must be filtered to exactly those, and a single
+        optional id can't express that; None still means "no project filter"
+        (portfolio-wide), same convention list_reports already uses.
+
+        Ilan's Phase 7 ask (Timeline/Gallery/analytics): a report's headcount
+        and cost are computed from its lines in the same pass, the same
+        aggregation _line_totals already does for get_report, so a gallery
+        thumbnail can show "12 workers — 27 Jul 2026" without the caller
+        fetching each report separately.
+        """
+        conditions = [_labour_attendance_reports.c.organization_id == organization_id]
+        if project_ids is not None:
+            conditions.append(_labour_attendance_reports.c.project_id.in_(project_ids))
+        if site_id is not None:
+            conditions.append(_labour_attendance_reports.c.site_id == site_id)
+        if start_date is not None:
+            conditions.append(_labour_attendance_reports.c.occurred_date >= start_date)
+        if end_date is not None:
+            conditions.append(_labour_attendance_reports.c.occurred_date <= end_date)
+
+        rows = (
+            await self._conn.execute(
+                sa.select(
+                    _labour_attendance_attachments.c.id,
+                    _labour_attendance_attachments.c.report_id,
+                    _labour_attendance_attachments.c.media_object_key,
+                    _labour_attendance_attachments.c.attachment_type,
+                    _labour_attendance_attachments.c.created_at,
+                    _labour_attendance_reports.c.occurred_date,
+                    _labour_attendance_reports.c.project_id,
+                    _labour_attendance_reports.c.site_id,
+                )
+                .select_from(
+                    _labour_attendance_attachments.join(
+                        _labour_attendance_reports,
+                        _labour_attendance_reports.c.id == _labour_attendance_attachments.c.report_id,
+                    )
+                )
+                .where(*conditions)
+                .order_by(_labour_attendance_attachments.c.created_at.desc())
+                .limit(limit)
+                .offset(offset)
+            )
+        ).mappings().all()
+
+        if not rows:
+            return []
+
+        # Headcount per report, computed the same way get_report does, so a
+        # gallery card can caption itself without a follow-up call. Batched
+        # into one query per unique report_id rather than N, same convention
+        # expenses/router.py's category/vendor name resolution uses below.
+        report_ids = {row["report_id"] for row in rows}
+        line_rows = (
+            await self._conn.execute(
+                sa.select(
+                    _labour_attendance_lines.c.report_id,
+                    _labour_attendance_lines.c.headcount,
+                    _labour_attendance_lines.c.daily_wage,
+                ).where(_labour_attendance_lines.c.report_id.in_(report_ids))
+            )
+        ).mappings().all()
+        totals: dict[uuid.UUID, tuple[int, float]] = {}
+        for report_id in report_ids:
+            lines = [dict(r) for r in line_rows if r["report_id"] == report_id]
+            totals[report_id] = _line_totals(lines)
+
+        return [
+            {
+                **dict(row),
+                "total_headcount": totals[row["report_id"]][0],
+                "total_cost": totals[row["report_id"]][1],
+            }
+            for row in rows
+        ]
