@@ -71,6 +71,7 @@ class WhatsAppReceiver:
         on_normalized: (
             Callable[[NormalizedMessage, Mapping[str, Any], str | None], Awaitable[None]] | None
         ) = None,
+        on_message_claimed: Callable[[str], Awaitable[None]] | None = None,
         trace_logger: TraceLogger | None = None,
     ) -> None:
         self._deduplication_store = deduplication_store
@@ -83,6 +84,14 @@ class WhatsAppReceiver:
         # normalized message (see _envelope) so it can be persisted for
         # debugging, and replayed later via `replay()` if processing failed.
         self._on_normalized = on_normalized
+        # Fired the moment a message is claimed, concurrently with (not
+        # before) the real work -- see handle_payload. This is the WhatsApp
+        # read receipt + "typing..." indicator, and it used to be sent from
+        # inside the journey callback, which for voice/image meant it waited
+        # on the Meta media download (~1.5-1.7s measured) plus upload plus
+        # normalization first. The sender saw no blue tick for seconds after
+        # sending, which reads as "it didn't go through".
+        self._on_message_claimed = on_message_claimed
         # Best-effort: records ingestion-time failures (media download,
         # normalization, or anything the on_normalized callback lets escape)
         # that would otherwise vanish into stdout with no persisted row.
@@ -94,8 +103,18 @@ class WhatsAppReceiver:
         scheduled_count = 0
 
         for context in self._extract_message_contexts(payload):
-            if not await self._deduplication_store.try_claim(str(context.message["id"])):
+            message_id = str(context.message["id"])
+            if not await self._deduplication_store.try_claim(message_id):
                 continue
+
+            # Blue tick + "typing..." starts here, in parallel with
+            # processing rather than after it. Deliberately not awaited: it's
+            # a full HTTP round trip to Meta that nothing downstream depends
+            # on, so awaiting it only delays the actual reply.
+            if self._on_message_claimed is not None:
+                ack_task = asyncio.create_task(self._acknowledge(message_id))
+                self._background_tasks.add(ack_task)
+                ack_task.add_done_callback(self._background_tasks.discard)
 
             task = asyncio.create_task(self._process_message(context))
             self._background_tasks.add(task)
@@ -104,6 +123,18 @@ class WhatsAppReceiver:
 
         logger.info("Scheduled %s WhatsApp message(s) for ingress processing", scheduled_count)
         return scheduled_count
+
+    async def _acknowledge(self, message_id: str) -> None:
+        """Read receipt / typing indicator. Best-effort by design: this runs
+        detached, so an exception here would otherwise surface as an
+        unretrieved task exception rather than anything actionable, and it
+        must never affect whether the message itself gets processed."""
+        if self._on_message_claimed is None:
+            return
+        try:
+            await self._on_message_claimed(message_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to acknowledge WhatsApp message %s", message_id)
 
     async def wait_until_idle(self) -> None:
         """Wait for in-flight ingress background tasks to complete."""

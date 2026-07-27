@@ -499,16 +499,17 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
                 _log.exception("inbound.unhandled_reply_failed")
             raise
 
+    async def _mark_read_on_claim(message_id: str) -> None:
+        """Blue tick + "typing..." -- wired into WhatsAppReceiver as
+        on_message_claimed so it fires the instant the webhook lands, in
+        parallel with processing. It used to run here at the top of
+        _run_journey, which for voice/image meant the sender saw no blue
+        tick until the Meta media download (~1.5-1.7s measured), upload and
+        normalization had all finished first."""
+        await sender.mark_as_read(message_id)
+
     async def _run_journey(message, raw_payload, retry_of_id=None) -> None:  # type: ignore[no-untyped-def]
         wa_id = message.sender.wa_id
-
-        # Blue tick + "typing..." as soon as the message is normalized, before
-        # any lookup or AI work starts. Best-effort: a failure here must never
-        # block or delay the actual reply.
-        try:
-            await sender.mark_as_read(message.message_id)
-        except Exception:  # noqa: BLE001
-            _log.exception("whatsapp.mark_as_read_failed message_id=%s", message.message_id)
 
         # M4: resolve the sender before spending on understanding.
         try:
@@ -1118,6 +1119,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         message_store=message_store,
         object_storage=object_storage,
         on_normalized=_on_normalized,
+        on_message_claimed=_mark_read_on_claim,
         trace_logger=trace_logger,
     )
     return AppContainer(

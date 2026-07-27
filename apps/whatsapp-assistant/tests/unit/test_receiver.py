@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
@@ -110,6 +111,47 @@ async def test_receiver_downloads_media_for_image_and_voice() -> None:
     assert voice_message.media is not None
     assert voice_message.media.object_key == "media/wamid.voice-1/media-audio-1"
     assert media_downloader.download.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_message_claimed_ack_fires_before_slow_media_download_completes() -> None:
+    """The blue tick / typing indicator (on_message_claimed) must not wait on
+    the Meta media download -- it used to run at the top of the journey
+    callback, which for voice/image meant the sender saw no acknowledgement
+    until download+upload+normalization had all finished. Proven here by
+    giving the download an artificial delay and asserting the ack still
+    completes first."""
+    events: list[str] = []
+
+    async def _slow_download(media_id: str) -> DownloadedMedia:
+        await asyncio.sleep(0.05)
+        events.append("downloaded")
+        return DownloadedMedia(
+            media_id=media_id,
+            mime_type="audio/ogg",
+            content=b"voice-bytes",
+            sha256="abc",
+            file_size=11,
+        )
+
+    async def _on_claimed(message_id: str) -> None:
+        events.append("claimed")
+
+    media_downloader = AsyncMock()
+    media_downloader.download.side_effect = _slow_download
+
+    receiver = WhatsAppReceiver(
+        deduplication_store=InMemoryDeduplicationStore(),
+        media_downloader=media_downloader,
+        message_store=InMemoryNormalizedMessageStore(),
+        object_storage=FakeObjectStorage(),
+        on_message_claimed=_on_claimed,
+    )
+
+    await receiver.handle_payload(voice_webhook_payload(message_id="wamid.voice-slow"))
+    await receiver.wait_until_idle()
+
+    assert events == ["claimed", "downloaded"]
 
 
 @pytest.mark.asyncio
