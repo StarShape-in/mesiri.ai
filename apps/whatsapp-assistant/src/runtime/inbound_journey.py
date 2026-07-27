@@ -8,6 +8,7 @@ failure is swallowed and never breaks the pipeline.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -15,7 +16,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from backend.ports import ActorIdentity
-from canonicalization import build_canonical_event, log_canonical_event
+from canonicalization import build_canonical_events, log_canonical_event
 from canonicalization.occurred_date import today_for
 from channel.replies import (
     ALL_SITES_ROW_ID,
@@ -44,6 +45,9 @@ from interactions.category_hint import CategoryHintStore
 from interactions.handler import InteractionHandler
 from interactions.pending_report import PendingReportStore
 from interactions.response_handler import render_workflow_run_reply
+from memory.context_loader import ConversationMemoryLoader
+from memory.context_pack import ContextPack
+from memory.coordinator import ConversationMemoryCoordinator
 from mesiri_contracts.assistant.canonical_event import CanonicalEventType
 from mesiri_contracts.assistant.canonical_event import IntentCompleteness as _IntentCompleteness
 from mesiri_contracts.assistant.enums import InputModality
@@ -54,6 +58,7 @@ from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
 from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
 from mesiri_contracts.assistant.v2.resolved_context import ResolvedContextV2
 from planner import Planner, log_planner_decision
+from planner.ambiguity import AmbiguityAction, caveat_text, decide_ambiguity
 from runtime.activity_query import ActivityQueryService
 from runtime.duplicate_expense_query import DuplicateExpenseQueryService
 from runtime.expense_category_query import ExpenseCategoryQueryService
@@ -83,6 +88,8 @@ from workflows import (
     WorkflowRuntime,
     log_workflow_run,
 )
+from workflows.batch import format_batch_prefix
+from workflows.batch_store import BatchProgress, PendingBatchStore
 
 _log = logging.getLogger("mesiri.inbound_journey")
 
@@ -685,13 +692,49 @@ async def _seed_reversal_target(
     build_draft then completes with a "nothing to reverse" reply instead of
     a draft (see that module's docstring and
     `WorkflowDefinition.allows_completion_without_draft` in
-    workflows/registry.py)."""
+    workflows/registry.py).
+
+    #6 Undo: a bare "undo"/"delete that" (mesiri_ai.undo_classifier) produces
+    a REVERSAL event with no target_kind at all -- canonicalization/
+    mapping.py defaults that specific case (target_kind absent, not merely
+    unrecognized) to CanonicalEventType.EXPENSE_REVERSAL_REQUESTED purely so
+    routing has a type to dispatch on; the REAL kind is resolved here, by
+    reversal_query.find_latest_of_either_kind, and written back onto
+    target_kind so workflows/reverse/nodes.py's confirmation prompt and
+    "nothing to reverse" message render for whichever kind actually won."""
     if reversal_query is None or actor is None or not actor.organization_id:
         return
     if decision.workflow_key is not WorkflowKey.REVERSE:
         return
     event.fields["created_by_role"] = actor.role
     target_kind = str(event.fields.get("target_kind", "")).strip().lower()
+
+    if not target_kind:
+        found = await reversal_query.find_latest_of_either_kind(
+            organization_id=actor.organization_id,
+            project_id=event.project_id,
+            site_id=event.site_id,
+        )
+        if found is None:
+            # Deliberately leave target_kind unset (not "expense" or
+            # "transfer") -- workflows/reverse/nodes.py's build_draft falls
+            # through to its generic "Nothing found to reverse." message for
+            # any unrecognized target_kind, which is the honest answer here:
+            # neither kind had anything, so naming one would be misleading.
+            return
+        target_kind, target = found
+        event.fields["target_kind"] = target_kind
+        if target_kind == "transfer":
+            event.fields["money_transaction_id"] = target["money_transaction_id"]
+            event.fields["reversal_amount"] = target["amount"]
+            event.fields["reversal_from_account_name"] = target["from_account_name"]
+            event.fields["reversal_to_account_name"] = target["to_account_name"]
+        else:
+            event.fields["expense_id"] = target["expense_id"]
+            event.fields["reversal_amount"] = target["amount"]
+            event.fields["reversal_description"] = target["description"]
+            event.fields["reversal_occurred_date"] = target["occurred_date"]
+        return
 
     if target_kind == "transfer":
         transfer = await reversal_query.find_latest_transfer(organization_id=actor.organization_id)
@@ -876,12 +919,24 @@ async def _seed_open_activity(
     decision: PlannerDecisionV2,
     activity_query: ActivityQueryService | None,
     actor: ActorIdentity | None,
+    *,
+    remembered_activity_id: str | None = None,
 ) -> None:
     """Resolve which Activity a continuation message ("finished plastering",
     "completed another 40 sqm") is about, before the graph runs (a node must
     never query a repository itself, same principle as
     _seed_account_candidates above). Only ever runs for
     WorkflowKey.ACTIVITY_CONTINUATION.
+
+    ``remembered_activity_id`` (memory/conversation_scope.py's
+    CurrentActivityStore -- the activity THIS conversation most recently
+    touched) is tried first and, if it's still open, wins outright: it is
+    strictly better evidence than "most recently updated on this site",
+    which can't tell two engineers' simultaneous activities apart. It is
+    revalidated against Postgres before use (a memory hint is never
+    authoritative -- see memory/requirements.py) and falls through to the
+    site-wide lookup below on any miss, so a stale/completed remembered
+    activity degrades to the existing V1 behaviour rather than erroring.
 
     Seeds `activity_id` (+ `activity_summary` for the confirmation prompt) if
     exactly one open activity is found. Otherwise leaves fields untouched --
@@ -895,11 +950,17 @@ async def _seed_open_activity(
     if decision.workflow_key is not WorkflowKey.ACTIVITY_CONTINUATION:
         return
 
-    found = await activity_query.find_open_activity(
-        organization_id=actor.organization_id,
-        site_id=event.site_id,
-        reported_by_user_id=actor.user_id,
-    )
+    found: dict | None = None
+    if remembered_activity_id:
+        found = await activity_query.get_activity_if_open(
+            organization_id=actor.organization_id, activity_id=remembered_activity_id
+        )
+    if found is None:
+        found = await activity_query.find_open_activity(
+            organization_id=actor.organization_id,
+            site_id=event.site_id,
+            reported_by_user_id=actor.user_id,
+        )
     if found is None:
         return
     event.fields["activity_id"] = found["activity_id"]
@@ -1039,10 +1100,25 @@ async def process_inbound_message(
     direction_hint: str | None = None,
     pending_report_store: PendingReportStore | None = None,
     category_hint_store: CategoryHintStore | None = None,
+    memory_loader: ConversationMemoryLoader | None = None,
+    memory_coordinator: ConversationMemoryCoordinator | None = None,
+    batch_store: PendingBatchStore | None = None,
 ) -> JourneyResult:
     mlog: MessageLogger = message_logger or NoopMessageLogger()
     tlog: TraceLogger = trace_logger or NoopTraceLogger()
     correlation_id = message.correlation_id
+
+    # M19 conversation memory: loaded concurrently with understanding below
+    # (independent reads -- see memory/context_loader.py's own docstring for
+    # why this mirrors context/resolver.py's gather pattern). None whenever
+    # the container didn't wire it (tests, or memory_loader not yet built) --
+    # every consumer below already treats a None pack as "no opinion".
+    memory_pack: ContextPack | None = None
+    memory_pack_task: asyncio.Task[ContextPack] | None = None
+    if memory_loader is not None and actor is not None and actor.organization_id:
+        memory_pack_task = asyncio.ensure_future(
+            memory_loader.load(organization_id=actor.organization_id, user_id=actor_user_id)
+        )
 
     # --- Understanding stage ---
     t0 = time.perf_counter()
@@ -1090,6 +1166,23 @@ async def process_inbound_message(
                     succeeded=execution.succeeded,
                     error_code=execution.error_code,
                 )
+            )
+
+        # Low-confidence routing (#7) -- classified here, off understanding
+        # alone, deliberately outside canonicalization (see
+        # planner/ambiguity.py's module docstring for why). PROCEED is the
+        # overwhelming common case and costs one pure-function call; the
+        # caveat (if any) is applied later, only onto a confirmation prompt
+        # the user is already about to read (see the reply-assembly step
+        # near the end of this function). ESCALATE has no receiving domain
+        # in this slice yet (#10 Human Review) -- logged as the documented
+        # extension point rather than silently dropped.
+        ambiguity_decision = decide_ambiguity(understanding)
+        if ambiguity_decision.action is AmbiguityAction.ESCALATE:
+            _log.warning(
+                "ambiguity.escalate correlation_id=%s reason=%s",
+                correlation_id,
+                ambiguity_decision.reason,
             )
     except Exception as exc:
         await _safe(
@@ -1218,7 +1311,15 @@ async def process_inbound_message(
         # --- Canonicalization stage ---
         t0 = time.perf_counter()
         try:
-            canonical_event = build_canonical_event(
+            # #1 Multi-Activity / #13 Cross-Module Trigger: build_canonical_events
+            # (plural) may return more than one segment for a single message
+            # (see canonicalization/builder.py's docstring for exactly which
+            # cases, and which it does not yet cover). canonical_event stays
+            # bound to events[0] for every line below, completely unchanged
+            # from before this existed -- extra_segments (queued after the
+            # primary workflow starts, see the workflow stage below) is the
+            # only new state this introduces into the first-pass journey.
+            canonical_events = build_canonical_events(
                 understanding,
                 resolved,
                 direction_hint=direction_hint,
@@ -1228,6 +1329,8 @@ async def process_inbound_message(
                 forwarded=bool(message.metadata.get("forwarded")),
                 frequently_forwarded=bool(message.metadata.get("frequently_forwarded")),
             )
+            canonical_event = canonical_events[0]
+            extra_segments = canonical_events[1:]
 
             # Inject the loaded actor profile into the canonical event so the
             # WHO_AM_I workflow has the data it needs to generate a reply
@@ -1406,6 +1509,15 @@ async def process_inbound_message(
                 # --- Workflow stage ---
                 t0 = time.perf_counter()
                 try:
+                    if memory_pack_task is not None:
+                        try:
+                            memory_pack = await memory_pack_task
+                        except Exception:  # noqa: BLE001 -- memory is a hint, never load-bearing
+                            _log.warning(
+                                "memory.pack_load_failed correlation_id=%s",
+                                correlation_id,
+                                exc_info=True,
+                            )
                     # Run all 8 seed functions in parallel — each targets a
                     # different table and is fully independent of the others.
                     await asyncio.gather(
@@ -1435,7 +1547,13 @@ async def process_inbound_message(
                             actor,
                         ),
                         _seed_open_activity(
-                            canonical_event, planner_decision, activity_query, actor
+                            canonical_event,
+                            planner_decision,
+                            activity_query,
+                            actor,
+                            remembered_activity_id=(
+                                memory_pack.current_activity_id if memory_pack else None
+                            ),
                         ),
                     )
                     # Synchronous — not a coroutine, runs after the gather.
@@ -1472,6 +1590,32 @@ async def process_inbound_message(
                         )
 
                     workflow_run = await workflow_runtime.start(planner_decision, canonical_event)
+
+                    # #1 Multi-Activity / #13 Cross-Module Trigger: the
+                    # primary segment started normally above -- the
+                    # single-active invariant is untouched, exactly as if
+                    # this were an ordinary one-segment message. If there
+                    # ARE extra segments, queue them and caption this
+                    # prompt with its batch position; the rest run one at a
+                    # time as each prior segment's confirmation resolves
+                    # (interactions/handler.py -> workflows/batch.py).
+                    if (
+                        extra_segments
+                        and workflow_run.status is WorkflowRunStatus.STARTED
+                        and batch_store is not None
+                    ):
+                        total = 1 + len(extra_segments)
+                        await batch_store.start_batch(
+                            user_id=actor_user_id, remaining=extra_segments, total=total
+                        )
+                        workflow_run = dataclasses.replace(
+                            workflow_run,
+                            pending_prompt=format_batch_prefix(
+                                BatchProgress(index=1, total=total, outcomes=())
+                            )
+                            + (workflow_run.pending_prompt or ""),
+                        )
+
                     if context_debug:
                         log_workflow_run(workflow_run)
                     if workflow_run.workflow_instance_id:
@@ -1555,6 +1699,27 @@ async def process_inbound_message(
     # ran this turn.
     reply = held_reply or _render_reply(workflow_run, workflow_resume, planner_decision, resolved)
 
+    # Attach the low-confidence caveat (if any) ONLY to a freshly-started
+    # confirmation for THIS message (workflow_run.status STARTED). Never on
+    # held_reply (a gate prompt is asking about something else entirely) and
+    # never on BLOCKED_PENDING_CONFIRMATION (that prompt describes an OLDER
+    # draft this message didn't produce -- captioning it with this message's
+    # own field confidence would name the wrong report).
+    if (
+        held_reply is None
+        and reply is not None
+        and workflow_run is not None
+        and workflow_run.status is WorkflowRunStatus.STARTED
+    ):
+        caveat = caveat_text(ambiguity_decision)
+        if caveat:
+            reply = ReplySpec(
+                text=f"{caveat}\n\n{reply.text}",
+                list_button_label=reply.list_button_label,
+                list_rows=reply.list_rows,
+                buttons=reply.buttons,
+            )
+
     if reply is not None:
         await send_reply_spec(
             reply,
@@ -1566,6 +1731,17 @@ async def process_inbound_message(
         await _safe(mlog.log_reply(correlation_id=correlation_id, reply=reply.text))
 
     await _safe(mlog.mark_completed(correlation_id=correlation_id))
+
+    if memory_coordinator is not None:
+        user_text = understanding.transcript or understanding.normalized_text or ""
+        asyncio.ensure_future(
+            memory_coordinator.record_turn(
+                user_id=actor_user_id,
+                user_text=user_text,
+                assistant_reply=reply.text if reply is not None else "",
+                correlation_id=correlation_id,
+            )
+        )
 
     return JourneyResult(
         understanding=understanding,

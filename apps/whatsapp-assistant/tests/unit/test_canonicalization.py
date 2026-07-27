@@ -459,10 +459,30 @@ def test_reversal_transfer_maps_to_transfer_reversal_requested():
     assert event.completeness is IntentCompleteness.ACTIONABLE
 
 
-def test_reversal_missing_target_kind_is_unrecognized():
+def test_reversal_missing_target_kind_defaults_to_a_generic_reversal_routing_label():
+    """#6 Undo: a bare "undo"/"delete that" (mesiri_ai.undo_classifier)
+    produces a REVERSAL semantic type with NO target_kind at all -- this
+    must route to WorkflowKey.REVERSE (both reversal event types map there,
+    see planner/routing.py) so runtime/inbound_journey.py's
+    _seed_reversal_target can resolve which kind it actually is by comparing
+    the latest expense against the latest transfer. The specific event type
+    chosen here (EXPENSE_REVERSAL_REQUESTED) is only a routing label in this
+    case -- see canonicalization/mapping.py's resolve_event_type docstring."""
     understanding = _understanding(
         semantic_type=SemanticType.REVERSAL,
         candidates=[ReversalCandidate(fields={})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.EXPENSE_REVERSAL_REQUESTED
+
+
+def test_reversal_unrecognized_target_kind_value_is_still_unrecognized():
+    """Distinct from the missing-target_kind case above: a target_kind the
+    extraction provider actually filled in with garbage must still fail
+    closed, not silently be treated as a generic undo."""
+    understanding = _understanding(
+        semantic_type=SemanticType.REVERSAL,
+        candidates=[ReversalCandidate(fields={"target_kind": "something_else"})],
     )
     event = build_canonical_event(understanding, _context())
     assert event.event_type is CanonicalEventType.UNRECOGNIZED

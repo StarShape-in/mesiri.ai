@@ -53,3 +53,9 @@ class PendingReportStore:
             return None
         await self._redis.set_json(key, {}, ttl_seconds=1)
         return CanonicalEventV2.model_validate(raw)
+
+    async def has_pending(self, *, user_id: str) -> bool:
+        """Non-destructive presence check -- for callers (memory/context_loader.py)
+        that need to know *whether* a report is held without consuming it."""
+        raw = await self._redis.get_json(self._key(user_id))
+        return bool(raw)

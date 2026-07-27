@@ -111,3 +111,54 @@ class ActivityQueryService:
             "narrative": row["narrative"],
             "status": row["status"],
         }
+
+    async def get_activity_if_open(
+        self, *, organization_id: str, activity_id: str
+    ) -> dict[str, Any] | None:
+        """Revalidate a *remembered* activity_id (memory/conversation_scope.py's
+        CurrentActivityStore is a hint, never authoritative -- see that
+        module's docstring) against the real row before a continuation
+        message is allowed to target it. None whenever the id is stale: the
+        activity was completed/deleted since it was remembered, or never
+        belonged to this organization at all."""
+        if not activity_id:
+            return None
+
+        import sqlalchemy as sa
+
+        try:
+            org_id = uuid.UUID(organization_id)
+            act_id = uuid.UUID(activity_id)
+        except (TypeError, ValueError):
+            return None
+
+        activities = sa.table(
+            "activities",
+            sa.column("id"),
+            sa.column("organization_id"),
+            sa.column("status"),
+            sa.column("work_type"),
+            sa.column("narrative"),
+            sa.column("deleted_at"),
+        )
+
+        query = sa.select(
+            activities.c.id, activities.c.work_type, activities.c.narrative, activities.c.status
+        ).where(
+            activities.c.id == act_id,
+            activities.c.organization_id == org_id,
+            activities.c.status.in_(_OPEN_STATUSES),
+            activities.c.deleted_at.is_(None),
+        )
+
+        async with self._db.transaction() as conn:
+            row = (await conn.execute(query)).mappings().first()
+
+        if row is None:
+            return None
+        return {
+            "activity_id": str(row["id"]),
+            "work_type": row["work_type"],
+            "narrative": row["narrative"],
+            "status": row["status"],
+        }

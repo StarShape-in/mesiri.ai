@@ -157,6 +157,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from mesiri.infrastructure.postgres.repositories.material_execution import (
         PostgresMaterialExecutionRepository,
     )
+    from mesiri_ai.undo_classifier import UNDO_SEMANTIC_HINT, is_undo_trigger
     from mesiri_contracts.assistant.enums import InputModality
     from planner import Planner
 
@@ -462,6 +463,29 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from runtime.activity_query import ActivityQueryService
 
     activity_query = ActivityQueryService(material_db)
+    # Direct evidence attach for #2 Batch Media's "Site Update" photo
+    # purpose -- never a workflow (see AttachEvidenceCommand's docstring).
+    # Reuses the same pool; opens its own write transaction only when
+    # attach_photos is actually called. See runtime/evidence_query.py.
+    from runtime.evidence_query import EvidenceAttachService
+
+    evidence_query = EvidenceAttachService(material_db)
+    # #1 Multi-Activity / #13 Cross-Module Trigger: queues segments AFTER
+    # the first in a multi-segment message, started one at a time as each
+    # prior segment's confirmation resolves. See workflows/batch_store.py
+    # and workflows/batch.py.
+    from workflows.batch_store import PendingBatchStore
+
+    batch_store = PendingBatchStore(redis_client)
+    # M19 conversation memory -- current project/site (existing
+    # RedisActiveContextStore), current activity/date (new), and a capped
+    # recent-turns history, composed behind one loader/coordinator pair. See
+    # memory/requirements.py for the full scope list and why each is a HINT,
+    # never authoritative. Requires workflow_runtime (built below) for its
+    # pending-confirmation check, so this line must stay after that build.
+    from memory import build_conversation_memory
+
+    memory_loader, memory_coordinator = build_conversation_memory(redis_client, workflow_runtime)
     # Read-only attendance lookups for the labour.query workflow ("how many
     # workers today?"). Reuses the same pool; never opens a write
     # transaction. See runtime/labour_query_service.py.
@@ -521,6 +545,9 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         classifier=interaction_classifier,
         dispatcher=execution_dispatcher,
         receipt_builder=record_receipt_builder,
+        memory_coordinator=memory_coordinator,
+        planner=planner,
+        batch_store=batch_store,
     )
     sender = WhatsAppSender(
         client=http_client,
@@ -932,20 +959,25 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
 
         # A tap on the "what is this photo for?" list (see
         # interactions/image_purpose.py and channel/replies.IMAGE_PURPOSE_ROWS)
-        # -- resumes the HELD image (not this tap message) with the chosen
-        # purpose as a semantic_hint, or replies that Site Update photos
-        # aren't processed yet. Deterministic tap detection, same principle
-        # as the two fast paths above.
+        # -- resumes the whole HELD BATCH (not this tap message) with the
+        # chosen purpose. Deterministic tap detection, same principle as the
+        # two fast paths above. #2 Batch Media: the batch can hold more than
+        # one photo (a burst); "img_site_update" attaches ALL of them to the
+        # open activity in one write, while "img_expense"/"img_attendance"
+        # still only process the FIRST through the normal single-report
+        # confirm flow (see render_batch_overflow_reply's docstring for why).
         image_purpose_row_id = interaction_handler.handle_image_purpose_tap(message)
         if image_purpose_row_id is not None:
             from channel.replies import (
                 IMAGE_PURPOSE_SEMANTIC_HINT,
-                render_image_purpose_coming_soon,
+                render_batch_overflow_reply,
+                render_evidence_attached_reply,
+                render_no_open_activity_for_evidence_reply,
             )
 
-            held_message = await pending_media_store.pop_pending(user_id=ctx.user_id)
+            held_batch = await pending_media_store.pop_batch(user_id=ctx.user_id)
             timer.lap("pop_pending_media")
-            if held_message is None:
+            if not held_batch:
                 expired_reply = "That photo has expired — please resend it."
                 await sender.send_text(wa_id, expired_reply)
                 await message_logger.log_reply(
@@ -954,15 +986,42 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
                 await message_logger.mark_completed(correlation_id=message.correlation_id)
                 return
 
-            coming_soon_reply = render_image_purpose_coming_soon(image_purpose_row_id)
-            if coming_soon_reply is not None:
-                await sender.send_text(wa_id, coming_soon_reply)
+            if image_purpose_row_id == "img_site_update":
+                # Evidence attach is a direct write, never a confirmable
+                # workflow (see AttachEvidenceCommand's docstring) -- no
+                # single-active-invariant concern, so the WHOLE batch
+                # attaches in one shot regardless of size.
+                found = await activity_query.find_open_activity(
+                    organization_id=ctx.organization_id,
+                    site_id=None,
+                    reported_by_user_id=ctx.user_id,
+                )
+                if found is None:
+                    reply_text = render_no_open_activity_for_evidence_reply()
+                else:
+                    media_keys = [m.media.object_key for m in held_batch if m.media is not None]
+                    created_ids = await evidence_query.attach_photos(
+                        organization_id=ctx.organization_id,
+                        activity_id=found["activity_id"],
+                        media_object_keys=media_keys,
+                        uploaded_by=ctx.user_id,
+                        correlation_id=message.correlation_id,
+                    )
+                    summary_bits = [
+                        b for b in (found.get("work_type"), found.get("narrative")) if b
+                    ]
+                    activity_summary = " — ".join(summary_bits) if summary_bits else None
+                    reply_text = render_evidence_attached_reply(
+                        count=len(created_ids), activity_summary=activity_summary
+                    )
+                await sender.send_text(wa_id, reply_text)
                 await message_logger.log_reply(
-                    correlation_id=message.correlation_id, reply=coming_soon_reply
+                    correlation_id=message.correlation_id, reply=reply_text
                 )
                 await message_logger.mark_completed(correlation_id=message.correlation_id)
                 return
 
+            held_message = held_batch[0]
             _fire_processing_ack(wa_id, held_message.modality)
             await process_inbound_message(
                 held_message,
@@ -996,8 +1055,19 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
                 vendor_query=vendor_query,
                 expense_query_service=expense_query_service,
                 pending_report_store=pending_report_store,
+                memory_loader=memory_loader,
+                memory_coordinator=memory_coordinator,
+                batch_store=batch_store,
             )
             timer.lap("process_inbound_message_held_media")
+            if len(held_batch) > 1:
+                overflow_reply = render_batch_overflow_reply(
+                    held_count=len(held_batch), remaining_count=len(held_batch) - 1
+                )
+                await sender.send_text(wa_id, overflow_reply)
+                await message_logger.log_reply(
+                    correlation_id=message.correlation_id, reply=overflow_reply
+                )
             await message_logger.mark_completed(correlation_id=message.correlation_id)
             return
 
@@ -1271,12 +1341,23 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
 
         category_hint = await category_hint_store.pop_hint(user_id=ctx.user_id)
         timer.lap("pop_category_hint")
+        # #6 Undo: a bare "undo"/"delete that" (mesiri_ai.undo_classifier) --
+        # deterministic, zero-cost, same principle as the greeting/whoami
+        # triggers above. Checked THIS message's own text directly (unlike
+        # category_hint, which biases the NEXT message) and wins over any
+        # stale category_hint from an unrelated earlier tap -- an explicit
+        # "undo" right now must not be diluted by a leftover hint.
+        undo_hint = (
+            UNDO_SEMANTIC_HINT
+            if message.modality is InputModality.TEXT and is_undo_trigger(message.text)
+            else None
+        )
         _fire_processing_ack(wa_id, message.modality)
         await process_inbound_message(
             message,
             actor_user_id=ctx.user_id,
             actor=ctx,
-            semantic_hint=category_hint.semantic_hint if category_hint else None,
+            semantic_hint=undo_hint or (category_hint.semantic_hint if category_hint else None),
             direction_hint=category_hint.direction if category_hint else None,
             category_hint_store=category_hint_store,
             pipeline=pipeline,
@@ -1305,6 +1386,9 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             vendor_query=vendor_query,
             expense_query_service=expense_query_service,
             pending_report_store=pending_report_store,
+            memory_loader=memory_loader,
+            memory_coordinator=memory_coordinator,
+            batch_store=batch_store,
         )
         timer.lap("process_inbound_message")
 

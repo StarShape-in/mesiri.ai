@@ -1,0 +1,32 @@
+{
+  "_comment": "Trigger vocabulary for the deterministic undo classifier (#6 Undo). Language data only -- no logic. Whole-message, whole-phrase matches, same convention as whoami_phrases.json -- 'delete that' is a phrase, not independently meaningful tokens. Deliberately generic (no material/expense-specific wording): this classifier's only job is to recognize the INTENT to undo something; runtime.reversal_query.find_latest_of_either_kind resolves WHAT that something is.",
+  "undo": [
+    "undo",
+    "undo that",
+    "undo it",
+    "undo my last message",
+    "undo my last report",
+    "undo the last one",
+    "delete that",
+    "delete it",
+    "delete the last one",
+    "cancel that",
+    "cancel it",
+    "cancel the last one",
+    "remove that",
+    "remove it",
+    "scrap that",
+    "ignore that",
+    "ignore my last message",
+    "ignore the last message",
+    "ignore previous message",
+    "that was wrong",
+    "that's wrong",
+    "that is wrong",
+    "that was a mistake",
+    "wrong entry",
+    "reverse that",
+    "reverse it",
+    "reverse the last one"
+  ]
+}

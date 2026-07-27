@@ -32,6 +32,7 @@ from mesiri.infrastructure.postgres.workflow_instance import (
 )
 from mesiri_contracts.application.commands.progress import (
     AddProgressUpdateCommand,
+    AttachEvidenceCommand,
     CreateActivityCommand,
 )
 from mesiri_contracts.application.results.execution_result import (
@@ -240,6 +241,15 @@ class PostgresProgressExecutionRepository(ProgressExecutionRepository):
         # (ADR-D14 governs corrections; this is ordinary lifecycle movement,
         # same as Work Package status), so no activity_corrections row is
         # written for it.
+        #
+        # Conflict Resolution (#12): this is the one place two concurrent
+        # WhatsApp messages ("paused" from one engineer, "completed" from
+        # another) can race on the SAME mutable field with no natural
+        # append-only escape hatch. SELECT ... FOR UPDATE serializes the two
+        # transactions on this row -- the second to arrive sees the first's
+        # already-committed status, not the stale value it started with, so
+        # this is a genuine lock-based prevention, not an after-the-fact
+        # version compare that could still miss a race.
         _STATUS_BY_KIND = {
             "STARTED": "IN_PROGRESS",
             "RESUMED": "IN_PROGRESS",
@@ -247,17 +257,48 @@ class PostgresProgressExecutionRepository(ProgressExecutionRepository):
             "COMPLETED": "COMPLETED",
         }
         new_status = _STATUS_BY_KIND.get(cmd.update_kind)
+        conflict_note: str | None = None
         if new_status is not None:
-            await conn.execute(
-                text("UPDATE activities SET status = :status, updated_at = now() WHERE id = :id"),
-                {"status": new_status, "id": activity_id},
-            )
+            current_row = (
+                await conn.execute(
+                    text("SELECT status FROM activities WHERE id = :id FOR UPDATE"),
+                    {"id": activity_id},
+                )
+            ).mappings().first()
+            current_status = current_row["status"] if current_row is not None else None
+
+            if current_status == new_status:
+                # Two reports converging on the same status (e.g. both
+                # engineers said "completed") is not a conflict -- it is
+                # agreement. Nothing to write, nothing to flag.
+                pass
+            elif current_status == "COMPLETED":
+                # COMPLETED is terminal in V1 -- no update_kind un-completes
+                # an activity (there is no "reopen"). A status message that
+                # arrives after someone else already completed it is the
+                # genuine conflict case: applying it would silently revert a
+                # finished activity back to in-progress/stopped. The
+                # narrative/quantity above was still recorded (P1 -- an
+                # append-only Progress Update is always safe to keep) --
+                # only the status mutation is held back.
+                conflict_note = (
+                    "Note: this activity was already marked Completed by someone "
+                    f"else, so its status was not changed to {new_status.replace('_', ' ').title()}."
+                )
+            else:
+                await conn.execute(
+                    text(
+                        "UPDATE activities SET status = :status, updated_at = now() WHERE id = :id"
+                    ),
+                    {"status": new_status, "id": activity_id},
+                )
 
         payload = {
             "update_kind": cmd.update_kind,
             "occurred_at": cmd.occurred_at.isoformat(),
             "quantity": str(cmd.quantity) if cmd.quantity is not None else None,
             "source": cmd.source,
+            "status_conflict": conflict_note is not None,
         }
         await conn.execute(
             text(
@@ -282,6 +323,7 @@ class PostgresProgressExecutionRepository(ProgressExecutionRepository):
             # Here it is progress_updates.id -- the row this confirmation
             # actually created, not the parent activity.
             material_row_id=str(update_id),
+            conflict_note=conflict_note,
         )
         await conn.execute(
             text(
@@ -294,6 +336,64 @@ class PostgresProgressExecutionRepository(ProgressExecutionRepository):
 
         await self._transition(conn, cmd.idempotency_key, WorkflowPhase.COMPLETED)
         return result
+
+    async def persist_attach_evidence(
+        self, conn: AsyncConnection, cmd: AttachEvidenceCommand
+    ) -> list[str]:
+        """Insert one progress_attachments row per media_object_key (#2 Batch
+        Media). No idempotency_keys claim -- see AttachEvidenceCommand's
+        docstring for why this never goes through the confirm/execute path
+        every other persist_* method here does. Still emits one outbox
+        event per photo (same "everything worth knowing about later flows
+        through the outbox" convention as every other write in this file),
+        carrying the activity_id so a future Search Index consumer can
+        index "this activity now has N photos" without querying
+        progress_attachments directly.
+        """
+        from sqlalchemy import text
+
+        activity_id = uuid.UUID(cmd.activity_id)
+        uploaded_by = uuid.UUID(cmd.uploaded_by)
+        created_ids: list[str] = []
+
+        for media_object_key in cmd.media_object_keys:
+            attachment_id = uuid.uuid4()
+            await conn.execute(
+                text(
+                    "INSERT INTO progress_attachments "
+                    "(id, parent_type, parent_id, media_object_key, attachment_type, "
+                    "mime_type, caption, uploaded_by_user_id) "
+                    "VALUES (:id, 'ACTIVITY', :parent_id, :media_object_key, "
+                    "'site_photo', :mime_type, :caption, :uploaded_by)"
+                ),
+                {
+                    "id": attachment_id,
+                    "parent_id": activity_id,
+                    "media_object_key": media_object_key,
+                    "mime_type": cmd.mime_type,
+                    "caption": cmd.caption,
+                    "uploaded_by": uploaded_by,
+                },
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO outbox_events "
+                    "(id, aggregate_type, aggregate_id, event_type, payload, correlation_id) "
+                    "VALUES (:id, :aggregate_type, :aggregate_id, :event_type, "
+                    "CAST(:payload AS jsonb), :correlation_id)"
+                ),
+                {
+                    "id": uuid.uuid4(),
+                    "aggregate_type": "activity",
+                    "aggregate_id": activity_id,
+                    "event_type": "ActivityEvidenceAttached",
+                    "payload": json.dumps({"attachment_id": str(attachment_id)}),
+                    "correlation_id": cmd.correlation_id,
+                },
+            )
+            created_ids.append(str(attachment_id))
+
+        return created_ids
 
     async def persist_rejection(
         self,

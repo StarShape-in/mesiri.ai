@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 
 from mesiri_contracts.application.commands.progress import (
     AddProgressUpdateCommand,
+    AttachEvidenceCommand,
     CreateActivityCommand,
 )
 from mesiri_contracts.application.results.execution_result import ExecutionResult
@@ -53,6 +54,18 @@ class ProgressExecutionRepository(ABC):
         """Claim the idempotency key, append the progress update + outbox
         event, cache SUCCEEDED, and transition the workflow to COMPLETED.
         Never edits the parent Activity or any prior update (P1)."""
+        ...
+
+    @abstractmethod
+    async def persist_attach_evidence(
+        self, conn: AsyncConnection, cmd: AttachEvidenceCommand
+    ) -> list[str]:
+        """Insert one progress_attachments row per media_object_key (#2 Batch
+        Media). No idempotency claim, no workflow transition -- unlike the
+        two methods above, this is never behind a confirmation (see
+        AttachEvidenceCommand's docstring). Returns the created attachment
+        ids, in the same order as media_object_keys, so the caller can
+        report exactly how many landed."""
         ...
 
     @abstractmethod

@@ -19,6 +19,7 @@ built to fix.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Coroutine
 from dataclasses import dataclass, field
@@ -33,12 +34,22 @@ from channel.replies import (
     render_material_direction_followup,
 )
 from context.live_identity import whoami_reply
+from memory.coordinator import ConversationMemoryCoordinator
 from mesiri_ai.greeting_classifier import is_greeting_trigger
-from mesiri_contracts.application.results.execution_result import ExecutionResult
+from mesiri_contracts.application.results.execution_result import ExecutionResult, ExecutionStatus
+from mesiri_contracts.assistant.draft_action import DraftActionType
 from mesiri_contracts.assistant.enums import InputModality
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage
 from mesiri_contracts.assistant.v2.interaction_spec import InteractionIntent
+from planner import Planner
 from workflows import WorkflowResumeResult, WorkflowResumeStatus, WorkflowRunResult, WorkflowRuntime
+from workflows.batch import (
+    format_batch_summary,
+    format_started_segment_reply,
+    start_segment,
+    summarize_batch_outcome,
+)
+from workflows.batch_store import PendingBatchStore
 from workflows.who_am_i import is_whoami_trigger
 
 from .classifier import classify_reply
@@ -82,11 +93,17 @@ class InteractionHandler:
         classifier: InteractionClassifierPort | None = None,
         dispatcher: ExecutionDispatcher | None = None,
         receipt_builder: ReceiptBuilder | None = None,
+        memory_coordinator: ConversationMemoryCoordinator | None = None,
+        planner: Planner | None = None,
+        batch_store: PendingBatchStore | None = None,
     ) -> None:
         self._runtime = workflow_runtime
         self._classifier = classifier
         self._dispatcher = dispatcher
         self._receipt_builder = receipt_builder
+        self._memory_coordinator = memory_coordinator
+        self._planner = planner
+        self._batch_store = batch_store
 
     async def _resume_and_render(
         self, user_id: str, loaded, resume_action, *, log_prefix: str, actor: ActorIdentity | None = None
@@ -122,6 +139,35 @@ class InteractionHandler:
                 result.workflow_instance_id,
             )
             reply_text = render_execution_reply(execution_result)
+            if (
+                self._memory_coordinator is not None
+                and execution_result.status is ExecutionStatus.SUCCEEDED
+                and execution_result.material_row_id is not None
+                and result.confirmed_action.draft_action.action_type
+                in (DraftActionType.CREATE_ACTIVITY, DraftActionType.ADD_PROGRESS_UPDATE)
+            ):
+                # M19: remember the activity THIS conversation just touched --
+                # see memory/conversation_scope.py's CurrentActivityStore and
+                # runtime/inbound_journey.py's _seed_open_activity, which
+                # prefers this over the site-wide "most recently updated"
+                # guess on the next continuation message. Fire-and-forget:
+                # memory bookkeeping must never delay or fail a reply.
+                # ADD_PROGRESS_UPDATE's execution result carries the
+                # Activity's own id, not the new Progress Update's, since the
+                # thing worth remembering for a future continuation is the
+                # activity, not the append-only row this one produced.
+                activity_id = (
+                    execution_result.material_row_id
+                    if result.confirmed_action.draft_action.action_type
+                    is DraftActionType.CREATE_ACTIVITY
+                    else result.confirmed_action.draft_action.fields.get("activity_id")
+                )
+                if activity_id:
+                    asyncio.ensure_future(
+                        self._memory_coordinator.record_activity(
+                            user_id=user_id, activity_id=str(activity_id)
+                        )
+                    )
             if self._receipt_builder is not None:
                 # Return the coroutine without awaiting it — the caller sends
                 # reply_text first so the user sees confirmation immediately,
@@ -131,6 +177,33 @@ class InteractionHandler:
                 )
         else:
             reply_text = render_resume_reply(result)
+
+        # #1 Multi-Activity / #13 Cross-Module Trigger: this resolution may
+        # be one segment of a multi-segment batch (runtime/inbound_journey.py
+        # queued the rest after the first segment started -- see
+        # workflows/batch_store.py). Record this segment's outcome and
+        # either start the next queued one (appending ITS prompt to the same
+        # reply) or, if this was the last, append the whole batch's summary.
+        # A no-op for the overwhelming common case: has_pending is False for
+        # every ordinary single-segment message.
+        if self._batch_store is not None and self._planner is not None:
+            has_batch = await self._batch_store.has_pending(user_id=user_id)
+            if has_batch:
+                await self._batch_store.record_outcome(
+                    user_id=user_id,
+                    outcome=summarize_batch_outcome(result, execution_result),
+                )
+                next_item = await self._batch_store.pop_next(user_id=user_id)
+                if next_item is not None:
+                    next_event, progress = next_item
+                    next_run = await start_segment(
+                        next_event, planner=self._planner, workflow_runtime=self._runtime
+                    )
+                    reply_text = f"{reply_text}\n\n{format_started_segment_reply(next_run, progress)}"
+                else:
+                    outcomes = await self._batch_store.get_outcomes(user_id=user_id)
+                    reply_text = reply_text + format_batch_summary(outcomes)
+                    await self._batch_store.clear(user_id=user_id)
 
         return result, reply_text, execution_result, receipt_coro
 
@@ -257,10 +330,10 @@ class InteractionHandler:
         arrives -- see runtime/dependencies.py). Deterministic, same
         principle as handle_category_tap. Returns the raw row_id (not yet
         the semantic hint) so the caller can special-case "img_site_update"
-        (not wired to a real workflow yet -- see
-        channel.replies.render_image_purpose_coming_soon) separately from
-        "img_expense" (re-processes the held image via
-        IMAGE_PURPOSE_SEMANTIC_HINT).
+        (#2 Batch Media: a direct evidence attach via
+        runtime/evidence_query.py, never a workflow -- see
+        AttachEvidenceCommand's docstring) separately from "img_expense"
+        (re-processes the held image via IMAGE_PURPOSE_SEMANTIC_HINT).
 
         Returns None for anything that isn't a recognized menu tap, so the
         caller falls through to the normal journey exactly like the other

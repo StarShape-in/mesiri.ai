@@ -394,6 +394,99 @@ def build_canonical_event(
     )
 
 
+# #13 Cross-Module Trigger: a material report naming a `work_item` ("used 40
+# bags of cement during plastering") is describing TWO things in one breath.
+# Only these two event types carry a work_item at all -- MaterialUpdateCandidate's
+# docstring documents it as a usage-only field, but a receipt naming the work
+# it's for ("cement delivered for the plastering crew") is just as valid a
+# cross-module signal, so both are covered here.
+_WORK_ITEM_LINKED_TYPES = frozenset(
+    {CanonicalEventType.MATERIAL_RECEIPT_REQUESTED, CanonicalEventType.MATERIAL_USAGE_REQUESTED}
+)
+
+
+def build_canonical_events(
+    understanding: UnderstandingResult,
+    context: ResolvedContextV2,
+    *,
+    direction_hint: str | None = None,
+    forwarded: bool = False,
+    frequently_forwarded: bool = False,
+) -> list[CanonicalEventV2]:
+    """Like build_canonical_event, but may return MORE than one event when a
+    single message describes more than one distinct thing (#1 Multi-Activity,
+    #13 Cross-Module Trigger). events[0] is always exactly what
+    build_canonical_event alone would have produced -- every existing caller
+    of the singular function is unaffected by this one existing alongside it.
+
+    Scope, stated plainly: today this ONLY detects the deterministic #13
+    case below (a material report's own `work_item` field, which the
+    extraction prompt already asks for and which already flows into
+    fields unchanged -- no new AI extraction risk). It does NOT yet split a
+    single free-text sentence describing several unrelated things ("finished
+    plastering Block A, started painting Block B") into separate segments --
+    that needs either an extraction-prompt change (cross-review, not
+    something to tune blind) or a dedicated deterministic clause-splitter,
+    neither of which this pass attempts. The sequencing machinery this
+    function feeds (workflows/batch.py, workflows/batch_store.py) is
+    general-purpose and ready for that source once it exists.
+    """
+    primary = build_canonical_event(
+        understanding,
+        context,
+        direction_hint=direction_hint,
+        forwarded=forwarded,
+        frequently_forwarded=frequently_forwarded,
+    )
+    events = [primary]
+
+    if primary.completeness is IntentCompleteness.ACTIONABLE and primary.event_type in _WORK_ITEM_LINKED_TYPES:
+        work_item = primary.fields.get("work_item")
+        if work_item:
+            events.append(_build_linked_activity_segment(primary, work_item=str(work_item)))
+
+    return events
+
+
+def _build_linked_activity_segment(primary: CanonicalEventV2, *, work_item: str) -> CanonicalEventV2:
+    """The second segment for a material report naming what it was for.
+
+    Deterministic -- requires no new AI extraction, since `work_item`
+    already flows through _normalize_material_fields untouched into
+    primary.fields whenever the provider populates it. Synthesizes an
+    ACTIVITY_CONTINUATION_REQUESTED segment so the activity gets captured
+    too, sequenced right after the material segment via workflows/batch.py
+    -- never merged into the material workflow itself, and never written by
+    it: Daily Reporting never writes another module's ledger, and Material
+    never writes Daily Reporting's tables (ADR-D2/P3). Linking the two
+    confirmed records together (activity_links, MATERIAL_MOVEMENT) is not
+    yet wired -- see workflows/batch.py's module docstring on scope.
+
+    No required fields (ACTIVITY_CONTINUATION_REQUESTED needs none -- see
+    canonicalization/mapping.py's REQUIRED_FIELDS): a bare narrative is a
+    complete, actionable continuation on its own (P10). If no open activity
+    exists to attach it to, workflows/activity_continuation/nodes.py's
+    build_draft already degrades to a clarifying "nothing to continue"
+    message with no draft -- the same safe, existing behavior a real
+    stand-alone continuation message gets.
+    """
+    return CanonicalEventV2(
+        event_id=new_id("evt"),
+        correlation_id=primary.correlation_id,
+        source_message_id=primary.source_message_id,
+        conversation_id=primary.conversation_id,
+        causation_id=primary.event_id,
+        event_type=CanonicalEventType.ACTIVITY_CONTINUATION_REQUESTED,
+        completeness=IntentCompleteness.ACTIONABLE,
+        organization_id=primary.organization_id,
+        user_id=primary.user_id,
+        project_id=primary.project_id,
+        site_id=primary.site_id,
+        permissions=primary.permissions,
+        fields={"narrative": work_item, "update_kind": "PROGRESS"},
+    )
+
+
 def log_canonical_event(event: CanonicalEventV2) -> None:
     logger.info(
         "CanonicalEvent correlation_id=%s event_type=%s completeness=%s "

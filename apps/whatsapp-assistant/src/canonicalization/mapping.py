@@ -138,6 +138,18 @@ def resolve_event_type(semantic_type: SemanticType, fields: dict) -> CanonicalEv
         return _PETTY_CASH_DIRECTION_EVENT_TYPE.get(direction, CanonicalEventType.UNRECOGNIZED)
     if semantic_type is SemanticType.REVERSAL:
         target_kind = str(fields.get("target_kind", "")).strip().lower()
+        if not target_kind:
+            # #6 Undo: a bare "undo"/"delete that" (mesiri_ai.undo_classifier)
+            # names no kind at all -- distinct from a target_kind the
+            # extraction provider filled in with something unrecognized,
+            # which still falls to UNRECOGNIZED below. EXPENSE_REVERSAL_
+            # REQUESTED is only a routing label here (both reversal event
+            # types map to WorkflowKey.REVERSE, see planner/routing.py) --
+            # the real kind is resolved by runtime/inbound_journey.py's
+            # _seed_reversal_target, which compares the latest expense
+            # against the latest transfer and writes the winning target_kind
+            # back onto fields before the confirmation prompt renders.
+            return CanonicalEventType.EXPENSE_REVERSAL_REQUESTED
         return _REVERSAL_TARGET_EVENT_TYPE.get(target_kind, CanonicalEventType.UNRECOGNIZED)
     if semantic_type is SemanticType.GENERAL_SITE_UPDATE:
         update_kind = str(fields.get("update_kind", "")).strip().lower()
