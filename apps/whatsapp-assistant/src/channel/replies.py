@@ -152,8 +152,14 @@ def render_image_purpose_picker() -> ReplySpec:
 
 def render_image_purpose_coming_soon(row_id: str) -> str | None:
     """Site Update photos aren't processed yet -- an honest reply instead of
-    a silent NO_GRAPH failure (WorkflowKey.SITE_UPDATE has no compiled graph
-    today; that's separate, unrelated follow-up work, not an image gap).
+    a silent failure.
+
+    WorkflowKey.SITE_UPDATE gained a compiled graph on 2026-07-27
+    (workflows/site_update/), so the *text/voice* path is real. This still
+    blocks specifically because attaching a photo to an activity is the
+    Evidence workflow (docs/execution/DAILY_REPORTING_PLAN.md Phase 4,
+    `progress_attachments`), which doesn't exist yet -- routing this image
+    through today would either drop it silently or attach it to nothing.
 
     None for every other purpose, which is what routes it to real processing:
     "img_expense" and (since 2026-07-26) "img_attendance" both have compiled

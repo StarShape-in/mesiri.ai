@@ -29,6 +29,7 @@ class DraftActionType(str, Enum):
     TRANSFER_MONEY = "transfer_money"
     REVERSE_TRANSACTION = "reverse_transaction"
     RECORD_LABOUR_ATTENDANCE = "record_labour_attendance"
+    CREATE_ACTIVITY = "create_activity"
     # Future v1 domains: record_equipment_usage
 
 

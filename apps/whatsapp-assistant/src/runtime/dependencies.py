@@ -341,6 +341,27 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     )
     labour_dispatcher = LabourExecutionDispatcher(labour_execution_handler)
 
+    # Activity creation (Daily Reporting, Phase 3): same in-process
+    # capability-boundary wiring as Materials/Labour above, reusing the same
+    # material_db transaction pool. The resolver re-verifies each stated
+    # quantity's unit against units_of_measure at confirm time (defense-in-
+    # depth, mirrors PostgresMaterialResolver) -- location/work-package
+    # resolution is a separate gate (plan §1B.2) that hasn't been built yet,
+    # so those fields simply stay null when unresolved (P4).
+    from mesiri.application.progress.dispatcher import CreateActivityExecutionDispatcher
+    from mesiri.application.progress.handlers import ExecuteConfirmedCreateActivityHandler
+    from mesiri.application.progress.resolution import PostgresProgressUnitResolver
+    from mesiri.infrastructure.postgres.repositories.progress_execution import (
+        PostgresProgressExecutionRepository,
+    )
+
+    create_activity_handler = ExecuteConfirmedCreateActivityHandler(
+        db=material_db,
+        repo=PostgresProgressExecutionRepository(),
+        resolver=PostgresProgressUnitResolver(),
+    )
+    create_activity_dispatcher = CreateActivityExecutionDispatcher(create_activity_handler)
+
     execution_dispatcher = ActionTypeRoutingDispatcher(
         {
             DraftActionType.RECORD_MATERIAL_RECEIPT: material_dispatcher,
@@ -350,6 +371,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             DraftActionType.TRANSFER_MONEY: transfer_dispatcher,
             DraftActionType.REVERSE_TRANSACTION: reverse_dispatcher,
             DraftActionType.RECORD_LABOUR_ATTENDANCE: labour_dispatcher,
+            DraftActionType.CREATE_ACTIVITY: create_activity_dispatcher,
         }
     )
     # Read-only inventory lookups for the material.inventory_query workflow --

@@ -56,8 +56,12 @@ def _activity_date(fields: dict[str, Any]) -> date:
     `_occurred_date` (application/labour/mapper.py) — canonicalization
     (canonicalization/occurred_date.py) is the only point holding both what
     the message said and the sender's timezone; this only reads its output
-    and falls back to today() for an older draft that never carried it."""
-    raw = fields.get("activity_date") or fields.get("occurred_date")
+    and falls back to today() for an older draft that never carried it.
+
+    `occurred_date` is checked first -- it's the uniform field name
+    canonicalization writes for every module. `activity_date` is accepted as
+    a fallback only for a caller that already renamed it (none currently do)."""
+    raw = fields.get("occurred_date") or fields.get("activity_date")
     if isinstance(raw, date) and not isinstance(raw, datetime):
         return raw
     if isinstance(raw, datetime):

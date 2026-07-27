@@ -131,7 +131,24 @@ _EXTRACTION_PROMPT = (
     'Latin for "name" (രവി -> "Ravi") and keep the original spelling in '
     '"name_original" -- never translate a name into an English word. Translate '
     "trades into the English trade word.\n"
-    "- general_site_update: summary, activity, location, weather, project_name\n"
+    "- general_site_update: narrative, work_type, quantities (array), location, "
+    "contractor, project_name, occurred_on. "
+    "narrative is the report in the sender's own words. work_type is the single "
+    'primary kind of work if one is clear (e.g. "plastering", "concreting", '
+    '"blockwork") -- omit if the message describes several unrelated things or '
+    "names none specifically. quantities is an array of every measured amount "
+    'stated, each an object with "work_type" (may repeat the top-level work_type, '
+    'or differ for a different item in the same message), "quantity" (a plain '
+    'number) and "unit" (e.g. "sqm", "m3", "bags", "nos", "m") -- omit quantities '
+    "entirely for a narrative-only report with nothing measured "
+    '(e.g. "started plastering on 2nd floor" has no quantities; "180 sqm '
+    'plastering done" -> quantities: [{"work_type":"plastering","quantity":180,'
+    '"unit":"sqm"}]). location is the free-text place on site the work happened '
+    '(e.g. "Block A", "2nd floor", "km 12+400") -- omit if unstated, never invent '
+    "one. contractor is the name of a contractor/agency mentioned, if any. This "
+    "type is for reporting work done or in progress -- never for problems, "
+    "delays, or blockers (those are a different report type, not yet extracted "
+    "here).\n"
     "- general_question: question, topic\n"
     "- whoami_question: question\n"
     "- inventory_query: material_name, project_name (omit material_name if asking about all "

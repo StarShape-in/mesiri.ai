@@ -48,8 +48,13 @@ def test_built_vs_unbuilt_matches_the_registry() -> None:
     # `implemented` live from the registry, so it now shows labour.attendance as
     # built rather than "not built yet".
     assert infos["labour_update"].implemented is True
+    # general_site_update joined this list when the Activity Creation graph
+    # was registered (docs/execution/DAILY_REPORTING_PLAN.md Phase 3,
+    # workflows/site_update/) -- same live-derivation reasoning as labour_update
+    # above.
+    assert infos["general_site_update"].implemented is True
     # Routed but not built yet.
-    for name in ("equipment_usage", "general_site_update"):
+    for name in ("equipment_usage",):
         assert infos[name].implemented is False
         assert infos[name].workflow_keys  # still mapped to a (future) workflow
 

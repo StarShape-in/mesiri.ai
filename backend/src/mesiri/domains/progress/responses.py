@@ -72,3 +72,30 @@ class ActivityDetailResponse(ActivitySummaryResponse):
     quantities: list[ActivityQuantityResponse]
     progress_updates: list[ProgressUpdateResponse]
     attachments: list[ActivityAttachmentResponse]
+
+
+class SiteIssueResponse(BaseModel):
+    id: uuid.UUID
+    organization_id: uuid.UUID
+    project_id: uuid.UUID
+    site_id: uuid.UUID
+    activity_id: uuid.UUID | None = None
+    work_package_id: uuid.UUID | None = None
+    location_id: uuid.UUID | None = None
+    issue_type: str
+    severity: str
+    narrative: str | None = None
+    delay_duration_minutes: int | None = None
+    occurred_at: datetime.datetime
+    resolved_at: datetime.datetime | None = None
+    status: str
+    resolution_notes: str | None = None
+    assigned_user_id: uuid.UUID | None = None
+    reported_by_user_id: uuid.UUID | None = None
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
+
+
+class SiteIssuesListResponse(BaseModel):
+    items: list[SiteIssueResponse]
+    total: int

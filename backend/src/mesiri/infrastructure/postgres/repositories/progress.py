@@ -156,3 +156,77 @@ class PostgresProgressReadRepository:
         item["attachments"] = [dict(a) for a in attachments]
 
         return item
+
+    async def list_issues(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        project_ids: set[uuid.UUID] | None,
+        site_id: uuid.UUID | None,
+        status: str | None,
+        severity: str | None,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[dict[str, Any]], int]:
+        where = ["organization_id = :organization_id"]
+        params: dict[str, Any] = {"organization_id": organization_id, "limit": limit, "offset": offset}
+
+        if project_ids is not None:
+            where.append("project_id = ANY(:project_ids)")
+            params["project_ids"] = list(project_ids)
+        if site_id is not None:
+            where.append("site_id = :site_id")
+            params["site_id"] = site_id
+        if status is not None:
+            where.append("status = :status")
+            params["status"] = status
+        if severity is not None:
+            where.append("severity = :severity")
+            params["severity"] = severity
+
+        where_clause = " AND ".join(where)
+
+        total_row = (
+            await self._conn.execute(
+                text(f"SELECT COUNT(*) AS total FROM site_issues WHERE {where_clause}"), params
+            )
+        ).mappings().first()
+        total = total_row["total"] if total_row else 0
+
+        rows = (
+            await self._conn.execute(
+                text(
+                    f"SELECT id, organization_id, project_id, site_id, activity_id, "
+                    f"work_package_id, location_id, issue_type, severity, narrative, "
+                    f"delay_duration_minutes, occurred_at, resolved_at, status, "
+                    f"resolution_notes, assigned_user_id, reported_by_user_id, "
+                    f"created_at, updated_at "
+                    f"FROM site_issues WHERE {where_clause} "
+                    f"ORDER BY occurred_at DESC LIMIT :limit OFFSET :offset"
+                ),
+                params,
+            )
+        ).mappings().all()
+        return [dict(row) for row in rows], total
+
+    async def get_issue(
+        self, organization_id: uuid.UUID, issue_id: uuid.UUID
+    ) -> dict[str, Any] | None:
+        row = (
+            (
+                await self._conn.execute(
+                    text(
+                        "SELECT id, organization_id, project_id, site_id, activity_id, "
+                        "work_package_id, location_id, issue_type, severity, narrative, "
+                        "delay_duration_minutes, occurred_at, resolved_at, status, "
+                        "resolution_notes, assigned_user_id, reported_by_user_id, "
+                        "created_at, updated_at "
+                        "FROM site_issues WHERE organization_id = :org_id AND id = :id"
+                    ),
+                    {"org_id": organization_id, "id": issue_id},
+                )
+            )
+            .mappings()
+            .first()
+        )
+        return dict(row) if row is not None else None

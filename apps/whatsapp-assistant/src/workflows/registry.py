@@ -25,6 +25,7 @@ from .material import build_material_graph
 from .material_inventory_query.graph import build_material_inventory_query_graph
 from .petty_cash.graph import build_petty_cash_graph
 from .reverse.graph import build_reverse_graph
+from .site_update.graph import build_activity_creation_graph
 from .transfer.graph import build_transfer_graph
 from .who_am_i.graph import build_who_am_i_graph
 
@@ -41,6 +42,7 @@ class WorkflowCategory(str, Enum):
     MATERIAL = "material"
     LABOUR = "labour"
     IDENTITY = "identity"
+    PROGRESS = "progress"
 
 
 @dataclass(frozen=True)
@@ -151,6 +153,11 @@ _DEFINITIONS: dict[WorkflowKey, WorkflowDefinition] = dict(
             build_labour_query_graph,
             WorkflowCategory.LABOUR,
             is_informational=True,
+        ),
+        _define(
+            WorkflowKey.SITE_UPDATE,
+            build_activity_creation_graph,
+            WorkflowCategory.PROGRESS,
         ),
     )
 )

@@ -88,7 +88,15 @@ _EXTRACTION_PROMPT = (
     '(e.g. "slabing the footing area", "column casting"). Omit work_item entirely '
     "for received material.\n"
     "- labour_update: headcount, trade, hours, contractor, project_name\n"
-    "- general_site_update: summary, activity, location, weather, project_name\n"
+    "- general_site_update: narrative, work_type, quantities (array), location, "
+    "contractor, project_name, occurred_on. "
+    "narrative is the report in the sender's own words. work_type is the single "
+    'primary kind of work if clear (e.g. "plastering", "concreting") -- omit if '
+    "unclear or multiple. quantities is an array of measured amounts, each "
+    '{"work_type","quantity","unit"} -- omit entirely for a narrative-only '
+    'report with nothing measured. location is the free-text place on site '
+    "(e.g. \"Block A\", \"2nd floor\") -- omit if unstated. contractor is the "
+    "contractor/agency named, if any. Never for problems/delays/blockers.\n"
     "- general_question: question, topic\n"
     "- inventory_query: material_name, project_name (omit material_name if asking about all "
     'materials, e.g. "show inventory"). Use this type for questions about how '

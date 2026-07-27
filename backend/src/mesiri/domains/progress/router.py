@@ -26,7 +26,12 @@ from mesiri.domains.projects.router import get_auth_context
 from mesiri.infrastructure.postgres.dependency import get_db_conn
 from mesiri.infrastructure.postgres.repositories.progress import PostgresProgressReadRepository
 
-from .responses import ActivitiesListResponse, ActivityDetailResponse
+from .responses import (
+    ActivitiesListResponse,
+    ActivityDetailResponse,
+    SiteIssueResponse,
+    SiteIssuesListResponse,
+)
 
 router = APIRouter(prefix="/progress", tags=["progress"])
 
@@ -110,5 +115,53 @@ async def get_activity(
     _project_ids, denied = _resolve_project_ids(auth_context, item["project_id"])
     if denied:
         raise HTTPException(status_code=403, detail="Not authorized for this activity")
+
+    return item
+
+
+@router.get("/issues", response_model=SiteIssuesListResponse)
+async def list_issues(
+    project_id: uuid.UUID | None = None,
+    site_id: uuid.UUID | None = None,
+    status: str | None = None,
+    severity: str | None = None,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """List site issues within the caller's organization and project scope."""
+    project_ids, denied = _resolve_project_ids(auth_context, project_id)
+    if denied or _site_filter_denied(auth_context, project_id, site_id):
+        return {"items": [], "total": 0}
+
+    repo = PostgresProgressReadRepository(conn)
+    items, total = await repo.list_issues(
+        organization_id=auth_context.organization_id,
+        project_ids=project_ids,
+        site_id=site_id,
+        status=status,
+        severity=severity,
+        limit=limit,
+        offset=offset,
+    )
+    return {"items": items, "total": total}
+
+
+@router.get("/issues/{issue_id}", response_model=SiteIssueResponse)
+async def get_issue(
+    issue_id: uuid.UUID,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    repo = PostgresProgressReadRepository(conn)
+    item = await repo.get_issue(auth_context.organization_id, issue_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Issue not found")
+    if _site_filter_denied(auth_context, item["project_id"], item["site_id"]):
+        raise HTTPException(status_code=403, detail="Not authorized for this issue")
+    _project_ids, denied = _resolve_project_ids(auth_context, item["project_id"])
+    if denied:
+        raise HTTPException(status_code=403, detail="Not authorized for this issue")
 
     return item

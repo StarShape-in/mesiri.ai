@@ -65,7 +65,12 @@ def test_progress_routes_are_mounted():
     both create_app() locations in the same change, precisely to avoid
     becoming the fifth occurrence of this bug class."""
     paths = _production_app_paths()
-    for expected in ("/progress/activities", "/progress/activities/{activity_id}"):
+    for expected in (
+        "/progress/activities",
+        "/progress/activities/{activity_id}",
+        "/progress/issues",
+        "/progress/issues/{issue_id}",
+    ):
         assert expected in paths, f"{expected} not mounted on the production app"
 
 
