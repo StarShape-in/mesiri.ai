@@ -51,6 +51,11 @@ class WorkflowKey(str, Enum):
     EXPENSE_SUBMIT = "expense.submit"
     EQUIPMENT_USAGE = "equipment.usage"
     LABOUR_ATTENDANCE = "labour.attendance"
+    # Triggered by the system after a confirmed labour attendance has named
+    # new temporary workers -- never by AI planner intent. No SemanticType or
+    # WORKFLOW_KEY_BY_EVENT mapping exists for it; inbound_journey.py creates
+    # its WorkflowInstance directly after writing the attendance record.
+    WORKER_PROMOTION = "labour.worker_promotion"
     SITE_UPDATE = "site.update"
     ACTIVITY_CONTINUATION = "site.activity_continuation"
     WHO_AM_I = "who.am.i"

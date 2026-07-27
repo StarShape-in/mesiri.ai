@@ -591,6 +591,10 @@ def test_informational_and_no_draft_keys_are_pinned() -> None:
         # Being informational is what stops an unrelated pending confirmation
         # blocking a question that changes nothing.
         WorkflowKey.LABOUR_QUERY,
+        # Writes the register directly inside the node -- the user's numbered
+        # reply IS the confirmation, so it must never be blocked by (or block)
+        # an unrelated pending confirmation. See worker_promotion/graph.py.
+        WorkflowKey.WORKER_PROMOTION,
     }
     assert no_draft == informational | {
         WorkflowKey.REVERSE,

@@ -23,6 +23,7 @@ a lower threshold.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import replace as dataclasses_replace
 from enum import Enum
 
 from .workers import normalize_name, normalize_trade
@@ -64,6 +65,25 @@ AUTO_ACCEPT = 0.75
 
 #: At or above this (but below AUTO_ACCEPT), offer as a candidate to choose.
 ASK = 0.35
+
+#: At or above this (but below ASK), surface as a low-confidence candidate
+#: rather than silently creating a new temporary worker.
+#:
+#: Reachable only via partial name overlap plus a trade mismatch (0.35 - 0.15
+#: = 0.20 exactly): "Ravi, carpenter" reported against registered "Ravi
+#: Kumar, mason". Before this band existed, that case fell silently to
+#: NO_MATCH -- a real partial-name signal was thrown away because the trade
+#: penalty alone dragged it under ASK. It is *not* reachable from trade,
+#: contractor or site/project history alone with zero name overlap: those
+#: signals only ever corroborate a name that already matched something
+#: (score_candidate returns 0.0 outright when the names share nothing --
+#: see its docstring). A pure transliteration miss ("Ravi" vs "Raavi") scores
+#: 0.0 and is correctly NO_MATCH, not a soft match; catching that would need
+#: fuzzy name matching, which this module deliberately avoids (see
+#: _name_score's docstring).
+#: Below this threshold (< 0.20), there is genuinely no signal and
+#: NO_MATCH is the correct and honest answer -- no guessing.
+SOFT_MATCH = 0.20
 
 
 class MatchOutcome(str, Enum):
@@ -107,6 +127,11 @@ class ScoredCandidate:
     #: this to word the question as "same worker, updated trade?" rather than
     #: a bare "which of these?" -- the two readings need different answers.
     trade_changed: bool = False
+    #: True when confidence is in [SOFT_MATCH, ASK) -- see SOFT_MATCH's
+    #: docstring for exactly which case reaches this band. The prompt labels
+    #: these "(possible match)" to set the right expectation, and the user
+    #: may still pick "Someone new" to dismiss them.
+    low_confidence: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -249,11 +274,21 @@ def match_worker(
     )
     plausible = tuple(s for s in scored if s.confidence >= ASK)
 
-    if not plausible:
-        return MatchResult(MatchOutcome.NO_MATCH)
+    if plausible:
+        confident = [s for s in plausible if s.confidence >= AUTO_ACCEPT]
+        if len(confident) == 1:
+            return MatchResult(MatchOutcome.AUTO_MATCHED, (confident[0],))
+        return MatchResult(MatchOutcome.ASK_USER, plausible)
 
-    confident = [s for s in plausible if s.confidence >= AUTO_ACCEPT]
-    if len(confident) == 1:
-        return MatchResult(MatchOutcome.AUTO_MATCHED, (confident[0],))
+    # Soft-match band: no candidate cleared ASK, but at least one has a faint
+    # signal (e.g. seen_on_site without any name overlap). Ask the user rather
+    # than silently creating a duplicate temp (principle P4 extended).
+    soft = tuple(
+        dataclasses_replace(s, low_confidence=True)
+        for s in scored
+        if s.confidence >= SOFT_MATCH
+    )
+    if soft:
+        return MatchResult(MatchOutcome.ASK_USER, soft)
 
-    return MatchResult(MatchOutcome.ASK_USER, plausible)
+    return MatchResult(MatchOutcome.NO_MATCH)

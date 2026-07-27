@@ -41,11 +41,12 @@ from channel.replies import (
 from context.resolver import ContextResolver
 from context.runtime import log_resolved_context
 from interactions.category_hint import CategoryHintStore
-from interactions.handler import InteractionHandler
+from interactions.handler import InteractionHandled, InteractionHandler
 from interactions.pending_report import PendingReportStore
 from interactions.response_handler import render_workflow_run_reply
 from mesiri_contracts.assistant.canonical_event import CanonicalEventType
 from mesiri_contracts.assistant.canonical_event import IntentCompleteness as _IntentCompleteness
+from mesiri_contracts.assistant.draft_action import DraftActionType
 from mesiri_contracts.assistant.enums import InputModality
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage
 from mesiri_contracts.assistant.planner_decision import PlannerDecisionType, WorkflowKey
@@ -53,6 +54,7 @@ from mesiri_contracts.assistant.understanding_result import UnderstandingResult
 from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
 from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
 from mesiri_contracts.assistant.v2.resolved_context import ResolvedContextV2
+from mesiri_contracts.common.ids import new_id as _new_id
 from planner import Planner, log_planner_decision
 from runtime.activity_query import ActivityQueryService
 from runtime.duplicate_expense_query import DuplicateExpenseQueryService
@@ -78,6 +80,7 @@ from runtime.workforce_query import WorkforceQueryService
 from understanding.pipeline import UnderstandingPipeline
 from workflows import (
     WorkflowResumeResult,
+    WorkflowResumeStatus,
     WorkflowRunResult,
     WorkflowRunStatus,
     WorkflowRuntime,
@@ -812,6 +815,157 @@ async def _seed_worker_candidates(
         event.fields["worker_candidates"] = candidates
 
 
+async def _maybe_trigger_worker_promotion(
+    handled: InteractionHandled,
+    workflow_runtime: WorkflowRuntime,
+    workforce_query: WorkforceQueryService | None,
+    actor: Any,
+    wa_id: str,
+    send_text_fn: Callable[[str, str], Awaitable[Any]],
+    send_button_fn: Callable[[str, str, tuple], Awaitable[Any]] | None = None,
+) -> None:
+    """After a confirmed RECORD_LABOUR_ATTENDANCE execution, send a follow-up
+    offer to add named temporary workers to the Worker Register.
+
+    Fires only when:
+    - The confirmed action type is RECORD_LABOUR_ATTENDANCE
+    - The domain execution succeeded
+    - At least one attendance line has a non-empty worker_name AND worker_id=None
+
+    Nothing in the attendance workflow is changed. This is the optional second
+    step (plan principle P1 + P9): attendance first, register management later.
+    """
+    # Guard: only after a successful RECORD_LABOUR_ATTENDANCE execution.
+    if not isinstance(handled.result, WorkflowResumeResult):
+        return
+    if handled.result.status is not WorkflowResumeStatus.CONFIRMED:
+        return
+    confirmed = handled.result.confirmed_action
+    if confirmed is None:
+        return
+    if confirmed.draft_action.action_type is not DraftActionType.RECORD_LABOUR_ATTENDANCE:
+        return
+    if handled.execution_result is None:
+        return
+    # Import here to avoid circular dependency at module load time.
+    from mesiri_contracts.application.results.execution_result import ExecutionStatus
+    if handled.execution_result.status is not ExecutionStatus.SUCCEEDED:
+        return
+
+    org_id = str(getattr(actor, "organization_id", None) or "")
+    if not org_id:
+        return
+
+    # Extract named temporary workers from the confirmed attendance lines.
+    lines = confirmed.draft_action.fields.get("lines") or []
+    promotable: list[dict] = []
+    for line in lines:
+        if not isinstance(line, dict):
+            continue
+        name = str(line.get("worker_name") or "").strip()
+        if not name:
+            continue  # Headcount-only worker — never promote directly.
+        if line.get("worker_id") is not None:
+            continue  # Already matched to a registered worker — nothing to promote.
+        promotable.append({
+            "name": name,
+            "trade": line.get("trade"),
+            "daily_wage": line.get("daily_wage"),
+        })
+
+    if not promotable:
+        return  # No new named temps — nothing to offer.
+
+    # Build an existing-worker-ids set for the final duplicate guard inside the
+    # promotion node. We reuse the candidate list from the attendance workflow's
+    # collected_fields (already loaded into memory — no extra DB read needed).
+    existing_ids: set[str] = set()
+    if workforce_query is not None:
+        # Fetch the register again — the attendance run may have finished within
+        # the same second so an in-memory set from before is equally fresh, but
+        # fetching again costs one read and prevents any race on a longer flow.
+        try:
+            candidates = await workforce_query.list_worker_candidates(
+                organization_id=org_id,
+                project_id=str(confirmed.draft_action.project_id or "") or None,
+                site_id=str(confirmed.draft_action.site_id or "") or None,
+            )
+            existing_ids = {str(c["worker_id"]) for c in candidates}
+        except Exception:  # noqa: BLE001 — promotion never blocks attendance
+            existing_ids = set()
+
+    # Inject the create_worker callable so the promotion node never touches
+    # repositories directly (same isolation principle as _seed_worker_candidates).
+    user_id = str(getattr(actor, "user_id", None) or confirmed.draft_action.user_id or "")
+    user_id_for_create = user_id or None
+
+    def _sync_create_worker(*, name: str, trade: str | None, daily_wage: object | None) -> None:
+        """Synchronous shim called from inside a sync LangGraph node.
+
+        The node runs inside graph.ainvoke(), but the LangGraph node itself is a
+        sync function (matching every other node in this codebase). LangGraph
+        runs sync nodes via run_in_executor(None, ...) -- a fresh
+        ThreadPoolExecutor thread, which has no event loop of its own.
+        asyncio.get_event_loop() would raise RuntimeError there ("no current
+        event loop in thread"); asyncio.run() creates and tears down a loop
+        local to this thread, which is exactly what's needed for one write.
+        """
+        import asyncio as _asyncio
+        if workforce_query is None:
+            return
+        coro = workforce_query.create_worker(
+            organization_id=org_id,
+            name=name,
+            trade=trade,
+            daily_wage=daily_wage,
+            created_by=user_id_for_create,
+        )
+        _asyncio.run(coro)
+
+    # Synthetic decision + event to drive the promotion workflow through the
+    # WorkflowRuntime (which handles COLLECTING_FIELDS persistence, provide_input
+    # resume, and the single-active gate bypass for informational workflows).
+    promotion_correlation_id = _new_id("promo")
+    promotion_decision = PlannerDecisionV2(
+        correlation_id=promotion_correlation_id,
+        source_message_id=promotion_correlation_id,
+        decision_type=PlannerDecisionType.START_WORKFLOW,
+        workflow_key=WorkflowKey.WORKER_PROMOTION,
+        reason=CanonicalEventType.LABOUR_ATTENDANCE_REQUESTED,
+        organization_id=confirmed.draft_action.organization_id,
+        user_id=confirmed.draft_action.user_id,
+        project_id=confirmed.draft_action.project_id,
+        site_id=confirmed.draft_action.site_id,
+    )
+    promotion_event = CanonicalEventV2(
+        event_id=promotion_correlation_id,
+        correlation_id=promotion_correlation_id,
+        source_message_id=promotion_correlation_id,
+        event_type=CanonicalEventType.LABOUR_ATTENDANCE_REQUESTED,
+        completeness=_IntentCompleteness.ACTIONABLE,
+        organization_id=confirmed.draft_action.organization_id,
+        user_id=confirmed.draft_action.user_id,
+        project_id=confirmed.draft_action.project_id,
+        site_id=confirmed.draft_action.site_id,
+        fields={
+            "promotable_workers": promotable,
+            "_existing_worker_ids": list(existing_ids),
+            "_create_worker_fn": _sync_create_worker,
+        },
+    )
+
+    try:
+        promo_run = await workflow_runtime.start(promotion_decision, promotion_event)
+    except Exception:  # noqa: BLE001 — promotion failure never blocks or retries
+        _log.warning("worker_promotion.start_failed org=%s", org_id)
+        return
+
+    # Pass 1 result: the promotion node ran, built the offer message, and
+    # saved the state as COLLECTING_FIELDS waiting for the user's choice.
+    if promo_run.pending_prompt:
+        await _safe(send_text_fn(wa_id, promo_run.pending_prompt))
+
+
 async def _seed_duplicate_check(
     event: CanonicalEventV2,
     decision: PlannerDecisionV2,
@@ -1146,6 +1300,21 @@ async def process_inbound_message(
                     image_bytes = None
                 if image_bytes is not None:
                     await send_image(message.sender.wa_id, image_bytes, caption=None)
+            # Worker promotion follow-up: fires only after a successful
+            # RECORD_LABOUR_ATTENDANCE with new named temporary workers.
+            # Attendance text + receipt are already sent above — this is
+            # strictly a second-step offer that never delays the reply.
+            await _safe(
+                _maybe_trigger_worker_promotion(
+                    handled,
+                    workflow_runtime,
+                    workforce_query,
+                    actor,
+                    message.sender.wa_id,
+                    send_text,
+                    send_button_fn=send_button,
+                )
+            )
             await _safe(mlog.log_reply(correlation_id=correlation_id, reply=handled.reply_text))
             if handled.result.workflow_instance_id:
                 await _safe(

@@ -29,6 +29,7 @@ from .reverse.graph import build_reverse_graph
 from .site_update.graph import build_activity_creation_graph
 from .transfer.graph import build_transfer_graph
 from .who_am_i.graph import build_who_am_i_graph
+from .worker_promotion.graph import build_worker_promotion_graph
 
 
 class WorkflowCategory(str, Enum):
@@ -165,6 +166,15 @@ _DEFINITIONS: dict[WorkflowKey, WorkflowDefinition] = dict(
             build_activity_continuation_graph,
             WorkflowCategory.PROGRESS,
             allows_completion_without_draft=True,
+        ),
+        _define(
+            WorkflowKey.WORKER_PROMOTION,
+            build_worker_promotion_graph,
+            WorkflowCategory.LABOUR,
+            # Never produces a DraftActionV2. Writes the Worker Register
+            # directly inside the node (via a callable seeded by the caller),
+            # which is intentional: the user's selection IS the confirmation.
+            is_informational=True,
         ),
     )
 )

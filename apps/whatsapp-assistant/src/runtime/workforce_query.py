@@ -77,6 +77,18 @@ class WorkforceQueryService(Protocol):
         """
         ...
 
+    async def create_worker(
+        self,
+        *,
+        organization_id: str,
+        name: str,
+        trade: str | None = None,
+        daily_wage: object | None = None,
+        created_by: str | None = None,
+    ) -> str:
+        """Insert a new active permanent worker and return its UUID string."""
+        ...
+
 
 class PostgresWorkforceQueryService:
     """Reads the real register, annotated with where each worker has worked."""
@@ -182,6 +194,71 @@ class PostgresWorkforceQueryService:
             for row in rows
         ]
 
+    async def create_worker(
+        self,
+        *,
+        organization_id: str,
+        name: str,
+        trade: str | None = None,
+        daily_wage: object | None = None,
+        created_by: str | None = None,
+    ) -> str:
+        """Promote a named temporary worker into the Worker Register.
+
+        Defaults: PERMANENT type, ACTIVE status — the supervisor can change
+        these from the dashboard later. The daily wage from the attendance
+        line is carried as the default, the strongest signal available at
+        promotion time (better than leaving it null and requiring a manual edit).
+
+        Returns the new worker's UUID string.
+        """
+        import decimal
+
+        import sqlalchemy as sa
+
+        from mesiri.domains.workforce.workers import normalize_trade
+
+        try:
+            org_id = uuid.UUID(organization_id)
+        except (TypeError, ValueError):
+            raise ValueError(f"invalid organization_id: {organization_id!r}") from None
+
+        worker_id = uuid.uuid4()
+        normalized_trade = normalize_trade(trade)
+
+        wage_decimal: decimal.Decimal | None = None
+        if daily_wage is not None:
+            try:
+                wage_decimal = decimal.Decimal(str(daily_wage))
+            except (decimal.InvalidOperation, TypeError, ValueError):
+                wage_decimal = None
+
+        workers = sa.table(
+            "workforce_workers",
+            sa.column("id"),
+            sa.column("organization_id"),
+            sa.column("name"),
+            sa.column("trade"),
+            sa.column("worker_type"),
+            sa.column("status"),
+            sa.column("default_daily_wage"),
+            sa.column("created_by"),
+        )
+        stmt = workers.insert().values(
+            id=worker_id,
+            organization_id=org_id,
+            name=name.strip(),
+            trade=normalized_trade,
+            worker_type="permanent",
+            status="active",
+            default_daily_wage=wage_decimal,
+            created_by=uuid.UUID(created_by) if created_by else None,
+        )
+        async with self._db.transaction() as conn:
+            await conn.execute(stmt)
+
+        return str(worker_id)
+
 
 class StubWorkforceQueryService:
     """Empty register unless a roster is configured — local/test use only.
@@ -204,6 +281,7 @@ class StubWorkforceQueryService:
 
     def __init__(self, roster: list[dict[str, Any]] | None = None) -> None:
         self._roster = roster if roster is not None else _roster_from_env()
+        self.created_workers: list[dict[str, Any]] = []
 
     async def list_worker_candidates(
         self,
@@ -217,6 +295,30 @@ class StubWorkforceQueryService:
         # scopes on organization and computes the site/project signals for
         # real -- a worker from another organization never appears there.
         return list(self._roster)
+
+    async def create_worker(
+        self,
+        *,
+        organization_id: str,
+        name: str,
+        trade: str | None = None,
+        daily_wage: object | None = None,
+        created_by: str | None = None,
+    ) -> str:
+        """Stub: records the call in self.created_workers for test assertions."""
+        import uuid as _uuid
+        worker_id = str(_uuid.uuid4())
+        self.created_workers.append(
+            {
+                "worker_id": worker_id,
+                "organization_id": organization_id,
+                "name": name,
+                "trade": trade,
+                "daily_wage": daily_wage,
+                "created_by": created_by,
+            }
+        )
+        return worker_id
 
 
 def _roster_from_env() -> list[dict[str, Any]]:

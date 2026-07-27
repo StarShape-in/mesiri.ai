@@ -17,6 +17,7 @@ import pytest
 from mesiri.domains.workforce.matching import (
     ASK,
     AUTO_ACCEPT,
+    SOFT_MATCH,
     MatchOutcome,
     ReportedWorker,
     WorkerCandidate,
@@ -316,3 +317,66 @@ def test_missing_trade_on_either_side_does_not_penalise():
         ReportedWorker(name="Ravi"), WorkerCandidate("w1", "Ravi", trade="mason")
     )
     assert no_trade.confidence > 0.0
+
+
+# ---------------------------------------------------------------------------
+# SOFT_MATCH — the one case a trade mismatch can drag below ASK
+# ---------------------------------------------------------------------------
+
+
+def test_partial_name_plus_trade_mismatch_lands_in_soft_match_band():
+    """A partial name match (0.35) reduced by a trade mismatch (-0.15) lands
+    at exactly SOFT_MATCH (0.20) -- this is the only combination that reaches
+    the band (see matching.SOFT_MATCH's docstring). Before this band existed,
+    the report silently became NO_MATCH: a real partial-name signal was
+    thrown away because the trade penalty alone dragged it under ASK."""
+    scored = score_candidate(
+        ReportedWorker(name="Ravi", trade="carpenter"),
+        WorkerCandidate("w1", "Ravi Kumar", trade="mason"),
+    )
+    assert SOFT_MATCH <= scored.confidence < ASK
+
+
+def test_soft_match_asks_rather_than_silently_becoming_a_new_worker():
+    result = match_worker(
+        ReportedWorker(name="Ravi", trade="carpenter"),
+        _candidates(WorkerCandidate("w1", "Ravi Kumar", trade="mason")),
+    )
+    assert result.outcome is MatchOutcome.ASK_USER
+    assert result.matched_worker_id is None
+    assert result.candidates[0].low_confidence is True
+
+
+def test_trade_contractor_and_site_history_alone_never_reach_soft_match():
+    """The one case SOFT_MATCH must NOT catch: a completely different name,
+    however strongly everything else corroborates. Trade, contractor and
+    site/project history only ever corroborate a name that already matched
+    something -- they must never suggest a specific person by themselves,
+    soft or otherwise (see score_candidate's docstring)."""
+    scored = score_candidate(
+        ReportedWorker(name="Suresh", trade="mason"),
+        WorkerCandidate("w1", "Ravi", trade="mason", contractor="ABC Labour", seen_on_site=True),
+    )
+    assert scored.confidence == 0.0
+
+    result = match_worker(
+        ReportedWorker(name="Suresh", trade="mason"),
+        _candidates(
+            WorkerCandidate(
+                "w1", "Ravi", trade="mason", contractor="ABC Labour", seen_on_site=True
+            )
+        ),
+    )
+    assert result.outcome is MatchOutcome.NO_MATCH
+
+
+def test_transliteration_miss_with_site_history_is_still_no_match():
+    """The scenario it would be nice to catch, but can't without fuzzy name
+    matching (deliberately not implemented -- see _name_score's docstring):
+    a worker seen on this site before, reported with a spelling that shares
+    no token with their registered name."""
+    scored = score_candidate(
+        ReportedWorker(name="Raavi"),
+        WorkerCandidate("w1", "Ravi", seen_on_site=True),
+    )
+    assert scored.confidence == 0.0
