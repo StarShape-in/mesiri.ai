@@ -100,6 +100,15 @@ class UnderstandingPipeline:
         self._extraction = extraction
         self._storage = object_storage
         self._confidence = confidence_policy or ConfidencePolicy()
+        # Phase 9 perf: bounded in-memory cache for media bytes, keyed by
+        # object_key. Images are immutable once uploaded (content-addressed),
+        # so a cache hit always returns the correct bytes. Helps on admin
+        # message retries and the image_purpose re-dispatch path (where the
+        # held image is re-processed after the user answers the purpose picker).
+        # Capped at _MEDIA_CACHE_MAX entries to prevent unbounded memory growth;
+        # oldest entry is evicted when the cap is reached (simple FIFO via
+        # dict insertion order, which Python 3.7+ guarantees).
+        self._media_cache: dict[str, bytes] = {}
 
     async def understand(
         self,
@@ -321,8 +330,17 @@ class UnderstandingPipeline:
                 internal_message="media modality without a media reference",
                 correlation_id=message.correlation_id,
             )
-        obj = await self._storage.get_object(message.media.object_key)
-        return obj.data
+        key = message.media.object_key
+        if key in self._media_cache:
+            return self._media_cache[key]
+        obj = await self._storage.get_object(key)
+        data = obj.data
+        _MEDIA_CACHE_MAX = 20
+        if len(self._media_cache) >= _MEDIA_CACHE_MAX:
+            # Evict oldest entry (dict preserves insertion order in Python 3.7+)
+            self._media_cache.pop(next(iter(self._media_cache)))
+        self._media_cache[key] = data
+        return data
 
     def _apply_deterministic_shortcut(
         self, result: UnderstandingResult, semantic_type: SemanticType

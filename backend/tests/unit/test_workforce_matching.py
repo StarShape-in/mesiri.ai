@@ -257,11 +257,23 @@ def test_partial_name_match_is_weaker_than_exact():
     assert partial.confidence < exact.confidence
 
 
-def test_partial_name_alone_does_not_reach_the_ask_threshold_by_accident():
-    """A bare first name against a full name is weak evidence; it should only
-    surface when something else corroborates it."""
+def test_partial_name_alone_reaches_the_ask_threshold_but_not_auto_accept():
+    """A bare first name against a full name is weak evidence — too weak to
+    act on silently, but strong enough that it must surface as a question.
+
+    Landing below ASK let a registered worker's own name, typed the short
+    way, resolve to NO_MATCH with no question ever shown — the report
+    silently created a second, unlinked identity instead of asking "is this
+    the Ravi Kumar already on the register?"
+    """
     scored = score_candidate(ReportedWorker(name="Ravi"), WorkerCandidate("w1", "Ravi Kumar"))
-    assert scored.confidence < AUTO_ACCEPT
+    assert ASK <= scored.confidence < AUTO_ACCEPT
+
+
+def test_partial_name_alone_asks_rather_than_silently_becoming_a_new_worker():
+    result = match_worker(ReportedWorker(name="Ravi"), _candidates(WorkerCandidate("w1", "Ravi Kumar")))
+    assert result.outcome is MatchOutcome.ASK_USER
+    assert result.matched_worker_id is None
 
 
 @pytest.mark.parametrize(
