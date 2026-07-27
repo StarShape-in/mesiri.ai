@@ -15,7 +15,6 @@ _SIMPLE_EVENT_TYPE: dict[SemanticType, CanonicalEventType] = {
     SemanticType.EXPENSE: CanonicalEventType.EXPENSE_REQUESTED,
     SemanticType.EQUIPMENT_USAGE: CanonicalEventType.EQUIPMENT_USAGE_REQUESTED,
     SemanticType.LABOUR_UPDATE: CanonicalEventType.LABOUR_ATTENDANCE_REQUESTED,
-    SemanticType.GENERAL_SITE_UPDATE: CanonicalEventType.GENERAL_SITE_UPDATE_REQUESTED,
     SemanticType.GENERAL_QUESTION: CanonicalEventType.GENERAL_QUESTION_ASKED,
     SemanticType.WHOAMI_QUESTION: CanonicalEventType.IDENTITY_LOOKUP_REQUESTED,
     SemanticType.INVENTORY_QUERY: CanonicalEventType.INVENTORY_QUERY_ASKED,
@@ -56,6 +55,22 @@ _REVERSAL_TARGET_EVENT_TYPE: dict[str, CanonicalEventType] = {
     "transfer": CanonicalEventType.TRANSFER_REVERSAL_REQUESTED,
 }
 
+# GENERAL_SITE_UPDATE is the fifth semantic type that splits by a candidate
+# field -- `update_kind` (PROGRESS/PAUSED/RESUMED/COMPLETED -> the message is
+# about work already in progress, so it continues an existing Activity;
+# absent or STARTED -> a new Activity), same pattern as MATERIAL_UPDATE/
+# direction above. Unlike the other splits, an unrecognized/missing
+# `update_kind` does NOT fall back to UNRECOGNIZED -- it means "new activity",
+# which is the correct default for a plain site update with no continuation
+# language (docs/execution/DAILY_REPORTING_PLAN.md P10: never block capture
+# on a classification the AI didn't confidently make).
+_SITE_UPDATE_KIND_EVENT_TYPE: dict[str, CanonicalEventType] = {
+    "progress": CanonicalEventType.ACTIVITY_CONTINUATION_REQUESTED,
+    "paused": CanonicalEventType.ACTIVITY_CONTINUATION_REQUESTED,
+    "resumed": CanonicalEventType.ACTIVITY_CONTINUATION_REQUESTED,
+    "completed": CanonicalEventType.ACTIVITY_CONTINUATION_REQUESTED,
+}
+
 # Business fields required for an event of this type to be ACTIONABLE.
 # Question/Unrecognized events require nothing — they carry no business record.
 REQUIRED_FIELDS: dict[CanonicalEventType, tuple[str, ...]] = {
@@ -70,6 +85,11 @@ REQUIRED_FIELDS: dict[CanonicalEventType, tuple[str, ...]] = {
     # genuinely unactionable and asks for clarification.
     CanonicalEventType.LABOUR_ATTENDANCE_REQUESTED: ("lines",),
     CanonicalEventType.GENERAL_SITE_UPDATE_REQUESTED: (),
+    # No required fields -- the target activity is resolved by seeding
+    # (runtime/inbound_journey.py's _seed_open_activity), never stated by the
+    # user, same reasoning as EXPENSE_REVERSAL_REQUESTED above. A narrative
+    # alone ("finished") is a complete, actionable continuation (P10).
+    CanonicalEventType.ACTIVITY_CONTINUATION_REQUESTED: (),
     CanonicalEventType.GENERAL_QUESTION_ASKED: (),
     CanonicalEventType.IDENTITY_LOOKUP_REQUESTED: (),
     CanonicalEventType.INVENTORY_QUERY_ASKED: (),
@@ -119,4 +139,9 @@ def resolve_event_type(semantic_type: SemanticType, fields: dict) -> CanonicalEv
     if semantic_type is SemanticType.REVERSAL:
         target_kind = str(fields.get("target_kind", "")).strip().lower()
         return _REVERSAL_TARGET_EVENT_TYPE.get(target_kind, CanonicalEventType.UNRECOGNIZED)
+    if semantic_type is SemanticType.GENERAL_SITE_UPDATE:
+        update_kind = str(fields.get("update_kind", "")).strip().lower()
+        return _SITE_UPDATE_KIND_EVENT_TYPE.get(
+            update_kind, CanonicalEventType.GENERAL_SITE_UPDATE_REQUESTED
+        )
     return _SIMPLE_EVENT_TYPE.get(semantic_type, CanonicalEventType.UNRECOGNIZED)

@@ -64,6 +64,7 @@ from runtime.labour_query_service import (
 from runtime.labour_query_service import (
     resolve_date_range as resolve_labour_date_range,
 )
+from runtime.activity_query import ActivityQueryService
 from runtime.logging_ports import MessageLogger, TraceLogger
 from runtime.material_catalog_query import MaterialCatalogQueryService
 from runtime.money_account_query import MoneyAccountQueryService
@@ -996,6 +997,7 @@ async def process_inbound_message(
     labour_query_service: LabourQueryService | None = None,
     vendor_query: VendorQueryService | None = None,
     expense_query_service: ExpenseQueryService | None = None,
+    activity_query: ActivityQueryService | None = None,
     semantic_hint: str | None = None,
     direction_hint: str | None = None,
     pending_report_store: PendingReportStore | None = None,

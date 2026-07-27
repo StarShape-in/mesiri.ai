@@ -35,6 +35,11 @@ class CanonicalEventType(str, Enum):
     EQUIPMENT_USAGE_REQUESTED = "EquipmentUsageRequested"
     LABOUR_ATTENDANCE_REQUESTED = "LabourAttendanceRequested"
     GENERAL_SITE_UPDATE_REQUESTED = "GeneralSiteUpdateRequested"
+    # GENERAL_SITE_UPDATE splits into this or the above by the extracted
+    # `update_kind` field (PROGRESS/PAUSED/RESUMED/COMPLETED -> continuation;
+    # absent/STARTED -> a new activity) -- same pattern as MATERIAL_UPDATE's
+    # `direction` split (see canonicalization/mapping.py's resolve_event_type).
+    ACTIVITY_CONTINUATION_REQUESTED = "ActivityContinuationRequested"
     GENERAL_QUESTION_ASKED = "GeneralQuestionAsked"
     IDENTITY_LOOKUP_REQUESTED = "IdentityLookupRequested"
     INVENTORY_QUERY_ASKED = "InventoryQueryAsked"

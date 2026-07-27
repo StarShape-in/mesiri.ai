@@ -132,7 +132,7 @@ _EXTRACTION_PROMPT = (
     '"name_original" -- never translate a name into an English word. Translate '
     "trades into the English trade word.\n"
     "- general_site_update: narrative, work_type, quantities (array), location, "
-    "contractor, project_name, occurred_on. "
+    "contractor, project_name, occurred_on, update_kind. "
     "narrative is the report in the sender's own words. work_type is the single "
     'primary kind of work if one is clear (e.g. "plastering", "concreting", '
     '"blockwork") -- omit if the message describes several unrelated things or '
@@ -145,10 +145,24 @@ _EXTRACTION_PROMPT = (
     'plastering done" -> quantities: [{"work_type":"plastering","quantity":180,'
     '"unit":"sqm"}]). location is the free-text place on site the work happened '
     '(e.g. "Block A", "2nd floor", "km 12+400") -- omit if unstated, never invent '
-    "one. contractor is the name of a contractor/agency mentioned, if any. This "
-    "type is for reporting work done or in progress -- never for problems, "
-    "delays, or blockers (those are a different report type, not yet extracted "
-    "here).\n"
+    "one. contractor is the name of a contractor/agency mentioned, if any. "
+    "update_kind classifies whether this describes brand-new work or an update "
+    "to something already reported earlier in the day, and MUST be exactly one "
+    'of "started", "progress", "paused", "resumed", "completed", or omitted '
+    'entirely when genuinely unclear. Use "started" only when the message '
+    'explicitly begins new work (e.g. "started plastering on 2nd floor"). Use '
+    '"progress" for a further update to work already underway with no explicit '
+    'stop (e.g. "completed another 40 sqm", "50 sqm done so far" as a running '
+    'total). Use "completed" only when the message says the work is now fully '
+    'finished (e.g. "finished plastering", "plastering done"). Use "paused" for '
+    'a stoppage without finishing (e.g. "stopped for rain", "paused for lunch"). '
+    'Use "resumed" for explicitly restarting paused work. Omit update_kind '
+    "entirely -- never guess -- when the message could equally be new work or a "
+    "continuation; a plain quantity update with no other context "
+    '(e.g. just "180 sqm") should still get "progress" since a bare number is '
+    "never how new work is first reported. This type is for reporting work done "
+    "or in progress -- never for problems, delays, or blockers (those are a "
+    "different report type, not yet extracted here).\n"
     "- general_question: question, topic\n"
     "- whoami_question: question\n"
     "- inventory_query: material_name, project_name (omit material_name if asking about all "

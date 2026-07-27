@@ -1202,3 +1202,118 @@ export async function fetchActivityDetailApi(activityId: string): Promise<Activi
   return res.data
 }
 
+// ─── Daily Progress Reports (DPR) API ──────────────────────────────────────────
+
+export interface DailyReportSummary {
+  id: string
+  dpr_number: string
+  report_date: string
+  project_id?: string
+  project_name: string
+  site_id?: string
+  site_name: string
+  prepared_by_name: string
+  prepared_by_role?: string
+  weather: 'sunny' | 'rainy' | 'cloudy' | 'extreme_heat' | 'windy'
+  temperature_celsius?: number
+  shift: 'day' | 'night' | 'full_day'
+  workflow_status: 'draft' | 'under_review' | 'approved' | 'frozen'
+  activities_count: number
+  labour_count: number
+  issues_count: number
+  narrative_summary?: string
+  created_at: string
+}
+
+export interface DailyReportWorkItem {
+  id: string
+  work_package: string
+  activity_name: string
+  location?: string
+  contractor?: string
+  quantity_planned?: number
+  quantity_executed: number
+  unit: string
+  percent_complete?: number
+  status: 'on_track' | 'delayed' | 'completed' | 'blocked'
+}
+
+export interface DailyReportLabourItem {
+  trade_category: string
+  subcontractor?: string
+  headcount: number
+  hours_worked: number
+  daily_cost_inr?: number
+}
+
+export interface DailyReportEquipmentItem {
+  equipment_name: string
+  category: string
+  hours_operated: number
+  idle_hours: number
+  fuel_litres_consumed?: number
+}
+
+export interface DailyReportIssue {
+  id: string
+  title: string
+  severity: 'low' | 'medium' | 'high' | 'critical'
+  category: 'material_shortage' | 'weather_delay' | 'equipment_failure' | 'design_clarification' | 'manpower'
+  narrative: string
+  is_resolved: boolean
+}
+
+export interface DailyReportAttachment {
+  id: string
+  url?: string
+  caption?: string
+  ai_analysis?: string
+  uploaded_at: string
+}
+
+export interface DailyReportDetailResponse extends DailyReportSummary {
+  general_notes?: string
+  work_items: DailyReportWorkItem[]
+  labour_items: DailyReportLabourItem[]
+  equipment_items: DailyReportEquipmentItem[]
+  issues: DailyReportIssue[]
+  attachments: DailyReportAttachment[]
+  reviewer_name?: string
+  reviewed_at?: string
+  approval_notes?: string
+}
+
+export interface DailyReportsListResponse {
+  items: DailyReportSummary[]
+  total: number
+}
+
+export async function fetchDailyReportsApi(params?: {
+  project_id?: string
+  site_id?: string
+  status?: string
+  category?: string
+  date_from?: string
+  date_to?: string
+  limit?: number
+  offset?: number
+}): Promise<DailyReportsListResponse> {
+  try {
+    const res = await api.get<DailyReportsListResponse>('/dpr/daily-reports', { params })
+    return res.data
+  } catch {
+    // Return empty fallback if backend API endpoint is not yet live
+    return { items: [], total: 0 }
+  }
+}
+
+export async function fetchDailyReportDetailApi(reportId: string): Promise<DailyReportDetailResponse> {
+  const res = await api.get<DailyReportDetailResponse>(`/dpr/daily-reports/${reportId}`)
+  return res.data
+}
+
+export async function approveDailyReportApi(reportId: string, notes?: string): Promise<void> {
+  await api.post(`/dpr/daily-reports/${reportId}/approve`, { notes })
+}
+
+
