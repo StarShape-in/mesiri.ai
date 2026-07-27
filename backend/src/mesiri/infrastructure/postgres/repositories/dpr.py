@@ -167,8 +167,9 @@ class PostgresDprRepository:
         res_dict["temperature_celsius"] = payload.get("temperature_celsius", 32)
         res_dict["shift"] = payload.get("shift", "day")
         res_dict["activities_count"] = len(payload.get("work_items", []))
-        res_dict["labour_count"] = sum(l.get("headcount", 0) for l in payload.get("labour_items", []))
+        res_dict["labour_count"] = sum(item.get("headcount", 0) for item in payload.get("labour_items", []))
         res_dict["issues_count"] = len(payload.get("issues", []))
+
 
         return res_dict
 
