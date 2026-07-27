@@ -1,0 +1,66 @@
+name: Fetch Latency Logs
+
+# Manual, on-demand read of the mesiri service's journal on the VPS --
+# grepped for the perf/latency log lines added while chasing the
+# pre-pipeline gap (whatsapp.ack_sent, whatsapp.sent, receipt.rendered,
+# receipt.browser_launched). Exists so pulling these doesn't require SSH
+# access or remembering the VPS host/user -- run it from the Actions tab
+# (or `gh workflow run fetch-perf-logs.yml -f since=...`) and read the
+# output in the job summary.
+#
+# Read-only: this never touches the running service or its data.
+
+on:
+  workflow_dispatch:
+    inputs:
+      since:
+        description: >-
+          journalctl --since value, in the VPS's own clock (check with the
+          `date` command in a deploy log if unsure of its timezone).
+          Examples: "09:30", "2026-07-27 09:30:00", "1 hour ago".
+        required: true
+        default: "1 hour ago"
+      extra_pattern:
+        description: >-
+          Additional grep -E pattern to OR into the default set below, for
+          when a specific message_id or correlation_id needs to be isolated
+          from a busy window.
+        required: false
+        default: ""
+
+jobs:
+  fetch-logs:
+    name: Fetch mesiri journal (perf lines)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" | tr -d '\r' > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Fetch and grep the journal
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          SINCE: ${{ inputs.since }}
+          EXTRA_PATTERN: ${{ inputs.extra_pattern }}
+        run: |
+          PATTERN='whatsapp\.ack_sent|whatsapp\.sent|receipt\.rendered|receipt\.browser_launched'
+          if [ -n "${EXTRA_PATTERN}" ]; then
+            PATTERN="${PATTERN}|${EXTRA_PATTERN}"
+          fi
+
+          echo "## Latency log lines since \`${SINCE}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+          # journalctl exits non-zero on "no entries found" in some
+          # versions -- that's a valid, useful answer here (means the
+          # window was quiet or the pattern didn't match), not a failed run.
+          ssh -i ~/.ssh/deploy_key "${VPS_USER}@${VPS_HOST}" \
+            "journalctl -u mesiri --since '${SINCE}' --no-pager" \
+            | grep -E "${PATTERN}" | tee -a "$GITHUB_STEP_SUMMARY" || \
+            echo "(no matching lines in this window)" | tee -a "$GITHUB_STEP_SUMMARY"
+
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
