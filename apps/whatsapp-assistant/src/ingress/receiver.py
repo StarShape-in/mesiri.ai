@@ -112,7 +112,9 @@ class WhatsAppReceiver:
             # a full HTTP round trip to Meta that nothing downstream depends
             # on, so awaiting it only delays the actual reply.
             if self._on_message_claimed is not None:
-                ack_task = asyncio.create_task(self._acknowledge(message_id))
+                ack_task = asyncio.create_task(
+                    self._acknowledge(message_id, claimed_at=time.perf_counter())
+                )
                 self._background_tasks.add(ack_task)
                 ack_task.add_done_callback(self._background_tasks.discard)
 
@@ -124,17 +126,34 @@ class WhatsAppReceiver:
         logger.info("Scheduled %s WhatsApp message(s) for ingress processing", scheduled_count)
         return scheduled_count
 
-    async def _acknowledge(self, message_id: str) -> None:
+    async def _acknowledge(self, message_id: str, *, claimed_at: float | None = None) -> None:
         """Read receipt / typing indicator. Best-effort by design: this runs
         detached, so an exception here would otherwise surface as an
         unretrieved task exception rather than anything actionable, and it
-        must never affect whether the message itself gets processed."""
+        must never affect whether the message itself gets processed.
+
+        Logs two separate numbers because they have different causes and
+        different fixes: ``scheduling_ms`` is how long this detached task sat
+        before the event loop ran it (loop congestion -- the pre-pipeline
+        block does ~15 sequential DB round trips per in-flight message), and
+        ``send_ms`` is Meta's own round trip. The blue tick still reads as
+        slow and we don't yet know which of the two is responsible.
+        """
         if self._on_message_claimed is None:
             return
+        started = time.perf_counter()
+        scheduling_ms = round((started - claimed_at) * 1000, 1) if claimed_at is not None else None
         try:
             await self._on_message_claimed(message_id)
         except Exception:  # noqa: BLE001
             logger.exception("Failed to acknowledge WhatsApp message %s", message_id)
+        else:
+            logger.info(
+                "whatsapp.ack_sent message_id=%s scheduling_ms=%s send_ms=%s",
+                message_id,
+                scheduling_ms,
+                round((time.perf_counter() - started) * 1000, 1),
+            )
 
     async def wait_until_idle(self) -> None:
         """Wait for in-flight ingress background tasks to complete."""
