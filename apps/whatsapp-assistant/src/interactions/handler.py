@@ -60,7 +60,7 @@ from workflows.who_am_i import is_whoami_trigger
 from .classifier import classify_reply
 from .classifier_port import InteractionClassifierPort
 from .completion_photo_hint import CompletionPhotoHintStore
-from .name_corrections import parse_name_corrections
+from .name_corrections import keep_reported_names, parse_name_corrections
 from .policy import InteractionRoute, decide
 from .ports import ExecutionDispatcher, ReceiptBuilder
 from .response_handler import render_execution_reply, render_resume_reply, render_workflow_run_reply
@@ -325,6 +325,18 @@ class InteractionHandler:
         if message.modality not in (InputModality.TEXT, InputModality.INTERACTIVE):
             return None
         corrections = parse_name_corrections(message.text or "")
+        if not corrections:
+            return None
+        # Only names actually on this preview may be corrected. The word
+        # separators ("Akhil is Akhilesh") match loosely enough that an
+        # ordinary sentence can look like a pair, so the reply has to name
+        # somebody in the report being confirmed before it counts as an edit.
+        reported = [
+            str(line.get("worker_name") or "")
+            for line in (loaded.state.collected_fields.get("lines") or [])
+            if isinstance(line, dict)
+        ]
+        corrections = keep_reported_names(corrections, reported)
         if not corrections:
             return None
 

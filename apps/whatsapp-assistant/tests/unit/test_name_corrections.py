@@ -217,3 +217,61 @@ def test_the_name_is_matched_case_insensitively():
     )
 
     assert update["collected_fields"]["lines"][0]["worker_name"] == "Akhilesh"
+
+
+# ---------------------------------------------------------------------------
+# Typed the way people actually type on a phone
+# ---------------------------------------------------------------------------
+
+ON_PREVIEW = ["Akhil", "Niyas", "Ravi"]
+
+
+def _correct(reply: str) -> dict[str, str]:
+    """Parse, then keep only what the preview recognises -- the two steps the
+    handler performs together."""
+    from interactions.name_corrections import keep_reported_names
+
+    return keep_reported_names(parse_name_corrections(reply), ON_PREVIEW)
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "Akhil is Akhilesh",
+        "akhil is akhilesh",
+        "AKHIL IS AKHILESH",
+        "Akhil is actually Akhilesh",
+        "Akhil should be Akhilesh",
+        "Akhil not Akhilesh",
+        "Akhil -> Akhilesh",
+    ],
+)
+def test_a_correction_can_be_spoken_plainly(reply):
+    """Arrows are awkward on a phone keyboard, and "Akhil is Akhilesh" is
+    what people actually write."""
+    assert _correct(reply) == {reply.split()[0]: reply.split()[-1]}
+
+
+def test_several_plainly_spoken_corrections_in_one_reply():
+    assert _correct("Akhil is Akhilesh, Niyas is Niyas PM") == {
+        "Akhil": "Akhilesh",
+        "Niyas": "Niyas PM",
+    }
+
+
+@pytest.mark.parametrize("reply", ["Ravi is mason", "Akhil is helper", "Niyas is carpenter"])
+def test_stating_someones_trade_is_not_renaming_them(reply):
+    """The risk that comes with a word separator. "Ravi is mason" describes
+    Ravi; renaming him to "mason" would be unrecoverable from WhatsApp."""
+    assert _correct(reply) == {}
+
+
+def test_a_correction_for_somebody_not_on_the_preview_is_ignored():
+    """The guard that makes loose matching safe -- and it also catches a typo
+    in the correction itself, rather than inventing a worker."""
+    assert _correct("Suresh is Suresh Babu") == {}
+
+
+@pytest.mark.parametrize("reply", ["yes", "no", "save all", "12 helpers 4 masons"])
+def test_ordinary_replies_are_still_never_corrections(reply):
+    assert _correct(reply) == {}
