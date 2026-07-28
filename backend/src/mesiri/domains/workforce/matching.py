@@ -4,12 +4,20 @@ Pure domain: no I/O, no SQL, no AI. Candidates are supplied by the caller
 (a repository read); this module only scores them and says what to do.
 
 **The rule this module exists to enforce (plan principle P4): a worker is
-never identified by name alone.** `Ravi (Mason)` and `Ravi (Painter)` are
-different people, and merging them silently corrupts attendance history in a
-way nobody notices until wages are wrong. A perfect name match with no
+never identified by *part of* a name.** `Ravi (Mason)` and `Ravi (Painter)`
+are different people, and merging them silently corrupts attendance history
+in a way nobody notices until wages are wrong. A first-name match with no
 corroborating signal is therefore capped below the auto-accept threshold by
 construction, not by convention — see `_NAME_ONLY_CEILING` and the test that
 pins it.
+
+The one deliberate exception is `_unique_full_name_match`: a *complete* name,
+spelled exactly, identifying exactly one worker in the register. That is not
+the collision P4 guards against — and the uniqueness requirement means the
+rule switches itself off the moment a name stops picking out one person. It
+exists because the strict reading asked "which Ilan Usman?" about the only
+Ilan Usman on the register, every single day. See that function's docstring
+for the full argument, including what it still refuses to decide.
 
 The counter-pressure is principle P9: the person recording this is on a site
 and busy. Asking about every worker would make a 10-person report unusable.
@@ -234,6 +242,56 @@ def score_candidate(reported: ReportedWorker, candidate: WorkerCandidate) -> Sco
     )
 
 
+def _unique_full_name_match(
+    reported: ReportedWorker,
+    candidates: list[WorkerCandidate],
+    scored: list[ScoredCandidate],
+) -> ScoredCandidate | None:
+    """The registered worker reported by their full name, spelled exactly.
+
+    Returns the candidate when the reported name is a *full* name (two or
+    more parts) that matches exactly, and exactly one worker in the register
+    carries that name. Otherwise None.
+
+    Why this is safe under P4, which says a worker is never identified by
+    name alone. P4 exists to stop two different people being merged, and its
+    canonical case is a bare first name: `Ravi (Mason)` and `Ravi (Painter)`
+    are different people, and first names collide constantly on a site. That
+    reasoning does not carry to a full name. "Ilan Usman" reported against a
+    register holding exactly one "Ilan Usman" is not a guess -- and the
+    uniqueness requirement is what keeps it honest: the moment a second
+    worker shares the name, this returns None and the user is asked, which
+    is precisely the situation P4 is defending against.
+
+    Why it is needed. Without it, an exact full-name match scores
+    _W_NAME_EXACT (0.55) and only reaches AUTO_ACCEPT if the trade is also
+    stated on both sides and agrees. In practice it often isn't: workers are
+    added from the dashboard without a trade, attendance sheets list names
+    without one, and OCR wording varies. The supervisor was then asked
+    "which Ilan Usman?" about the only Ilan Usman on the register -- and
+    answering "someone new" (or an image path that never surfaced the
+    question) filed a registered worker as a temporary one, splitting their
+    history and offering them for promotion all over again.
+    """
+    if len(normalize_name(reported.name).split()) < 2:
+        return None
+    exact = [
+        s
+        for s, c in zip(scored, candidates, strict=False)
+        if normalize_name(c.name) == normalize_name(reported.name)
+    ]
+    if len(exact) != 1:
+        return None
+    # A stated trade that disagrees still gets confirmed, exactly as it does
+    # for a first-name match (_TRADE_MISMATCH_CEILING). A full name makes the
+    # "different person" reading weaker, not impossible, and the question
+    # ("same worker, new trade?") is worth asking either way -- answering it
+    # wrong merges two people or splits one. A trade absent on either side is
+    # not a disagreement and does not block the match: that is the common
+    # case this function exists to fix.
+    return None if exact[0].trade_changed else exact[0]
+
+
 def match_worker(
     reported: ReportedWorker, candidates: list[WorkerCandidate]
 ) -> MatchResult:
@@ -242,11 +300,15 @@ def match_worker(
     Auto-accepts only when a single candidate clears AUTO_ACCEPT. Two
     candidates both clearing it is *more* ambiguous, not less — that asks.
     """
-    scored = sorted(
-        (score_candidate(reported, c) for c in candidates),
-        key=lambda s: s.confidence,
-        reverse=True,
-    )
+    # Score in candidate order first so a scored entry can be traced back to
+    # the candidate it came from (the full-name check below needs both).
+    scored_in_order = [score_candidate(reported, c) for c in candidates]
+
+    unique_full_name = _unique_full_name_match(reported, candidates, scored_in_order)
+    if unique_full_name is not None:
+        return MatchResult(MatchOutcome.AUTO_MATCHED, (unique_full_name,))
+
+    scored = sorted(scored_in_order, key=lambda s: s.confidence, reverse=True)
     plausible = tuple(s for s in scored if s.confidence >= ASK)
 
     if not plausible:

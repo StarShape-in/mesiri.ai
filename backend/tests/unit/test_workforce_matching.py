@@ -375,3 +375,99 @@ def test_transliteration_miss_with_site_history_is_still_no_match():
         WorkerCandidate("w1", "Ravi", seen_on_site=True),
     )
     assert scored.confidence == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Unique full-name match — recognising a registered worker without a question
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("reported_trade", "registered_trade", "case"),
+    [
+        ("carpenter", "carpenter", "both state the same trade"),
+        ("carpenter", None, "added from the dashboard without a trade"),
+        (None, "carpenter", "the sheet lists names only"),
+        (None, None, "neither side states a trade"),
+        ("Carpentry", "Carpenter", "the same trade worded differently"),
+    ],
+)
+def test_a_uniquely_named_registered_worker_is_recognised(
+    reported_trade, registered_trade, case
+):
+    """The bug this fixes, reported from real use: "Ilan Usman" is already a
+    permanent worker, yet attendance kept treating him as somebody new --
+    so he was offered for promotion again every single day.
+
+    An exact full-name match scores 0.55, which only reaches AUTO_ACCEPT when
+    a trade is stated on *both* sides and agrees. Every other case asked
+    "which Ilan Usman?" about the only Ilan Usman on the register.
+    """
+    result = match_worker(
+        ReportedWorker(name="Ilan Usman", trade=reported_trade),
+        _candidates(WorkerCandidate("w1", "Ilan Usman", trade=registered_trade)),
+    )
+    assert result.outcome is MatchOutcome.AUTO_MATCHED, case
+    assert result.matched_worker_id == "w1", case
+
+
+def test_two_workers_sharing_a_full_name_still_ask():
+    """The uniqueness guard is what keeps the rule above honest under P4 --
+    the moment the name stops identifying one person, it stops deciding."""
+    result = match_worker(
+        ReportedWorker(name="Ilan Usman"),
+        _candidates(
+            WorkerCandidate("w1", "Ilan Usman", trade="carpenter"),
+            WorkerCandidate("w2", "Ilan Usman", trade="painter"),
+        ),
+    )
+    assert result.outcome is MatchOutcome.ASK_USER
+    assert result.matched_worker_id is None
+
+
+def test_a_full_name_match_with_a_changed_trade_is_still_confirmed():
+    """A full name makes "different person" less likely, not impossible, and
+    the two readings need different answers -- so the trade-change rule holds
+    here exactly as it does for a first name."""
+    result = match_worker(
+        ReportedWorker(name="Ilan Usman", trade="mason"),
+        _candidates(WorkerCandidate("w1", "Ilan Usman", trade="carpenter")),
+    )
+    assert result.outcome is MatchOutcome.ASK_USER
+    assert result.candidates[0].trade_changed is True
+
+
+def test_a_bare_first_name_is_never_auto_matched_by_the_full_name_rule():
+    """P4's canonical case, unchanged: first names collide constantly on a
+    site, so one part of a name never decides on its own."""
+    assert (
+        match_worker(
+            ReportedWorker(name="Ravi"), _candidates(WorkerCandidate("w1", "Ravi"))
+        ).outcome
+        is MatchOutcome.ASK_USER
+    )
+    # ...including when the register holds the full version of that name.
+    assert (
+        match_worker(
+            ReportedWorker(name="Ilan"), _candidates(WorkerCandidate("w1", "Ilan Usman"))
+        ).outcome
+        is MatchOutcome.ASK_USER
+    )
+
+
+def test_the_full_name_rule_ignores_case_and_spacing():
+    result = match_worker(
+        ReportedWorker(name="  ilan   USMAN "),
+        _candidates(WorkerCandidate("w1", "Ilan Usman")),
+    )
+    assert result.matched_worker_id == "w1"
+
+
+def test_a_genuinely_new_full_name_is_still_no_match():
+    """Recognising known workers must not start inventing matches for
+    unknown ones -- a new name still flows to the temporary-worker path."""
+    result = match_worker(
+        ReportedWorker(name="Rahul Nair"),
+        _candidates(WorkerCandidate("w1", "Ilan Usman", trade="carpenter")),
+    )
+    assert result.outcome is MatchOutcome.NO_MATCH

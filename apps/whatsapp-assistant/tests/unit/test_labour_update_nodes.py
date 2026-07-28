@@ -103,13 +103,38 @@ def test_confident_match_is_applied_without_asking():
     assert update["collected_fields"]["lines"][0]["worker_id"] == RAVI_KUMAR
 
 
-def test_name_alone_always_asks():
-    """The P4 guarantee, seen from the workflow: a perfect name match with
-    nothing corroborating it must produce a question, never a silent match."""
+def test_part_of_a_name_alone_always_asks():
+    """The P4 guarantee, seen from the workflow: one part of a name matching,
+    with nothing corroborating it, must produce a question and never a silent
+    match. `Ravi (Mason)` and `Ravi (Painter)` are different people, and first
+    names collide constantly on a site.
+
+    The boundary moved once, deliberately: a *full* name that identifies
+    exactly one worker in the register is now recognised without asking (see
+    matching._unique_full_name_match, and the pair of tests below). This
+    still holds for everything short of that.
+    """
+    state = _base_state(
+        {
+            "lines": [_named("Ravi")],
+            "worker_candidates": [{"worker_id": RAVI_KUMAR, "name": "Ravi Kumar"}],
+        }
+    )
+    update = match_workers(state)
+    assert update["awaiting_slot"] == f"{WORKER_MATCH_SLOT_PREFIX}0"
+    assert update["collected_fields"]["lines"][0].get("worker_id") is None
+
+
+def test_a_full_name_shared_by_two_registered_workers_still_asks():
+    """The other half of that boundary: the moment a full name stops picking
+    out one person, it stops deciding on its own."""
     state = _base_state(
         {
             "lines": [_named("Ravi Kumar")],
-            "worker_candidates": [{"worker_id": RAVI_KUMAR, "name": "Ravi Kumar"}],
+            "worker_candidates": [
+                {"worker_id": RAVI_KUMAR, "name": "Ravi Kumar", "trade": "mason"},
+                {"worker_id": RAVI_S, "name": "Ravi Kumar", "trade": "painter"},
+            ],
         }
     )
     update = match_workers(state)
@@ -600,3 +625,58 @@ def test_preview_never_shows_the_raw_date_plumbing():
 def test_preview_omits_the_date_line_when_there_is_no_date():
     """An older draft persisted before dating shipped must still render."""
     assert "Date:" not in _preview({"lines": [_group(4, "mason")]})
+
+
+# --- recognising permanent workers ----------------------------------------
+
+
+def test_a_registered_worker_is_recognised_and_the_rest_stay_temporary():
+    """The reported scenario, end to end at the node.
+
+    Register holds one permanent worker, Ilan Usman. Attendance names him
+    plus two people nobody has recorded before. Ilan must be linked to his
+    register entry silently -- no question during the report -- while Rahul
+    and Niyas pass through as temporary workers.
+
+    That `worker_id` is what keeps Ilan out of the promotion offer
+    afterwards: the follow-up only collects lines whose worker_id is still
+    None (see runtime/inbound_journey.py's _maybe_trigger_worker_promotion).
+    Before this, Ilan was offered for promotion again on every single report.
+    """
+    state = _base_state(
+        {
+            "lines": [
+                _named("Ilan Usman", "carpenter"),
+                _named("Rahul", "helper"),
+                _named("Niyas", "mason"),
+            ],
+            "worker_candidates": [
+                {"worker_id": RAVI_KUMAR, "name": "Ilan Usman", "trade": "carpenter"}
+            ],
+        }
+    )
+    update = match_workers(state)
+
+    assert update["awaiting_slot"] is None, "recognising a known worker must not ask"
+    lines = update["collected_fields"]["lines"]
+    assert lines[0]["worker_id"] == RAVI_KUMAR
+    assert lines[1]["worker_id"] is None
+    assert lines[2]["worker_id"] is None
+
+
+def test_a_registered_worker_is_recognised_when_the_sheet_omits_the_trade():
+    """Attendance sheets routinely list names with no trade column, and
+    workers are often added from the dashboard without one. Neither should
+    turn a known worker back into a stranger."""
+    state = _base_state(
+        {
+            "lines": [{"worker_name": "Ilan Usman", "trade": None, "headcount": 1}],
+            "worker_candidates": [
+                {"worker_id": RAVI_KUMAR, "name": "Ilan Usman", "trade": None}
+            ],
+        }
+    )
+    update = match_workers(state)
+
+    assert update["awaiting_slot"] is None
+    assert update["collected_fields"]["lines"][0]["worker_id"] == RAVI_KUMAR

@@ -103,6 +103,20 @@ _TRADE_SYNONYMS: dict[str, str] = {
     "supervisor": "supervisor",
     "operator": "operator",
     "driver": "driver",
+    # Trade-as-activity wordings. A register entry saying "Carpenter" and a
+    # sheet saying "Carpentry" are the same trade, but without these they
+    # normalize to different strings and score as a *mismatch* -- which is
+    # worse than no trade at all, because a mismatch actively subtracts
+    # confidence and forces a question about a worker who plainly matches.
+    "carpentry": "carpenter",
+    "masonry": "mason",
+    "painting": "painter",
+    "plumbing": "plumber",
+    "welding": "welder",
+    "electrical": "electrician",
+    "wiring": "electrician",
+    "bar_bending": "bar_bender",
+    "steel_fixing": "bar_bender",
 }
 
 
