@@ -25,13 +25,19 @@ export interface PettyCashBox {
   current_balance: number
   custodian_name: string
   project_name: string
+  project_id?: string
+  site_id?: string
 }
 
 interface RecordVoucherDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   cashBoxes: PettyCashBox[]
-  onVoucherCreated?: (newVoucher: any) => void
+  // No arguments -- the caller re-fetches real data after a successful
+  // record rather than being handed a client-fabricated voucher object
+  // (the backend resolves the real category/vendor/expense id, none of
+  // which this dialog can predict).
+  onVoucherCreated?: () => void
 }
 
 import { recordVoucherApi } from '@/lib/api'
@@ -72,33 +78,25 @@ export function RecordVoucherDialog({
       alert('Voucher amount exceeds available site cash box balance.')
       return
     }
+    if (!selectedBox?.project_id) {
+      alert('This cash box has no project assigned, so a voucher cannot be recorded against it.')
+      return
+    }
 
     setSubmitting(true)
 
     try {
       await recordVoucherApi({
         cash_box_id: cashBoxId,
+        project_id: selectedBox.project_id,
+        site_id: selectedBox.site_id,
         amount: val,
         category,
         vendor_name: vendorName || undefined,
         description: description || 'Petty cash expenditure',
         date: voucherDate,
       })
-      onVoucherCreated?.({
-        id: `vch_${Date.now()}`,
-        voucher_number: `VCH-${Math.floor(100 + Math.random() * 900)}`,
-        cash_box_id: cashBoxId,
-        cash_box_name: selectedBox?.name || 'Site Cash Box',
-        project_name: selectedBox?.project_name || 'Site Project',
-        custodian_name: selectedBox?.custodian_name || 'Site Supervisor',
-        amount: val,
-        category,
-        vendor_name: vendorName || 'Local Store',
-        description: description || 'Petty cash expenditure',
-        date: voucherDate,
-        status: 'pending',
-        source: 'Web Direct',
-      })
+      onVoucherCreated?.()
       onOpenChange(false)
       setCashBoxId('')
       setAmount('')
