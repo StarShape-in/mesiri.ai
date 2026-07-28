@@ -5,6 +5,7 @@ Mounted at /dpr so:
   GET   /dpr/daily-reports/{report_id}     get daily report details
   POST  /dpr/daily-reports                 create daily report draft
   POST  /dpr/daily-reports/{report_id}/approve approve a report
+  POST  /dpr/daily-reports/{report_id}/revise  correct an approved/published report
 """
 
 from __future__ import annotations
@@ -48,6 +49,11 @@ class CreateDprRequest(BaseModel):
 
 class ApproveDprRequest(BaseModel):
     notes: str | None = None
+
+
+class ReviseDprRequest(BaseModel):
+    revision_reason: str
+    narrative_summary: str | None = None
 
 
 def _resolve_project_ids(
@@ -178,6 +184,56 @@ async def publish_daily_report(
     if not success:
         raise HTTPException(status_code=404, detail="Report not found or not in APPROVED status")
     return {"status": "success"}
+
+
+@router.post("/daily-reports/{report_id}/revise")
+async def revise_daily_report(
+    report_id: uuid.UUID,
+    req: ReviseDprRequest,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Correct an already APPROVED/PUBLISHED report: re-assembles the
+    payload from what's actually recorded now (same composition
+    create_version uses) and inserts it as a new version superseding the
+    current one, with a stated `revision_reason`. Status resets to DRAFT so
+    the correction goes back through submit-for-review/approve/publish.
+
+    404s for a report with no site-level scope (the manual-entry path, or a
+    PROJECT-level roll-up) -- there is no live data to re-assemble a
+    revision from; only a generated SITE report has one.
+    """
+    if not req.revision_reason or not req.revision_reason.strip():
+        raise HTTPException(status_code=400, detail="revision_reason is required")
+
+    repo = PostgresDprRepository(conn)
+    scope = await repo.get_report_scope(
+        organization_id=auth_context.organization_id, report_id=report_id
+    )
+    if scope is None:
+        raise HTTPException(status_code=404, detail="Daily report not found")
+    if scope["level"] != "SITE" or scope["site_id"] is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Only a generated site-level report can be revised",
+        )
+
+    payload = await repo.assemble_site_report_payload(
+        organization_id=auth_context.organization_id,
+        project_id=scope["project_id"],
+        site_id=scope["site_id"],
+        report_date=scope["report_date"],
+    )
+    try:
+        version = await repo.revise_version(
+            daily_report_id=report_id,
+            payload=payload,
+            narrative_summary=req.narrative_summary,
+            revision_reason=req.revision_reason,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"status": "success", **{k: str(v) if v is not None else v for k, v in version.items()}}
 
 
 @router.get("/daily-reports/{report_id}/pdf")
