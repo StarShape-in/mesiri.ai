@@ -839,6 +839,26 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
                     sent = await sender.send_image(wa_id, image_bytes, caption=None)
                     if not sent:
                         pass  # image already tried; text was already sent above
+            # Worker promotion follow-up. This belongs *here*, not in
+            # inbound_journey: a confirmation reply is resolved by the fast
+            # path above and returns before the journey ever runs, so a hook
+            # placed there never fires for the one event it exists to follow
+            # -- which is exactly why no promotion offer was ever sent.
+            # Attendance text and receipt are already delivered above; this is
+            # strictly a second-step offer that never delays either.
+            from runtime.inbound_journey import _maybe_trigger_worker_promotion
+
+            try:
+                await _maybe_trigger_worker_promotion(
+                    handled,
+                    workflow_runtime,
+                    workforce_query,
+                    ctx,
+                    wa_id,
+                    sender.send_text,
+                )
+            except Exception:  # noqa: BLE001 — promotion never disturbs saved attendance
+                _log.exception("worker_promotion.trigger_failed user=%s", ctx.user_id)
             # Phase 8 perf: user reply is already sent above. These 4 writes
             # are order-independent audit rows -- run them concurrently.
             await asyncio.gather(
@@ -888,6 +908,23 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
                 send_list=sender.send_list,
                 send_button=sender.send_button,
             )
+            # The other half of worker promotion: answering the offer arrives
+            # here, as a slot answer. The node decided who to add but cannot
+            # write (it is pure), so the inserts happen on this side. Same
+            # reason as the fast path above -- inbound_journey never runs for
+            # a slot answer either.
+            from runtime.inbound_journey import _create_promoted_workers
+
+            try:
+                await _create_promoted_workers(
+                    slot_handled.result,
+                    workforce_query,
+                    ctx,
+                    wa_id,
+                    sender.send_text,
+                )
+            except Exception:  # noqa: BLE001 — never disturbs saved attendance
+                _log.exception("worker_promotion.create_failed user=%s", ctx.user_id)
             await asyncio.gather(
                 message_logger.log_reply(
                     correlation_id=message.correlation_id, reply=reply.text

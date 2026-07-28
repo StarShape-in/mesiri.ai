@@ -1530,32 +1530,12 @@ async def process_inbound_message(
                     image_bytes = None
                 if image_bytes is not None:
                     await send_image(message.sender.wa_id, image_bytes, caption=None)
-            # Worker promotion follow-up: fires only after a successful
-            # RECORD_LABOUR_ATTENDANCE with new named temporary workers.
-            # Attendance text + receipt are already sent above — this is
-            # strictly a second-step offer that never delays the reply.
-            await _safe(
-                _maybe_trigger_worker_promotion(
-                    handled,
-                    workflow_runtime,
-                    workforce_query,
-                    actor,
-                    message.sender.wa_id,
-                    send_text,
-                )
-            )
-            # ...and the other half: when *this* message was the answer to the
-            # promotion offer, the node has decided who to add but cannot write
-            # (it is pure). Do the inserts here.
-            await _safe(
-                _create_promoted_workers(
-                    handled.result,
-                    workforce_query,
-                    actor,
-                    message.sender.wa_id,
-                    send_text,
-                )
-            )
+            # Worker promotion is NOT hooked here. A confirmation reply is
+            # resolved by handle_fast_path in runtime/dependencies.py, which
+            # returns before this journey ever runs, and the answer to the
+            # promotion offer arrives there too, via handle_slot_answer. Both
+            # hooks live at those two call sites; placing them here looked
+            # right and fired for nobody.
             await _safe(mlog.log_reply(correlation_id=correlation_id, reply=handled.reply_text))
             if handled.result.workflow_instance_id:
                 await _safe(
