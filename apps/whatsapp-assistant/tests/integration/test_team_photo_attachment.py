@@ -33,16 +33,6 @@ async def test_engine():
 async def seeded(test_engine: AsyncEngine):
     """One organization, one user, one recorded attendance report."""
 
-    async def _clean() -> None:
-        async with test_engine.begin() as conn:
-            await conn.execute(sa.text("DELETE FROM labour_attendance_attachments"))
-            await conn.execute(sa.text("DELETE FROM labour_attendance_lines"))
-            await conn.execute(sa.text("DELETE FROM labour_attendance_reports"))
-            await conn.execute(sa.text("DELETE FROM projects"))
-            await conn.execute(sa.text("DELETE FROM users"))
-            await conn.execute(sa.text("DELETE FROM organizations"))
-
-    await _clean()
     org_id, user_id = uuid.uuid4(), uuid.uuid4()
     project_id, report_id = uuid.uuid4(), uuid.uuid4()
     async with test_engine.begin() as conn:
@@ -85,7 +75,27 @@ async def seeded(test_engine: AsyncEngine):
             },
         )
     yield {"org_id": org_id, "user_id": user_id, "report_id": report_id}
-    await _clean()
+    # Only this fixture's own rows, in FK order. Wiping these tables wholesale
+    # is unsafe in a shared database -- every other suite writes to users and
+    # organizations too, and "DELETE FROM users" fails outright while anything
+    # else still references one.
+    async with test_engine.begin() as conn:
+        await conn.execute(
+            sa.text("DELETE FROM labour_attendance_attachments WHERE report_id = :r"),
+            {"r": report_id},
+        )
+        await conn.execute(
+            sa.text("DELETE FROM labour_attendance_lines WHERE report_id = :r"),
+            {"r": report_id},
+        )
+        await conn.execute(
+            sa.text("DELETE FROM labour_attendance_reports WHERE id = :r"), {"r": report_id}
+        )
+        await conn.execute(
+            sa.text("DELETE FROM projects WHERE id = :p"), {"p": project_id}
+        )
+        await conn.execute(sa.text("DELETE FROM users WHERE id = :u"), {"u": user_id})
+        await conn.execute(sa.text("DELETE FROM organizations WHERE id = :o"), {"o": org_id})
 
 
 class _DbAdapter:
@@ -145,7 +155,12 @@ async def test_a_report_belonging_to_another_organization_is_refused(
     assert result is None
     async with test_engine.connect() as conn:
         count = (
-            await conn.execute(sa.text("SELECT count(*) FROM labour_attendance_attachments"))
+            await conn.execute(
+                sa.text(
+                    "SELECT count(*) FROM labour_attendance_attachments WHERE report_id = :r"
+                ),
+                {"r": seeded["report_id"]},
+            )
         ).scalar()
     assert count == 0
 

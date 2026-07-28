@@ -31,22 +31,19 @@ async def test_engine():
 
 @pytest.fixture
 async def clean_db(test_engine: AsyncEngine):
-    async def _clean() -> None:
-        async with test_engine.begin() as conn:
-            await conn.execute(sa.text("DELETE FROM workforce_workers"))
-            await conn.execute(sa.text("DELETE FROM users"))
-            await conn.execute(sa.text("DELETE FROM organizations"))
+    """No-op kept so existing fixtures can depend on it.
 
-    await _clean()
+    This file used to wipe workforce_workers, users and organizations
+    wholesale. That is unsafe in a shared database: every other suite's rows
+    live in those tables too, and "DELETE FROM users" fails outright the
+    moment anything else (a material receipt, an expense) still references
+    one. Running the backend integration suite first was enough to break
+    every test here.
+
+    Cleanup is now per-fixture and by id -- see test_org -- so these tests
+    neither destroy nor depend on anybody else's data, in any order.
+    """
     yield
-    # Other integration test files' clean_db fixtures delete `users` without
-    # knowing about workforce_workers (this file is the first to write there
-    # with a `created_by` FK to users.id, which -- unlike organization_id --
-    # is NOT ON DELETE CASCADE). In a full-suite run against one shared
-    # Postgres (exactly what CI does), a row left behind here breaks whatever
-    # other file's clean_db runs next. Clean up after ourselves too, not just
-    # before.
-    await _clean()
 
 
 @pytest.fixture
@@ -66,7 +63,19 @@ async def test_org(test_engine: AsyncEngine, clean_db):
                 "status": "active",
             },
         )
-    return org_id
+    yield org_id
+    # By id, in FK order. workforce_workers.created_by points at users.id and
+    # is NOT ON DELETE CASCADE, so the workers this org's tests created have
+    # to go before the user does.
+    async with test_engine.begin() as conn:
+        await conn.execute(
+            sa.text("DELETE FROM workforce_workers WHERE organization_id = :org"),
+            {"org": org_id},
+        )
+        await conn.execute(
+            sa.text("DELETE FROM users WHERE organization_id = :org"), {"org": org_id}
+        )
+        await conn.execute(sa.text("DELETE FROM organizations WHERE id = :org"), {"org": org_id})
 
 
 @pytest.fixture
