@@ -1300,6 +1300,54 @@ async def _seed_finance_query_context(
         }
 
 
+def _build_finance_query_pdf(
+    workflow_key: WorkflowKey, fields: dict[str, Any]
+) -> tuple[bytes, str] | None:
+    """Build (pdf_bytes, filename) for a finance query's output_format="pdf"
+    request, or None if `workflow_key` isn't one of the two finance query
+    workflows. Pure -- reads only the balance_results/expense_results
+    _seed_finance_query_context already seeded into `fields`, so this is
+    testable without constructing a full inbound journey. See
+    domains/reports/pdf_table.py (backend, imported in-process -- same
+    convention runtime/dpr_request_query.py and friends use for their own
+    repository calls) for the actual rendering."""
+    if workflow_key not in (WorkflowKey.ACCOUNT_BALANCE_QUERY, WorkflowKey.EXPENSE_QUERY):
+        return None
+
+    from mesiri.domains.reports.pdf_table import render_table_pdf
+
+    if workflow_key is WorkflowKey.ACCOUNT_BALANCE_QUERY:
+        balances = fields.get("balance_results") or []
+        pdf_bytes = render_table_pdf(
+            title="Account Balances",
+            subtitle=None,
+            columns=["Account", "Balance"],
+            rows=[[b.get("name"), b.get("balance")] for b in balances],
+            column_widths=[100, 80],
+            empty_message="No matching accounts found.",
+        )
+        return pdf_bytes, "Account_Balances.pdf"
+
+    expense_results = fields.get("expense_results") or {}
+    items = expense_results.get("items") or []
+    label = expense_results.get("date_range_label") or "All Time"
+    pdf_bytes = render_table_pdf(
+        title="Expenses",
+        subtitle=(
+            f"{label}  |  {expense_results.get('count', 0)} expenses  |  "
+            f"Total: {expense_results.get('total', '0')}"
+        ),
+        columns=["Date", "Amount", "Description"],
+        rows=[
+            [item.get("occurred_date"), item.get("amount"), item.get("description")]
+            for item in items
+        ],
+        column_widths=[35, 35, 110],
+        empty_message="No matching expenses found.",
+    )
+    return pdf_bytes, "Expenses.pdf"
+
+
 async def _plan_and_run(
     event: CanonicalEventV2,
     *,
@@ -2105,6 +2153,32 @@ async def process_inbound_message(
             _log.warning(
                 "dpr_request.document_send_failed correlation_id=%s", correlation_id, exc_info=True
             )
+
+    # Finance query "send as PDF": the text reply above always goes first
+    # (same reasoning as the DPR side-channel just above), and a PDF follows
+    # only when the extractor set output_format="pdf" on the request (see
+    # platform/ai/src/mesiri_ai/adapters/{gemini,deepseek}/adapter.py's
+    # finance_query field docs). Unlike DPR, there is no R2 artifact to fetch
+    # -- _build_finance_query_pdf renders on the fly from the balance_results/
+    # expense_results _seed_finance_query_context already seeded.
+    if (
+        workflow_run is not None
+        and canonical_event is not None
+        and canonical_event.fields.get("output_format") == "pdf"
+        and send_document is not None
+    ):
+        built = _build_finance_query_pdf(workflow_run.workflow_key, canonical_event.fields)
+        if built is not None:
+            pdf_bytes, filename = built
+            try:
+                await send_document(message.sender.wa_id, pdf_bytes, filename=filename, caption=None)
+            except Exception:  # noqa: BLE001 -- the status text was already sent; a
+                # failed PDF build/send must not fail the whole journey.
+                _log.warning(
+                    "finance_query.pdf_send_failed correlation_id=%s",
+                    correlation_id,
+                    exc_info=True,
+                )
 
     await _safe(mlog.mark_completed(correlation_id=correlation_id))
 

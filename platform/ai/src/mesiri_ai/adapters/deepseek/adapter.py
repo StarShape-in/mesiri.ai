@@ -112,7 +112,7 @@ _EXTRACTION_PROMPT = (
     '"current stock of steel") or its movement history '
     '(e.g. "show today\'s cement history"). This is a question, never an update.\n'
     "- finance_query: query_kind, account_name, category_name, date_range, missing_receipts, "
-    "project_name. "
+    "output_format, project_name. "
     'query_kind MUST be exactly "balance" or "expenses" -- never any other word. '
     'Use "balance" for questions about how much money/cash is in an account '
     '(e.g. "how much cash do I have?", "balance of Site Cash", "how much money is left?"). '
@@ -127,6 +127,10 @@ _EXTRACTION_PROMPT = (
     '"expenses" and the question is specifically about which expenses have no receipt/bill '
     'attached (e.g. "which expenses are missing receipts?", "show expenses without a bill", '
     '"who hasn\'t uploaded a receipt yet") -- omit entirely otherwise, never set it to false. '
+    'output_format is "pdf" ONLY when the user explicitly asks for the answer as a file/'
+    'document (e.g. "send me my balance as pdf", "export my expenses as pdf", "pdf of '
+    'today\'s expenses", "can I get that as a document") -- omit entirely for a plain '
+    "question that expects a normal chat reply. "
     "This is always a question, never an update -- "
     "never confuse with expense (which records a NEW expense being reported).\n"
     "- transfer: amount, from_account_name, to_account_name, description, project_name. "
