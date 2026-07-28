@@ -16,11 +16,31 @@ from __future__ import annotations
 from mesiri_contracts.application.commands.progress import (
     AddProgressUpdateCommand,
     CreateActivityCommand,
+    ReportSiteIssueCommand,
 )
 
 _VALID_UPDATE_KINDS = frozenset(
     {"STARTED", "PROGRESS", "PAUSED", "RESUMED", "COMPLETED", "NOTE"}
 )
+
+# site_issue_type / site_issue_status enum members (migration 0430). Kept
+# here (not imported from infrastructure/postgres/repositories/progress.py's
+# identical constants) since that file is the REST-only direct-write path's
+# own copy -- this validates the WhatsApp-confirmed command path instead, and
+# domain validation must not import infrastructure.
+_VALID_ISSUE_TYPES = frozenset(
+    {
+        "WEATHER",
+        "MATERIAL_SHORTAGE",
+        "LABOUR_SHORTAGE",
+        "DRAWING_PENDING",
+        "EQUIPMENT_BREAKDOWN",
+        "INSPECTION_WAITING",
+        "ACCESS",
+        "OTHER",
+    }
+)
+_VALID_ISSUE_SEVERITIES = frozenset({"LOW", "MEDIUM", "HIGH", "CRITICAL"})
 
 
 def validate_create_activity(cmd: CreateActivityCommand) -> list[str]:
@@ -64,4 +84,16 @@ def validate_add_progress_update(cmd: AddProgressUpdateCommand) -> list[str]:
     if not cmd.narrative and cmd.quantity is None and cmd.update_kind == "NOTE":
         reasons.append("a NOTE update needs a narrative or a quantity")
 
+    return reasons
+
+
+def validate_report_site_issue(cmd: ReportSiteIssueCommand) -> list[str]:
+    """Return violation reasons; empty list means valid."""
+    reasons: list[str] = []
+    if cmd.project_id is None:
+        reasons.append("project is not resolved")
+    if cmd.issue_type not in _VALID_ISSUE_TYPES:
+        reasons.append(f"unrecognized issue_type: {cmd.issue_type}")
+    if cmd.severity not in _VALID_ISSUE_SEVERITIES:
+        reasons.append(f"unrecognized severity: {cmd.severity}")
     return reasons

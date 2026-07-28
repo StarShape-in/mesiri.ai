@@ -70,7 +70,7 @@ _EXTRACTION_PROMPT = (
     '"detected_language" (the source language\'s common English name, e.g. '
     '"Malayalam", "English"), '
     '"semantic_type" (expense|equipment_usage|material_update|labour_update|'
-    "general_site_update|general_question|whoami_question|inventory_query|"
+    "general_site_update|site_issue|general_question|whoami_question|inventory_query|"
     "labour_query|activity_query|dpr_request|finance_query|transfer|petty_cash|reversal|"
     "account_admin|unknown), "
     '"fields" (object, values in English except proper nouns/names -- see '
@@ -162,8 +162,26 @@ _EXTRACTION_PROMPT = (
     "continuation; a plain quantity update with no other context "
     '(e.g. just "180 sqm") should still get "progress" since a bare number is '
     "never how new work is first reported. This type is for reporting work done "
-    "or in progress -- never for problems, delays, or blockers (those are a "
-    "different report type, not yet extracted here).\n"
+    "or in progress -- never for problems, delays, or blockers (those are "
+    "site_issue, a different report type).\n"
+    "- site_issue: issue_type, severity, narrative, delay_duration_minutes, project_name, "
+    'occurred_on. issue_type MUST be exactly one of "WEATHER", "MATERIAL_SHORTAGE", '
+    '"LABOUR_SHORTAGE", "DRAWING_PENDING", "EQUIPMENT_BREAKDOWN", "INSPECTION_WAITING", '
+    '"ACCESS", "OTHER" -- infer from context (e.g. "no cement left" -> MATERIAL_SHORTAGE, '
+    '"JCB broke down" -> EQUIPMENT_BREAKDOWN, "raining since morning" -> WEATHER, '
+    '"waiting on the structural drawings" -> DRAWING_PENDING, "site is locked, no one can '
+    'get in" -> ACCESS, "waiting for the inspector to sign off" -> INSPECTION_WAITING), '
+    'defaulting to "OTHER" only when genuinely unclear which bucket it falls in. severity '
+    'MUST be exactly one of "LOW", "MEDIUM", "HIGH", "CRITICAL" -- infer from the language '
+    'used (e.g. "completely stopped", "urgent", "everyone is idle" -> HIGH/CRITICAL; a '
+    'minor inconvenience -> LOW/MEDIUM), defaulting to "MEDIUM" when unclear. narrative is '
+    "the blocker description in the sender's own words. delay_duration_minutes is a plain "
+    "number of minutes only when the message states how long work has been stopped/delayed "
+    "(e.g. \"stopped for 2 hours\" -> 120) -- omit if not stated. This type is specifically "
+    "for a NEW problem, delay, or blocker that stops or slows down work -- never for a plain "
+    "progress report (general_site_update) and never for a QUESTION about existing issues "
+    '("any open issues?" is activity_query, asking; "ran out of cement, work stopped" is '
+    "site_issue, reporting).\n"
     "- general_question: question, topic\n"
     "- whoami_question: question\n"
     "- inventory_query: material_name, project_name (omit material_name if asking about all "

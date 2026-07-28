@@ -172,3 +172,42 @@ class AddProgressUpdateCommand(BaseModel):
     created_by: CanonicalUuid
 
     model_config = {"extra": "forbid"}
+
+
+class ReportSiteIssueCommand(BaseModel):
+    """Report a Site Issue (blocker/delay) -- always a new site_issues row,
+    never a continuation of a prior one (unlike AddProgressUpdateCommand,
+    there is no "same issue, more detail" concept in V1: a second report
+    about the same problem is simply a second issue).
+
+    `issue_type`/`severity` are closed enums (site_issue_type/
+    site_issue_status per migration 0430) the AI extraction picks directly --
+    unlike Expense's category_text, there is no org-scoped catalog to
+    resolve against, so no Handler-side resolution step is needed (mirrors
+    Material's `unit`/`unit_id` split NOT applying here, since there is
+    nothing analogous to resolve)."""
+
+    version: str = CONTRACT_VERSION
+
+    command_id: str
+    idempotency_key: str
+    correlation_id: str
+
+    organization_id: CanonicalUuid
+    project_id: CanonicalUuid | None
+    site_id: CanonicalUuid | None
+    activity_id: CanonicalUuid | None = None
+
+    issue_type: str
+    severity: str = "MEDIUM"
+    narrative: str | None = None
+    delay_duration_minutes: int | None = None
+
+    occurred_date: date
+    occurred_date_source: str = "inferred_at_confirmation"
+
+    source: str = "whatsapp_text"
+
+    created_by: CanonicalUuid
+
+    model_config = {"extra": "forbid"}

@@ -311,6 +311,7 @@ def build_canonical_event(
         SemanticType.LABOUR_UPDATE,
         SemanticType.MATERIAL_UPDATE,
         SemanticType.EXPENSE,
+        SemanticType.SITE_ISSUE,
     ):
         # Dated here, not in the mapper: this is the only point that holds
         # both what the message said and where the sender is (see

@@ -31,6 +31,7 @@ class DraftActionType(str, Enum):
     RECORD_LABOUR_ATTENDANCE = "record_labour_attendance"
     CREATE_ACTIVITY = "create_activity"
     ADD_PROGRESS_UPDATE = "add_progress_update"
+    RECORD_SITE_ISSUE = "record_site_issue"
     # Future v1 domains: record_equipment_usage
 
 

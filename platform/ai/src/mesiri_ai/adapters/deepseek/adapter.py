@@ -54,7 +54,7 @@ _EXTRACTION_PROMPT = (
     '"detected_language" (the source language\'s common English name, e.g. '
     '"Malayalam", "English"), '
     '"semantic_type" (one of: expense, equipment_usage, material_update, '
-    "labour_update, general_site_update, general_question, whoami_question, "
+    "labour_update, general_site_update, site_issue, general_question, whoami_question, "
     "inventory_query, labour_query, activity_query, dpr_request, finance_query, transfer, "
     "petty_cash, "
     "reversal, account_admin, unknown), "
@@ -103,7 +103,20 @@ _EXTRACTION_PROMPT = (
     '"started" only for explicitly new work, "completed" only when explicitly '
     'finished, "progress" for a further update to work already underway '
     '(including a bare quantity with no other context, e.g. "180 sqm"). Never '
-    "for problems/delays/blockers.\n"
+    "for problems/delays/blockers (those are site_issue).\n"
+    "- site_issue: issue_type, severity, narrative, delay_duration_minutes, project_name, "
+    'occurred_on. issue_type MUST be exactly one of "WEATHER", "MATERIAL_SHORTAGE", '
+    '"LABOUR_SHORTAGE", "DRAWING_PENDING", "EQUIPMENT_BREAKDOWN", "INSPECTION_WAITING", '
+    '"ACCESS", "OTHER" -- infer from context (e.g. "no cement left" -> MATERIAL_SHORTAGE, '
+    '"JCB broke down" -> EQUIPMENT_BREAKDOWN, "raining since morning" -> WEATHER), '
+    'defaulting to "OTHER" only when genuinely unclear. severity MUST be exactly one of '
+    '"LOW", "MEDIUM", "HIGH", "CRITICAL" -- infer from the language used (e.g. "completely '
+    'stopped", "urgent" -> HIGH/CRITICAL; a minor inconvenience -> LOW/MEDIUM), defaulting '
+    'to "MEDIUM" when unclear. narrative is the blocker description in the sender\'s own '
+    "words. delay_duration_minutes is a plain number of minutes only when stated -- omit "
+    "if not stated. This type is specifically for a NEW problem/delay/blocker that stops "
+    "or slows down work -- never for a plain progress report (general_site_update) and "
+    'never for a QUESTION about existing issues ("any open issues?" is activity_query).\n'
     "- general_question: question, topic\n"
     "- whoami_question: question\n"
     "- inventory_query: material_name, project_name (omit material_name if asking about all "

@@ -23,6 +23,11 @@ _SIMPLE_EVENT_TYPE: dict[SemanticType, CanonicalEventType] = {
     SemanticType.DPR_REQUEST: CanonicalEventType.DPR_REQUESTED,
     SemanticType.TRANSFER: CanonicalEventType.TRANSFER_REQUESTED,
     SemanticType.ACCOUNT_ADMIN: CanonicalEventType.ACCOUNT_ADMIN_REQUESTED,
+    # Always a new site_issues row -- no candidate-field split (issue_type/
+    # severity are closed enums the AI picks directly, unlike direction/
+    # query_kind/target_kind/update_kind), so this belongs here rather than
+    # in one of the _XXX_EVENT_TYPE split tables below.
+    SemanticType.SITE_ISSUE: CanonicalEventType.SITE_ISSUE_REPORTED,
 }
 
 # MATERIAL_UPDATE is the one semantic type that splits by the candidate's
@@ -119,6 +124,10 @@ REQUIRED_FIELDS: dict[CanonicalEventType, tuple[str, ...]] = {
     # mirroring reverse/nodes.py's own "nothing to reverse" completeness
     # check.
     CanonicalEventType.ACCOUNT_ADMIN_REQUESTED: ("action",),
+    # Mirrors EXPENSE_REQUESTED: ("amount",) -- one required field (the
+    # closed-enum issue_type), everything else (severity, narrative, delay)
+    # optional.
+    CanonicalEventType.SITE_ISSUE_REPORTED: ("issue_type",),
     CanonicalEventType.CLARIFICATION_REQUIRED: (),
     CanonicalEventType.UNRECOGNIZED: (),
 }

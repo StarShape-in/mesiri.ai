@@ -23,6 +23,7 @@ from mesiri_contracts.application.commands.progress import (
     ActivityQuantityInput,
     AddProgressUpdateCommand,
     CreateActivityCommand,
+    ReportSiteIssueCommand,
 )
 from mesiri_contracts.assistant.v2.confirmed_action import ConfirmedActionV2
 from mesiri_contracts.common.ids import new_id
@@ -139,6 +140,38 @@ def build_add_progress_update_command(confirmed: ConfirmedActionV2) -> AddProgre
         unit=fields.get("unit"),
         unit_id=fields.get("unit_id"),
         occurred_at=occurred_at,
+        source=str(fields.get("source") or "whatsapp_text"),
+        created_by=confirmed.confirmed_by_user_id,
+    )
+
+
+def _delay_minutes(value: object) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def build_report_site_issue_command(confirmed: ConfirmedActionV2) -> ReportSiteIssueCommand:
+    draft = confirmed.draft_action
+    fields = draft.fields
+
+    return ReportSiteIssueCommand(
+        command_id=new_id("cmd"),
+        idempotency_key=confirmed.workflow_instance_id,
+        correlation_id=confirmed.correlation_id,
+        organization_id=draft.organization_id,
+        project_id=draft.project_id,
+        site_id=draft.site_id,
+        activity_id=fields.get("activity_id"),
+        issue_type=str(fields.get("issue_type") or "OTHER").upper(),
+        severity=str(fields.get("severity") or "MEDIUM").upper(),
+        narrative=fields.get("narrative"),
+        delay_duration_minutes=_delay_minutes(fields.get("delay_duration_minutes")),
+        occurred_date=_activity_date(fields),
+        occurred_date_source=str(fields.get("occurred_date_source") or "inferred_at_confirmation"),
         source=str(fields.get("source") or "whatsapp_text"),
         created_by=confirmed.confirmed_by_user_id,
     )

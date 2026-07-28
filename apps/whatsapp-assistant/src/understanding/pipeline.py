@@ -48,6 +48,7 @@ _REQUIRED_FIELDS: dict[SemanticType, tuple[str, ...]] = {
     # one missing field, which is honest -- that reply lost the names.
     SemanticType.LABOUR_UPDATE: ("workers",),
     SemanticType.GENERAL_SITE_UPDATE: (),
+    SemanticType.SITE_ISSUE: ("issue_type",),
     SemanticType.GENERAL_QUESTION: (),
     SemanticType.WHOAMI_QUESTION: (),
     SemanticType.INVENTORY_QUERY: (),
