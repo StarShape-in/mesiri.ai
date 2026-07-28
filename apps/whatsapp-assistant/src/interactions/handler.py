@@ -27,6 +27,8 @@ from typing import Any
 
 from backend.ports import ActorIdentity
 from channel.replies import (
+    CATEGORY_ROWS,
+    IMAGE_PURPOSE_ROWS,
     IMAGE_PURPOSE_SEMANTIC_HINT,
     ReplySpec,
     render_category_prompt,
@@ -61,6 +63,14 @@ from .ports import ExecutionDispatcher, ReceiptBuilder
 from .response_handler import render_execution_reply, render_resume_reply, render_workflow_run_reply
 
 logger = logging.getLogger(__name__)
+
+#: Interactive reply ids owned by the app's own fixed pickers, which
+#: handle_slot_answer must never consume as an answer to a workflow's slot
+#: question. Derived from the row definitions rather than written out, so a
+#: new row cannot be added to a picker without also being protected here.
+_FOREIGN_PICKER_IDS: frozenset[str] = frozenset(
+    row.id for row in (*IMAGE_PURPOSE_ROWS, *CATEGORY_ROWS)
+)
 
 
 @dataclass(slots=True)
@@ -294,6 +304,20 @@ class InteractionHandler:
         """
         if message.modality not in (InputModality.TEXT, InputModality.INTERACTIVE):
             return None
+        # A tap belonging to one of the app's own fixed pickers is never an
+        # answer to a slot question. Slot options carry dynamic values --
+        # worker ids, account ids -- never these literals, so an id from this
+        # set means the user is answering something else entirely.
+        #
+        # This runs before both the category-tap handler and the image-purpose
+        # picker (see runtime/dependencies.py's ordering), so without the
+        # check it swallows their taps: with a promotion offer open, choosing
+        # "Attendance" for a photo was consumed as a worker name and answered
+        # "Sorry, I didn't catch that" -- and the photo was never processed.
+        if message.modality is InputModality.INTERACTIVE:
+            tapped = str((message.metadata or {}).get("interactive_reply_id") or "")
+            if tapped in _FOREIGN_PICKER_IDS:
+                return None
         loaded = await self._runtime.get_awaiting_input(user_id)
         if loaded is None:
             return None
