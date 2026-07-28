@@ -33,6 +33,8 @@ import OperationsTimelinePage from '@/pages/OperationsTimelinePage'
 import OperationsIssuesPage from '@/pages/OperationsIssuesPage'
 import OperationsGalleryPage from '@/pages/OperationsGalleryPage'
 import OperationsAnalyticsPage from '@/pages/OperationsAnalyticsPage'
+import OperationsSettingsPage from '@/pages/OperationsSettingsPage'
+
 
 
 
@@ -78,7 +80,8 @@ export default function App() {
 
         <Route path="operations/analytics" element={<OperationsAnalyticsPage />} />
 
-        <Route path="operations/settings" element={<OperationalPlaceholder title="Operations Settings" />} />
+        <Route path="operations/settings" element={<OperationsSettingsPage />} />
+
 
 
         {/* Finance Section */}

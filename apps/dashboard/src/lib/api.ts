@@ -409,6 +409,30 @@ export async function fetchSiteGalleryApi(params: {
   return res.data
 }
 
+export interface OperationsSettingsItem {
+  auto_approve_dprs: boolean
+  require_photo_evidence: boolean
+  allow_overrun_quantities: boolean
+  default_shift: string
+  whatsapp_nudge_hours: number
+  auto_flag_weather_delays: boolean
+  supervisor_phone_numbers: string[]
+}
+
+
+export async function fetchOperationsSettingsApi(): Promise<OperationsSettingsItem> {
+  const res = await api.get<OperationsSettingsItem>('/progress/settings')
+  return res.data
+}
+
+export async function updateOperationsSettingsApi(
+  payload: Partial<OperationsSettingsItem>
+): Promise<OperationsSettingsItem> {
+  const res = await api.patch<OperationsSettingsItem>('/progress/settings', payload)
+  return res.data
+}
+
+
 
 export async function acknowledgeSiteIssueApi(
   issueId: string

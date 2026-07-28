@@ -104,14 +104,10 @@ class SiteIssuesListResponse(BaseModel):
 class CreateSiteIssueRequest(BaseModel):
     project_id: uuid.UUID
     site_id: uuid.UUID
-    activity_id: uuid.UUID | None = None
-    work_package_id: uuid.UUID | None = None
-    location_id: uuid.UUID | None = None
-    issue_type: str = "OTHER"
-    severity: str = "MEDIUM"
+    issue_type: str
+    severity: str
     narrative: str | None = None
     delay_duration_minutes: int | None = None
-    assigned_user_id: uuid.UUID | None = None
 
 
 class ResolveSiteIssueRequest(BaseModel):
@@ -121,3 +117,22 @@ class ResolveSiteIssueRequest(BaseModel):
 class WontFixSiteIssueRequest(BaseModel):
     resolution_notes: str | None = None
 
+
+class OperationsSettingsResponse(BaseModel):
+    auto_approve_dprs: bool = False
+    require_photo_evidence: bool = True
+    allow_overrun_quantities: bool = False
+    default_shift: str = "DAY"
+    whatsapp_nudge_hours: int = 18
+    auto_flag_weather_delays: bool = True
+    supervisor_phone_numbers: list[str] = []
+
+
+class UpdateOperationsSettingsRequest(BaseModel):
+    auto_approve_dprs: bool | None = None
+    require_photo_evidence: bool | None = None
+    allow_overrun_quantities: bool | None = None
+    default_shift: str | None = None
+    whatsapp_nudge_hours: int | None = None
+    auto_flag_weather_delays: bool | None = None
+    supervisor_phone_numbers: list[str] | None = None
