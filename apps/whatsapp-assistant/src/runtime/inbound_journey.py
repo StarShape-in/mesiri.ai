@@ -953,25 +953,48 @@ async def _maybe_trigger_worker_promotion(
     Nothing in the attendance workflow is changed. This is the optional second
     step (plan principle P1 + P9): attendance first, register management later.
     """
+    # Every early return below logs why. This has now silently declined to
+    # fire twice for different reasons, each time indistinguishable from the
+    # feature simply not existing -- there is no way to tell from the outside
+    # whether the offer was skipped deliberately or a guard rejected it. One
+    # INFO line per decision makes the next report answerable from the logs
+    # instead of from guesswork.
+    def _skip(reason: str, **detail: Any) -> None:
+        _log.info(
+            "worker_promotion.skipped reason=%s %s",
+            reason,
+            " ".join(f"{k}={v}" for k, v in detail.items()),
+        )
+
     # Guard: only after a successful RECORD_LABOUR_ATTENDANCE execution.
     if not isinstance(handled.result, WorkflowResumeResult):
+        _skip("not_a_resume", got=type(handled.result).__name__)
         return
     if handled.result.status is not WorkflowResumeStatus.CONFIRMED:
+        _skip("not_confirmed", status=handled.result.status.value)
         return
     confirmed = handled.result.confirmed_action
     if confirmed is None:
+        _skip("no_confirmed_action")
         return
     if confirmed.draft_action.action_type is not DraftActionType.RECORD_LABOUR_ATTENDANCE:
+        _skip("not_attendance", action=confirmed.draft_action.action_type.value)
         return
     if handled.execution_result is None:
+        _skip("no_execution_result")
         return
     # Import here to avoid circular dependency at module load time.
     from mesiri_contracts.application.results.execution_result import ExecutionStatus
     if handled.execution_result.status is not ExecutionStatus.SUCCEEDED:
+        # ALREADY_EXECUTED lands here on a genuine replay -- a resend of the
+        # same confirmation. Worth seeing, because it also means the offer for
+        # that report was already made once.
+        _skip("execution_not_succeeded", status=handled.execution_result.status.value)
         return
 
     org_id = str(getattr(actor, "organization_id", None) or "")
     if not org_id:
+        _skip("no_organization_on_actor", actor=type(actor).__name__)
         return
 
     # Extract named temporary workers from the confirmed attendance lines.
@@ -992,7 +1015,8 @@ async def _maybe_trigger_worker_promotion(
         })
 
     if not promotable:
-        return  # No new named temps — nothing to offer.
+        _skip("no_new_named_workers", lines=len(lines))
+        return
 
     # Seed the register so the promotion node can screen each chosen worker
     # against it (name + trade + contractor) before writing. A node must never
@@ -1052,13 +1076,29 @@ async def _maybe_trigger_worker_promotion(
     try:
         promo_run = await workflow_runtime.start(promotion_decision, promotion_event)
     except Exception:  # noqa: BLE001 — promotion failure never blocks or retries
-        _log.warning("worker_promotion.start_failed org=%s", org_id)
+        _log.exception("worker_promotion.start_failed org=%s", org_id)
         return
 
     # Pass 1 result: the promotion node ran, built the offer message, and
     # saved the state as COLLECTING_FIELDS waiting for the user's choice.
     if promo_run.pending_prompt:
+        _log.info(
+            "worker_promotion.offered org=%s workers=%d status=%s",
+            org_id,
+            len(promotable),
+            promo_run.status.value,
+        )
         await _safe(send_text_fn(wa_id, promo_run.pending_prompt))
+    else:
+        # The run produced no message -- the offer exists nowhere the user can
+        # see. Loud, because this is indistinguishable from the feature being
+        # switched off, and is exactly how it went unnoticed before.
+        _log.error(
+            "worker_promotion.no_prompt org=%s status=%s workers=%d",
+            org_id,
+            promo_run.status.value,
+            len(promotable),
+        )
 
 
 async def _create_promoted_workers(
@@ -1089,12 +1129,19 @@ async def _create_promoted_workers(
     if not isinstance(queued, list) or not queued:
         return
     if workforce_query is None:
+        _log.error("worker_promotion.no_workforce_query queued=%d", len(queued))
         return
 
     org_id = str(getattr(actor, "organization_id", None) or "")
     if not org_id:
+        _log.error("worker_promotion.no_organization queued=%d", len(queued))
         return
+    # created_by is NOT NULL on workforce_workers, so a missing user id makes
+    # every insert fail. Say so once, clearly, rather than reporting each
+    # worker individually as a mystery failure.
     created_by = str(getattr(actor, "user_id", None) or "") or None
+    if created_by is None:
+        _log.error("worker_promotion.no_user_id org=%s queued=%d", org_id, len(queued))
 
     failed: list[str] = []
     for worker in queued:
@@ -1109,9 +1156,20 @@ async def _create_promoted_workers(
                 created_by=created_by,
             )
         except Exception:  # noqa: BLE001 — a failed promotion never disturbs attendance
-            _log.warning("worker_promotion.create_failed org=%s", org_id)
+            # exception(), not warning(): "some workers wouldn't save" is not
+            # diagnosable without the reason, and this is the only place it
+            # exists.
+            _log.exception(
+                "worker_promotion.create_failed org=%s name=%s", org_id, worker.get("name")
+            )
             failed.append(str(worker["name"]))
 
+    _log.info(
+        "worker_promotion.created org=%s requested=%d failed=%d",
+        org_id,
+        len(queued),
+        len(failed),
+    )
     if failed:
         await _safe(
             send_text_fn(
