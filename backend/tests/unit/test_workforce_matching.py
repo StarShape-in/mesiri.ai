@@ -1,13 +1,24 @@
-"""Worker matching — the rules that stop attendance history being corrupted.
+"""Worker matching — two separate questions, two separate contracts.
 
-The load-bearing rule (Labour plan principle P4): **a worker is never
-identified by name alone.** A silent false merge is the worst failure this
-module can produce — nobody notices until wages are wrong, and attendance is
-immutable so it cannot simply be corrected.
+**`match_worker` — "is this attendance line an existing worker?"** Exact full
+name AND exact trade, or no match. No fuzzy matching, no partial names, no
+contractor, no site history, no confidence, and — importantly — no
+questions. Every test in the first half asserts that rule and nothing else.
 
-These tests pin the invariants rather than the exact numbers, so the weights
-can be retuned without rewriting the suite; where a specific threshold matters
-it is asserted through behaviour (which outcome results), not the constant.
+**`score_candidate` — "does this look like somebody already registered?"**
+The weighted model, now used only by the promotion step's duplicate screen,
+which asks about one worker at a time *after* attendance is saved. The
+second half covers that, unchanged.
+
+Why they split. The weighted model answered both questions until an 80-row
+register upload turned into dozens of "is this Ravi the same Ravi?"
+questions inside WhatsApp. It scaled to five workers and not to eighty, so
+attendance matching became deterministic and the model stayed where a
+question is still affordable.
+
+P4 -- a worker is never identified by *part* of a name -- is not weakened by
+this. It is stricter: a partial name now matches nothing at all, where
+before it was offered as a question.
 """
 
 from __future__ import annotations
@@ -15,8 +26,6 @@ from __future__ import annotations
 import pytest
 
 from mesiri.domains.workforce.matching import (
-    ASK,
-    AUTO_ACCEPT,
     MatchOutcome,
     ReportedWorker,
     WorkerCandidate,
@@ -29,105 +38,189 @@ def _candidates(*cs: WorkerCandidate) -> list[WorkerCandidate]:
     return list(cs)
 
 
-# ---------------------------------------------------------------------------
-# P4 — never by name alone
-# ---------------------------------------------------------------------------
+#: The register used across the attendance-matching tests, mirroring the
+#: worked example this rule was specified against.
+REGISTER = [
+    WorkerCandidate("w-ilan", "Ilan Usman", trade="carpenter"),
+    WorkerCandidate("w-ravi", "Ravi Kumar", trade="mason"),
+    WorkerCandidate("w-ajith", "Ajith N", trade="helper"),
+]
 
 
-def test_perfect_name_match_alone_never_auto_matches():
-    """The single most important assertion in this module.
+# ===========================================================================
+# match_worker — exact name AND exact trade, or nothing
+# ===========================================================================
 
-    A flawless name match with nothing corroborating it must still ask. If
-    this ever passes silently, two different people with the same name get
-    merged and their attendance is wrong from then on.
+
+@pytest.mark.parametrize(
+    ("name", "trade", "expected_id"),
+    [
+        ("Ilan Usman", "Carpenter", "w-ilan"),
+        ("Ravi Kumar", "Mason", "w-ravi"),
+        ("Ajith N", "Helper", "w-ajith"),
+    ],
+)
+def test_an_exact_name_and_trade_matches_with_no_question(name, trade, expected_id):
+    result = match_worker(ReportedWorker(name=name, trade=trade), REGISTER)
+
+    assert result.outcome is MatchOutcome.AUTO_MATCHED
+    assert result.matched_worker_id == expected_id
+
+
+@pytest.mark.parametrize(
+    ("name", "trade", "why"),
+    [
+        ("Ilan Usman", "Mason", "right name, wrong trade"),
+        ("Ravi Kumar", "Carpenter", "right name, wrong trade"),
+        ("Ilan", None, "part of a name, no trade"),
+        ("Ravi", None, "part of a name, no trade"),
+        ("Ajith", "helper", "part of a name, right trade"),
+        ("Ilan Usman", None, "right name, no trade stated"),
+        ("Suresh Babu", "mason", "nobody of that name"),
+        ("", "mason", "no name at all"),
+    ],
+)
+def test_anything_short_of_both_is_not_a_match(name, trade, why):
+    """The whole rule, from the other side. Each of these becomes a temporary
+    worker and is offered for the register afterwards, which is recoverable
+    -- whereas linking the wrong person is not."""
+    result = match_worker(ReportedWorker(name=name, trade=trade), REGISTER)
+
+    assert result.outcome is MatchOutcome.NO_MATCH, why
+    assert result.matched_worker_id is None, why
+
+
+def test_a_name_with_no_trade_beside_it_matches_nobody():
+    """Called out on its own because it is the consequence people are most
+    likely to be surprised by: a sheet with no Trade column matches nothing
+    at all, and every row becomes a promotion candidate.
+
+    That is the honest reading of "both must match", and it fails toward
+    creating a new worker -- which the promotion step lets the user catch --
+    rather than toward linking the wrong one, which nobody sees.
     """
-    reported = ReportedWorker(name="Ravi")
-    result = match_worker(reported, _candidates(WorkerCandidate("w1", "Ravi")))
+    result = match_worker(ReportedWorker(name="Ilan Usman"), REGISTER)
 
-    assert result.outcome is MatchOutcome.ASK_USER
-    assert result.matched_worker_id is None
+    assert result.outcome is MatchOutcome.NO_MATCH
 
 
-def test_name_only_confidence_stays_below_the_auto_accept_threshold():
-    """Enforced structurally by the ceiling, not by weights happening to sum
-    low — so adding a future signal can't accidentally break P4."""
-    scored = score_candidate(
-        ReportedWorker(name="Ravi Kumar"), WorkerCandidate("w1", "Ravi Kumar")
+def test_a_worker_with_no_trade_on_either_side_still_matches():
+    """Both absent is still "the same", so a register kept without trades
+    stays usable when the report omits them too."""
+    register = [WorkerCandidate("w1", "Ilan Usman")]
+    result = match_worker(ReportedWorker(name="Ilan Usman"), register)
+
+    assert result.matched_worker_id == "w1"
+
+
+@pytest.mark.parametrize(
+    "name", ["ILAN USMAN", "ilan usman", "  Ilan   Usman  ", "Ilan-Usman", "Ilan Usman."]
+)
+def test_matching_ignores_case_spacing_and_punctuation(name):
+    """"Exact" means the same name, not the same keystrokes -- OCR returns
+    whole sheets in capitals."""
+    result = match_worker(ReportedWorker(name=name, trade="carpenter"), REGISTER)
+
+    assert result.matched_worker_id == "w-ilan"
+
+
+@pytest.mark.parametrize("trade", ["CARPENTER", "Carpenter", "carpenter", "Carpentry"])
+def test_matching_ignores_trade_casing_and_wording(trade):
+    """Same for the trade: "Carpentry" and "Carpenter" are one trade, and
+    treating them as two would break a match that is plainly correct."""
+    result = match_worker(ReportedWorker(name="Ilan Usman", trade=trade), REGISTER)
+
+    assert result.matched_worker_id == "w-ilan"
+
+
+def test_two_identical_register_entries_match_neither():
+    """There is no question to fall back on any more, so an ambiguous
+    register cannot be resolved. Creating a new worker is fixable from the
+    dashboard; attributing a day's wage to the wrong record is not."""
+    register = [
+        WorkerCandidate("w1", "Ravi Kumar", trade="mason"),
+        WorkerCandidate("w2", "Ravi Kumar", trade="mason"),
+    ]
+    result = match_worker(ReportedWorker(name="Ravi Kumar", trade="mason"), register)
+
+    assert result.outcome is MatchOutcome.NO_MATCH
+
+
+def test_an_empty_register_is_no_match_not_an_error():
+    """Day one: nobody is registered, so every named worker is new."""
+    assert match_worker(ReportedWorker(name="Ravi Kumar", trade="mason"), []).outcome is (
+        MatchOutcome.NO_MATCH
     )
-    assert scored.confidence < AUTO_ACCEPT
 
 
-def test_same_name_different_trade_asks_rather_than_deciding():
-    """`Ravi (Mason)` vs `Ravi (Painter)` — the canonical ambiguous case.
+def test_matching_never_asks_a_question():
+    """The property that makes an 80-row upload usable. Reported from
+    testing: a register upload produced dozens of "is this Ravi the same
+    Ravi?" questions, which nobody can answer inside WhatsApp."""
+    reports = [
+        ReportedWorker(name="Ravi", trade="mason"),
+        ReportedWorker(name="Ravi Kumar", trade="carpenter"),
+        ReportedWorker(name="Ilan", trade="carpenter"),
+        ReportedWorker(name="Ilan Usman", trade="carpenter"),
+        ReportedWorker(name="Ajith N"),
+    ]
+    outcomes = {match_worker(r, REGISTER).outcome for r in reports}
 
-    Both readings are plausible: a different Ravi, or the same Ravi who has
-    changed trade. Guessing either way is harmful — assume "different" and
-    one worker's history splits in two; assume "same" and two people merge.
-    So it always asks.
-    """
-    reported = ReportedWorker(name="Ravi", trade="Painter")
-    result = match_worker(reported, _candidates(WorkerCandidate("w1", "Ravi", trade="mason")))
-
-    assert result.outcome is MatchOutcome.ASK_USER
-    assert result.matched_worker_id is None
-    assert result.candidates[0].trade_changed is True
+    assert MatchOutcome.ASK_USER not in outcomes
 
 
-def test_a_worker_who_changed_trade_is_still_offered_as_a_candidate():
-    """Trades genuinely change on site: a helper is promoted to mason,
-    someone lays brick one day and does carpentry the next. Treating a
-    mismatch as disqualifying would quietly create a second register entry
-    for the same person and split their history."""
+def test_neither_contractor_nor_site_history_can_produce_a_match():
+    """Explicitly dropped for this phase. Both are still carried on the
+    candidate and still feed score_candidate, so re-enabling them later is a
+    change to one function rather than a re-plumb."""
+    register = [
+        WorkerCandidate(
+            "w1",
+            "Ravi Kumar",
+            trade="carpenter",
+            contractor="ABC Labour",
+            seen_on_site=True,
+            seen_on_project=True,
+        )
+    ]
     result = match_worker(
-        ReportedWorker(name="Ravi", trade="Mason"),
-        _candidates(WorkerCandidate("w1", "Ravi", trade="helper", seen_on_site=True)),
+        ReportedWorker(name="Ravi Kumar", trade="mason", contractor="ABC Labour"),
+        register,
     )
-    assert result.outcome is MatchOutcome.ASK_USER
-    assert [c.worker_id for c in result.candidates] == ["w1"]
+
+    assert result.outcome is MatchOutcome.NO_MATCH
 
 
-def test_a_trade_change_never_auto_matches_however_strong_the_rest():
-    """Even with the same contractor and prior history on this very site, a
-    changed trade is confirmed rather than assumed — the ceiling holds."""
-    result = match_worker(
-        ReportedWorker(name="Ravi", trade="Mason", contractor="ABC Labour"),
-        _candidates(
-            WorkerCandidate(
-                "w1", "Ravi", trade="helper", contractor="ABC Labour", seen_on_site=True
-            )
-        ),
-    )
-    assert result.outcome is MatchOutcome.ASK_USER
-    assert result.candidates[0].trade_changed is True
+@pytest.mark.parametrize(
+    ("reported_name", "candidate_name"),
+    [("Sunil", "Sunita"), ("Ramesh", "Rakesh"), ("Anil", "Anita"), ("Raavi", "Ravi")],
+)
+def test_near_miss_names_never_match(reported_name, candidate_name):
+    """No fuzzy matching, deliberately. On a roster one character often *is*
+    the difference between two people."""
+    register = [WorkerCandidate("w1", candidate_name, trade="mason")]
+    result = match_worker(ReportedWorker(name=reported_name, trade="mason"), register)
+
+    assert result.outcome is MatchOutcome.NO_MATCH
 
 
-def test_trade_change_reason_names_both_trades():
-    """The prompt has to be able to say "register says mason, report says
-    carpenter" — a bare "which of these?" doesn't tell the user what decision
-    they are actually making."""
-    scored = score_candidate(
-        ReportedWorker(name="Ravi", trade="Carpenter"),
-        WorkerCandidate("w1", "Ravi", trade="mason"),
-    )
-    joined = " ".join(scored.reasons).lower()
-    assert "mason" in joined and "carpenter" in joined
+# ===========================================================================
+# score_candidate — the weighted model, now used only by the duplicate screen
+# ===========================================================================
 
 
-def test_trade_mismatch_alone_does_not_lift_a_name_only_match():
-    """A disagreeing trade is not corroboration — it must not be what pushes
-    a bare name match over the ask threshold."""
-    scored = score_candidate(
-        ReportedWorker(name="Ravi", trade="Painter"),
-        WorkerCandidate("w1", "Ravi", trade="mason"),
-    )
+def test_a_name_on_its_own_never_reaches_auto_accept():
+    """P4 at the scoring level. The duplicate screen leans on this: a bare
+    name should raise a question, not silently decide."""
+    from mesiri.domains.workforce.matching import AUTO_ACCEPT
+
+    scored = score_candidate(ReportedWorker(name="Ravi"), WorkerCandidate("w1", "Ravi"))
     assert scored.confidence < AUTO_ACCEPT
 
 
 def test_trade_alone_never_identifies_a_person():
-    """Two masons are not the same mason. Trade agreement without any name
-    overlap must score nothing."""
     scored = score_candidate(
-        ReportedWorker(name="Suresh", trade="mason"),
+        ReportedWorker(name="Ravi", trade="mason"),
         WorkerCandidate("w1", "Ramesh", trade="mason", seen_on_site=True),
     )
     assert scored.confidence == 0.0
@@ -135,43 +228,23 @@ def test_trade_alone_never_identifies_a_person():
 
 def test_contractor_alone_never_identifies_a_person():
     scored = score_candidate(
-        ReportedWorker(name="Suresh", contractor="ABC Labour"),
+        ReportedWorker(name="Ravi", contractor="ABC Labour"),
         WorkerCandidate("w1", "Ramesh", contractor="ABC Labour"),
     )
     assert scored.confidence == 0.0
 
 
-# ---------------------------------------------------------------------------
-# Corroboration earns confidence (P9 — keep the asking rare)
-# ---------------------------------------------------------------------------
-
-
-def test_name_plus_trade_plus_history_auto_matches():
-    """The common good case: a known worker, same trade, worked here before.
-    This must NOT ask — asking on every routine worker would make a 10-person
-    report unusable (P9)."""
-    reported = ReportedWorker(name="Ravi", trade="Mason")
-    result = match_worker(
-        reported,
-        _candidates(WorkerCandidate("w1", "Ravi", trade="mason", seen_on_site=True)),
+def test_trade_synonyms_corroborate():
+    """"Mistri" and "mason" are the same trade on an Indian site."""
+    same = score_candidate(
+        ReportedWorker(name="Ravi", trade="Mistri"),
+        WorkerCandidate("w1", "Ravi", trade="Mason"),
     )
-
-    assert result.outcome is MatchOutcome.AUTO_MATCHED
-    assert result.matched_worker_id == "w1"
-
-
-def test_trade_synonyms_still_corroborate():
-    """"Mistri" and "mason" are the same trade on an Indian site; treating
-    them as different would push a routine match into asking."""
-    reported = ReportedWorker(name="Ravi", trade="Mistri")
-    result = match_worker(
-        reported,
-        _candidates(WorkerCandidate("w1", "Ravi", trade="Mason", seen_on_site=True)),
-    )
-    assert result.outcome is MatchOutcome.AUTO_MATCHED
+    bare = score_candidate(ReportedWorker(name="Ravi"), WorkerCandidate("w1", "Ravi"))
+    assert same.confidence > bare.confidence
 
 
-def test_history_on_project_counts_less_than_history_on_this_site():
+def test_history_on_this_site_counts_more_than_on_the_project():
     on_site = score_candidate(
         ReportedWorker(name="Ravi", trade="mason"),
         WorkerCandidate("w1", "Ravi", trade="mason", seen_on_site=True),
@@ -183,9 +256,32 @@ def test_history_on_project_counts_less_than_history_on_this_site():
     assert on_site.confidence > on_project.confidence
 
 
+def test_a_trade_change_is_flagged_and_capped():
+    """The duplicate screen words its question differently for "same worker,
+    new trade?" than for "which of these?"."""
+    scored = score_candidate(
+        ReportedWorker(name="Ravi", trade="Mason"),
+        WorkerCandidate("w1", "Ravi", trade="helper", seen_on_site=True),
+    )
+    from mesiri.domains.workforce.matching import AUTO_ACCEPT
+
+    assert scored.trade_changed is True
+    assert scored.confidence < AUTO_ACCEPT
+
+
+def test_trade_change_reason_names_both_trades():
+    scored = score_candidate(
+        ReportedWorker(name="Ravi", trade="carpenter"),
+        WorkerCandidate("w1", "Ravi", trade="mason"),
+    )
+    joined = " ".join(scored.reasons).lower()
+    assert "mason" in joined
+    assert "carpenter" in joined
+
+
 def test_scored_candidates_explain_themselves():
-    """The prompt shows these reasons to the user, and they are what makes a
-    wrong match noticeable before it is confirmed."""
+    """These reasons are shown to the user, and they are what makes a wrong
+    suggestion noticeable before it is accepted."""
     scored = score_candidate(
         ReportedWorker(name="Ravi", trade="mason", contractor="ABC"),
         WorkerCandidate("w1", "Ravi", trade="mason", contractor="ABC", seen_on_site=True),
@@ -197,312 +293,27 @@ def test_scored_candidates_explain_themselves():
     assert "site" in joined
 
 
-# ---------------------------------------------------------------------------
-# Ambiguity must ask, never pick
-# ---------------------------------------------------------------------------
-
-
-def test_two_equally_strong_candidates_ask_rather_than_guess():
-    """Two confident matches are *more* ambiguous than one, not less."""
-    reported = ReportedWorker(name="Ravi", trade="mason")
-    result = match_worker(
-        reported,
-        _candidates(
-            WorkerCandidate("w1", "Ravi", trade="mason", seen_on_site=True),
-            WorkerCandidate("w2", "Ravi", trade="mason", seen_on_site=True),
-        ),
+def test_a_partial_name_scores_below_an_exact_one():
+    exact = score_candidate(
+        ReportedWorker(name="Ravi Kumar"), WorkerCandidate("w1", "Ravi Kumar")
     )
-
-    assert result.outcome is MatchOutcome.ASK_USER
-    assert result.matched_worker_id is None
-    assert len(result.candidates) == 2
-
-
-def test_candidates_are_offered_best_first():
-    reported = ReportedWorker(name="Ravi", trade="mason")
-    result = match_worker(
-        reported,
-        _candidates(
-            WorkerCandidate("weak", "Ravi"),
-            WorkerCandidate("strong", "Ravi", trade="mason", seen_on_site=True),
-        ),
-    )
-    assert [c.worker_id for c in result.candidates][0] == "strong"
-
-
-def test_no_candidates_is_no_match_not_an_error():
-    """An empty register is the normal state on day one — every worker is new
-    then, and that must flow into the temporary-worker path rather than
-    failing."""
-    result = match_worker(ReportedWorker(name="Ravi"), [])
-    assert result.outcome is MatchOutcome.NO_MATCH
-    assert result.candidates == ()
-
-
-def test_unrelated_names_are_not_offered_at_all():
-    result = match_worker(
-        ReportedWorker(name="Ravi"), _candidates(WorkerCandidate("w1", "Mahesh"))
-    )
-    assert result.outcome is MatchOutcome.NO_MATCH
-
-
-# ---------------------------------------------------------------------------
-# Partial names — real, but weak
-# ---------------------------------------------------------------------------
-
-
-def test_partial_name_match_is_weaker_than_exact():
-    exact = score_candidate(ReportedWorker(name="Ravi Kumar"), WorkerCandidate("w1", "Ravi Kumar"))
     partial = score_candidate(ReportedWorker(name="Ravi"), WorkerCandidate("w1", "Ravi Kumar"))
     assert partial.confidence < exact.confidence
 
 
-def test_partial_name_alone_reaches_the_ask_threshold_but_not_auto_accept():
-    """A bare first name against a full name is weak evidence — too weak to
-    act on silently, but strong enough that it must surface as a question.
-
-    Landing below ASK let a registered worker's own name, typed the short
-    way, resolve to NO_MATCH with no question ever shown — the report
-    silently created a second, unlinked identity instead of asking "is this
-    the Ravi Kumar already on the register?"
-    """
-    scored = score_candidate(ReportedWorker(name="Ravi"), WorkerCandidate("w1", "Ravi Kumar"))
-    assert ASK <= scored.confidence < AUTO_ACCEPT
-
-
-def test_partial_name_alone_asks_rather_than_silently_becoming_a_new_worker():
-    result = match_worker(ReportedWorker(name="Ravi"), _candidates(WorkerCandidate("w1", "Ravi Kumar")))
-    assert result.outcome is MatchOutcome.ASK_USER
-    assert result.matched_worker_id is None
-
-
-@pytest.mark.parametrize(
-    ("reported_name", "candidate_name"),
-    [("Sunil", "Sunita"), ("Ramesh", "Rakesh"), ("Anil", "Anita")],
-)
-def test_near_miss_names_are_not_treated_as_the_same_person(reported_name, candidate_name):
-    """No fuzzy edit-distance matching, deliberately. On a roster one
-    character often *is* the difference between two people, and a near-miss
-    scoring highly is precisely how a false merge happens."""
-    scored = score_candidate(
-        ReportedWorker(name=reported_name), WorkerCandidate("w1", candidate_name)
-    )
+def test_names_sharing_nothing_score_zero():
+    scored = score_candidate(ReportedWorker(name="Ravi"), WorkerCandidate("w1", "Mahesh"))
     assert scored.confidence == 0.0
 
 
-# ---------------------------------------------------------------------------
-# Input robustness — extraction output is messy
-# ---------------------------------------------------------------------------
+def test_an_empty_reported_name_scores_nothing():
+    assert score_candidate(ReportedWorker(name=""), WorkerCandidate("w1", "Ravi")).confidence == 0.0
 
 
-@pytest.mark.parametrize("name", ["  Ravi  ", "RAVI", "ravi", "Ravi.", "Ravi-Kumar"])
-def test_name_comparison_is_insensitive_to_case_spacing_and_punctuation(name):
+def test_a_missing_trade_does_not_penalise_the_score():
+    """A report that omits trade is normal -- it should simply not
+    corroborate, rather than counting against the match."""
     scored = score_candidate(
-        ReportedWorker(name=name, trade="mason"),
-        WorkerCandidate("w1", "Ravi Kumar", trade="mason", seen_on_site=True),
-    )
-    assert scored.confidence >= ASK
-
-
-def test_empty_reported_name_matches_nothing():
-    scored = score_candidate(ReportedWorker(name=""), WorkerCandidate("w1", "Ravi"))
-    assert scored.confidence == 0.0
-
-
-def test_missing_trade_on_either_side_does_not_penalise():
-    """A report that omits trade is normal and fast (P9) — it should simply
-    not corroborate, rather than counting against the match."""
-    no_trade = score_candidate(
         ReportedWorker(name="Ravi"), WorkerCandidate("w1", "Ravi", trade="mason")
     )
-    assert no_trade.confidence > 0.0
-
-
-# ---------------------------------------------------------------------------
-# Everything below ASK becomes a temporary worker — duplicates are caught
-# later, at promotion time, not here
-# ---------------------------------------------------------------------------
-
-
-def test_partial_name_with_a_trade_mismatch_falls_below_ask():
-    """"Ravi, carpenter" against registered "Ravi Kumar, mason": the partial
-    name (0.35) minus the trade penalty (0.15) lands under ASK, so attendance
-    records a temporary worker without asking anything.
-
-    That is deliberate -- the attendance flow stays fast (P9) and never stops
-    to interrogate a weak signal. The duplicate is caught afterwards, by the
-    promotion step's own name/trade/contractor check, where asking costs
-    nothing because attendance is already saved."""
-    scored = score_candidate(
-        ReportedWorker(name="Ravi", trade="carpenter"),
-        WorkerCandidate("w1", "Ravi Kumar", trade="mason"),
-    )
-    assert scored.confidence < ASK
-
-    result = match_worker(
-        ReportedWorker(name="Ravi", trade="carpenter"),
-        _candidates(WorkerCandidate("w1", "Ravi Kumar", trade="mason")),
-    )
-    assert result.outcome is MatchOutcome.NO_MATCH
-
-
-def test_trade_contractor_and_site_history_alone_never_identify_a_person():
-    """A completely different name, however strongly everything else
-    corroborates, is never a match. Trade, contractor and site/project
-    history only ever corroborate a name that already matched something --
-    they must never suggest a specific person by themselves (P4)."""
-    strong_but_wrong_name = WorkerCandidate(
-        "w1", "Ravi", trade="mason", contractor="ABC Labour", seen_on_site=True
-    )
-    scored = score_candidate(
-        ReportedWorker(name="Suresh", trade="mason"), strong_but_wrong_name
-    )
-    assert scored.confidence == 0.0
-
-    result = match_worker(
-        ReportedWorker(name="Suresh", trade="mason"), _candidates(strong_but_wrong_name)
-    )
-    assert result.outcome is MatchOutcome.NO_MATCH
-
-
-def test_transliteration_miss_with_site_history_is_still_no_match():
-    """A worker seen on this site before, reported with a spelling sharing no
-    token with their registered name, scores nothing -- catching it would
-    need fuzzy name matching, which this module deliberately avoids (see
-    _name_score's docstring)."""
-    scored = score_candidate(
-        ReportedWorker(name="Raavi"),
-        WorkerCandidate("w1", "Ravi", seen_on_site=True),
-    )
-    assert scored.confidence == 0.0
-
-
-# ---------------------------------------------------------------------------
-# Unique full-name match — recognising a registered worker without a question
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("reported_trade", "registered_trade", "case"),
-    [
-        ("carpenter", "carpenter", "both state the same trade"),
-        ("carpenter", None, "added from the dashboard without a trade"),
-        (None, "carpenter", "the sheet lists names only"),
-        (None, None, "neither side states a trade"),
-        ("Carpentry", "Carpenter", "the same trade worded differently"),
-    ],
-)
-def test_a_uniquely_named_registered_worker_is_recognised(
-    reported_trade, registered_trade, case
-):
-    """The bug this fixes, reported from real use: "Ilan Usman" is already a
-    permanent worker, yet attendance kept treating him as somebody new --
-    so he was offered for promotion again every single day.
-
-    An exact full-name match scores 0.55, which only reaches AUTO_ACCEPT when
-    a trade is stated on *both* sides and agrees. Every other case asked
-    "which Ilan Usman?" about the only Ilan Usman on the register.
-    """
-    result = match_worker(
-        ReportedWorker(name="Ilan Usman", trade=reported_trade),
-        _candidates(WorkerCandidate("w1", "Ilan Usman", trade=registered_trade)),
-    )
-    assert result.outcome is MatchOutcome.AUTO_MATCHED, case
-    assert result.matched_worker_id == "w1", case
-
-
-def test_two_workers_sharing_a_full_name_still_ask():
-    """The uniqueness guard is what keeps the rule above honest under P4 --
-    the moment the name stops identifying one person, it stops deciding."""
-    result = match_worker(
-        ReportedWorker(name="Ilan Usman"),
-        _candidates(
-            WorkerCandidate("w1", "Ilan Usman", trade="carpenter"),
-            WorkerCandidate("w2", "Ilan Usman", trade="painter"),
-        ),
-    )
-    assert result.outcome is MatchOutcome.ASK_USER
-    assert result.matched_worker_id is None
-
-
-def test_a_full_name_match_with_a_changed_trade_is_still_confirmed():
-    """A full name makes "different person" less likely, not impossible, and
-    the two readings need different answers -- so the trade-change rule holds
-    here exactly as it does for a first name."""
-    result = match_worker(
-        ReportedWorker(name="Ilan Usman", trade="mason"),
-        _candidates(WorkerCandidate("w1", "Ilan Usman", trade="carpenter")),
-    )
-    assert result.outcome is MatchOutcome.ASK_USER
-    assert result.candidates[0].trade_changed is True
-
-
-def test_a_bare_first_name_is_never_auto_matched_by_the_full_name_rule():
-    """P4's canonical case, unchanged: first names collide constantly on a
-    site, so one part of a name never decides on its own."""
-    assert (
-        match_worker(
-            ReportedWorker(name="Ravi"), _candidates(WorkerCandidate("w1", "Ravi"))
-        ).outcome
-        is MatchOutcome.ASK_USER
-    )
-    # ...including when the register holds the full version of that name.
-    assert (
-        match_worker(
-            ReportedWorker(name="Ilan"), _candidates(WorkerCandidate("w1", "Ilan Usman"))
-        ).outcome
-        is MatchOutcome.ASK_USER
-    )
-
-
-@pytest.mark.parametrize(
-    "reported_name",
-    [
-        "ILAN USMAN",  # OCR block capitals — the common one on printed sheets
-        "ilan usman",
-        "Ilan Usman",
-        "iLaN uSmAn",
-        "  ILAN   USMAN  ",
-        "Ilan-Usman",
-        "ILAN USMAN.",
-    ],
-)
-def test_the_full_name_rule_ignores_case_spacing_and_punctuation(reported_name):
-    """However the sheet or the speaker renders the name, it is the same
-    worker. OCR in particular returns whole sheets in capitals."""
-    result = match_worker(
-        ReportedWorker(name=reported_name),
-        _candidates(WorkerCandidate("w1", "Ilan Usman")),
-    )
-    assert result.matched_worker_id == "w1"
-
-
-def test_a_register_entry_stored_in_capitals_is_matched_too():
-    """The same tolerance in the other direction — registers get typed in
-    capitals as often as sheets get printed that way."""
-    result = match_worker(
-        ReportedWorker(name="Ilan Usman"),
-        _candidates(WorkerCandidate("w1", "ILAN USMAN")),
-    )
-    assert result.matched_worker_id == "w1"
-
-
-@pytest.mark.parametrize("trade", ["CARPENTER", "Carpenter", "carpenter", "CARPENTRY"])
-def test_trade_casing_never_turns_a_match_into_a_mismatch(trade):
-    """A trade in a different case must corroborate, never contradict — a
-    false mismatch actively subtracts confidence."""
-    result = match_worker(
-        ReportedWorker(name="Ilan Usman", trade=trade),
-        _candidates(WorkerCandidate("w1", "Ilan Usman", trade="carpenter")),
-    )
-    assert result.outcome is MatchOutcome.AUTO_MATCHED
-
-
-def test_a_genuinely_new_full_name_is_still_no_match():
-    """Recognising known workers must not start inventing matches for
-    unknown ones -- a new name still flows to the temporary-worker path."""
-    result = match_worker(
-        ReportedWorker(name="Rahul Nair"),
-        _candidates(WorkerCandidate("w1", "Ilan Usman", trade="carpenter")),
-    )
-    assert result.outcome is MatchOutcome.NO_MATCH
+    assert scored.confidence > 0.0

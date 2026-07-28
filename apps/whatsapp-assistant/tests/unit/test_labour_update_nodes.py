@@ -10,6 +10,8 @@ WorkflowRuntime.provide_input does.
 
 from __future__ import annotations
 
+import pytest
+
 from mesiri_contracts.assistant.draft_action import DraftActionType
 from mesiri_contracts.assistant.planner_decision import WorkflowKey
 
@@ -25,6 +27,20 @@ from workflows.labour_update.nodes import (
     build_draft,
     match_workers,
     request_confirmation,
+)
+
+#: Attendance matching no longer asks anything: match_worker returns only
+#: AUTO_MATCHED or NO_MATCH (exact full name AND exact trade, or nothing), so
+#: the node's question path is currently unreachable.
+#:
+#: The node code and these tests are kept rather than deleted because the
+#: rule was simplified for *this phase* -- an 80-row register upload produced
+#: dozens of unanswerable "is this Ravi the same Ravi?" questions -- and
+#: smarter matching is expected to want the question back. Skipped, not
+#: commented out, so the gap is visible in every run: a skipped test is not a
+#: passing test.
+ASKING_IS_DISABLED = pytest.mark.skip(
+    reason="attendance matching asks nothing in this phase -- see matching.match_worker"
 )
 
 ORG = "11111111-1111-4111-8111-111111111111"
@@ -103,6 +119,7 @@ def test_confident_match_is_applied_without_asking():
     assert update["collected_fields"]["lines"][0]["worker_id"] == RAVI_KUMAR
 
 
+@ASKING_IS_DISABLED
 def test_part_of_a_name_alone_always_asks():
     """The P4 guarantee, seen from the workflow: one part of a name matching,
     with nothing corroborating it, must produce a question and never a silent
@@ -125,6 +142,7 @@ def test_part_of_a_name_alone_always_asks():
     assert update["collected_fields"]["lines"][0].get("worker_id") is None
 
 
+@ASKING_IS_DISABLED
 def test_a_full_name_shared_by_two_registered_workers_still_asks():
     """The other half of that boundary: the moment a full name stops picking
     out one person, it stops deciding on its own."""
@@ -158,6 +176,7 @@ def _ambiguous_state(**fields) -> dict:
     )
 
 
+@ASKING_IS_DISABLED
 def test_question_offers_candidates_plus_someone_new():
     """"Someone new" is always last, and is what keeps a temporary worker
     recordable when none of the suggestions is right."""
@@ -167,6 +186,7 @@ def test_question_offers_candidates_plus_someone_new():
     assert set(values[:-1]) == {RAVI_KUMAR, RAVI_S}
 
 
+@ASKING_IS_DISABLED
 def test_option_labels_are_bare_names_so_the_list_stays_tappable():
     """A WhatsApp row title over 24 characters makes the send side drop the
     whole list back to plain text, so reasons belong in the prompt body, not
@@ -176,11 +196,13 @@ def test_option_labels_are_bare_names_so_the_list_stays_tappable():
         assert len(option["label"]) <= 24, option
 
 
+@ASKING_IS_DISABLED
 def test_prompt_shows_why_each_candidate_was_suggested():
     update = match_workers(_ambiguous_state())
     assert "same trade (mason)" in update["pending_prompt"]
 
 
+@ASKING_IS_DISABLED
 def test_trade_change_question_names_both_trades():
     """P4's explicit requirement. A bare "which of these?" invites the user to
     pick the familiar name without noticing the discrepancy — which is exactly
@@ -208,6 +230,7 @@ def test_trade_change_question_names_both_trades():
     assert "updated trade" in prompt
 
 
+@ASKING_IS_DISABLED
 def test_partial_name_with_changed_trade_and_site_history_asks():
     """A *partial* name plus a trade mismatch, corroborated by having worked
     this site before: "Ravi, carpenter" against a registered "Ravi Kumar,
@@ -234,6 +257,7 @@ def test_partial_name_with_changed_trade_and_site_history_asks():
     assert update["awaiting_slot"] is not None
 
 
+@ASKING_IS_DISABLED
 def test_duplicate_candidate_names_are_disambiguated_by_trade():
     """The one case where a bare name genuinely cannot identify the choice."""
     state = _base_state(
@@ -262,6 +286,7 @@ def _answer(previous: dict, text: str) -> dict:
     return match_workers(_base_state(fields, awaiting_slot=previous["awaiting_slot"]))
 
 
+@ASKING_IS_DISABLED
 def test_answering_by_number_resolves_the_line():
     asked = match_workers(_ambiguous_state())
     resolved = _answer(asked, "1")
@@ -269,6 +294,7 @@ def test_answering_by_number_resolves_the_line():
     assert resolved["collected_fields"]["lines"][0]["worker_id"] == RAVI_KUMAR
 
 
+@ASKING_IS_DISABLED
 def test_answering_by_name_resolves_the_line():
     asked = match_workers(_ambiguous_state())
     resolved = _answer(asked, "Ravi S")
@@ -286,6 +312,7 @@ def test_answering_someone_new_records_a_temporary_worker():
     assert line["worker_id"] is None
 
 
+@ASKING_IS_DISABLED
 def test_unmatched_answer_re_asks_the_same_line():
     asked = match_workers(_ambiguous_state())
     again = _answer(asked, "no idea honestly")
@@ -302,6 +329,7 @@ def test_the_answer_text_never_leaks_into_the_draft():
 # --- matching: many workers, one question at a time -----------------------
 
 
+@ASKING_IS_DISABLED
 def test_one_question_per_pass_and_the_loop_terminates():
     """The behaviour the whole design exists for: three ambiguous workers are
     asked about one at a time, in order, and the loop ends resolved."""
@@ -331,6 +359,7 @@ def test_one_question_per_pass_and_the_loop_terminates():
     ]
 
 
+@ASKING_IS_DISABLED
 def test_resolvable_lines_are_settled_before_the_first_question():
     """P9: nine confident matches plus one ambiguity is one question, not ten
     round trips. The confident lines are already resolved in the same pass
@@ -680,3 +709,75 @@ def test_a_registered_worker_is_recognised_when_the_sheet_omits_the_trade():
 
     assert update["awaiting_slot"] is None
     assert update["collected_fields"]["lines"][0]["worker_id"] == RAVI_KUMAR
+
+
+# --- a register upload, the case the rule was simplified for ---------------
+
+
+def test_an_eighty_worker_upload_asks_nothing_and_splits_cleanly():
+    """The scenario this phase exists for. An Excel-sized report used to
+    produce dozens of "is this Ravi the same Ravi?" questions, which nobody
+    can answer inside WhatsApp -- the report simply stalled.
+
+    55 exact name+trade matches link silently; 25 unknown names become
+    temporary workers and are what the promotion step offers; a headcount
+    group belongs to neither. One pass, no questions.
+    """
+    trades = ["mason", "helper", "carpenter", "painter"]
+    register = [
+        {"worker_id": f"w{i}", "name": f"Worker {i}", "trade": trades[i % 4]}
+        for i in range(55)
+    ]
+    lines = [_named(f"Worker {i}", trades[i % 4]) for i in range(55)]
+    lines += [_named(f"New Person {i}", "helper") for i in range(25)]
+    lines += [_group(12, "helper")]
+
+    update = match_workers(
+        _base_state({"lines": lines, "worker_candidates": register})
+    )
+
+    assert update["awaiting_slot"] is None, "a register upload must ask nothing"
+    resolved = update["collected_fields"]["lines"]
+    matched = [line for line in resolved if line.get("worker_id")]
+    new_named = [
+        line for line in resolved if line.get("worker_name") and not line.get("worker_id")
+    ]
+
+    assert len(matched) == 55
+    assert len(new_named) == 25
+
+
+def test_a_matched_worker_carries_an_id_so_promotion_skips_them():
+    """The link between the two halves: the promotion step collects only
+    lines whose worker_id is still None (see inbound_journey's
+    _maybe_trigger_worker_promotion), so an exact match disappearing from
+    that list is a consequence of being matched, not a separate filter."""
+    register = [{"worker_id": RAVI_KUMAR, "name": "Ravi Kumar", "trade": "mason"}]
+    update = match_workers(
+        _base_state(
+            {
+                "lines": [_named("Ravi Kumar", "mason"), _named("Ajmal", "helper")],
+                "worker_candidates": register,
+            }
+        )
+    )
+
+    lines = update["collected_fields"]["lines"]
+    assert lines[0]["worker_id"] == RAVI_KUMAR, "matched -- never offered for promotion"
+    assert lines[1]["worker_id"] is None, "unmatched -- this is what gets offered"
+
+
+def test_a_trade_change_becomes_a_new_worker_rather_than_a_question():
+    """Deliberate consequence of the simplified rule, recorded so it is not
+    mistaken for a regression: the same person reported under a different
+    trade no longer asks, it becomes a temporary worker. The promotion step's
+    duplicate screen is what surfaces it afterwards."""
+    register = [{"worker_id": RAVI_KUMAR, "name": "Ravi Kumar", "trade": "mason"}]
+    update = match_workers(
+        _base_state(
+            {"lines": [_named("Ravi Kumar", "carpenter")], "worker_candidates": register}
+        )
+    )
+
+    assert update["awaiting_slot"] is None
+    assert update["collected_fields"]["lines"][0]["worker_id"] is None

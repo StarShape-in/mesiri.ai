@@ -22,6 +22,20 @@ from mesiri_contracts.assistant.planner_decision import WorkflowKey  # noqa: E40
 from workflows.labour_update.graph import build_labour_attendance_graph  # noqa: E402
 from workflows.registry import WorkflowRegistry  # noqa: E402
 
+#: Attendance matching no longer asks anything: match_worker returns only
+#: AUTO_MATCHED or NO_MATCH (exact full name AND exact trade, or nothing), so
+#: the node's question path is currently unreachable.
+#:
+#: The node code and these tests are kept rather than deleted because the
+#: rule was simplified for *this phase* -- an 80-row register upload produced
+#: dozens of unanswerable "is this Ravi the same Ravi?" questions -- and
+#: smarter matching is expected to want the question back. Skipped, not
+#: commented out, so the gap is visible in every run: a skipped test is not a
+#: passing test.
+ASKING_IS_DISABLED = pytest.mark.skip(
+    reason="attendance matching asks nothing in this phase -- see matching.match_worker"
+)
+
 ORG = "11111111-1111-4111-8111-111111111111"
 USR = "22222222-2222-4222-8222-222222222222"
 PRJ = "33333333-3333-4333-8333-333333333333"
@@ -67,6 +81,7 @@ async def test_headcount_only_report_builds_a_draft_in_one_pass():
     assert "Confirm this record" in result["pending_prompt"]
 
 
+@ASKING_IS_DISABLED
 async def test_ambiguous_worker_ends_the_pass_at_the_question():
     graph = build_labour_attendance_graph()
 
@@ -87,6 +102,7 @@ async def test_ambiguous_worker_ends_the_pass_at_the_question():
     assert "Ravi Kumar" in result["pending_prompt"]
 
 
+@ASKING_IS_DISABLED
 async def test_answering_the_question_resumes_and_completes_the_draft():
     """Re-invoked exactly as WorkflowRuntime.provide_input does it: the
     persisted collected_fields plus the raw answer plus the stored
@@ -119,6 +135,7 @@ async def test_answering_the_question_resumes_and_completes_the_draft():
     assert "Confirm this record" in resumed["pending_prompt"]
 
 
+@ASKING_IS_DISABLED
 async def test_the_conditional_edge_fires_on_a_later_line_index():
     """The reason this edge is prefix-matched rather than an exact slot name:
     the second worker's question is `worker_match:1`, and a graph that only

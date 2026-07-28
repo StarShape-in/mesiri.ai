@@ -402,3 +402,48 @@ def test_a_headcount_group_never_gains_an_original_name():
     from canonicalization.builder import _labour_line
 
     assert "worker_name_original" not in _labour_line({"trade": "helper", "headcount": 12})
+
+
+def test_matching_behaves_identically_for_text_voice_and_image():
+    """Closes the loop on "test every input path".
+
+    Canonicalization already produces identical `lines` for all three (see
+    test_labour_lines_are_identical_across_modalities); this runs the
+    simplified matcher over each and pins that an exact name+trade match
+    connects, and an unknown name does not, whichever way the report arrived.
+    Matching sees a list of lines and nothing about how they were captured,
+    so there is no fourth code path for Excel to introduce later either.
+    """
+    from workflows.labour_update.nodes import match_workers
+
+    fields = {
+        "workers": [
+            {"name": "Ravi Kumar", "trade": "mason"},
+            {"name": "Ajmal", "trade": "helper"},
+            {"trade": "helper", "headcount": 12},
+        ]
+    }
+    register = [{"worker_id": "w-ravi", "name": "Ravi Kumar", "trade": "mason"}]
+
+    outcomes = []
+    for modality in (InputModality.TEXT, InputModality.VOICE, InputModality.IMAGE):
+        lines = _event(fields, modality=modality).fields["lines"]
+        update = match_workers(
+            {
+                "workflow_instance_id": "wf",
+                "workflow_key": "labour.attendance",
+                "correlation_id": "cor",
+                "organization_id": "11111111-1111-4111-8111-111111111111",
+                "user_id": "22222222-2222-4222-8222-222222222222",
+                "project_id": None,
+                "site_id": None,
+                "collected_fields": {"lines": lines, "worker_candidates": register},
+            }
+        )
+        assert update["awaiting_slot"] is None, f"{modality} asked a question"
+        outcomes.append(
+            [line.get("worker_id") for line in update["collected_fields"]["lines"]]
+        )
+
+    assert outcomes[0] == outcomes[1] == outcomes[2]
+    assert outcomes[0] == ["w-ravi", None, None]

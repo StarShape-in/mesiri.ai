@@ -3,29 +3,31 @@
 Pure domain: no I/O, no SQL, no AI. Candidates are supplied by the caller
 (a repository read); this module only scores them and says what to do.
 
-**The rule this module exists to enforce (plan principle P4): a worker is
-never identified by *part of* a name.** `Ravi (Mason)` and `Ravi (Painter)`
-are different people, and merging them silently corrupts attendance history
-in a way nobody notices until wages are wrong. A first-name match with no
-corroborating signal is therefore capped below the auto-accept threshold by
-construction, not by convention — see `_NAME_ONLY_CEILING` and the test that
-pins it.
+There are two separate questions here, answered by two different functions,
+and they are deliberately not the same:
 
-The one deliberate exception is `_unique_full_name_match`: a *complete* name,
-spelled exactly, identifying exactly one worker in the register. That is not
-the collision P4 guards against — and the uniqueness requirement means the
-rule switches itself off the moment a name stops picking out one person. It
-exists because the strict reading asked "which Ilan Usman?" about the only
-Ilan Usman on the register, every single day. See that function's docstring
-for the full argument, including what it still refuses to decide.
+**`match_worker` — "is this attendance line an existing worker?"** Exact
+full name AND exact trade, or no match. Nothing else counts. See its
+docstring for the reasoning and for the two consequences that follow.
 
-The counter-pressure is principle P9: the person recording this is on a site
-and busy. Asking about every worker would make a 10-person report unusable.
-So the resolution is deliberate: **P4 governs correctness, P9 governs how
-often asking triggers.** Corroborating signals (trade, contractor, having
-worked here before) are what earn confidence and keep the question rare. If
-supervisors are being asked on most reports, the fix is better signals — not
-a lower threshold.
+**`score_candidate` — "does this look like somebody already registered?"**
+The weighted model below (name, trade, contractor, site history). Used only
+by the promotion step's duplicate screen, which asks about one worker at a
+time *after* attendance is saved, where a question is cheap.
+
+Everything under "Scoring weights" belongs to the second question. It used
+to answer the first as well, until an 80-row register upload turned into
+dozens of unanswerable "is this Ravi the same Ravi?" questions inside
+WhatsApp. Matching scaled to five workers and not to eighty.
+
+Principle P4 -- a worker is never identified by *part* of a name -- still
+holds, more strictly than before: partial names now match nothing at all
+rather than being offered as a question. Its counter-pressure, P9 (the
+person recording this is on a site and busy), is what drove the switch to a
+rule with no questions in it whatsoever.
+
+Smarter matching is expected to come back once the module is stable. The
+scoring model is kept intact for that, not merely for the duplicate screen.
 """
 
 from __future__ import annotations
@@ -242,80 +244,78 @@ def score_candidate(reported: ReportedWorker, candidate: WorkerCandidate) -> Sco
     )
 
 
-def _unique_full_name_match(
-    reported: ReportedWorker,
-    candidates: list[WorkerCandidate],
-    scored: list[ScoredCandidate],
-) -> ScoredCandidate | None:
-    """The registered worker reported by their full name, spelled exactly.
-
-    Returns the candidate when the reported name is a *full* name (two or
-    more parts) that matches exactly, and exactly one worker in the register
-    carries that name. Otherwise None.
-
-    Why this is safe under P4, which says a worker is never identified by
-    name alone. P4 exists to stop two different people being merged, and its
-    canonical case is a bare first name: `Ravi (Mason)` and `Ravi (Painter)`
-    are different people, and first names collide constantly on a site. That
-    reasoning does not carry to a full name. "Ilan Usman" reported against a
-    register holding exactly one "Ilan Usman" is not a guess -- and the
-    uniqueness requirement is what keeps it honest: the moment a second
-    worker shares the name, this returns None and the user is asked, which
-    is precisely the situation P4 is defending against.
-
-    Why it is needed. Without it, an exact full-name match scores
-    _W_NAME_EXACT (0.55) and only reaches AUTO_ACCEPT if the trade is also
-    stated on both sides and agrees. In practice it often isn't: workers are
-    added from the dashboard without a trade, attendance sheets list names
-    without one, and OCR wording varies. The supervisor was then asked
-    "which Ilan Usman?" about the only Ilan Usman on the register -- and
-    answering "someone new" (or an image path that never surfaced the
-    question) filed a registered worker as a temporary one, splitting their
-    history and offering them for promotion all over again.
-    """
-    if len(normalize_name(reported.name).split()) < 2:
-        return None
-    exact = [
-        s
-        for s, c in zip(scored, candidates, strict=False)
-        if normalize_name(c.name) == normalize_name(reported.name)
-    ]
-    if len(exact) != 1:
-        return None
-    # A stated trade that disagrees still gets confirmed, exactly as it does
-    # for a first-name match (_TRADE_MISMATCH_CEILING). A full name makes the
-    # "different person" reading weaker, not impossible, and the question
-    # ("same worker, new trade?") is worth asking either way -- answering it
-    # wrong merges two people or splits one. A trade absent on either side is
-    # not a disagreement and does not block the match: that is the common
-    # case this function exists to fix.
-    return None if exact[0].trade_changed else exact[0]
-
-
 def match_worker(
     reported: ReportedWorker, candidates: list[WorkerCandidate]
 ) -> MatchResult:
     """Decide whether `reported` is one of `candidates`.
 
-    Auto-accepts only when a single candidate clears AUTO_ACCEPT. Two
-    candidates both clearing it is *more* ambiguous, not less — that asks.
+    **Exact full name AND exact trade, or no match.** Nothing else links a
+    reported worker to the register: not a partial name, not a nickname, not
+    a transliteration, not the contractor, and not where they have worked
+    before. Anything short of both matching flows to the temporary-worker
+    path, and the promotion step afterwards offers them for the register.
+
+    Why the scoring model no longer decides this. It was tuned for a
+    supervisor typing five names, where one question is cheap and worth
+    asking. That trade-off inverts completely on a register upload: an 80-row
+    sheet produced dozens of "is this Ravi the same Ravi?" questions, which
+    nobody can answer inside WhatsApp -- the report simply stalls. A rule
+    that is dull and predictable beats one that is clever and occasionally
+    unanswerable, so matching is now deterministic and states its whole
+    reasoning in one line.
+
+    Two consequences worth stating plainly, because both are deliberate:
+
+    - A name with no trade beside it matches nobody, even when the register
+      holds exactly one person of that name. A sheet with no Trade column
+      therefore matches nothing at all and every row becomes a promotion
+      candidate. That is the honest outcome of "both must match" -- and it
+      fails toward creating a new worker, which the promotion step lets the
+      user catch, rather than toward linking the wrong one, which nobody
+      sees.
+    - A trade change ("Ravi Kumar" recorded as mason, reported as carpenter)
+      is not a match. Under the old model it asked; now it silently becomes a
+      new worker, and the promotion duplicate screen is what surfaces it.
+
+    ASK_USER is never returned from here any more. The workflow still knows
+    how to ask (see labour_update/nodes.py) and that machinery is kept
+    deliberately, because smarter matching is expected to want it back --
+    but nothing reaches it while this rule is in force.
+
+    `score_candidate` is untouched and still used, by the promotion step's
+    duplicate screen (workflows/worker_promotion/nodes.py), which asks a
+    question about one worker at a time *after* attendance is saved. Cheap
+    there, unaffordable here.
     """
-    # Score in candidate order first so a scored entry can be traced back to
-    # the candidate it came from (the full-name check below needs both).
-    scored_in_order = [score_candidate(reported, c) for c in candidates]
+    reported_name = normalize_name(reported.name)
+    if not reported_name:
+        return MatchResult(MatchOutcome.NO_MATCH)
+    reported_trade = normalize_trade(reported.trade)
 
-    unique_full_name = _unique_full_name_match(reported, candidates, scored_in_order)
-    if unique_full_name is not None:
-        return MatchResult(MatchOutcome.AUTO_MATCHED, (unique_full_name,))
-
-    scored = sorted(scored_in_order, key=lambda s: s.confidence, reverse=True)
-    plausible = tuple(s for s in scored if s.confidence >= ASK)
-
-    if not plausible:
+    exact = [
+        c
+        for c in candidates
+        if normalize_name(c.name) == reported_name
+        and normalize_trade(c.trade) == reported_trade
+    ]
+    # Two register entries with the same name *and* the same trade cannot be
+    # told apart by this rule, and there is no question to fall back on, so
+    # neither is chosen. Creating a new worker is recoverable from the
+    # dashboard; silently attributing a day's wage to the wrong record is
+    # not.
+    if len(exact) != 1:
         return MatchResult(MatchOutcome.NO_MATCH)
 
-    confident = [s for s in plausible if s.confidence >= AUTO_ACCEPT]
-    if len(confident) == 1:
-        return MatchResult(MatchOutcome.AUTO_MATCHED, (confident[0],))
-
-    return MatchResult(MatchOutcome.ASK_USER, plausible)
+    winner = exact[0]
+    return MatchResult(
+        MatchOutcome.AUTO_MATCHED,
+        (
+            ScoredCandidate(
+                winner.worker_id,
+                winner.name,
+                1.0,
+                ("same name", f"same trade ({reported_trade})") if reported_trade
+                else ("same name",),
+            ),
+        ),
+    )
