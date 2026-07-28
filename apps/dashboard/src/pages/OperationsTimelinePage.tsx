@@ -25,7 +25,8 @@ import {
   Minimize2,
 } from 'lucide-react'
 import { useScope } from '@/lib/ScopeContext'
-import { fetchPortfolioTimeline, type PortfolioTimelineEntry } from '@/lib/portfolio'
+import { fetchTimelineEntriesApi } from '@/lib/api'
+
 import { KpiCard } from '@/components/ui/kpi-card'
 import { useToast } from '@/components/ui/toast-notification'
 import { Badge } from '@/components/ui/badge'
@@ -38,7 +39,13 @@ import { cn } from '@/lib/utils'
 
 // ─── Extended Timeline Entry Model ───────────────────────────────────────────
 
-export interface EnrichedTimelineEntry extends PortfolioTimelineEntry {
+export interface EnrichedTimelineEntry {
+  id: string
+  projectId: string | null
+  siteId: string | null
+  eventType: string
+  summary: string
+  occurredAt: string
   category: 'progress' | 'finance' | 'workforce' | 'materials' | 'blocker' | 'system'
   actorName?: string
   actorRole?: string
@@ -228,13 +235,27 @@ export default function OperationsTimelinePage() {
   const loadTimeline = React.useCallback(async () => {
     setLoading(true)
     try {
-      const liveData = await fetchPortfolioTimeline(100, scopeFilter)
-      if (liveData && liveData.length > 0) {
-        const enriched: EnrichedTimelineEntry[] = liveData.map((e) => ({
-          ...e,
-          category: deriveCategory(e.eventType),
+      const res = await fetchTimelineEntriesApi({
+        projectId: scopeFilter.projectId,
+        siteId: scopeFilter.siteId,
+        eventType: categoryFilter !== 'ALL' ? categoryFilter : undefined,
+        dateFrom: dateFrom || undefined,
+        dateTo: dateTo || undefined,
+        limit: 100,
+      })
+
+      if (res && res.items && res.items.length > 0) {
+        const enriched: EnrichedTimelineEntry[] = res.items.map((e) => ({
+          id: e.id,
+          projectId: e.project_id,
+          siteId: e.site_id,
+          eventType: e.event_type,
+          summary: e.summary,
+          occurredAt: e.occurred_at,
+          category: deriveCategory(e.event_type),
           actorName: 'Site Supervisor',
           locationName: currentSiteName,
+          payloadDetails: e.payload,
         }))
         setEntries(enriched)
       } else {
@@ -245,23 +266,33 @@ export default function OperationsTimelinePage() {
     } finally {
       setLoading(false)
     }
-  }, [scopeFilter, currentSiteName])
+  }, [scopeFilter, categoryFilter, dateFrom, dateTo, currentSiteName])
 
   React.useEffect(() => {
     loadTimeline()
   }, [loadTimeline])
 
-  // Live Auto-Refresh polling simulation
+  // Live Auto-Refresh polling
   React.useEffect(() => {
     if (!liveStreamActive) return
     const interval = setInterval(() => {
-      fetchPortfolioTimeline(10, scopeFilter).then((data) => {
-        if (data && data.length > 0) {
-          const enriched: EnrichedTimelineEntry[] = data.map((e) => ({
-            ...e,
-            category: deriveCategory(e.eventType),
+      fetchTimelineEntriesApi({
+        projectId: scopeFilter.projectId,
+        siteId: scopeFilter.siteId,
+        limit: 10,
+      }).then((res) => {
+        if (res && res.items && res.items.length > 0) {
+          const enriched: EnrichedTimelineEntry[] = res.items.map((e) => ({
+            id: e.id,
+            projectId: e.project_id,
+            siteId: e.site_id,
+            eventType: e.event_type,
+            summary: e.summary,
+            occurredAt: e.occurred_at,
+            category: deriveCategory(e.event_type),
             actorName: 'Site Engineer',
             locationName: currentSiteName,
+            payloadDetails: e.payload,
           }))
           setEntries((prev) => {
             const existingIds = new Set(prev.map((item) => item.id))

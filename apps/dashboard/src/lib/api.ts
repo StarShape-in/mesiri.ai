@@ -254,8 +254,50 @@ export interface CompanyMessageDetail extends CompanyMessage {
   interactions: InteractionMin[]
 }
 
+export interface TimelineApiEntry {
+  id: string
+  project_id: string | null
+  site_id: string | null
+  event_type: string
+  summary: string
+  payload?: any
+  occurred_at: string
+  correlation_id?: string | null
+  source_aggregate_type?: string | null
+  source_aggregate_id?: string | null
+  created_at?: string
+}
+
+export interface TimelineListResponse {
+  items: TimelineApiEntry[]
+  total: number
+}
+
+export async function fetchTimelineEntriesApi(params: {
+  projectId?: string
+  siteId?: string
+  eventType?: string
+  dateFrom?: string
+  dateTo?: string
+  limit?: number
+  offset?: number
+} = {}): Promise<TimelineListResponse> {
+  const res = await api.get<TimelineListResponse>('/timeline', {
+    params: {
+      project_id: params.projectId,
+      site_id: params.siteId,
+      event_type: params.eventType && params.eventType !== 'ALL' ? params.eventType : undefined,
+      date_from: params.dateFrom || undefined,
+      date_to: params.dateTo || undefined,
+      limit: params.limit ?? 50,
+      offset: params.offset ?? 0,
+    },
+  })
+  return res.data
+}
 
 export async function fetchCompany(): Promise<Company> {
+
   const res = await api.get<Company>('/company')
   return res.data
 }
