@@ -33,6 +33,8 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy.dialects.postgresql import ENUM as PG_ENUM
+
 if TYPE_CHECKING:
     from mesiri.infrastructure.postgres.database import PostgresDatabase
 
@@ -41,6 +43,15 @@ if TYPE_CHECKING:
 #: work with no open activity falls through to activity_creation instead
 #: (see workflows/site_update/'s handling of no_open_activity).
 _OPEN_STATUSES = ("PLANNED", "IN_PROGRESS")
+
+#: Mirrors the `activity_status` Postgres enum from migrations/versions/
+#: 0430_progress_add_activities_and_updates.py. sa.column("status") alone is
+#: untyped, so .in_(_OPEN_STATUSES) would bind as VARCHAR and Postgres has no
+#: `activity_status = varchar` operator -- create_type=False since the type
+#: already exists in the database.
+_ACTIVITY_STATUS_TYPE = PG_ENUM(
+    "PLANNED", "IN_PROGRESS", "COMPLETED", "STOPPED", name="activity_status", create_type=False
+)
 
 
 class ActivityQueryService:
@@ -75,7 +86,7 @@ class ActivityQueryService:
             sa.column("organization_id"),
             sa.column("site_id"),
             sa.column("reported_by_user_id"),
-            sa.column("status"),
+            sa.column("status", _ACTIVITY_STATUS_TYPE),
             sa.column("work_type"),
             sa.column("narrative"),
             sa.column("deleted_at"),
@@ -136,7 +147,7 @@ class ActivityQueryService:
             "activities",
             sa.column("id"),
             sa.column("organization_id"),
-            sa.column("status"),
+            sa.column("status", _ACTIVITY_STATUS_TYPE),
             sa.column("work_type"),
             sa.column("narrative"),
             sa.column("deleted_at"),
