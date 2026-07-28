@@ -39,10 +39,15 @@ if TYPE_CHECKING:
     from mesiri.infrastructure.postgres.database import PostgresDatabase
 
 #: Activities in either of these states are still "open" for continuation.
-#: COMPLETED/STOPPED activities are not offered -- a message about finished
-#: work with no open activity falls through to activity_creation instead
-#: (see workflows/site_update/'s handling of no_open_activity).
-_OPEN_STATUSES = ("PLANNED", "IN_PROGRESS")
+#: STOPPED is where a PAUSED update lands too -- the activity_status enum
+#: (migrations/0430_progress_add_activities_and_updates.py) has no distinct
+#: "paused" value, so progress_execution.py's _STATUS_BY_KIND maps PAUSED ->
+#: STOPPED, and "resumed after rain" must still be able to find that activity
+#: to reopen it. Only COMPLETED is truly terminal and excluded here -- a
+#: message about finished work with no open activity falls through to
+#: activity_creation instead (see workflows/site_update/'s handling of
+#: no_open_activity).
+_OPEN_STATUSES = ("PLANNED", "IN_PROGRESS", "STOPPED")
 
 #: Mirrors the `activity_status` Postgres enum from migrations/versions/
 #: 0430_progress_add_activities_and_updates.py. sa.column("status") alone is
