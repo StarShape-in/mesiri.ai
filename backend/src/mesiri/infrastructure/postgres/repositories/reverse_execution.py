@@ -107,12 +107,29 @@ class PostgresReverseExecutionRepository(ReverseExecutionRepository):
                 {"updated_by": created_by, "id": expense_id, "organization_id": organization_id},
             )
             row_id = expense_id
+            await conn.execute(
+                sa.text(
+                    "INSERT INTO outbox_events "
+                    "(id, aggregate_type, aggregate_id, event_type, payload, correlation_id) "
+                    "VALUES (:id, 'expense', :aggregate_id, 'ExpenseVoided', '{}'::jsonb, :correlation_id)"
+                ),
+                {"id": uuid.uuid4(), "aggregate_id": expense_id, "correlation_id": cmd.correlation_id},
+            )
         else:  # transfer
             assert cmd.money_transaction_id is not None
             transactions = PostgresMoneyTransactionRepository(conn)
             transaction_id = uuid.UUID(cmd.money_transaction_id)
             await transactions.reverse(organization_id, transaction_id, created_by)
             row_id = transaction_id
+            await conn.execute(
+                sa.text(
+                    "INSERT INTO outbox_events "
+                    "(id, aggregate_type, aggregate_id, event_type, payload, correlation_id) "
+                    "VALUES (:id, 'money_transaction', :aggregate_id, 'MoneyTransactionReversed', "
+                    "'{}'::jsonb, :correlation_id)"
+                ),
+                {"id": uuid.uuid4(), "aggregate_id": transaction_id, "correlation_id": cmd.correlation_id},
+            )
 
         result = ExecutionResult(
             status=ExecutionStatus.SUCCEEDED,

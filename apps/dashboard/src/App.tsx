@@ -31,6 +31,8 @@ import VendorsPage from '@/pages/VendorsPage'
 import CategoriesPage from '@/pages/CategoriesPage'
 import OperationsTimelinePage from '@/pages/OperationsTimelinePage'
 import OperationsIssuesPage from '@/pages/OperationsIssuesPage'
+import OperationsGalleryPage from '@/pages/OperationsGalleryPage'
+
 
 
 import { OperationalPlaceholder } from '@/components/operational-placeholder'
@@ -70,7 +72,8 @@ export default function App() {
         <Route path="operations/daily-reports" element={<DailyReportsPage />} />
         <Route path="operations/issues" element={<OperationsIssuesPage />} />
 
-        <Route path="operations/gallery" element={<OperationalPlaceholder title="Operations Gallery" />} />
+        <Route path="operations/gallery" element={<OperationsGalleryPage />} />
+
         <Route path="operations/analytics" element={<OperationalPlaceholder title="Operations Analytics" />} />
         <Route path="operations/settings" element={<OperationalPlaceholder title="Operations Settings" />} />
 
@@ -112,8 +115,8 @@ export default function App() {
         {/* Legacy operational routes fallbacks */}
         <Route path="timeline" element={<OperationsTimelinePage />} />
         <Route path="analytics" element={<OperationalPlaceholder title="Analytics" />} />
+        <Route path="gallery" element={<OperationsGalleryPage />} />
 
-        <Route path="gallery" element={<OperationalPlaceholder title="Gallery" />} />
         <Route path="reports" element={<OperationalPlaceholder title="Reports" />} />
         <Route path="expenses" element={<ExpensesPage />} />
         <Route path="petty-cash" element={<PettyCashPage />} />

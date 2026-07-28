@@ -269,3 +269,31 @@ async def resolve_issue(
 
     return {"status": "success", "message": "Site issue resolved"}
 
+
+@router.get("/gallery")
+async def list_gallery(
+    project_id: uuid.UUID | None = None,
+    site_id: uuid.UUID | None = None,
+    attachment_type: str | None = None,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """List site media gallery attachments within organization & scope."""
+    project_ids, denied = _resolve_project_ids(auth_context, project_id)
+    if denied or _site_filter_denied(auth_context, project_id, site_id):
+        return {"items": [], "total": 0}
+
+    repo = PostgresProgressReadRepository(conn)
+    items, total = await repo.list_gallery(
+        organization_id=auth_context.organization_id,
+        project_ids=project_ids,
+        site_id=site_id,
+        attachment_type=attachment_type,
+        limit=limit,
+        offset=offset,
+    )
+    return {"items": items, "total": total}
+
+

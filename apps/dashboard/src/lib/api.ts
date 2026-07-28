@@ -368,6 +368,48 @@ export async function resolveSiteIssueApi(
   return res.data
 }
 
+export interface GalleryItem {
+  id: string
+  organization_id: string
+  project_id: string
+  site_id: string
+  parent_type: string
+  parent_id: string
+  media_object_key: string
+  attachment_type: string
+  mime_type?: string | null
+  caption?: string | null
+  ai_caption?: string | null
+  role?: string | null
+  captured_at?: string | null
+  created_at: string
+}
+
+export interface GalleryListResponse {
+  items: GalleryItem[]
+  total: number
+}
+
+export async function fetchSiteGalleryApi(params: {
+  projectId?: string
+  siteId?: string
+  attachmentType?: string
+  limit?: number
+  offset?: number
+} = {}): Promise<GalleryListResponse> {
+  const res = await api.get<GalleryListResponse>('/progress/gallery', {
+    params: {
+      project_id: params.projectId,
+      site_id: params.siteId,
+      attachment_type: params.attachmentType && params.attachmentType !== 'ALL' ? params.attachmentType : undefined,
+      limit: params.limit ?? 50,
+      offset: params.offset ?? 0,
+    },
+  })
+  return res.data
+}
+
+
 export async function acknowledgeSiteIssueApi(
   issueId: string
 ): Promise<{ status: string; message: string }> {

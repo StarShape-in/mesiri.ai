@@ -393,3 +393,59 @@ class PostgresProgressReadRepository:
             )
         return res.rowcount > 0
 
+    async def list_gallery(
+        self,
+        organization_id: uuid.UUID,
+        project_ids: set[uuid.UUID] | None = None,
+        site_id: uuid.UUID | None = None,
+        attachment_type: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[dict[str, Any]], int]:
+        where = ["pa.organization_id = :organization_id"]
+        params: dict[str, Any] = {"organization_id": organization_id, "limit": limit, "offset": offset}
+
+        if project_ids is not None:
+            where.append("pa.project_id = ANY(:project_ids)")
+            params["project_ids"] = list(project_ids)
+        if site_id is not None:
+            where.append("pa.site_id = :site_id")
+            params["site_id"] = site_id
+        if attachment_type is not None:
+            where.append("pa.attachment_type = :attachment_type")
+            params["attachment_type"] = attachment_type
+
+        where_clause = " AND ".join(where)
+
+        total_row = (
+            await self._conn.execute(
+                text(f"SELECT COUNT(*) AS total FROM progress_attachments pa WHERE {where_clause}"), params
+            )
+        ).mappings().first()
+        total = total_row["total"] if total_row else 0
+
+        query = f"""
+            SELECT
+                pa.id,
+                pa.organization_id,
+                pa.project_id,
+                pa.site_id,
+                pa.parent_type,
+                pa.parent_id,
+                pa.media_object_key,
+                pa.attachment_type,
+                pa.mime_type,
+                pa.caption,
+                pa.ai_caption,
+                pa.role,
+                pa.captured_at,
+                pa.created_at
+            FROM progress_attachments pa
+            WHERE {where_clause}
+            ORDER BY pa.created_at DESC
+            LIMIT :limit OFFSET :offset
+        """
+        rows = (await self._conn.execute(text(query), params)).mappings().all()
+        return [dict(r) for r in rows], total
+
+

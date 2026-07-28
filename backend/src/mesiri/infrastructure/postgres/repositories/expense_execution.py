@@ -187,6 +187,38 @@ class PostgresExpenseExecutionRepository(ExpenseExecutionRepository):
                 created_by=uuid.UUID(cmd.created_by),
             )
 
+        # Same generic outbox mechanism progress_execution.py uses for
+        # ActivityCreated — registered as aggregate_type 'expense' in
+        # timeline_projector.py's AGGREGATE_TABLES. category_text/vendor_text
+        # are the free-text fields already on the command (resolved from
+        # WhatsApp or typed on the web form) rather than a category_id lookup,
+        # matching the projector's rule of not reaching into a second table
+        # just to caption an event.
+        await conn.execute(
+            sa.text(
+                "INSERT INTO outbox_events "
+                "(id, aggregate_type, aggregate_id, event_type, payload, correlation_id) "
+                "VALUES (:id, 'expense', :aggregate_id, :event_type, "
+                "CAST(:payload AS jsonb), :correlation_id)"
+            ),
+            {
+                "id": uuid.uuid4(),
+                "aggregate_id": expense_id,
+                "event_type": "ExpenseRecorded",
+                "payload": json.dumps(
+                    {
+                        "amount": str(cmd.amount),
+                        "currency": cmd.currency,
+                        "category_text": cmd.category_text,
+                        "vendor_text": cmd.vendor_text,
+                        "description": cmd.description,
+                    },
+                    default=str,
+                ),
+                "correlation_id": cmd.correlation_id,
+            },
+        )
+
         result = ExecutionResult(
             status=ExecutionStatus.SUCCEEDED,
             idempotency_key=cmd.idempotency_key,
