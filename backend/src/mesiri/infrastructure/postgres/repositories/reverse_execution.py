@@ -125,7 +125,7 @@ class PostgresReverseExecutionRepository(ReverseExecutionRepository):
                 sa.text(
                     "INSERT INTO outbox_events "
                     "(id, aggregate_type, aggregate_id, event_type, payload, correlation_id) "
-                    "VALUES (:id, 'money_transaction', :aggregate_id, 'MoneyTransactionReversed', "
+                    "VALUES (:id, 'money_transaction', :aggregate_id, 'MoneyTransferReversed', "
                     "'{}'::jsonb, :correlation_id)"
                 ),
                 {"id": uuid.uuid4(), "aggregate_id": transaction_id, "correlation_id": cmd.correlation_id},

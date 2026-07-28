@@ -221,7 +221,7 @@ EVENT_SUMMARY_BUILDERS: dict[str, Callable[[dict[str, Any]], str]] = {
     "MoneyTransactionTransferred": lambda p: (
         f"{p.get('currency', 'INR')} {p.get('amount')} transferred between accounts"
     ),
-    "MoneyTransactionReversed": lambda p: "Money transfer reversed",
+    "MoneyTransferReversed": lambda p: "Money transfer reversed",
 }
 
 
