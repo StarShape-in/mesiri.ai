@@ -29,6 +29,8 @@ import ExpenseDetailPage from '@/pages/ExpenseDetailPage'
 import TransactionsPage from '@/pages/TransactionsPage'
 import VendorsPage from '@/pages/VendorsPage'
 import CategoriesPage from '@/pages/CategoriesPage'
+import OperationsTimelinePage from '@/pages/OperationsTimelinePage'
+
 import { OperationalPlaceholder } from '@/components/operational-placeholder'
 
 import { ToastProvider } from '@/components/ui/toast-notification'
@@ -62,12 +64,13 @@ export default function App() {
         <Route path="operations" element={<OperationsIndexRedirect />} />
         <Route path="operations/dashboard" element={<Overview />} />
         <Route path="operations/activities" element={<ActivitiesPage />} />
-        <Route path="operations/timeline" element={<OperationalPlaceholder title="Operations Timeline" />} />
+        <Route path="operations/timeline" element={<OperationsTimelinePage />} />
         <Route path="operations/daily-reports" element={<DailyReportsPage />} />
         <Route path="operations/issues" element={<OperationalPlaceholder title="Operations Issues" />} />
         <Route path="operations/gallery" element={<OperationalPlaceholder title="Operations Gallery" />} />
         <Route path="operations/analytics" element={<OperationalPlaceholder title="Operations Analytics" />} />
         <Route path="operations/settings" element={<OperationalPlaceholder title="Operations Settings" />} />
+
 
         {/* Finance Section */}
         <Route path="finance" element={<Navigate to="/finance/expenses" replace />} />
@@ -104,8 +107,9 @@ export default function App() {
         <Route path="labour/settings" element={<LabourSettingsPage />} />
 
         {/* Legacy operational routes fallbacks */}
-        <Route path="timeline" element={<OperationalPlaceholder title="Timeline" />} />
+        <Route path="timeline" element={<OperationsTimelinePage />} />
         <Route path="analytics" element={<OperationalPlaceholder title="Analytics" />} />
+
         <Route path="gallery" element={<OperationalPlaceholder title="Gallery" />} />
         <Route path="reports" element={<OperationalPlaceholder title="Reports" />} />
         <Route path="expenses" element={<ExpensesPage />} />
