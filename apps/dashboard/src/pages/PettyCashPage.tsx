@@ -94,64 +94,59 @@ export default function PettyCashPage() {
   const [cashBoxes, setCashBoxes] = React.useState<SiteCashBoxItem[]>([])
   const [vouchers, setVouchers] = React.useState<PettyCashVoucherItem[]>([])
 
-  React.useEffect(() => {
-    let active = true
-    async function loadBackendPettyCash() {
-      try {
-        const [data, voucherData] = await Promise.all([
-          fetchAccountsApi(),
-          fetchVouchersApi().catch(() => []),
-        ])
-        if (active && Array.isArray(data)) {
-          const pettyBoxes = data.filter((a: any) => a.account_type === 'employee_advance' || a.account_type === 'cash' || a.account_type === 'petty_cash')
-          const mappedBoxes: SiteCashBoxItem[] = pettyBoxes.map((b: any, idx: number) => ({
-            id: String(b.id) || `cb_real_${idx}`,
-            name: b.name || 'Site Float',
-            opening_balance: parseFloat(b.opening_balance) || 0,
-            current_balance: parseFloat(b.current_balance) || parseFloat(b.opening_balance) || 0,
-            disbursed_month: 0,
-            custodian_name: b.custodian_name || 'Site Supervisor',
-            project_id: b.project_id ? String(b.project_id) : undefined,
-            project_name: 'Project Site',
-            site_id: b.site_id ? String(b.site_id) : undefined,
-            site_name: b.site_name,
-            status: 'active',
-          }))
-          setCashBoxes(mappedBoxes)
-        }
-        if (active && Array.isArray(voucherData)) {
-          const mappedVouchers: PettyCashVoucherItem[] = voucherData.map((v: any) => ({
-            id: String(v.id),
-            voucher_number: `VCH-${String(v.id).slice(0, 4).toUpperCase()}`,
-            cash_box_id: String(v.from_account_id || ''),
-            cash_box_name: 'Site Cash Box',
-            amount: parseFloat(v.amount) || 0,
-            category: v.description || 'General Expense',
-            category_name: v.description || 'General Expense',
-            vendor_name: v.source_type || 'Direct Payee',
-            description: v.description || 'Petty Cash Voucher',
-            date: v.occurred_date || toLocalISODate(),
-            custodian_name: 'Site Supervisor',
-            project_name: 'Project Site',
-            status: 'verified',
-            source: 'WhatsApp Assistant',
-            receipt_url: undefined,
-          }))
-          setVouchers(mappedVouchers)
-        }
-      } catch (err) {
-        console.warn('Live backend petty cash fetch error:', err)
-        if (active) {
-          setCashBoxes([])
-          setVouchers([])
-        }
+  const loadBackendPettyCash = React.useCallback(async () => {
+    try {
+      const [data, voucherData] = await Promise.all([
+        fetchAccountsApi(),
+        fetchVouchersApi().catch(() => []),
+      ])
+      if (Array.isArray(data)) {
+        const pettyBoxes = data.filter((a: any) => a.account_type === 'employee_advance' || a.account_type === 'cash' || a.account_type === 'petty_cash')
+        const mappedBoxes: SiteCashBoxItem[] = pettyBoxes.map((b: any, idx: number) => ({
+          id: String(b.id) || `cb_real_${idx}`,
+          name: b.name || 'Site Float',
+          opening_balance: parseFloat(b.opening_balance) || 0,
+          current_balance: parseFloat(b.current_balance) || parseFloat(b.opening_balance) || 0,
+          disbursed_month: 0,
+          custodian_name: b.custodian_name || 'Site Supervisor',
+          project_id: b.project_id ? String(b.project_id) : undefined,
+          project_name: 'Project Site',
+          site_id: b.site_id ? String(b.site_id) : undefined,
+          site_name: b.site_name,
+          status: 'active',
+        }))
+        setCashBoxes(mappedBoxes)
       }
+      if (Array.isArray(voucherData)) {
+        const mappedVouchers: PettyCashVoucherItem[] = voucherData.map((v: any) => ({
+          id: String(v.id),
+          voucher_number: `VCH-${String(v.id).slice(0, 4).toUpperCase()}`,
+          cash_box_id: String(v.from_account_id || ''),
+          cash_box_name: 'Site Cash Box',
+          amount: parseFloat(v.amount) || 0,
+          category: v.description || 'General Expense',
+          category_name: v.description || 'General Expense',
+          vendor_name: v.source_type || 'Direct Payee',
+          description: v.description || 'Petty Cash Voucher',
+          date: v.occurred_date || toLocalISODate(),
+          custodian_name: 'Site Supervisor',
+          project_name: 'Project Site',
+          status: 'verified',
+          source: 'WhatsApp Assistant',
+          receipt_url: undefined,
+        }))
+        setVouchers(mappedVouchers)
+      }
+    } catch (err) {
+      console.warn('Live backend petty cash fetch error:', err)
+      setCashBoxes([])
+      setVouchers([])
     }
+  }, [])
+
+  React.useEffect(() => {
     loadBackendPettyCash()
-    return () => {
-      active = false
-    }
-  }, [scope])
+  }, [loadBackendPettyCash, scope])
 
   const [search, setSearch] = React.useState('')
   const [categoryFilter, setCategoryFilter] = React.useState('ALL')
@@ -230,21 +225,12 @@ export default function PettyCashPage() {
     }
   }, [scopedCashBoxes, vouchers])
 
-  const handleVoucherCreated = (newVoucher: PettyCashVoucherItem) => {
-    setVouchers((prev) => [newVoucher, ...prev])
-    // Deduct float from cash box
-    setCashBoxes((prev) =>
-      prev.map((box) => {
-        if (box.id === newVoucher.cash_box_id) {
-          return {
-            ...box,
-            current_balance: Math.max(0, box.current_balance - newVoucher.amount),
-            disbursed_month: box.disbursed_month + newVoucher.amount,
-          }
-        }
-        return box
-      })
-    )
+  const handleVoucherCreated = () => {
+    // The dialog now records a real expense (paid from the cash box account)
+    // via the backend -- reload real vouchers/balances rather than
+    // fabricating a local optimistic entry we can't accurately predict
+    // (the backend resolves the real category/vendor/expense id).
+    loadBackendPettyCash()
   }
 
   const handleReplenishCompleted = (boxId: string, amount: number) => {

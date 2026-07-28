@@ -31,9 +31,11 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from mesiri.application.expenses.commands import RecordExpenseCommand
 from mesiri.application.expenses.handlers import RecordExpenseHandler
+from mesiri.application.expenses.resolution import PostgresExpenseCategoryResolver
 from mesiri.application.finance.reverse_commands import ReverseTransactionCommand
 from mesiri.application.finance.reverse_handler import ReverseTransactionHandler
 from mesiri.application.finance.reverse_resolution import PostgresReverseTargetResolver
+from mesiri.application.vendors.resolution import PostgresVendorResolver
 from mesiri.authorization.context import AuthorizationContext
 from mesiri.domains.expenses.responses import ExpenseResponse, RecordExpenseResponse
 from mesiri.domains.projects.router import get_auth_context
@@ -88,11 +90,25 @@ class ExpenseAttachmentGalleryItem(BaseModel):
 
 class RecordExpenseRequest(BaseModel):
     project_id: uuid.UUID
-    category_id: uuid.UUID
     amount: Decimal
     occurred_date: datetime.date
+    # Either category_id (a real, already-fetched id) or category_text (a
+    # free-typed name the resolver matches against expense_categories, or
+    # falls back to "Uncategorized" for -- see application/expenses/
+    # resolution.py's ExpenseCategoryResolver) must be usable; at least one
+    # of the two should be sent, but neither is required at the schema level
+    # since an absent category_text still resolves to the default category.
+    category_id: uuid.UUID | None = None
+    category_text: str | None = None
     site_id: uuid.UUID | None = None
     vendor_id: uuid.UUID | None = None
+    vendor_text: str | None = None
+    # Paid immediately from a specific org account (e.g. a petty cash box) --
+    # same field RecordExpenseCommand already exposes for the WhatsApp path
+    # (expense_execution.py records the payment + ledger transaction when
+    # set). Omit to leave the expense unpaid, exactly as before this field
+    # existed on the REST request.
+    account_id: uuid.UUID | None = None
     currency: str = "INR"
     description: str | None = None
     occurred_time: datetime.time | None = None
@@ -132,8 +148,11 @@ async def record_expense(
         organization_id=str(auth_context.organization_id),
         project_id=str(body.project_id),
         site_id=str(body.site_id) if body.site_id else None,
-        category_id=str(body.category_id),
+        category_id=str(body.category_id) if body.category_id else None,
+        category_text=body.category_text,
         vendor_id=str(body.vendor_id) if body.vendor_id else None,
+        vendor_text=body.vendor_text,
+        account_id=str(body.account_id) if body.account_id else None,
         amount=body.amount,
         currency=body.currency,
         description=body.description,
@@ -148,7 +167,16 @@ async def record_expense(
         is_tax_inclusive=body.is_tax_inclusive,
     )
 
-    handler = RecordExpenseHandler(PostgresExpenseExecutionRepository())
+    # Resolvers wired in (previously absent on the REST path -- a request
+    # with no category_id and no matching category_text would have hit
+    # expense_execution.py's "Handler must resolve this" RuntimeError). Same
+    # ports the WhatsApp path uses (runtime/dependencies.py's expense wiring),
+    # just constructed per-request here rather than once at startup.
+    handler = RecordExpenseHandler(
+        PostgresExpenseExecutionRepository(),
+        resolver=PostgresExpenseCategoryResolver(),
+        vendor_resolver=PostgresVendorResolver(),
+    )
     result = await handler.handle(conn, cmd)
 
     if result.status == ExecutionStatus.REJECTED:

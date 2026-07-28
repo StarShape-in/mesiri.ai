@@ -658,11 +658,19 @@ export async function fetchUserWhatsAppMessageDetail(
 
 export interface RecordExpenseApiPayload {
   project_id: string
-  category_id: string
+  // Either category_id (picked from a real fetched list) or category_text
+  // (a free-typed name the backend resolves against expense_categories, or
+  // falls back to "Uncategorized" for) works -- at least one should be sent.
+  category_id?: string
+  category_text?: string
   amount: number
   occurred_date: string
   site_id?: string
   vendor_id?: string
+  vendor_text?: string
+  // Paid immediately from this org account (e.g. a petty cash box) -- omit
+  // to record an unpaid expense, as before this field existed.
+  account_id?: string
   currency?: string
   description?: string
   source?: string
@@ -832,6 +840,10 @@ export async function transferMoneyApi(payload: TransferMoneyApiPayload, idempot
 
 export interface RecordVoucherApiPayload {
   cash_box_id: string
+  // Required to record a real expense (POST /expenses needs it) -- the
+  // cash box's own project_id, passed through by the caller.
+  project_id: string
+  site_id?: string
   amount: number
   category: string
   vendor_name?: string
@@ -854,8 +866,28 @@ export async function recordVoucherApi(payload: RecordVoucherApiPayload) {
       key
     )
   }
-  const res = await api.post('/finance/petty-cash/vouchers', payload).catch(() => ({ status: 'simulated' }))
-  return res
+  // A real expense paid immediately from the cash box account -- the same
+  // mechanism WhatsApp's petty-cash-adjacent expense capture already uses
+  // (RecordExpenseCommand.account_id), just reached via the dashboard.
+  // category/vendor are free-typed here (the dialog offers a fixed picklist,
+  // not real category ids), so they travel as category_text/vendor_text for
+  // the backend's resolver to match against real categories/vendors (or
+  // create them on first use, or fall back to "Uncategorized") -- never a
+  // hard rejection over an unmatched name.
+  return recordExpenseApi(
+    {
+      project_id: payload.project_id,
+      site_id: payload.site_id,
+      account_id: payload.cash_box_id,
+      category_text: payload.category,
+      vendor_text: payload.vendor_name,
+      amount: payload.amount,
+      occurred_date: payload.date,
+      description: payload.description,
+      source: 'web',
+    },
+    key
+  )
 }
 
 export interface ReplenishFloatApiPayload {
