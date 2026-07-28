@@ -21,6 +21,9 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from mesiri.application.finance.reverse_commands import ReverseTransactionCommand
+from mesiri.application.finance.reverse_handler import ReverseTransactionHandler
+from mesiri.application.finance.reverse_resolution import PostgresReverseTargetResolver
 from mesiri.application.finance.transfer_commands import TransferMoneyCommand
 from mesiri.application.finance.transfer_handler import TransferMoneyHandler
 from mesiri.application.finance.transfer_resolution import PostgresTransferAccountResolver
@@ -34,6 +37,9 @@ from mesiri.infrastructure.postgres.repositories.expenses import (
 from mesiri.infrastructure.postgres.repositories.finance import (
     PostgresMoneyAccountRepository,
     PostgresMoneyTransactionRepository,
+)
+from mesiri.infrastructure.postgres.repositories.reverse_execution import (
+    PostgresReverseExecutionRepository,
 )
 from mesiri.infrastructure.postgres.repositories.transfer_execution import (
     PostgresTransferExecutionRepository,
@@ -857,6 +863,104 @@ async def transfer_money(
         raise HTTPException(status_code=422, detail=result.rejection_reasons)
 
     return {"id": result.material_row_id, "status": "succeeded"}
+
+
+@router.post("/transfers/{transfer_id}/reverse")
+async def reverse_transfer(
+    transfer_id: uuid.UUID,
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Reverse a confirmed transfer (posts an offsetting money_transaction).
+
+    ReverseTransactionCommand/Handler already fully support
+    target_kind='transfer' -- the WhatsApp 'reverse' workflow ("cancel that
+    transfer") has used this path since it was built. There was simply no
+    REST route calling it (expenses/router.py's /reverse hardcodes
+    target_kind='expense'), so a transfer made by mistake on the dashboard
+    could only ever be undone via WhatsApp chat. Mirrors that endpoint's
+    shape for the other target_kind.
+    """
+    role_upper = (auth_context.role or "USER").upper()
+    if role_upper not in ("ADMIN", "FINANCE", "USER", "OWNER", "SUPER_ADMIN"):
+        raise HTTPException(status_code=403, detail="Not authorized to reverse transfers")
+
+    ikey = idempotency_key or f"rev_rest_{transfer_id}_{uuid.uuid4().hex[:8]}"
+    cmd = ReverseTransactionCommand(
+        idempotency_key=ikey,
+        organization_id=str(auth_context.organization_id),
+        created_by=str(auth_context.user_id),
+        created_by_role=auth_context.role,
+        target_kind="transfer",
+        money_transaction_id=str(transfer_id),
+    )
+
+    handler = ReverseTransactionHandler(
+        repo=PostgresReverseExecutionRepository(),
+        resolver=PostgresReverseTargetResolver(),
+    )
+    result = await handler.handle(conn, cmd)
+
+    if result.status == ExecutionStatus.REJECTED:
+        raise HTTPException(status_code=422, detail=result.rejection_reasons)
+
+    return {"id": str(transfer_id), "status": "reversed"}
+
+
+class UpdateAccountRequest(BaseModel):
+    name: str
+
+
+@router.patch("/accounts/{account_id}", response_model=MoneyAccountResponse)
+async def update_account(
+    account_id: uuid.UUID,
+    body: UpdateAccountRequest,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Rename a money account.
+
+    The only account-admin action REST ever exposed a route for was
+    create/deactivate -- `PostgresMoneyAccountRepository.rename()` has
+    existed since the WhatsApp `account_admin` workflow was built (see
+    infrastructure/postgres/repositories/account_admin_execution.py), but
+    with no REST route calling it, a dashboard user could never rename an
+    account at all. Same direct-repo-call shape as create_account/
+    deactivate_account above -- account admin has no draft/confirm step on
+    either side, so there is no Command/Handler to route through here.
+    """
+    repo = PostgresMoneyAccountRepository(conn)
+    acc = await repo.get_by_id(auth_context.organization_id, account_id)
+    if acc is None:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    new_name = body.name.strip()
+    if not new_name:
+        raise HTTPException(status_code=422, detail="name must not be empty")
+
+    await repo.rename(auth_context.organization_id, account_id, new_name, updated_by=auth_context.user_id)
+
+    updated = await repo.get_by_id(auth_context.organization_id, account_id)
+    assert updated is not None
+    try:
+        balance = await repo.get_balance(auth_context.organization_id, updated.id)
+    except Exception:
+        balance = updated.opening_balance
+    return MoneyAccountResponse(
+        id=updated.id,
+        organization_id=updated.organization_id,
+        name=updated.name,
+        account_type=updated.account_type,
+        currency=updated.currency,
+        opening_balance=updated.opening_balance,
+        current_balance=balance,
+        status=updated.status,
+        project_id=updated.project_id,
+        site_id=updated.site_id,
+        owner_user_id=updated.owner_user_id,
+        opening_balance_date=updated.opening_balance_date,
+    )
 
 
 @router.delete("/accounts/{account_id}")
