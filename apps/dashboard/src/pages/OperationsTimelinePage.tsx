@@ -340,234 +340,277 @@ export default function OperationsTimelinePage() {
       isFullView && "fixed inset-0 z-50 bg-background/98 backdrop-blur-2xl p-6 overflow-y-auto pb-16"
     )}>
 
-      {/* ── Page Header ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-3.5">
-        <div className="flex items-center gap-3">
-          <div className="size-10 rounded-lg border border-indigo-500/30 bg-indigo-500/10 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shrink-0 shadow-2xs">
-            <Activity className="size-5" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
-              Site Operations Timeline
-              <Badge variant="outline" className="text-[10px] font-mono border-indigo-500/30 text-indigo-600 dark:text-indigo-400">
-                {isFullView ? 'Fullscreen Command Theater' : 'Real-Time Event Stream'}
-              </Badge>
-            </h1>
-            <p className="text-xs text-muted-foreground font-medium">{scopeLabel}</p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {/* Full View / Fullscreen Toggle Button */}
-          <Button
-            size="sm"
-            variant={isFullView ? 'secondary' : 'outline'}
-            className={cn(
-              "h-8 gap-1.5 text-xs font-bold transition-all shadow-2xs",
-              isFullView && "bg-indigo-600 text-white hover:bg-indigo-700"
-            )}
-            onClick={() => {
-              setIsFullView((prev) => !prev)
-              toast.info(isFullView ? 'Exited Full View' : 'Entered Full View Command Theater', 'Expanded viewport for executive site presentation')
-            }}
-          >
-            {isFullView ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
-            {isFullView ? 'Exit Full View' : 'Full View'}
-          </Button>
-
-          {/* Live Auto-Refresh Stream Toggle */}
-          <Button
-            size="sm"
-            variant="outline"
-            className={cn(
-              'h-8 gap-1.5 text-xs font-semibold border transition-all',
-              liveStreamActive
-                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
-                : 'text-muted-foreground'
-            )}
-            onClick={() => {
-              setLiveStreamActive((prev) => !prev)
-              toast.info('Live Stream Updated', liveStreamActive ? 'Paused auto-refresh' : 'Enabled live stream auto-refresh')
-            }}
-          >
-            <span className={cn('size-2 rounded-full', liveStreamActive ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-400')} />
-            {liveStreamActive ? 'Live Stream Active' : 'Stream Paused'}
-          </Button>
-
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-8 gap-1.5 text-xs font-medium"
-            onClick={() => toast.info('Exporting Event Ledger', 'Downloading CSV timeline log')}
-          >
-            <Download className="size-3.5" />
-            Export Log
-          </Button>
-
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={loadTimeline}
-            disabled={loading}
-            className="h-8 gap-1.5 text-xs"
-          >
-            <RefreshCw className={cn('size-3.5', loading && 'animate-spin')} />
-            Refresh
-          </Button>
-        </div>
-      </div>
-
-      {/* ── Executive KPI Cards ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        <KpiCard
-          title="Total Events Logged"
-          value={<span className="text-indigo-600 dark:text-indigo-400">{stats.totalEvents}</span>}
-          trend="up"
-          trendValue="Real-time Stream"
-          description="Operational timeline events"
-          icon={<Activity className="text-indigo-500" />}
-          chartData={[10, 15, 22, 28, 35, 42, 50, 65]}
-        />
-        <KpiCard
-          title="Progress Milestones"
-          value={<span className="text-emerald-600 dark:text-emerald-400">{stats.progressCount}</span>}
-          trend="up"
-          trendValue="Executed & Signed"
-          description="Approved site DPRs & pours"
-          icon={<CheckCircle2 className="text-emerald-500" />}
-          chartData={[4, 8, 12, 16, 20, 24, 28, 32]}
-        />
-        <KpiCard
-          title="Financial Vouchers"
-          value={<span className="text-sky-600 dark:text-sky-400">{stats.financeCount}</span>}
-          trend="neutral"
-          trendValue="Approved Invoices"
-          description="Site vouchers & petty cash"
-          icon={<DollarSign className="text-sky-500" />}
-          chartData={[3, 5, 8, 10, 12, 15, 18, 22]}
-        />
-        <KpiCard
-          title="Flagged Delays"
-          value={<span className="text-rose-600 dark:text-rose-400">{stats.blockersCount}</span>}
-          trend={stats.blockersCount > 0 ? 'down' : 'neutral'}
-          trendValue={`${stats.aiCount} AI Vision Audits`}
-          description="Site interruptions logged"
-          icon={<ShieldAlert className="text-rose-500" />}
-          chartData={[2, 4, 1, 3, 2, 1, 2, 1]}
-        />
-      </div>
-
-      {/* ── Toolbar: Search, Filters & View Switcher ── */}
-      <div className="flex flex-col gap-2 border border-border/80 p-2.5 rounded-lg bg-card/40">
-        <div className="flex flex-col sm:flex-row gap-2.5 items-center justify-between">
-          <div className="flex flex-wrap gap-2 w-full sm:w-auto flex-1 items-center">
-            {/* Search */}
-            <div className="relative w-full sm:w-64">
-              <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-              <Input
-                placeholder="Search event type, summary, author..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-8 h-9 text-xs"
-              />
+      {/* ── Page Header (Hidden in Full View Mode for pure stream experience) ── */}
+      {!isFullView ? (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-3.5">
+          <div className="flex items-center gap-3">
+            <div className="size-10 rounded-lg border border-indigo-500/30 bg-indigo-500/10 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shrink-0 shadow-2xs">
+              <Activity className="size-5" />
             </div>
+            <div>
+              <h1 className="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
+                Site Operations Timeline
+                <Badge variant="outline" className="text-[10px] font-mono border-indigo-500/30 text-indigo-600 dark:text-indigo-400">
+                  Real-Time Event Stream
+                </Badge>
+              </h1>
+              <p className="text-xs text-muted-foreground font-medium">{scopeLabel}</p>
+            </div>
+          </div>
 
-            {/* Category Select */}
+          <div className="flex items-center gap-2">
+            {/* Full View Toggle Button */}
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 gap-1.5 text-xs font-bold shadow-2xs border-indigo-500/30 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-500/10"
+              onClick={() => {
+                setIsFullView(true)
+                toast.info('Entered Full View Stream', 'Distraction-free event stream mode')
+              }}
+            >
+              <Maximize2 className="size-3.5" />
+              Full View
+            </Button>
+
+            {/* Live Auto-Refresh Stream Toggle */}
+            <Button
+              size="sm"
+              variant="outline"
+              className={cn(
+                'h-8 gap-1.5 text-xs font-semibold border transition-all',
+                liveStreamActive
+                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+                  : 'text-muted-foreground'
+              )}
+              onClick={() => {
+                setLiveStreamActive((prev) => !prev)
+                toast.info('Live Stream Updated', liveStreamActive ? 'Paused auto-refresh' : 'Enabled live stream auto-refresh')
+              }}
+            >
+              <span className={cn('size-2 rounded-full', liveStreamActive ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-400')} />
+              {liveStreamActive ? 'Live Stream Active' : 'Stream Paused'}
+            </Button>
+
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 gap-1.5 text-xs font-medium"
+              onClick={() => toast.info('Exporting Event Ledger', 'Downloading CSV timeline log')}
+            >
+              <Download className="size-3.5" />
+              Export Log
+            </Button>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={loadTimeline}
+              disabled={loading}
+              className="h-8 gap-1.5 text-xs"
+            >
+              <RefreshCw className={cn('size-3.5', loading && 'animate-spin')} />
+              Refresh
+            </Button>
+          </div>
+        </div>
+      ) : (
+        /* Full View Floating Control Bar */
+        <div className="sticky top-0 z-50 flex items-center justify-between gap-3 p-3 rounded-xl border border-indigo-500/30 bg-card/95 shadow-2xl backdrop-blur-xl mb-2">
+          <div className="flex items-center gap-2.5">
+            <div className="size-7 rounded-md bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-600">
+              <Activity className="size-4" />
+            </div>
+            <span className="font-bold text-xs text-foreground font-mono">Operations Feed (Full Screen Stream)</span>
+            <span className="text-[11px] text-muted-foreground">· {filteredEntries.length} Events</span>
+          </div>
+
+          <div className="flex items-center gap-2">
             <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-              <SelectTrigger className="h-9 text-xs w-full sm:w-40">
-                <Filter className="size-3.5 mr-1.5 text-muted-foreground shrink-0" />
+              <SelectTrigger className="h-7 text-xs w-36 bg-background">
                 <SelectValue placeholder="All Categories" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="ALL">All Categories</SelectItem>
-                <SelectItem value="PROGRESS">🏗️ Site Progress</SelectItem>
-                <SelectItem value="FINANCE">💰 Finance & Expenses</SelectItem>
-                <SelectItem value="WORKFORCE">👷 Workforce & Labour</SelectItem>
-                <SelectItem value="MATERIALS">📦 Materials Ledger</SelectItem>
-                <SelectItem value="BLOCKER">⚠️ Delays & Blockers</SelectItem>
+                <SelectItem value="PROGRESS">🏗️ Progress</SelectItem>
+                <SelectItem value="FINANCE">💰 Finance</SelectItem>
+                <SelectItem value="WORKFORCE">👷 Workforce</SelectItem>
+                <SelectItem value="MATERIALS">📦 Materials</SelectItem>
+                <SelectItem value="BLOCKER">⚠️ Delays</SelectItem>
               </SelectContent>
             </Select>
 
-            {/* Date Preset */}
-            <Select value={datePreset} onValueChange={(val) => {
-              setDatePreset(val)
-              const now = new Date()
-              if (val === 'ALL') { setDateFrom(''); setDateTo('') }
-              else if (val === 'TODAY') {
-                const todayStr = now.toISOString().split('T')[0]
-                setDateFrom(todayStr); setDateTo(todayStr)
-              } else if (val === 'THIS_WEEK') {
-                const lastWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-                setDateFrom(lastWeek.toISOString().split('T')[0])
-                setDateTo(now.toISOString().split('T')[0])
-              }
-            }}>
-              <SelectTrigger className="h-9 text-xs w-full sm:w-36">
-                <Calendar className="size-3.5 mr-1.5 text-muted-foreground shrink-0" />
-                <SelectValue placeholder="All Time" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL">All Time</SelectItem>
-                <SelectItem value="TODAY">Today</SelectItem>
-                <SelectItem value="THIS_WEEK">This Week</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* View Switcher */}
-          <div className="flex items-center gap-1 border border-border/80 rounded-md p-0.5 bg-background shrink-0">
             <Button
-              variant={viewMode === 'stream' ? 'secondary' : 'ghost'}
               size="sm"
-              className="h-7 px-2.5 text-xs font-semibold gap-1"
-              onClick={() => setViewMode('stream')}
+              variant="default"
+              className="h-7 text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 gap-1.5"
+              onClick={() => {
+                setIsFullView(false)
+                toast.info('Exited Full View', 'Returned to standard layout')
+              }}
             >
-              <List className="size-3.5" />
-              Stream
-            </Button>
-            <Button
-              variant={viewMode === 'matrix' ? 'secondary' : 'ghost'}
-              size="sm"
-              className="h-7 px-2.5 text-xs font-semibold gap-1"
-              onClick={() => setViewMode('matrix')}
-            >
-              <LayoutGrid className="size-3.5" />
-              Matrix
-            </Button>
-            <Button
-              variant={viewMode === 'heatmap' ? 'secondary' : 'ghost'}
-              size="sm"
-              className="h-7 px-2.5 text-xs font-semibold gap-1"
-              onClick={() => setViewMode('heatmap')}
-            >
-              <CalendarDays className="size-3.5" />
-              Density
+              <Minimize2 className="size-3.5" />
+              Exit Full View
             </Button>
           </div>
         </div>
+      )}
 
-        {/* Active Filter Chips */}
-        {hasActiveFilters && (
-          <div className="flex items-center gap-2 pt-1 text-xs border-t border-border/40 flex-wrap">
-            <span className="text-muted-foreground font-semibold text-[11px]">Active Filters:</span>
-            {categoryFilter !== 'ALL' && (
-              <Badge variant="secondary" className="gap-1 text-[10px]">
-                Category: {categoryFilter}
-                <X className="size-3 cursor-pointer hover:opacity-80" onClick={() => setCategoryFilter('ALL')} />
-              </Badge>
-            )}
-            {searchQuery && (
-              <Badge variant="secondary" className="gap-1 text-[10px]">
-                Query: "{searchQuery}"
-                <X className="size-3 cursor-pointer hover:opacity-80" onClick={() => setSearchQuery('')} />
-              </Badge>
-            )}
-            <Button variant="ghost" size="sm" onClick={resetFilters} className="h-5 text-[10px] text-muted-foreground hover:text-foreground p-0 ml-auto">
-              Reset All
-            </Button>
+      {/* ── Executive KPI Cards (Hidden in Full View Mode) ── */}
+      {!isFullView && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <KpiCard
+            title="Total Events Logged"
+            value={<span className="text-indigo-600 dark:text-indigo-400">{stats.totalEvents}</span>}
+            trend="up"
+            trendValue="Real-time Stream"
+            description="Operational timeline events"
+            icon={<Activity className="text-indigo-500" />}
+            chartData={[10, 15, 22, 28, 35, 42, 50, 65]}
+          />
+          <KpiCard
+            title="Progress Milestones"
+            value={<span className="text-emerald-600 dark:text-emerald-400">{stats.progressCount}</span>}
+            trend="up"
+            trendValue="Executed & Signed"
+            description="Approved site DPRs & pours"
+            icon={<CheckCircle2 className="text-emerald-500" />}
+            chartData={[4, 8, 12, 16, 20, 24, 28, 32]}
+          />
+          <KpiCard
+            title="Financial Vouchers"
+            value={<span className="text-sky-600 dark:text-sky-400">{stats.financeCount}</span>}
+            trend="neutral"
+            trendValue="Approved Invoices"
+            description="Site vouchers & petty cash"
+            icon={<DollarSign className="text-sky-500" />}
+            chartData={[3, 5, 8, 10, 12, 15, 18, 22]}
+          />
+          <KpiCard
+            title="Flagged Delays"
+            value={<span className="text-rose-600 dark:text-rose-400">{stats.blockersCount}</span>}
+            trend={stats.blockersCount > 0 ? 'down' : 'neutral'}
+            trendValue={`${stats.aiCount} AI Vision Audits`}
+            description="Site interruptions logged"
+            icon={<ShieldAlert className="text-rose-500" />}
+            chartData={[2, 4, 1, 3, 2, 1, 2, 1]}
+          />
+        </div>
+      )}
+
+      {/* ── Toolbar: Search, Filters & View Switcher (Hidden in Full View Mode) ── */}
+      {!isFullView && (
+        <div className="flex flex-col gap-2 border border-border/80 p-2.5 rounded-lg bg-card/40">
+          <div className="flex flex-col sm:flex-row gap-2.5 items-center justify-between">
+            <div className="flex flex-wrap gap-2 w-full sm:w-auto flex-1 items-center">
+              {/* Search */}
+              <div className="relative w-full sm:w-64">
+                <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search event type, summary, author..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-8 h-9 text-xs"
+                />
+              </div>
+
+              {/* Category Select */}
+              <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                <SelectTrigger className="h-9 text-xs w-full sm:w-40">
+                  <Filter className="size-3.5 mr-1.5 text-muted-foreground shrink-0" />
+                  <SelectValue placeholder="All Categories" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">All Categories</SelectItem>
+                  <SelectItem value="PROGRESS">🏗️ Site Progress</SelectItem>
+                  <SelectItem value="FINANCE">💰 Finance & Expenses</SelectItem>
+                  <SelectItem value="WORKFORCE">👷 Workforce & Labour</SelectItem>
+                  <SelectItem value="MATERIALS">📦 Materials Ledger</SelectItem>
+                  <SelectItem value="BLOCKER">⚠️ Delays & Blockers</SelectItem>
+                </SelectContent>
+              </Select>
+
+              {/* Date Preset */}
+              <Select value={datePreset} onValueChange={(val) => {
+                setDatePreset(val)
+                const now = new Date()
+                if (val === 'ALL') { setDateFrom(''); setDateTo('') }
+                else if (val === 'TODAY') {
+                  const todayStr = now.toISOString().split('T')[0]
+                  setDateFrom(todayStr); setDateTo(todayStr)
+                } else if (val === 'THIS_WEEK') {
+                  const lastWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+                  setDateFrom(lastWeek.toISOString().split('T')[0])
+                  setDateTo(now.toISOString().split('T')[0])
+                }
+              }}>
+                <SelectTrigger className="h-9 text-xs w-full sm:w-36">
+                  <Calendar className="size-3.5 mr-1.5 text-muted-foreground shrink-0" />
+                  <SelectValue placeholder="All Time" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">All Time</SelectItem>
+                  <SelectItem value="TODAY">Today</SelectItem>
+                  <SelectItem value="THIS_WEEK">This Week</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* View Switcher */}
+            <div className="flex items-center gap-1 border border-border/80 rounded-md p-0.5 bg-background shrink-0">
+              <Button
+                variant={viewMode === 'stream' ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-7 px-2.5 text-xs font-semibold gap-1"
+                onClick={() => setViewMode('stream')}
+              >
+                <List className="size-3.5" />
+                Stream
+              </Button>
+              <Button
+                variant={viewMode === 'matrix' ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-7 px-2.5 text-xs font-semibold gap-1"
+                onClick={() => setViewMode('matrix')}
+              >
+                <LayoutGrid className="size-3.5" />
+                Matrix
+              </Button>
+              <Button
+                variant={viewMode === 'heatmap' ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-7 px-2.5 text-xs font-semibold gap-1"
+                onClick={() => setViewMode('heatmap')}
+              >
+                <CalendarDays className="size-3.5" />
+                Density
+              </Button>
+            </div>
           </div>
-        )}
-      </div>
+
+          {/* Active Filter Chips */}
+          {hasActiveFilters && (
+            <div className="flex items-center gap-2 pt-1 text-xs border-t border-border/40 flex-wrap">
+              <span className="text-muted-foreground font-semibold text-[11px]">Active Filters:</span>
+              {categoryFilter !== 'ALL' && (
+                <Badge variant="secondary" className="gap-1 text-[10px]">
+                  Category: {categoryFilter}
+                  <X className="size-3 cursor-pointer hover:opacity-80" onClick={() => setCategoryFilter('ALL')} />
+                </Badge>
+              )}
+              {searchQuery && (
+                <Badge variant="secondary" className="gap-1 text-[10px]">
+                  Query: "{searchQuery}"
+                  <X className="size-3 cursor-pointer hover:opacity-80" onClick={() => setSearchQuery('')} />
+                </Badge>
+              )}
+              <Button variant="ghost" size="sm" onClick={resetFilters} className="h-5 text-[10px] text-muted-foreground hover:text-foreground p-0 ml-auto">
+                Reset All
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Stream View: Chronological Timeline Feed ── */}
       {viewMode === 'stream' ? (
@@ -590,7 +633,7 @@ export default function OperationsTimelinePage() {
               <div key={dateStr} className="space-y-3">
 
                 {/* Day Header Badge */}
-                <div className="sticky top-0 z-10 flex items-center gap-2 py-1 bg-background/90 backdrop-blur-md">
+                <div className="sticky top-12 z-10 flex items-center gap-2 py-1 bg-background/90 backdrop-blur-md">
                   <Badge variant="outline" className="bg-card shadow-2xs font-mono font-bold text-xs py-1 px-3 border-indigo-500/30 text-indigo-600 dark:text-indigo-400 gap-1.5">
                     <Calendar className="size-3.5" />
                     {dateStr === new Date().toISOString().split('T')[0] ? `Today — ${dateStr}` : dateStr}
