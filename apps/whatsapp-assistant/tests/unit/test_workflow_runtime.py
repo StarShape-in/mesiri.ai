@@ -621,3 +621,115 @@ def test_every_registered_workflow_has_a_category() -> None:
 
     for definition in iter_definitions():
         assert isinstance(definition.category, WorkflowCategory), definition.key
+
+
+async def test_provide_input_completes_a_workflow_that_ends_without_a_draft():
+    """Answering a slot question can *be* the decision, with nothing left to
+    confirm -- WORKER_PROMOTION ("which of these should I add?") is the first
+    workflow that both asks a slot question and finishes without a draft.
+
+    start() has always allowed this via allows_completion_without_draft;
+    provide_input did not, and returned FAILED. On WhatsApp that surfaced as
+    "Sorry, I couldn't apply that update - please try again" every single time
+    the offer was answered, with the answer discarded.
+    """
+    repo = FakeWorkflowInstanceRepository()
+    collecting = WorkflowStateV2(
+        workflow_instance_id="wf_promo",
+        workflow_key=WorkflowKey.WORKER_PROMOTION,
+        correlation_id="cor_1",
+        organization_id=ORG,
+        user_id=USR,
+        phase=WorkflowPhase.COLLECTING_FIELDS,
+        collected_fields={"promotable_workers": [{"name": "Rahul"}]},
+        awaiting_slot="promotion_choice",
+        pending_prompt="Which of these should I add?",
+    )
+    repo.seed(collecting, version=0)
+    loaded = LoadedWorkflowInstance(state=collecting, version=0)
+
+    graph = _FakeGraph(
+        result={
+            "draft_action": None,
+            "pending_prompt": "Added to your Worker Register: Rahul",
+            "awaiting_slot": None,
+            "collected_fields": {"workers_to_create": [{"name": "Rahul"}]},
+        }
+    )
+    registry = _FakeRegistry({WorkflowKey.WORKER_PROMOTION: graph})
+    runtime = WorkflowRuntime(registry=registry, repo=repo)
+
+    result = await runtime.provide_input(loaded, "save all")
+
+    assert result.status is WorkflowRunStatus.COMPLETED
+    assert result.pending_prompt == "Added to your Worker Register: Rahul"
+    # The caller needs these to perform the writes the node decided on.
+    assert result.collected_fields["workers_to_create"] == [{"name": "Rahul"}]
+
+
+async def test_provide_input_closes_out_the_row_when_it_completes_without_a_draft():
+    """Leaving the COLLECTING_FIELDS row open would make get_awaiting_input()
+    keep finding it, so the user's *next* message would be swallowed as
+    another answer to a question that is already over."""
+    repo = FakeWorkflowInstanceRepository()
+    collecting = WorkflowStateV2(
+        workflow_instance_id="wf_promo",
+        workflow_key=WorkflowKey.WORKER_PROMOTION,
+        correlation_id="cor_1",
+        organization_id=ORG,
+        user_id=USR,
+        phase=WorkflowPhase.COLLECTING_FIELDS,
+        collected_fields={"promotable_workers": [{"name": "Rahul"}]},
+        awaiting_slot="promotion_choice",
+        pending_prompt="Which of these should I add?",
+    )
+    repo.seed(collecting, version=0)
+    loaded = LoadedWorkflowInstance(state=collecting, version=0)
+
+    graph = _FakeGraph(
+        result={
+            "draft_action": None,
+            "pending_prompt": "Done.",
+            "awaiting_slot": None,
+            "collected_fields": {},
+        }
+    )
+    runtime = WorkflowRuntime(
+        registry=_FakeRegistry({WorkflowKey.WORKER_PROMOTION: graph}), repo=repo
+    )
+
+    await runtime.provide_input(loaded, "none")
+
+    saved_state, _ = repo._rows["wf_promo"]  # noqa: SLF001 — test introspection
+    assert saved_state.phase is WorkflowPhase.COMPLETED
+    assert saved_state.awaiting_slot is None
+
+
+async def test_provide_input_still_fails_a_workflow_that_owes_a_draft():
+    """The guard that remains: a workflow which is *supposed* to produce a
+    draft and doesn't is a real bug, not a quiet completion."""
+    repo = FakeWorkflowInstanceRepository()
+    collecting = WorkflowStateV2(
+        workflow_instance_id="wf_1",
+        workflow_key=WorkflowKey.MATERIAL_RECEIPT,
+        correlation_id="cor_1",
+        organization_id=ORG,
+        user_id=USR,
+        phase=WorkflowPhase.COLLECTING_FIELDS,
+        collected_fields={},
+        awaiting_slot="unit",
+        pending_prompt="Which unit?",
+    )
+    repo.seed(collecting, version=0)
+    loaded = LoadedWorkflowInstance(state=collecting, version=0)
+
+    graph = _FakeGraph(
+        result={"draft_action": None, "pending_prompt": "ok", "awaiting_slot": None}
+    )
+    runtime = WorkflowRuntime(
+        registry=_FakeRegistry({WorkflowKey.MATERIAL_RECEIPT: graph}), repo=repo
+    )
+
+    result = await runtime.provide_input(loaded, "bags")
+
+    assert result.status is WorkflowRunStatus.FAILED

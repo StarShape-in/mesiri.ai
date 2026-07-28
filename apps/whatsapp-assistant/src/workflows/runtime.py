@@ -630,6 +630,46 @@ class WorkflowRuntime:
                 collected_fields=resolved_fields,
             )
 
+        if draft_action is None and pending_prompt is not None:
+            # A workflow that legitimately ends without anything to confirm
+            # (allows_completion_without_draft -- the answer *was* the
+            # decision). start() has always allowed this; provide_input did
+            # not, so such a workflow answered its own question and was then
+            # told "Sorry, I couldn't apply that update". Worker promotion is
+            # the first workflow to both ask a slot question and finish
+            # without a draft, which is why the gap went unnoticed.
+            if not allows_completion_without_draft(state.workflow_key):
+                logger.error(
+                    "workflow.missing_draft_action workflow_key=%s workflow_instance_id=%s",
+                    state.workflow_key.value,
+                    instance_id,
+                )
+                return WorkflowRunResult.failed(
+                    workflow_key=state.workflow_key, correlation_id=state.correlation_id
+                )
+            # The COLLECTING_FIELDS row has to be closed out, not just left
+            # behind: get_awaiting_input() would keep finding it and swallow
+            # the user's next message as another answer to a question that is
+            # already over.
+            done_state = state.model_copy(
+                update={
+                    "collected_fields": resolved_fields,
+                    "awaiting_slot": None,
+                    "phase": WorkflowPhase.COMPLETED,
+                    "pending_prompt": pending_prompt,
+                }
+            )
+            if not await self._repo.transition(instance_id, loaded.version, done_state):
+                return WorkflowRunResult.failed(
+                    workflow_key=state.workflow_key, correlation_id=state.correlation_id
+                )
+            return WorkflowRunResult.completed(
+                workflow_key=state.workflow_key,
+                correlation_id=state.correlation_id,
+                pending_prompt=pending_prompt,
+                collected_fields=resolved_fields,
+            )
+
         if draft_action is None or pending_prompt is None:
             return WorkflowRunResult.failed(
                 workflow_key=state.workflow_key, correlation_id=state.correlation_id

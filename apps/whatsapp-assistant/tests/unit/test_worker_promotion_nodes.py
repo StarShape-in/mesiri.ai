@@ -8,6 +8,8 @@ WorkflowRuntime.provide_input does.
 
 from __future__ import annotations
 
+import pytest
+
 from workflows.worker_promotion.nodes import (
     DUPLICATE_SLOT,
     PROMOTION_SLOT,
@@ -174,6 +176,60 @@ def test_the_daily_wage_from_attendance_is_carried_into_the_register():
 
     assert queued[0]["daily_wage"] == "800"
     assert queued[0]["trade"] == "mason"
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "all",
+        "save all",          # the one that was reported, and the most natural
+        "Save All",
+        "SAVE ALL",
+        "add all",
+        "save them all",
+        "yes save all",
+        "add them all please",
+        "everyone",
+        "yes",
+        "ok",
+    ],
+)
+def test_saying_yes_is_understood_however_it_is_phrased(reply):
+    """Reported from testing: "save all" was rejected. The accepted answers
+    were a fixed list of exact phrasings, which can never be complete -- the
+    verb around the answer is now treated as noise instead."""
+    assert _names(_answer([AJITH, NIYAS], reply)) == ["Ajith", "Niyas"], reply
+
+
+@pytest.mark.parametrize(
+    "reply",
+    ["none", "no", "skip", "no thanks", "dont save", "nobody", "not now", "cancel"],
+)
+def test_saying_no_is_understood_however_it_is_phrased(reply):
+    result = _answer([AJITH, NIYAS], reply)
+    assert _queued(result) == [], reply
+    assert result["awaiting_slot"] is None, reply
+
+
+@pytest.mark.parametrize(
+    "reply", ["all except Ajith", "everyone but Niyas", "save all without Ajith"]
+)
+def test_an_exclusion_is_re_asked_rather_than_inverted(reply):
+    """"All except Ajith" names who to leave *out*, and every other branch
+    here reads names as who to put in -- so this would otherwise have
+    selected exactly the person the user excluded. A wrongly added worker
+    can't be undone from WhatsApp, so it asks again instead."""
+    result = _answer([AJITH, NIYAS], reply)
+
+    assert _queued(result) == [], reply
+    assert result["awaiting_slot"] == PROMOTION_SLOT, reply
+
+
+def test_a_worker_whose_name_reads_like_a_keyword_is_still_selectable():
+    """The keyword check must never shadow a real name on the list."""
+    ok_the_worker = {"name": "Ok", "trade": "mason"}
+
+    assert _names(_answer([ok_the_worker, NIYAS], "Ok")) == ["Ok"]
 
 
 def test_a_reply_naming_nobody_recognisable_re_asks():

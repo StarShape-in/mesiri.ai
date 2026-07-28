@@ -74,9 +74,33 @@ DUPLICATE_SLOT = "promotion_duplicate_check"
 _DUPLICATE_SUSPICION = 0.20
 
 _NONE_WORDS = frozenset(
-    {"none", "no", "skip", "no thanks", "nope", "cancel", "later", "not now"}
+    {
+        "none", "no", "not", "now", "skip", "nope", "cancel", "later",
+        "nobody", "nothing", "dont", "don't",
+    }
 )
-_ALL_WORDS = frozenset({"all", "yes", "all of them", "add all", "yes all", "everyone"})
+_ALL_WORDS = frozenset({"all", "everyone", "everybody", "yes", "yeah", "yep", "ok", "okay"})
+
+#: Words that carry no selection meaning here -- the reply is *already* an
+#: answer to "which of these should I add?", so the verb around it is noise.
+#: Without stripping these, the entirely natural "save all" fell through to
+#: name matching, matched nobody, and re-asked the same question forever.
+_FILLER_WORDS = frozenset(
+    {
+        "save", "saving", "add", "adding", "register", "registering", "keep",
+        "make", "mark", "set", "put", "please", "pls", "plz", "them", "these",
+        "those", "it", "to", "the", "my", "our", "as", "in", "into", "on",
+        "of", "and", "worker", "workers", "permanent", "permanently", "list",
+        "thanks", "thank", "you",
+    }
+)
+
+#: A reply carrying one of these names people to *leave out*, and this parser
+#: reads names as people to put in -- so "all except Rahul" would otherwise
+#: select exactly the one person the user excluded. Exclusions are re-asked
+#: rather than guessed at: a wrongly added worker cannot be undone from
+#: WhatsApp, and one extra question costs nothing here.
+_EXCLUSION_WORDS = frozenset({"except", "but", "besides", "apart", "without", "excluding"})
 
 
 # --- Helpers -----------------------------------------------------------------
@@ -134,18 +158,33 @@ def _select_by_name(text: str, workers: list[dict[str, Any]]) -> list[int] | Non
     normalized names; a reply naming nobody recognisable returns None so the
     question is re-asked rather than silently doing nothing.
     """
-    stripped = " ".join(text.strip().lower().split())
-    if not stripped:
-        return None
-    if stripped in _ALL_WORDS:
-        return list(range(len(workers)))
-    if stripped in _NONE_WORDS:
-        return []
-
     normalized_reply = normalize_name(text)
     if not normalized_reply:
         return None
     reply_tokens = set(normalized_reply.split())
+
+    # An exclusion ("all except Rahul") names who to leave out, and everything
+    # below reads names as who to put in. Re-ask instead of inverting the
+    # user's meaning.
+    if reply_tokens & _EXCLUSION_WORDS:
+        return None
+
+    # "all" / "none", however they are phrased. Read from the words that are
+    # left once the filler verbs are removed, rather than by matching the whole
+    # reply against a fixed list of phrasings -- that list can never be
+    # complete, and "save all" (which it did not contain) is the most natural
+    # way to say yes.
+    meaningful = reply_tokens - _FILLER_WORDS
+    # A name on the list always wins over a keyword, so a worker called
+    # "Sabu" is still selectable even though the reply reads like filler.
+    listed = {
+        token for worker in workers for token in normalize_name(str(worker["name"])).split()
+    }
+    meaningful -= listed
+    if meaningful and meaningful <= _ALL_WORDS:
+        return list(range(len(workers)))
+    if meaningful and meaningful <= _NONE_WORDS:
+        return []
 
     chosen: set[int] = set()
     for i, worker in enumerate(workers):
