@@ -306,16 +306,31 @@ class WorkflowRuntime:
                     pending_prompt=existing.state.pending_prompt,
                 )
             if existing_input is not None and existing_input.state.pending_prompt:
-                logger.info(
-                    "workflow.blocked_pending_input user=%s existing=%s",
-                    event.user_id,
-                    existing_input.state.workflow_instance_id,
-                )
-                return WorkflowRunResult.blocked_pending_confirmation(
-                    workflow_key=workflow_key,
-                    correlation_id=event.correlation_id,
-                    pending_prompt=existing_input.state.pending_prompt,
-                )
+                # An *optional* question must never hold the user hostage.
+                # Worker promotion ("shall I add these to the register?") is
+                # informational: nothing depends on the answer, and ignoring
+                # it is a legitimate reply. Left blocking, an unanswered offer
+                # stopped every later report -- and because the row lives in
+                # Postgres with no expiry, it stopped them forever. Drop the
+                # offer and let the new work through.
+                if is_informational(existing_input.state.workflow_key):
+                    logger.info(
+                        "workflow.abandoned_optional_question user=%s existing=%s",
+                        event.user_id,
+                        existing_input.state.workflow_instance_id,
+                    )
+                    await self._abandon(existing_input)
+                else:
+                    logger.info(
+                        "workflow.blocked_pending_input user=%s existing=%s",
+                        event.user_id,
+                        existing_input.state.workflow_instance_id,
+                    )
+                    return WorkflowRunResult.blocked_pending_confirmation(
+                        workflow_key=workflow_key,
+                        correlation_id=event.correlation_id,
+                        pending_prompt=existing_input.state.pending_prompt,
+                    )
 
         # Look up the graph BEFORE minting any identity: an unmapped key must
         # never generate an orphaned workflow_instance_id.
@@ -697,6 +712,28 @@ class WorkflowRuntime:
             draft_action=draft_action,
             pending_prompt=pending_prompt,
         )
+
+    async def _abandon(self, loaded: LoadedWorkflowInstance) -> None:
+        """Close out an optional question the user moved on from.
+
+        Best-effort by design: this runs on the path of a *new* report, and
+        failing to tidy up an old offer must never cost the user the thing
+        they actually just sent. A row left behind is retried on the next
+        message anyway.
+        """
+        try:
+            await self._repo.transition(
+                loaded.state.workflow_instance_id,
+                loaded.version,
+                loaded.state.model_copy(
+                    update={"awaiting_slot": None, "phase": WorkflowPhase.CANCELLED}
+                ),
+            )
+        except Exception:  # noqa: BLE001 — tidying up never blocks new work
+            logger.warning(
+                "workflow.abandon_failed workflow_instance_id=%s",
+                loaded.state.workflow_instance_id,
+            )
 
     async def get_awaiting_confirmation(self, user_id: str) -> LoadedWorkflowInstance | None:
         """The user's single awaiting-confirmation instance, or None. Interactions

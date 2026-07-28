@@ -733,3 +733,80 @@ async def test_provide_input_still_fails_a_workflow_that_owes_a_draft():
     result = await runtime.provide_input(loaded, "bags")
 
     assert result.status is WorkflowRunStatus.FAILED
+
+
+async def test_an_unanswered_optional_question_never_blocks_the_next_report():
+    """Reported from testing: everything jammed after a promotion offer.
+
+    The offer ("shall I add these to the register?") is optional -- ignoring
+    it is a legitimate answer. But an unanswered COLLECTING_FIELDS row
+    blocked every later workflow, and that row lives in Postgres with no
+    expiry, so the block never lifted on its own. Sending a fresh attendance
+    report is exactly how a supervisor "answers" it: by moving on.
+    """
+    repo = FakeWorkflowInstanceRepository()
+    stale_offer = WorkflowStateV2(
+        workflow_instance_id="wf_promo",
+        workflow_key=WorkflowKey.WORKER_PROMOTION,
+        correlation_id="cor_old",
+        organization_id=ORG,
+        user_id=USR,
+        phase=WorkflowPhase.COLLECTING_FIELDS,
+        collected_fields={"promotable_workers": [{"name": "Rahul"}]},
+        awaiting_slot="promotion_choice",
+        pending_prompt="Would you like to add any of these workers?",
+    )
+    repo.seed(stale_offer, version=0)
+
+    graph = _FakeGraph(result={"draft_action": _draft(), "pending_prompt": "Confirm?"})
+    runtime = WorkflowRuntime(
+        registry=_FakeRegistry({WorkflowKey.MATERIAL_RECEIPT: graph}), repo=repo
+    )
+
+    result = await runtime.start(
+        _decision(
+            decision_type=PlannerDecisionType.START_WORKFLOW,
+            workflow_key=WorkflowKey.MATERIAL_RECEIPT,
+        ),
+        _event(),
+    )
+
+    assert result.status is WorkflowRunStatus.STARTED, "an optional offer must not block"
+    # ...and the abandoned offer is closed out, not left to block again.
+    saved, _ = repo._rows["wf_promo"]  # noqa: SLF001 — test introspection
+    assert saved.phase is WorkflowPhase.CANCELLED
+
+
+async def test_a_real_pending_question_still_blocks():
+    """The invariant that must survive the change above: a question the
+    workflow genuinely needs answered ("which account?") still holds the
+    single-active line."""
+    repo = FakeWorkflowInstanceRepository()
+    pending = WorkflowStateV2(
+        workflow_instance_id="wf_expense",
+        workflow_key=WorkflowKey.EXPENSE_SUBMIT,
+        correlation_id="cor_old",
+        organization_id=ORG,
+        user_id=USR,
+        phase=WorkflowPhase.COLLECTING_FIELDS,
+        collected_fields={},
+        awaiting_slot="account_id",
+        pending_prompt="Which account?",
+    )
+    repo.seed(pending, version=0)
+
+    graph = _FakeGraph(result={"draft_action": _draft(), "pending_prompt": "Confirm?"})
+    runtime = WorkflowRuntime(
+        registry=_FakeRegistry({WorkflowKey.MATERIAL_RECEIPT: graph}), repo=repo
+    )
+
+    result = await runtime.start(
+        _decision(
+            decision_type=PlannerDecisionType.START_WORKFLOW,
+            workflow_key=WorkflowKey.MATERIAL_RECEIPT,
+        ),
+        _event(),
+    )
+
+    assert result.status is WorkflowRunStatus.BLOCKED_PENDING_CONFIRMATION
+    assert result.pending_prompt == "Which account?"
