@@ -123,3 +123,38 @@ def test_the_skip_tap_is_handled_before_the_confirmation_classifier():
     fast_path_at = source.index("handle_fast_path(ctx.user_id, message, actor=ctx)")
 
     assert skip_at < fast_path_at
+
+
+def test_the_report_id_is_parked_before_the_offer_is_deferred():
+    """The bug this catches, which shipped once: when a report has new named
+    workers the team-photo offer waits for the promotion answer, and the
+    deferred branch pops a hint to learn which day the photo belongs to.
+
+    An earlier version wrote that hint only inside _offer_team_photo -- which
+    the deferred path does not reach -- so it popped an id nobody had
+    written and the prompt never arrived, for exactly the reports most likely
+    to want a photo. Both halves are asserted together because either alone
+    looks correct.
+    """
+    block = _block_after(
+        _dependencies_source(),
+        "handle_fast_path(ctx.user_id, message, actor=ctx)",
+        "handle_slot_answer",
+    )
+    park_at = block.index("_park_team_photo_report(")
+    offer_at = block.index("await _offer_team_photo(")
+
+    assert park_at < offer_at, "the report id must be parked before the offer branch"
+    # ...and parked unconditionally, not only on the immediate path.
+    assert "if report_id and not promotion_offered:" in block
+
+
+def test_the_deferred_offer_reads_the_id_that_confirmation_parked():
+    """The other end of the same contract."""
+    block = _block_after(
+        _dependencies_source(),
+        "handle_slot_answer(ctx.user_id, message)",
+        "try_handle_account_admin_command",
+    )
+    assert "_safe_pop_pending_report(" in block
+    assert "await _offer_team_photo(" in block

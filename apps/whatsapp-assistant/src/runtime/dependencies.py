@@ -905,6 +905,17 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
                 send_button=sender.send_button,
             )
 
+        async def _park_team_photo_report(store, user_id: str, report_id: str) -> None:
+            """Remember which report a team photo would belong to.
+
+            Never raises: Redis is a hint here, and losing it costs the photo
+            offer, not the attendance.
+            """
+            try:
+                await store.set_hint(user_id=user_id, report_id=report_id)
+            except Exception:  # noqa: BLE001
+                _log.warning("team_photo.park_failed user=%s", user_id)
+
         async def _safe_pop_pending_report(store, user_id: str) -> str | None:
             """Pop the pending team-photo report id, never raising.
 
@@ -994,16 +1005,25 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             except Exception:  # noqa: BLE001 — promotion never disturbs saved attendance
                 _log.exception("worker_promotion.trigger_failed user=%s", ctx.user_id)
                 promotion_offered = False
-            # Team photo. Only when nothing is being promoted -- otherwise it
-            # waits until the promotion answer lands (see the slot-answer
-            # branch below), so the supervisor answers one question at a time
-            # rather than receiving two prompts at once.
-            if not promotion_offered:
-                report_id = _recorded_attendance_report_id(handled)
-                if report_id:
-                    await _offer_team_photo(
-                        report_id, ctx, wa_id, team_photo_hint_store, _send_spec
-                    )
+            # Team photo. The report id is parked here, on confirmation,
+            # whatever happens next -- the deferred branch below pops it after
+            # the promotion answer, and has no other way to learn which day
+            # the photo belongs to. An earlier version parked it only inside
+            # _offer_team_photo, so a report *with* new workers deferred the
+            # offer and then looked for an id nobody had written: the prompt
+            # never arrived for exactly the reports most likely to want one.
+            report_id = _recorded_attendance_report_id(handled)
+            if report_id:
+                await _park_team_photo_report(
+                    team_photo_hint_store, ctx.user_id, report_id
+                )
+            # Sent now only when nothing is being promoted; otherwise it waits
+            # for that answer, so the supervisor faces one question at a time
+            # rather than two prompts at once.
+            if report_id and not promotion_offered:
+                await _offer_team_photo(
+                    report_id, ctx, wa_id, team_photo_hint_store, _send_spec
+                )
             # Phase 8 perf: user reply is already sent above. These 4 writes
             # are order-independent audit rows -- run them concurrently.
             await asyncio.gather(
