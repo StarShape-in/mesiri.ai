@@ -195,3 +195,83 @@ async def test_send_list_and_send_button_bool_contract_unchanged_by_str_refactor
     )
     assert result is True
     assert isinstance(result, bool)
+
+
+def _two_step_sender(requests: list[httpx.Request]) -> WhatsAppSender:
+    """Distinguishes the media-upload POST from the message-send POST by
+    path, mirroring the Cloud API's actual two-call shape (see send_image/
+    send_document's docstrings)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/media"):
+            return httpx.Response(200, json={"id": "media-123"})
+        return httpx.Response(200, json={"messages": [{"id": "wamid.out.1"}]})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return WhatsAppSender(client=client, access_token="token", phone_number_id="PHONE_NUMBER_ID")
+
+
+@pytest.mark.asyncio
+async def test_send_document_uploads_then_references_the_media_id():
+    """#16 Daily Report Generation's PDF delivery -- same two-call shape as
+    send_image, but type=document with a filename Meta requires."""
+    requests: list[httpx.Request] = []
+    sender = _two_step_sender(requests)
+
+    ok = await sender.send_document(
+        "919876543210", b"%PDF-1.4 fake", filename="DPR-20260727.pdf", caption="Today's DPR"
+    )
+
+    assert ok is True
+    assert len(requests) == 2
+    assert requests[0].url.path.endswith("/media")
+    assert requests[1].url.path.endswith("/messages")
+    payload = json.loads(requests[1].content)
+    assert payload["type"] == "document"
+    assert payload["document"] == {
+        "id": "media-123",
+        "filename": "DPR-20260727.pdf",
+        "caption": "Today's DPR",
+    }
+
+
+@pytest.mark.asyncio
+async def test_send_document_uses_pdf_filename_for_the_upload_multipart():
+    """The upload step's multipart filename must be the real one, not a
+    hardcoded receipt.png -- Meta/downstream viewers use it for the
+    document's display name."""
+    requests: list[httpx.Request] = []
+    sender = _two_step_sender(requests)
+
+    await sender.send_document("919876543210", b"%PDF-1.4 fake", filename="DPR-20260727.pdf")
+
+    assert b"DPR-20260727.pdf" in requests[0].content
+
+
+@pytest.mark.asyncio
+async def test_send_document_degrades_to_false_when_upload_fails():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="server error")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    sender = WhatsAppSender(client=client, access_token="token", phone_number_id="PHONE_NUMBER_ID")
+
+    ok = await sender.send_document("919876543210", b"%PDF-1.4", filename="x.pdf")
+    assert ok is False
+
+
+@pytest.mark.asyncio
+async def test_send_image_still_uploads_with_its_own_filename():
+    """Pins send_image's behavior unchanged by _upload_media's new filename
+    parameter -- it must still upload as receipt.png."""
+    requests: list[httpx.Request] = []
+    sender = _two_step_sender(requests)
+
+    ok = await sender.send_image("919876543210", b"\x89PNG fake", caption="Saved")
+
+    assert ok is True
+    assert b"receipt.png" in requests[0].content
+    payload = json.loads(requests[1].content)
+    assert payload["type"] == "image"
+    assert payload["image"] == {"id": "media-123", "caption": "Saved"}

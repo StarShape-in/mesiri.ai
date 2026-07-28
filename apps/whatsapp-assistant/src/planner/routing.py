@@ -23,6 +23,7 @@ WORKFLOW_KEY_BY_EVENT: dict[CanonicalEventType, WorkflowKey] = {
     CanonicalEventType.INVENTORY_QUERY_ASKED: WorkflowKey.MATERIAL_INVENTORY_QUERY,
     CanonicalEventType.LABOUR_QUERY_ASKED: WorkflowKey.LABOUR_QUERY,
     CanonicalEventType.ACTIVITY_QUERY_ASKED: WorkflowKey.ACTIVITY_QUERY,
+    CanonicalEventType.DPR_REQUESTED: WorkflowKey.DPR_REQUEST,
     CanonicalEventType.ACCOUNT_ADMIN_REQUESTED: WorkflowKey.ACCOUNT_ADMIN,
     CanonicalEventType.ACCOUNT_BALANCE_QUERY_ASKED: WorkflowKey.ACCOUNT_BALANCE_QUERY,
     CanonicalEventType.EXPENSE_QUERY_ASKED: WorkflowKey.EXPENSE_QUERY,

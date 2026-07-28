@@ -71,8 +71,8 @@ _EXTRACTION_PROMPT = (
     '"Malayalam", "English"), '
     '"semantic_type" (expense|equipment_usage|material_update|labour_update|'
     "general_site_update|general_question|whoami_question|inventory_query|"
-    "labour_query|activity_query|finance_query|transfer|petty_cash|reversal|account_admin|"
-    "unknown), "
+    "labour_query|activity_query|dpr_request|finance_query|transfer|petty_cash|reversal|"
+    "account_admin|unknown), "
     '"fields" (object, values in English except proper nouns/names -- see '
     "per-type rules below for how to handle names), "
     '"missing_fields" (array), '
@@ -192,6 +192,12 @@ _EXTRACTION_PROMPT = (
     'general_site_update (recording work); "what did I log today?" is an activity_query '
     "(asking). Getting this backwards would try to record a report instead of answering "
     "a question.\n"
+    "- dpr_request: (no fields). Use this type ONLY when the user explicitly asks to be "
+    'SENT today\'s Daily Progress Report / DPR as a document (e.g. "send me today\'s DPR", '
+    '"share today\'s report", "send the daily report"). Distinct from activity_query, which '
+    'asks a QUESTION about the log ("what did I log today?") and gets a text answer -- '
+    "dpr_request wants the actual generated PDF document sent to them. Never use this for a "
+    "vague \"how's the site doing\" question -- that is activity_query or general_question.\n"
     "- finance_query: query_kind, account_name, category_name, date_range, missing_receipts, "
     "project_name. "
     'query_kind MUST be exactly "balance" or "expenses" -- never any other word. '

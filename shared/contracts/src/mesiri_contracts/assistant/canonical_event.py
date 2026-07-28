@@ -45,6 +45,7 @@ class CanonicalEventType(str, Enum):
     INVENTORY_QUERY_ASKED = "InventoryQueryAsked"
     LABOUR_QUERY_ASKED = "LabourQueryAsked"
     ACTIVITY_QUERY_ASKED = "ActivityQueryAsked"
+    DPR_REQUESTED = "DprRequested"
     ACCOUNT_BALANCE_QUERY_ASKED = "AccountBalanceQueryAsked"
     EXPENSE_QUERY_ASKED = "ExpenseQueryAsked"
     TRANSFER_REQUESTED = "TransferRequested"

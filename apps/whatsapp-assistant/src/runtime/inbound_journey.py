@@ -59,10 +59,12 @@ from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
 from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
 from mesiri_contracts.assistant.v2.resolved_context import ResolvedContextV2
 from mesiri_contracts.common.ids import new_id as _new_id
+from mesiri_contracts.common.storage import ObjectStoragePort
 from planner import Planner, log_planner_decision
 from planner.ambiguity import AmbiguityAction, caveat_text, decide_ambiguity
 from runtime.activity_query import ActivityQueryService
 from runtime.activity_search_service import ActivitySearchService
+from runtime.dpr_request_query import DprRequestQueryService
 from runtime.duplicate_expense_query import DuplicateExpenseQueryService
 from runtime.escalation_query import EscalationCreateService
 from runtime.expense_category_query import ExpenseCategoryQueryService
@@ -850,6 +852,42 @@ async def _seed_activity_search(
     event.fields["activity_search_results"] = results
 
 
+async def _seed_dpr_request(
+    event: CanonicalEventV2,
+    decision: PlannerDecisionV2,
+    dpr_request_query: DprRequestQueryService | None,
+    actor: ActorIdentity | None,
+    timezone_name: str | None,
+) -> None:
+    """Resolve today's DPR status before the graph runs -- same shape and
+    reasoning as _seed_labour_query above. Only ever runs for DPR_REQUEST.
+
+    Only ever checks *today* -- see runtime/dpr_request_query.py's module
+    docstring for why a date range isn't extracted for this V1 trigger.
+    Writes `dpr_object_key` even though the node itself never reads it
+    (workflows/dpr_request/nodes.py only reads `dpr_status`/`dpr_code`) --
+    the post-reply delivery step below (in process_inbound_message) is what
+    actually fetches and sends the PDF, and it reads the field straight off
+    `canonical_event.fields` rather than threading a third value through
+    the node's return dict.
+    """
+    if dpr_request_query is None or actor is None or not actor.organization_id:
+        return
+    if decision.workflow_key is not WorkflowKey.DPR_REQUEST:
+        return
+
+    today = today_for(timezone_name)
+    result = await dpr_request_query.find_report(
+        organization_id=actor.organization_id,
+        project_id=event.project_id,
+        site_id=event.site_id,
+        report_date=today,
+    )
+    event.fields["dpr_status"] = result["status"]
+    event.fields["dpr_object_key"] = result["object_key"]
+    event.fields["dpr_code"] = result["code"]
+
+
 async def _seed_worker_candidates(
     event: CanonicalEventV2,
     decision: PlannerDecisionV2,
@@ -1269,6 +1307,8 @@ async def process_inbound_message(
     send_list: Callable[[str, str, str, tuple[ListRow, ...]], Awaitable[Any]] | None = None,
     send_button: Callable[[str, str, tuple[ListRow, ...]], Awaitable[Any]] | None = None,
     send_image: Callable[[str, bytes], Awaitable[Any]] | None = None,
+    send_document: Callable[..., Awaitable[Any]] | None = None,
+    object_storage: ObjectStoragePort | None = None,
     context_debug: bool = False,
     message_logger: MessageLogger | None = None,
     trace_logger: TraceLogger | None = None,
@@ -1287,6 +1327,7 @@ async def process_inbound_message(
     expense_query_service: ExpenseQueryService | None = None,
     activity_query: ActivityQueryService | None = None,
     activity_search_service: ActivitySearchService | None = None,
+    dpr_request_query: DprRequestQueryService | None = None,
     semantic_hint: str | None = None,
     direction_hint: str | None = None,
     pending_report_store: PendingReportStore | None = None,
@@ -1749,7 +1790,7 @@ async def process_inbound_message(
                                 correlation_id,
                                 exc_info=True,
                             )
-                    # Run all 10 seed functions in parallel — each targets a
+                    # Run all 11 seed functions in parallel — each targets a
                     # different table and is fully independent of the others.
                     timezone_name = resolved.timezone if resolved else None
                     await asyncio.gather(
@@ -1807,6 +1848,13 @@ async def process_inbound_message(
                             canonical_event,
                             planner_decision,
                             activity_search_service,
+                            actor,
+                            timezone_name,
+                        ),
+                        _seed_dpr_request(
+                            canonical_event,
+                            planner_decision,
+                            dpr_request_query,
                             actor,
                             timezone_name,
                         ),
@@ -1992,6 +2040,38 @@ async def process_inbound_message(
         if isinstance(send_result, str):
             await _safe(
                 mlog.set_reply_wamid(correlation_id=correlation_id, reply_wamid=send_result)
+            )
+
+    # #16 Daily Report Generation's chat trigger: the status text above is
+    # always sent first (a supervisor should never get a document with no
+    # explanation), and the PDF itself follows as a second message only
+    # when _seed_dpr_request found a rendered one. This is a side-channel
+    # deliberately separate from ReplySpec/send_reply_spec -- the same
+    # shape send_image's receipt delivery uses (see the interaction-resume
+    # leg's `handled.receipt_coro` branch) -- because ReplySpec has no
+    # notion of a binary attachment and adding one there would ripple into
+    # every other reply type that doesn't need it.
+    if (
+        workflow_run is not None
+        and workflow_run.workflow_key is WorkflowKey.DPR_REQUEST
+        and canonical_event is not None
+        and canonical_event.fields.get("dpr_object_key")
+        and send_document is not None
+        and object_storage is not None
+    ):
+        try:
+            stored = await object_storage.get_object(canonical_event.fields["dpr_object_key"])
+            code = canonical_event.fields.get("dpr_code") or "DPR"
+            await send_document(
+                message.sender.wa_id,
+                stored.data,
+                filename=f"{code}.pdf",
+                caption=None,
+            )
+        except Exception:  # noqa: BLE001 -- the status text was already sent; a
+            # failed document fetch/send must not fail the whole journey.
+            _log.warning(
+                "dpr_request.document_send_failed correlation_id=%s", correlation_id, exc_info=True
             )
 
     await _safe(mlog.mark_completed(correlation_id=correlation_id))

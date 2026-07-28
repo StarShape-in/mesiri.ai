@@ -217,7 +217,7 @@ class WhatsAppSender:
             logger.warning("WhatsApp sender disabled (missing phone_number_id/access_token)")
             return False
 
-        media_id = await self._upload_media(image_bytes, mime_type="image/png")
+        media_id = await self._upload_media(image_bytes, mime_type="image/png", filename="receipt.png")
         if media_id is None:
             return False
 
@@ -226,13 +226,40 @@ class WhatsAppSender:
             image_fields["caption"] = caption
         return (await self._send(to_wa_id, {"type": "image", "image": image_fields})) is not None
 
-    async def _upload_media(self, data: bytes, *, mime_type: str) -> str | None:
+    async def send_document(
+        self,
+        to_wa_id: str,
+        document_bytes: bytes,
+        *,
+        filename: str,
+        caption: str | None = None,
+        mime_type: str = "application/pdf",
+    ) -> bool:
+        """Upload a document (e.g. a DPR PDF, #16 Daily Report Generation)
+        and send it. Same two-step upload-then-reference flow as
+        send_image -- see that docstring."""
+        if not self.enabled:
+            logger.warning("WhatsApp sender disabled (missing phone_number_id/access_token)")
+            return False
+
+        media_id = await self._upload_media(document_bytes, mime_type=mime_type, filename=filename)
+        if media_id is None:
+            return False
+
+        document_fields: dict = {"id": media_id, "filename": filename}
+        if caption:
+            document_fields["caption"] = caption
+        return (
+            await self._send(to_wa_id, {"type": "document", "document": document_fields})
+        ) is not None
+
+    async def _upload_media(self, data: bytes, *, mime_type: str, filename: str) -> str | None:
         url = f"{self._graph_base_url}/{self._api_version}/{self._phone_number_id}/media"
         try:
             resp = await self._client.post(
                 url,
                 data={"messaging_product": "whatsapp", "type": mime_type},
-                files={"file": ("receipt.png", data, mime_type)},
+                files={"file": (filename, data, mime_type)},
                 headers={"Authorization": f"Bearer {self._access_token}"},
             )
         except httpx.HTTPError as exc:
