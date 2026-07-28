@@ -89,6 +89,28 @@ class PostgresTransferExecutionRepository(TransferExecutionRepository):
             correlation_id=cmd.correlation_id,
         )
 
+        # Registered as aggregate_type 'money_transaction' in
+        # timeline_projector.py's AGGREGATE_TABLES — that table has no
+        # project_id/site_id (a transfer is scoped to accounts, not a
+        # project), so the projected timeline entry is org-wide.
+        await conn.execute(
+            sa.text(
+                "INSERT INTO outbox_events "
+                "(id, aggregate_type, aggregate_id, event_type, payload, correlation_id) "
+                "VALUES (:id, 'money_transaction', :aggregate_id, :event_type, "
+                "CAST(:payload AS jsonb), :correlation_id)"
+            ),
+            {
+                "id": uuid.uuid4(),
+                "aggregate_id": transaction.id,
+                "event_type": "MoneyTransactionTransferred",
+                "payload": json.dumps(
+                    {"amount": str(cmd.amount), "description": cmd.description}, default=str
+                ),
+                "correlation_id": cmd.correlation_id,
+            },
+        )
+
         result = ExecutionResult(
             status=ExecutionStatus.SUCCEEDED,
             idempotency_key=cmd.idempotency_key,

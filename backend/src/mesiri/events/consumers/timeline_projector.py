@@ -107,15 +107,68 @@ _activities = sa.Table(
     sa.Column("started_at", sa.Time, key="occurred_time"),
 )
 
+# site_issues has no occurred_date/occurred_time split — occurred_at is
+# already a single timestamp (migration 0430), so this table is keyed
+# directly as "occurred_at" rather than aliased into the occurred_date/
+# occurred_time shape every other aggregate above uses. The batch loop below
+# checks for either column name rather than assuming one shape fits all
+# aggregates (this is the "extend the projector to accept a column-name
+# mapping" option _activities' own comment flagged as the alternative to
+# aliasing).
+_site_issues = sa.Table(
+    "site_issues",
+    sa.MetaData(),
+    sa.Column("id", sa.UUID(as_uuid=True)),
+    sa.Column("organization_id", sa.UUID(as_uuid=True)),
+    sa.Column("project_id", sa.UUID(as_uuid=True)),
+    sa.Column("site_id", sa.UUID(as_uuid=True)),
+    sa.Column("occurred_at", sa.DateTime(timezone=True)),
+)
+
+_expenses = sa.Table(
+    "expenses",
+    sa.MetaData(),
+    sa.Column("id", sa.UUID(as_uuid=True)),
+    sa.Column("organization_id", sa.UUID(as_uuid=True)),
+    sa.Column("project_id", sa.UUID(as_uuid=True)),
+    sa.Column("site_id", sa.UUID(as_uuid=True)),
+    sa.Column("occurred_date", sa.Date),
+    sa.Column("occurred_time", sa.Time),
+)
+
+# money_transactions (migration 0340) has no project_id/site_id at all — it's
+# scoped to money_accounts, not a project/site directly (a transfer between
+# two accounts has no single project to attribute it to). Left absent here
+# rather than joined through from_account_id/to_account_id to money_accounts
+# for a project_id, matching the projector's existing rule of never reaching
+# into a second table just to enrich one event (see
+# _labour_attendance_summary's docstring for the same reasoning applied to
+# names instead of scope). The batch loop below defaults project_id/site_id
+# to NULL for any aggregate table that simply has no such column — timeline_
+# entries already declares both nullable (migration 0150) for exactly this.
+_money_transactions = sa.Table(
+    "money_transactions",
+    sa.MetaData(),
+    sa.Column("id", sa.UUID(as_uuid=True)),
+    sa.Column("organization_id", sa.UUID(as_uuid=True)),
+    sa.Column("occurred_date", sa.Date),
+    sa.Column("occurred_time", sa.Time),
+)
+
 # Extension point: a new domain's aggregate is one entry here — the table
-# must expose organization_id, project_id, site_id, occurred_date.
-# occurred_time is optional (see _labour_attendance_reports above); the batch
-# loop checks for it rather than assuming every aggregate has one.
+# must expose organization_id, and either occurred_date (+ optional
+# occurred_time) or a single occurred_at timestamp. project_id/site_id are
+# both optional (see money_transactions above); when present they scope the
+# projected entry, when absent the entry is org-wide (project_id/site_id
+# NULL in timeline_entries).
 AGGREGATE_TABLES: dict[str, sa.Table] = {
     "material_receipt": _material_receipts,
     "material_usage": _material_usage,
     "labour_attendance_report": _labour_attendance_reports,
     "activity": _activities,
+    "site_issue": _site_issues,
+    "expense": _expenses,
+    "money_transaction": _money_transactions,
 }
 
 
@@ -153,6 +206,22 @@ EVENT_SUMMARY_BUILDERS: dict[str, Callable[[dict[str, Any]], str]] = {
         f"Progress update: {p.get('update_kind', 'PROGRESS').title()}"
     ),
     "ActivityEvidenceAttached": lambda p: "Photo evidence attached",
+    "SiteIssueReported": lambda p: (
+        f"{p.get('issue_type', 'Issue').replace('_', ' ').title()} reported"
+        + (f" ({p['severity'].title()})" if p.get("severity") else "")
+    ),
+    "SiteIssueAcknowledged": lambda p: "Site issue acknowledged",
+    "SiteIssueResolved": lambda p: "Site issue resolved",
+    "SiteIssueWontFix": lambda p: "Site issue marked as won't fix",
+    "ExpenseRecorded": lambda p: (
+        f"{p.get('currency', 'INR')} {p.get('amount')} expense recorded"
+        + (f" ({p['category_text']})" if p.get("category_text") else "")
+    ),
+    "ExpenseVoided": lambda p: "Expense voided",
+    "MoneyTransactionTransferred": lambda p: (
+        f"{p.get('currency', 'INR')} {p.get('amount')} transferred between accounts"
+    ),
+    "MoneyTransferReversed": lambda p: "Money transfer reversed",
 }
 
 
@@ -200,20 +269,28 @@ async def project_pending_events(conn: AsyncConnection, batch_size: int = 100) -
         source_table = AGGREGATE_TABLES.get(row["aggregate_type"])
         source = None
         if source_table is not None:
-            # occurred_time is optional per-aggregate (labour_attendance_reports
-            # has none -- attendance is a whole-day fact). Selected only when the
-            # table actually declares it, rather than assuming every aggregate
-            # has one; occurred_at below already treats a missing time as
-            # midnight, so this only changes whether the column is asked for.
-            select_columns = [
-                source_table.c.organization_id,
-                source_table.c.project_id,
-                source_table.c.site_id,
-                source_table.c.occurred_date,
-            ]
-            has_occurred_time = "occurred_time" in source_table.c
-            if has_occurred_time:
-                select_columns.append(source_table.c.occurred_time)
+            select_columns = [source_table.c.organization_id]
+            # project_id/site_id are optional per-aggregate (money_transactions
+            # has neither — see its table comment above); selected only when
+            # the table actually declares them, defaulting to NULL below
+            # otherwise (timeline_entries has both nullable for exactly this).
+            if "project_id" in source_table.c:
+                select_columns.append(source_table.c.project_id)
+            if "site_id" in source_table.c:
+                select_columns.append(source_table.c.site_id)
+            if "occurred_date" in source_table.c:
+                # occurred_time is optional per-aggregate (labour_attendance_reports
+                # has none -- attendance is a whole-day fact). Selected only when the
+                # table actually declares it, rather than assuming every aggregate
+                # has one; occurred_at below already treats a missing time as
+                # midnight, so this only changes whether the column is asked for.
+                select_columns.append(source_table.c.occurred_date)
+                if "occurred_time" in source_table.c:
+                    select_columns.append(source_table.c.occurred_time)
+            elif "occurred_at" in source_table.c:
+                # site_issues' shape: a single timestamp column, no
+                # date/time split to recombine.
+                select_columns.append(source_table.c.occurred_at)
             source = (
                 (
                     await conn.execute(
@@ -238,10 +315,12 @@ async def project_pending_events(conn: AsyncConnection, batch_size: int = 100) -
         payload = _coerce_payload(row["payload"])
 
         occurred_at = row["created_at"]
-        if source["occurred_date"] is not None:
+        if source.get("occurred_date") is not None:
             occurred_at = datetime.datetime.combine(
                 source["occurred_date"], source.get("occurred_time") or datetime.time.min
             )
+        elif source.get("occurred_at") is not None:
+            occurred_at = source["occurred_at"]
 
         await conn.execute(
             sa.text(
@@ -256,8 +335,8 @@ async def project_pending_events(conn: AsyncConnection, batch_size: int = 100) -
             {
                 "id": uuid.uuid4(),
                 "organization_id": source["organization_id"],
-                "project_id": source["project_id"],
-                "site_id": source["site_id"],
+                "project_id": source.get("project_id"),
+                "site_id": source.get("site_id"),
                 "event_type": row["event_type"],
                 "summary": _build_summary(row["event_type"], payload),
                 "payload": json.dumps(payload),

@@ -311,7 +311,7 @@ export interface SiteIssueItem {
   delay_duration_minutes?: number | null
   occurred_at: string
   resolved_at?: string | null
-  status: 'OPEN' | 'INVESTIGATING' | 'RESOLVED' | 'BLOCKED' | string
+  status: 'OPEN' | 'ACKNOWLEDGED' | 'RESOLVED' | 'WONT_FIX' | string
   resolution_notes?: string | null
   assigned_user_id?: string | null
   reported_by_user_id?: string | null
@@ -363,6 +363,68 @@ export async function resolveSiteIssueApi(
 ): Promise<{ status: string; message: string }> {
   const res = await api.post<{ status: string; message: string }>(
     `/progress/issues/${issueId}/resolve`,
+    { resolution_notes: resolutionNotes }
+  )
+  return res.data
+}
+
+export interface GalleryItem {
+  id: string
+  organization_id: string
+  project_id: string
+  site_id: string
+  parent_type: string
+  parent_id: string
+  media_object_key: string
+  attachment_type: string
+  mime_type?: string | null
+  caption?: string | null
+  ai_caption?: string | null
+  role?: string | null
+  captured_at?: string | null
+  created_at: string
+}
+
+export interface GalleryListResponse {
+  items: GalleryItem[]
+  total: number
+}
+
+export async function fetchSiteGalleryApi(params: {
+  projectId?: string
+  siteId?: string
+  attachmentType?: string
+  limit?: number
+  offset?: number
+} = {}): Promise<GalleryListResponse> {
+  const res = await api.get<GalleryListResponse>('/progress/gallery', {
+    params: {
+      project_id: params.projectId,
+      site_id: params.siteId,
+      attachment_type: params.attachmentType && params.attachmentType !== 'ALL' ? params.attachmentType : undefined,
+      limit: params.limit ?? 50,
+      offset: params.offset ?? 0,
+    },
+  })
+  return res.data
+}
+
+
+export async function acknowledgeSiteIssueApi(
+  issueId: string
+): Promise<{ status: string; message: string }> {
+  const res = await api.post<{ status: string; message: string }>(
+    `/progress/issues/${issueId}/acknowledge`
+  )
+  return res.data
+}
+
+export async function wontFixSiteIssueApi(
+  issueId: string,
+  resolutionNotes?: string
+): Promise<{ status: string; message: string }> {
+  const res = await api.post<{ status: string; message: string }>(
+    `/progress/issues/${issueId}/wont-fix`,
     { resolution_notes: resolutionNotes }
   )
   return res.data
@@ -1332,7 +1394,7 @@ export interface DailyReportSummary {
   weather: 'sunny' | 'rainy' | 'cloudy' | 'extreme_heat' | 'windy'
   temperature_celsius?: number
   shift: 'day' | 'night' | 'full_day'
-  workflow_status: 'draft' | 'under_review' | 'approved' | 'frozen'
+  workflow_status: 'draft' | 'in_review' | 'approved' | 'published' | 'not_reported'
   activities_count: number
   labour_count: number
   issues_count: number
@@ -1427,8 +1489,16 @@ export async function fetchDailyReportDetailApi(reportId: string): Promise<Daily
   return res.data
 }
 
+export async function submitDailyReportForReviewApi(reportId: string): Promise<void> {
+  await api.post(`/dpr/daily-reports/${reportId}/submit-for-review`)
+}
+
 export async function approveDailyReportApi(reportId: string, notes?: string): Promise<void> {
   await api.post(`/dpr/daily-reports/${reportId}/approve`, { notes })
+}
+
+export async function publishDailyReportApi(reportId: string): Promise<void> {
+  await api.post(`/dpr/daily-reports/${reportId}/publish`)
 }
 
 export interface CreateDailyReportPayload {

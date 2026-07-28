@@ -142,10 +142,12 @@ export default function OperationsTimelinePage() {
   const loadTimeline = React.useCallback(async () => {
     setLoading(true)
     try {
+      // Note: categoryFilter is a client-derived label (progress/finance/workforce/...), not a
+      // real backend event_type value, so it is applied via deriveCategory() below rather than
+      // sent to the API as an exact-match eventType filter.
       const res = await fetchTimelineEntriesApi({
         projectId: scopeFilter.projectId,
         siteId: scopeFilter.siteId,
-        eventType: categoryFilter !== 'ALL' ? categoryFilter : undefined,
         dateFrom: dateFrom || undefined,
         dateTo: dateTo || undefined,
         limit: 100,
@@ -173,7 +175,7 @@ export default function OperationsTimelinePage() {
     } finally {
       setLoading(false)
     }
-  }, [scopeFilter, categoryFilter, dateFrom, dateTo, currentSiteName])
+  }, [scopeFilter, dateFrom, dateTo, currentSiteName])
 
   React.useEffect(() => {
     loadTimeline()

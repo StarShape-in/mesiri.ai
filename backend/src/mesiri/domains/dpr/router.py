@@ -123,6 +123,23 @@ async def create_daily_report(
     return created
 
 
+@router.post("/daily-reports/{report_id}/submit-for-review")
+async def submit_daily_report_for_review(
+    report_id: uuid.UUID,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """DRAFT -> IN_REVIEW."""
+    repo = PostgresDprRepository(conn)
+    success = await repo.submit_for_review(
+        organization_id=auth_context.organization_id,
+        report_id=report_id,
+    )
+    if not success:
+        raise HTTPException(status_code=404, detail="Report not found or not in DRAFT status")
+    return {"status": "success"}
+
+
 @router.post("/daily-reports/{report_id}/approve")
 async def approve_daily_report(
     report_id: uuid.UUID,
@@ -139,4 +156,21 @@ async def approve_daily_report(
     )
     if not success:
         raise HTTPException(status_code=404, detail="Report not found or already approved")
+    return {"status": "success"}
+
+
+@router.post("/daily-reports/{report_id}/publish")
+async def publish_daily_report(
+    report_id: uuid.UUID,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """APPROVED -> PUBLISHED."""
+    repo = PostgresDprRepository(conn)
+    success = await repo.publish_report(
+        organization_id=auth_context.organization_id,
+        report_id=report_id,
+    )
+    if not success:
+        raise HTTPException(status_code=404, detail="Report not found or not in APPROVED status")
     return {"status": "success"}

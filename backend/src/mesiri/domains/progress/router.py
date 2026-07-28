@@ -33,6 +33,7 @@ from .responses import (
     ResolveSiteIssueRequest,
     SiteIssueResponse,
     SiteIssuesListResponse,
+    WontFixSiteIssueRequest,
 )
 
 router = APIRouter(prefix="/progress", tags=["progress"])
@@ -182,12 +183,65 @@ async def create_issue(
         raise HTTPException(status_code=403, detail="Not authorized for target project or site")
 
     repo = PostgresProgressReadRepository(conn)
-    item = await repo.create_issue(
-        organization_id=auth_context.organization_id,
-        user_id=auth_context.user_id,
-        payload=payload.model_dump(),
-    )
+    try:
+        item = await repo.create_issue(
+            organization_id=auth_context.organization_id,
+            user_id=auth_context.user_id,
+            payload=payload.model_dump(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return item
+
+
+@router.post("/issues/{issue_id}/acknowledge")
+async def acknowledge_issue(
+    issue_id: uuid.UUID,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Mark a site issue as ACKNOWLEDGED (OPEN -> ACKNOWLEDGED only)."""
+    repo = PostgresProgressReadRepository(conn)
+    existing = await repo.get_issue(auth_context.organization_id, issue_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Issue not found")
+    if _site_filter_denied(auth_context, existing["project_id"], existing["site_id"]):
+        raise HTTPException(status_code=403, detail="Not authorized for this issue")
+
+    success = await repo.acknowledge_issue(
+        organization_id=auth_context.organization_id,
+        issue_id=issue_id,
+    )
+    if not success:
+        raise HTTPException(status_code=400, detail="Issue must be OPEN to be acknowledged")
+
+    return {"status": "success", "message": "Site issue acknowledged"}
+
+
+@router.post("/issues/{issue_id}/wont-fix")
+async def wont_fix_issue(
+    issue_id: uuid.UUID,
+    payload: WontFixSiteIssueRequest,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Mark a site issue as WONT_FIX (OPEN/ACKNOWLEDGED -> WONT_FIX)."""
+    repo = PostgresProgressReadRepository(conn)
+    existing = await repo.get_issue(auth_context.organization_id, issue_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Issue not found")
+    if _site_filter_denied(auth_context, existing["project_id"], existing["site_id"]):
+        raise HTTPException(status_code=403, detail="Not authorized for this issue")
+
+    success = await repo.wont_fix_issue(
+        organization_id=auth_context.organization_id,
+        issue_id=issue_id,
+        notes=payload.resolution_notes,
+    )
+    if not success:
+        raise HTTPException(status_code=400, detail="Issue is already resolved/won't-fix or cannot be updated")
+
+    return {"status": "success", "message": "Site issue marked as won't fix"}
 
 
 @router.post("/issues/{issue_id}/resolve")
@@ -214,4 +268,32 @@ async def resolve_issue(
         raise HTTPException(status_code=400, detail="Issue is already resolved or cannot be updated")
 
     return {"status": "success", "message": "Site issue resolved"}
+
+
+@router.get("/gallery")
+async def list_gallery(
+    project_id: uuid.UUID | None = None,
+    site_id: uuid.UUID | None = None,
+    attachment_type: str | None = None,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """List site media gallery attachments within organization & scope."""
+    project_ids, denied = _resolve_project_ids(auth_context, project_id)
+    if denied or _site_filter_denied(auth_context, project_id, site_id):
+        return {"items": [], "total": 0}
+
+    repo = PostgresProgressReadRepository(conn)
+    items, total = await repo.list_gallery(
+        organization_id=auth_context.organization_id,
+        project_ids=project_ids,
+        site_id=site_id,
+        attachment_type=attachment_type,
+        limit=limit,
+        offset=offset,
+    )
+    return {"items": items, "total": total}
+
 

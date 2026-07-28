@@ -1,8 +1,8 @@
-import { PackagePlus, PackageMinus } from 'lucide-react'
+import { PackagePlus, PackageMinus, Wrench, HardHat, ClipboardList, Camera } from 'lucide-react'
 
-// Shared across Portfolio/Project/Site Overview: today only two event types
-// are ever projected into timeline_entries (see
-// backend/src/mesiri/events/consumers/timeline_projector.py::AGGREGATE_TABLES).
+// Shared across Portfolio/Project/Site Overview. Kept in sync with the event
+// types actually projected into timeline_entries (see
+// backend/src/mesiri/events/consumers/timeline_projector.py::EVENT_SUMMARY_BUILDERS).
 // Add an entry here when a new Field Report domain starts writing to the
 // timeline projection.
 export const FIELD_ACTIVITY_META: Record<
@@ -11,6 +11,11 @@ export const FIELD_ACTIVITY_META: Record<
 > = {
   MaterialReceived: { label: 'Material In', slug: 'material-in', icon: PackagePlus },
   MaterialUsed: { label: 'Material Out', slug: 'material-out', icon: PackageMinus },
+  MaterialMovementCorrected: { label: 'Material Correction', slug: 'material-correction', icon: Wrench },
+  LabourAttendanceRecorded: { label: 'Attendance', slug: 'attendance', icon: HardHat },
+  ActivityCreated: { label: 'Activity Started', slug: 'activity-created', icon: ClipboardList },
+  ActivityProgressUpdateAdded: { label: 'Progress Update', slug: 'progress-update', icon: ClipboardList },
+  ActivityEvidenceAttached: { label: 'Evidence Attached', slug: 'evidence-attached', icon: Camera },
 }
 
 export function describeEventType(eventType: string): string {
