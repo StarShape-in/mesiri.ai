@@ -32,6 +32,8 @@ import CategoriesPage from '@/pages/CategoriesPage'
 import OperationsTimelinePage from '@/pages/OperationsTimelinePage'
 import OperationsIssuesPage from '@/pages/OperationsIssuesPage'
 import OperationsGalleryPage from '@/pages/OperationsGalleryPage'
+import OperationsAnalyticsPage from '@/pages/OperationsAnalyticsPage'
+
 
 
 
@@ -74,7 +76,8 @@ export default function App() {
 
         <Route path="operations/gallery" element={<OperationsGalleryPage />} />
 
-        <Route path="operations/analytics" element={<OperationalPlaceholder title="Operations Analytics" />} />
+        <Route path="operations/analytics" element={<OperationsAnalyticsPage />} />
+
         <Route path="operations/settings" element={<OperationalPlaceholder title="Operations Settings" />} />
 
 
@@ -114,7 +117,8 @@ export default function App() {
 
         {/* Legacy operational routes fallbacks */}
         <Route path="timeline" element={<OperationsTimelinePage />} />
-        <Route path="analytics" element={<OperationalPlaceholder title="Analytics" />} />
+        <Route path="analytics" element={<OperationsAnalyticsPage />} />
+
         <Route path="gallery" element={<OperationsGalleryPage />} />
 
         <Route path="reports" element={<OperationalPlaceholder title="Reports" />} />
