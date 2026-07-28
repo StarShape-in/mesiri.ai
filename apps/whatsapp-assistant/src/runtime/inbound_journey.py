@@ -1011,34 +1011,6 @@ async def _maybe_trigger_worker_promotion(
         except Exception:  # noqa: BLE001 — promotion never blocks attendance
             register = []
 
-    # Inject the create_worker callable so the promotion node never touches
-    # repositories directly (same isolation principle as _seed_worker_candidates).
-    user_id = str(getattr(actor, "user_id", None) or confirmed.draft_action.user_id or "")
-    user_id_for_create = user_id or None
-
-    def _sync_create_worker(*, name: str, trade: str | None, daily_wage: object | None) -> None:
-        """Synchronous shim called from inside a sync LangGraph node.
-
-        The node runs inside graph.ainvoke(), but the LangGraph node itself is a
-        sync function (matching every other node in this codebase). LangGraph
-        runs sync nodes via run_in_executor(None, ...) -- a fresh
-        ThreadPoolExecutor thread, which has no event loop of its own.
-        asyncio.get_event_loop() would raise RuntimeError there ("no current
-        event loop in thread"); asyncio.run() creates and tears down a loop
-        local to this thread, which is exactly what's needed for one write.
-        """
-        import asyncio as _asyncio
-        if workforce_query is None:
-            return
-        coro = workforce_query.create_worker(
-            organization_id=org_id,
-            name=name,
-            trade=trade,
-            daily_wage=daily_wage,
-            created_by=user_id_for_create,
-        )
-        _asyncio.run(coro)
-
     # Synthetic decision + event to drive the promotion workflow through the
     # WorkflowRuntime (which handles COLLECTING_FIELDS persistence, provide_input
     # resume, and the single-active gate bypass for informational workflows).
@@ -1067,7 +1039,6 @@ async def _maybe_trigger_worker_promotion(
         fields={
             "promotable_workers": promotable,
             "_register": register,
-            "_create_worker_fn": _sync_create_worker,
         },
     )
 
@@ -1081,6 +1052,68 @@ async def _maybe_trigger_worker_promotion(
     # saved the state as COLLECTING_FIELDS waiting for the user's choice.
     if promo_run.pending_prompt:
         await _safe(send_text_fn(wa_id, promo_run.pending_prompt))
+
+
+async def _create_promoted_workers(
+    result: WorkflowRunResult | WorkflowResumeResult,
+    workforce_query: WorkforceQueryService | None,
+    actor: Any,
+    wa_id: str,
+    send_text_fn: Callable[[str, str], Awaitable[Any]],
+) -> None:
+    """Perform the register writes the promotion node decided on.
+
+    The node is pure and cannot write (see workflows/worker_promotion/nodes.py
+    for why a seeded callable is not an option here), so it lists whoever it
+    concluded should be added under WORKERS_TO_CREATE and leaves the inserts
+    to this side, which is holding the database.
+
+    The confirmation text the user already saw names those workers, so a
+    failure here has to correct itself out loud rather than fail silently --
+    the attendance record is safe either way, but a register entry the user
+    believes exists and doesn't is worse than an error message.
+    """
+    from workflows.worker_promotion.nodes import WORKERS_TO_CREATE
+
+    fields = getattr(result, "collected_fields", None)
+    if not isinstance(fields, dict):
+        return
+    queued = fields.get(WORKERS_TO_CREATE)
+    if not isinstance(queued, list) or not queued:
+        return
+    if workforce_query is None:
+        return
+
+    org_id = str(getattr(actor, "organization_id", None) or "")
+    if not org_id:
+        return
+    created_by = str(getattr(actor, "user_id", None) or "") or None
+
+    failed: list[str] = []
+    for worker in queued:
+        if not isinstance(worker, dict) or not str(worker.get("name") or "").strip():
+            continue
+        try:
+            await workforce_query.create_worker(
+                organization_id=org_id,
+                name=str(worker["name"]),
+                trade=worker.get("trade"),
+                daily_wage=worker.get("daily_wage"),
+                created_by=created_by,
+            )
+        except Exception:  # noqa: BLE001 — a failed promotion never disturbs attendance
+            _log.warning("worker_promotion.create_failed org=%s", org_id)
+            failed.append(str(worker["name"]))
+
+    if failed:
+        await _safe(
+            send_text_fn(
+                wa_id,
+                f"⚠️ I couldn't add {', '.join(failed)} to the Worker Register after all "
+                "— please add them from the dashboard. Today's attendance is saved and "
+                "unaffected.",
+            )
+        )
 
 
 async def _seed_duplicate_check(
@@ -1505,6 +1538,18 @@ async def process_inbound_message(
                 _maybe_trigger_worker_promotion(
                     handled,
                     workflow_runtime,
+                    workforce_query,
+                    actor,
+                    message.sender.wa_id,
+                    send_text,
+                )
+            )
+            # ...and the other half: when *this* message was the answer to the
+            # promotion offer, the node has decided who to add but cannot write
+            # (it is pure). Do the inserts here.
+            await _safe(
+                _create_promoted_workers(
+                    handled.result,
                     workforce_query,
                     actor,
                     message.sender.wa_id,

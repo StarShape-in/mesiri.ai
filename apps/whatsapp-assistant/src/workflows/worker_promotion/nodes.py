@@ -24,11 +24,20 @@ Pass 3 (``promotion_duplicate_check`` answered, only when pass 2 held someone):
     Whoever the user says is genuinely a different person gets created; the
     rest are left alone, already being in the register.
 
-**I/O isolation.** The ``create_worker`` DB call and the register snapshot
-are both *seeded* into the state by the caller (runtime/inbound_journey.py),
-the same pattern that worker candidates are seeded for ``match_workers`` in
-the labour_update workflow. This keeps the node free of repository imports
-and therefore trivially testable with a fake callable.
+**I/O isolation.** The register snapshot is *seeded* into the state by the
+caller (runtime/inbound_journey.py), the same pattern that worker candidates
+are seeded for ``match_workers`` in the labour_update workflow. This node
+decides but never writes: whoever it concludes should be added is listed
+under ``WORKERS_TO_CREATE`` in the returned state, and the caller performs
+the inserts.
+
+That split is not stylistic. This state is persisted between messages with
+``model_dump_json()``, so a create-callable seeded in alongside the data
+would fail to serialize outright -- and even if it didn't, ``provide_input``
+rebuilds the fields from the database on the next message, so the callable
+would be gone by the pass that needed it. Both failures were silent: the
+save raised, the run was recorded as failed, and the offer simply never
+arrived.
 """
 
 from __future__ import annotations
@@ -235,43 +244,41 @@ def _build_duplicate_message(held: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _create_selected(
+#: Key under which the node hands the caller the workers it decided to add.
+#: Plain JSON-safe dicts, because this survives a trip through Postgres.
+WORKERS_TO_CREATE = "workers_to_create"
+
+
+def _queue_for_creation(
     workers: list[dict[str, Any]], fields: dict[str, Any]
-) -> tuple[list[str], list[str]]:
-    """Run the seeded create callable over ``workers``. Returns (created, failed)."""
-    create_fn = fields.get("_create_worker_fn")
-    created: list[str] = []
-    failed: list[str] = []
-    for worker in workers:
-        if create_fn is None:
-            failed.append(str(worker["name"]))
-            continue
-        try:
-            create_fn(
-                name=str(worker["name"]),
-                trade=worker.get("trade"),
-                daily_wage=worker.get("daily_wage"),
-            )
-            created.append(str(worker["name"]))
-        except Exception:  # noqa: BLE001 — promotion never disturbs saved attendance
-            failed.append(str(worker["name"]))
-    return created, failed
+) -> list[str]:
+    """Record which workers the caller should write. Returns their names.
+
+    The node decides; it never writes. Nodes are pure (no I/O, no
+    repositories -- see workflows/runtime.py), and this state is persisted
+    between messages with model_dump_json(), so a callable smuggled in here
+    would neither serialize nor survive to the pass that needed it. The
+    caller picks these up from WorkflowRunResult.collected_fields.
+    """
+    queued = [
+        {
+            "name": str(worker["name"]),
+            "trade": worker.get("trade"),
+            "daily_wage": worker.get("daily_wage"),
+        }
+        for worker in workers
+    ]
+    fields[WORKERS_TO_CREATE] = queued
+    return [w["name"] for w in queued]
 
 
-def _closing_message(created: list[str], failed: list[str]) -> str:
-    parts: list[str] = []
-    if created:
-        parts.append(f"✅ Added to your Worker Register: {', '.join(created)}")
-    if failed:
-        parts.append(
-            f"⚠️ Could not add: {', '.join(failed)} — please add them from the dashboard."
-        )
-    if not parts:
-        parts.append(
+def _closing_message(queued: list[str]) -> str:
+    if not queued:
+        return (
             "No problem — they stay as temporary workers. You can add them any "
             "time from the Worker Register on the dashboard."
         )
-    return "\n".join(parts)
+    return f"✅ Added to your Worker Register: {', '.join(queued)}"
 
 
 def _ask(prompt: str, slot: str, fields: dict[str, Any]) -> dict:
@@ -312,14 +319,11 @@ def offer_and_promote(state: WorkflowGraphState) -> dict:
                 fields,
             )
 
-        created, failed = _create_selected([held[i] for i in selection], fields)
-        return _done(
-            _closing_message(
-                list(fields.get("_created_so_far") or []) + created,
-                list(fields.get("_failed_so_far") or []) + failed,
-            ),
-            fields,
-        )
+        # Anyone confirmed as a different person joins those already cleared,
+        # so the run ends with one summary covering both halves.
+        already = list(fields.get("_cleared_so_far") or [])
+        queued = _queue_for_creation(already + [held[i] for i in selection], fields)
+        return _done(_closing_message(queued), fields)
 
     # --- Pass 2: resolve the chosen names, then screen for duplicates --------
     if awaiting == PROMOTION_SLOT and answer is not None:
@@ -332,7 +336,7 @@ def offer_and_promote(state: WorkflowGraphState) -> dict:
                 fields,
             )
         if not selection:
-            return _done(_closing_message([], []), fields)
+            return _done(_closing_message([]), fields)
 
         clear: list[dict[str, Any]] = []
         held: list[dict[str, Any]] = []
@@ -344,17 +348,15 @@ def offer_and_promote(state: WorkflowGraphState) -> dict:
             else:
                 clear.append(worker)
 
-        created, failed = _create_selected(clear, fields)
-
         if held:
             fields["_held_for_duplicate_check"] = held
             # Carried so the run ends with one closing summary covering both
             # halves, rather than two partial ones.
-            fields["_created_so_far"] = created
-            fields["_failed_so_far"] = failed
+            fields["_cleared_so_far"] = clear
             return _ask(_build_duplicate_message(held), DUPLICATE_SLOT, fields)
 
-        return _done(_closing_message(created, failed), fields)
+        queued = _queue_for_creation(clear, fields)
+        return _done(_closing_message(queued), fields)
 
     # --- Pass 1: the offer ---------------------------------------------------
     return _ask(_build_offer_message(workers), PROMOTION_SLOT, fields)

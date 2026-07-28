@@ -11,6 +11,7 @@ from __future__ import annotations
 from workflows.worker_promotion.nodes import (
     DUPLICATE_SLOT,
     PROMOTION_SLOT,
+    WORKERS_TO_CREATE,
     offer_and_promote,
 )
 
@@ -34,13 +35,17 @@ def _base_state(fields: dict, **extra) -> dict:
     return state
 
 
-def _recorder():
-    created: list[dict] = []
+def _queued(result: dict) -> list[dict]:
+    """The workers the node decided to add.
 
-    def create_fn(*, name: str, trade: str | None, daily_wage) -> None:
-        created.append({"name": name, "trade": trade, "daily_wage": daily_wage})
+    The node is pure and never writes -- it lists them under
+    WORKERS_TO_CREATE and runtime/inbound_journey.py performs the inserts.
+    """
+    return list(result["collected_fields"].get(WORKERS_TO_CREATE) or [])
 
-    return created, create_fn
+
+def _names(result: dict) -> list[str]:
+    return [w["name"] for w in _queued(result)]
 
 
 def _answer(workers: list[dict], text: str, *, slot: str = PROMOTION_SLOT, **extra) -> dict:
@@ -99,43 +104,36 @@ def test_offer_never_carries_a_draft_action():
 
 
 def test_all_creates_every_worker():
-    created, create_fn = _recorder()
-    result = _answer([AJITH, NIYAS], "all", _create_worker_fn=create_fn)
+    result = _answer([AJITH, NIYAS], "all")
 
-    assert [c["name"] for c in created] == ["Ajith", "Niyas"]
+    assert _names(result) == ["Ajith", "Niyas"]
     assert "Ajith, Niyas" in result["pending_prompt"]
     assert result["awaiting_slot"] is None
 
 
 def test_none_creates_nobody_and_says_they_stay_temporary():
-    created, create_fn = _recorder()
-    result = _answer([AJITH, NIYAS], "none", _create_worker_fn=create_fn)
+    result = _answer([AJITH, NIYAS], "none")
 
-    assert created == []
+    assert _queued(result) == []
     assert "temporary workers" in result["pending_prompt"]
     assert result["awaiting_slot"] is None
 
 
 def test_selecting_by_name_creates_only_those_named():
-    created, create_fn = _recorder()
-    _answer([AJITH, NIYAS, RAHUL], "Ajith, Rahul", _create_worker_fn=create_fn)
+    result = _answer([AJITH, NIYAS, RAHUL], "Ajith, Rahul")
 
-    assert [c["name"] for c in created] == ["Ajith", "Rahul"]
+    assert _names(result) == ["Ajith", "Rahul"]
 
 
 def test_name_selection_is_case_and_separator_insensitive():
     for reply in ("ajith and rahul", "AJITH, RAHUL", "  ajith   rahul  "):
-        created, create_fn = _recorder()
-        _answer([AJITH, NIYAS, RAHUL], reply, _create_worker_fn=create_fn)
-        assert [c["name"] for c in created] == ["Ajith", "Rahul"], reply
+        assert _names(_answer([AJITH, NIYAS, RAHUL], reply)) == ["Ajith", "Rahul"], reply
 
 
 def test_a_multi_word_name_is_matched_as_a_whole():
     ravi_kumar = {"name": "Ravi Kumar", "trade": "mason"}
-    created, create_fn = _recorder()
-    _answer([ravi_kumar, NIYAS], "Ravi Kumar", _create_worker_fn=create_fn)
 
-    assert [c["name"] for c in created] == ["Ravi Kumar"]
+    assert _names(_answer([ravi_kumar, NIYAS], "Ravi Kumar")) == ["Ravi Kumar"]
 
 
 def test_a_name_read_in_capitals_is_selected_by_any_casing():
@@ -143,80 +141,66 @@ def test_a_name_read_in_capitals_is_selected_by_any_casing():
     on the list and the name the supervisor types rarely agree on case."""
     shouty = {"name": "AJITH KUMAR", "trade": "mason"}
     for reply in ("AJITH KUMAR", "ajith kumar", "Ajith Kumar", "  ajith   KUMAR "):
-        created, create_fn = _recorder()
-        _answer([shouty, NIYAS], reply, _create_worker_fn=create_fn)
-        assert [c["name"] for c in created] == ["AJITH KUMAR"], reply
+        assert _names(_answer([shouty, NIYAS], reply)) == ["AJITH KUMAR"], reply
 
 
 def test_a_first_name_selects_the_one_worker_it_identifies():
     """Typing "Ajith" for a listed "Ajith Kumar" is the natural reply --
     rejecting it made the question feel broken."""
     ajith_kumar = {"name": "Ajith Kumar", "trade": "mason"}
-    created, create_fn = _recorder()
-    _answer([ajith_kumar, NIYAS], "Ajith", _create_worker_fn=create_fn)
 
-    assert [c["name"] for c in created] == ["Ajith Kumar"]
+    assert _names(_answer([ajith_kumar, NIYAS], "Ajith")) == ["Ajith Kumar"]
 
 
 def test_a_first_name_shared_by_two_listed_workers_re_asks():
     """The guard on the rule above: promoting the wrong person is worse than
     asking twice."""
-    created, create_fn = _recorder()
-    result = _answer(
-        [{"name": "Ajith Kumar"}, {"name": "Ajith Nair"}],
-        "Ajith",
-        _create_worker_fn=create_fn,
-    )
+    result = _answer([{"name": "Ajith Kumar"}, {"name": "Ajith Nair"}], "Ajith")
 
-    assert created == []
+    assert _queued(result) == []
     assert result["awaiting_slot"] == PROMOTION_SLOT
 
 
 def test_a_reply_mixing_a_full_name_and_a_first_name_keeps_both():
     """"Ajith and Niyas" matches Niyas in full and Ajith only in part. An
     earlier version stopped at the first pass and silently dropped Ajith."""
-    created, create_fn = _recorder()
-    _answer(
-        [{"name": "Ajith Kumar"}, NIYAS],
-        "Ajith and Niyas",
-        _create_worker_fn=create_fn,
-    )
+    result = _answer([{"name": "Ajith Kumar"}, NIYAS], "Ajith and Niyas")
 
-    assert [c["name"] for c in created] == ["Ajith Kumar", "Niyas"]
+    assert _names(result) == ["Ajith Kumar", "Niyas"]
 
 
 def test_the_daily_wage_from_attendance_is_carried_into_the_register():
-    created, create_fn = _recorder()
-    _answer([AJITH], "Ajith", _create_worker_fn=create_fn)
+    queued = _queued(_answer([AJITH], "Ajith"))
 
-    assert created[0]["daily_wage"] == "800"
-    assert created[0]["trade"] == "mason"
+    assert queued[0]["daily_wage"] == "800"
+    assert queued[0]["trade"] == "mason"
 
 
 def test_a_reply_naming_nobody_recognisable_re_asks():
-    created, create_fn = _recorder()
-    result = _answer([AJITH], "Suresh", _create_worker_fn=create_fn)
+    result = _answer([AJITH], "Suresh")
 
-    assert created == []
+    assert _queued(result) == []
     assert result["awaiting_slot"] == PROMOTION_SLOT
     assert "didn't catch that" in result["pending_prompt"]
 
 
-def test_create_failure_is_reported_not_raised():
-    """Attendance is already saved; promotion is a courtesy step and must
-    never raise back into the caller."""
+def test_the_queued_workers_are_plain_json_safe_data():
+    """The node's output is persisted with model_dump_json() between
+    messages, so everything it hands back has to survive that round trip.
 
-    def failing_create(**kwargs):
-        raise RuntimeError("boom")
+    An earlier version seeded a create-callable into these fields instead.
+    It could not serialize at all, so saving the paused state raised, the
+    run was recorded as failed, and the offer never reached the user --
+    silently, on every single report.
+    """
+    import json
 
-    result = _answer([AJITH], "all", _create_worker_fn=failing_create)
-    assert "Could not add" in result["pending_prompt"]
-    assert result["awaiting_slot"] is None
-
-
-def test_missing_create_fn_is_treated_as_failed_not_a_crash():
-    result = _answer([AJITH], "all")
-    assert "Could not add" in result["pending_prompt"]
+    result = _answer([AJITH, NIYAS], "all")
+    json.dumps(result["collected_fields"])  # must not raise
+    assert _queued(result) == [
+        {"name": "Ajith", "trade": "mason", "daily_wage": "800"},
+        {"name": "Niyas", "trade": "helper", "daily_wage": "600"},
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -236,20 +220,16 @@ REGISTER = [
 def test_a_likely_existing_worker_is_not_created_without_asking():
     """"Ajith, mason" against registered "Ajith Kumar, mason" -- creating a
     second record here is exactly the duplicate this step exists to stop."""
-    created, create_fn = _recorder()
-    result = _answer(
-        [AJITH], "Ajith", _create_worker_fn=create_fn, _register=REGISTER
-    )
+    result = _answer([AJITH], "Ajith", _register=REGISTER)
 
-    assert created == []
+    assert _queued(result) == []
     assert result["awaiting_slot"] == DUPLICATE_SLOT
     assert "similar workers already in your register" in result["pending_prompt"]
     assert "Ajith Kumar" in result["pending_prompt"]
 
 
 def test_confirming_a_look_alike_is_a_different_person_creates_them():
-    created, create_fn = _recorder()
-    asked = _answer([AJITH], "Ajith", _create_worker_fn=create_fn, _register=REGISTER)
+    asked = _answer([AJITH], "Ajith", _register=REGISTER)
 
     resumed = offer_and_promote(
         _base_state(
@@ -258,14 +238,13 @@ def test_confirming_a_look_alike_is_a_different_person_creates_them():
         )
     )
 
-    assert [c["name"] for c in created] == ["Ajith"]
+    assert _names(resumed) == ["Ajith"]
     assert "Added to your Worker Register: Ajith" in resumed["pending_prompt"]
     assert resumed["awaiting_slot"] is None
 
 
 def test_saying_none_to_the_duplicate_question_creates_nobody():
-    created, create_fn = _recorder()
-    asked = _answer([AJITH], "Ajith", _create_worker_fn=create_fn, _register=REGISTER)
+    asked = _answer([AJITH], "Ajith", _register=REGISTER)
 
     resumed = offer_and_promote(
         _base_state(
@@ -274,21 +253,19 @@ def test_saying_none_to_the_duplicate_question_creates_nobody():
         )
     )
 
-    assert created == []
+    assert _queued(resumed) == []
     assert resumed["awaiting_slot"] is None
 
 
-def test_unambiguous_workers_are_created_immediately_alongside_a_held_one():
-    """A mixed batch must not punish the clean names: they are written on the
-    spot, and only the look-alike waits for an answer. The closing summary
-    then covers both halves at once."""
-    created, create_fn = _recorder()
-    asked = _answer(
-        [AJITH, RAHUL], "all", _create_worker_fn=create_fn, _register=REGISTER
-    )
+def test_a_mixed_batch_ends_with_one_write_and_one_summary():
+    """Only the look-alike waits for an answer; the clean names ride along
+    and the whole batch is handed over together at the end, so the user
+    gets one closing summary covering both halves rather than two partial
+    ones."""
+    asked = _answer([AJITH, RAHUL], "all", _register=REGISTER)
 
-    assert [c["name"] for c in created] == ["Rahul"]
     assert asked["awaiting_slot"] == DUPLICATE_SLOT
+    assert _queued(asked) == [], "nothing is handed over while a question is open"
 
     resumed = offer_and_promote(
         _base_state(
@@ -297,7 +274,7 @@ def test_unambiguous_workers_are_created_immediately_alongside_a_held_one():
         )
     )
 
-    assert [c["name"] for c in created] == ["Rahul", "Ajith"]
+    assert _names(resumed) == ["Rahul", "Ajith"]
     assert "Rahul" in resumed["pending_prompt"]
     assert "Ajith" in resumed["pending_prompt"]
 
@@ -305,10 +282,9 @@ def test_unambiguous_workers_are_created_immediately_alongside_a_held_one():
 def test_an_empty_register_never_triggers_the_duplicate_question():
     """Day one: nobody is registered, so every named worker is genuinely new
     and the extra question would be pure friction."""
-    created, create_fn = _recorder()
-    result = _answer([AJITH], "all", _create_worker_fn=create_fn, _register=[])
+    result = _answer([AJITH], "all", _register=[])
 
-    assert [c["name"] for c in created] == ["Ajith"]
+    assert _names(result) == ["Ajith"]
     assert result["awaiting_slot"] is None
 
 
@@ -320,15 +296,11 @@ def test_a_different_trade_still_asks_rather_than_assuming_a_new_person():
     partial-name signal under the attendance threshold. Promotion screens at
     a lower bar precisely so it lands here instead (see _DUPLICATE_SUSPICION).
     """
-    created, create_fn = _recorder()
     result = _answer(
-        [{"name": "Ajith", "trade": "painter"}],
-        "Ajith",
-        _create_worker_fn=create_fn,
-        _register=REGISTER,
+        [{"name": "Ajith", "trade": "painter"}], "Ajith", _register=REGISTER
     )
 
-    assert created == []
+    assert _queued(result) == []
     assert result["awaiting_slot"] == DUPLICATE_SLOT
 
 
@@ -336,13 +308,9 @@ def test_a_genuinely_different_name_is_created_with_no_extra_question():
     """The other half of the trade-off: the duplicate screen must not turn
     every promotion into an interrogation. A name sharing nothing with any
     register entry is written straight away, however much else matches."""
-    created, create_fn = _recorder()
     result = _answer(
-        [{"name": "Niyas", "trade": "mason"}],
-        "Niyas",
-        _create_worker_fn=create_fn,
-        _register=REGISTER,
+        [{"name": "Niyas", "trade": "mason"}], "Niyas", _register=REGISTER
     )
 
-    assert [c["name"] for c in created] == ["Niyas"]
+    assert _names(result) == ["Niyas"]
     assert result["awaiting_slot"] is None

@@ -13,6 +13,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 from mesiri_contracts.assistant.planner_decision import PlannerDecisionType, WorkflowKey
 from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
@@ -81,6 +82,17 @@ class WorkflowRunResult:
     # status, and also legal for AWAITING_INPUT itself (a node that doesn't
     # set awaiting_slot_options just gets plain text, no crash).
     slot_options: tuple[SlotCandidate, ...] | None = None
+    # The state the graph finished with. Present on the two statuses that ran
+    # a graph to a usable end (AWAITING_INPUT, COMPLETED); None otherwise.
+    #
+    # This exists so a caller can act on something a node *decided* but must
+    # not *do*. Nodes are pure -- no I/O, no repositories (see this module's
+    # docstring) -- so a node that concludes "create these workers" can only
+    # say so in its state and leave the write to whoever is holding the
+    # database. Smuggling a callable into collected_fields instead is not an
+    # option: this state is persisted with model_dump_json() between messages,
+    # so a function neither survives the round trip nor serializes at all.
+    collected_fields: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.slot_options is not None and self.status is not WorkflowRunStatus.AWAITING_INPUT:
@@ -165,12 +177,14 @@ class WorkflowRunResult:
         workflow_key: WorkflowKey,
         correlation_id: str,
         pending_prompt: str,
+        collected_fields: dict[str, Any] | None = None,
     ) -> WorkflowRunResult:
         return cls(
             status=WorkflowRunStatus.COMPLETED,
             workflow_key=workflow_key,
             correlation_id=correlation_id,
             pending_prompt=pending_prompt,
+            collected_fields=collected_fields,
         )
 
     @classmethod
@@ -182,6 +196,7 @@ class WorkflowRunResult:
         workflow_instance_id: str,
         pending_prompt: str,
         slot_options: tuple[SlotCandidate, ...] | None = None,
+        collected_fields: dict[str, Any] | None = None,
     ) -> WorkflowRunResult:
         return cls(
             status=WorkflowRunStatus.AWAITING_INPUT,
@@ -190,6 +205,7 @@ class WorkflowRunResult:
             workflow_instance_id=workflow_instance_id,
             pending_prompt=pending_prompt,
             slot_options=slot_options,
+            collected_fields=collected_fields,
         )
 
 
@@ -381,6 +397,7 @@ class WorkflowRuntime:
                 workflow_instance_id=workflow_instance_id,
                 pending_prompt=pending_prompt,
                 slot_options=_to_slot_candidates(result_state.get("awaiting_slot_options")),
+                collected_fields=collected_fields,
             )
 
         if pending_prompt is None:
@@ -408,6 +425,7 @@ class WorkflowRuntime:
                 workflow_key=workflow_key,
                 correlation_id=event.correlation_id,
                 pending_prompt=pending_prompt,
+                collected_fields=collected_fields,
             )
 
         state = WorkflowStateV2(
@@ -609,6 +627,7 @@ class WorkflowRuntime:
                 workflow_instance_id=instance_id,
                 pending_prompt=pending_prompt,
                 slot_options=_to_slot_candidates(result_state.get("awaiting_slot_options")),
+                collected_fields=resolved_fields,
             )
 
         if draft_action is None or pending_prompt is None:
