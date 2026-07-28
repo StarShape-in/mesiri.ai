@@ -72,16 +72,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # otherwise.
                 await app.state.container.receipt_renderer.close()
 
-    def _media_storage_provider() -> str:
-        """Which object-storage adapter is live, or why we cannot tell."""
-        try:
-            from mesiri.bootstrap.settings import get_settings
-
-            return str(get_settings().object_storage.provider.value)
-        except Exception:  # noqa: BLE001 -- a probe never fails over a label
-            return "unknown"
-
-
     app = FastAPI(title="Mesiri WhatsApp Assistant", lifespan=lifespan)
 
     @app.get("/health", tags=["ops"])
@@ -96,12 +86,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # a symptom that looks like a broken feature and is actually a
         # missing environment variable. The provider name only; never a
         # credential.
-        from runtime.build_info import build_sha
+        from runtime.build_info import build_sha, media_storage_provider
 
         return {
             "status": "ok",
             "build": build_sha(),
-            "media_storage": _media_storage_provider(),
+            "media_storage": media_storage_provider(),
         }
 
     # Alias matching the documented liveness-probe convention

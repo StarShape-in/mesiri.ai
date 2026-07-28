@@ -1,4 +1,4 @@
-"""Which commit is actually running.
+"""Which commit is running, and which media storage it is using.
 
 Added because a whole class of "the fix didn't work" turned out to be
 unanswerable: with a deploy failing at the SSH step, ten pushed fixes and a
@@ -48,3 +48,24 @@ def build_sha() -> str:
         return _UNKNOWN
     sha = result.stdout.strip()
     return sha if result.returncode == 0 and sha else _UNKNOWN
+
+
+@lru_cache(maxsize=1)
+def media_storage_provider() -> str:
+    """Which object-storage adapter is live: "fake", "r2", or "unknown".
+
+    Reported on /health for the same reason as the commit: with the fake
+    adapter selected every photo is written to memory and every URL comes
+    back as memory://, which the dashboard shows as "Photo unavailable". That
+    reads as a broken feature and is a missing environment variable, and
+    there was no way to tell the two apart from outside.
+
+    The provider *name* only. A credential must never reach a public probe.
+    Never raises -- a liveness check must not fail over a label.
+    """
+    try:
+        from mesiri.bootstrap.settings import get_settings
+
+        return str(get_settings().object_storage.provider.value)
+    except Exception:  # noqa: BLE001 — a probe never fails over a label
+        return _UNKNOWN
