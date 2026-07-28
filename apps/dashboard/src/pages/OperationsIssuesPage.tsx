@@ -17,6 +17,8 @@ import {
   fetchSiteIssuesApi,
   createSiteIssueApi,
   resolveSiteIssueApi,
+  acknowledgeSiteIssueApi,
+  wontFixSiteIssueApi,
   type SiteIssueItem,
 } from '@/lib/api'
 import { KpiCard } from '@/components/ui/kpi-card'
@@ -50,10 +52,10 @@ function getStatusBadge(status: string) {
   switch (status.toUpperCase()) {
     case 'RESOLVED':
       return <Badge variant="outline" className="border-emerald-500/40 text-emerald-600 dark:text-emerald-400 font-bold text-[10px] uppercase gap-1"><Check className="size-3" /> RESOLVED</Badge>
-    case 'INVESTIGATING':
-      return <Badge variant="outline" className="border-sky-500/40 text-sky-600 dark:text-sky-400 font-bold text-[10px] uppercase">INVESTIGATING</Badge>
-    case 'BLOCKED':
-      return <Badge variant="destructive" className="font-bold text-[10px] uppercase">BLOCKED</Badge>
+    case 'ACKNOWLEDGED':
+      return <Badge variant="outline" className="border-sky-500/40 text-sky-600 dark:text-sky-400 font-bold text-[10px] uppercase">ACKNOWLEDGED</Badge>
+    case 'WONT_FIX':
+      return <Badge variant="secondary" className="font-bold text-[10px] uppercase">WON'T FIX</Badge>
     default:
       return <Badge variant="outline" className="border-amber-500/40 text-amber-600 dark:text-amber-400 font-bold text-[10px] uppercase">OPEN</Badge>
   }
@@ -81,11 +83,12 @@ export default function OperationsIssuesPage() {
   // Modals
   const [createDialogOpen, setCreateDialogOpen] = React.useState<boolean>(false)
   const [resolveDialogOpen, setResolveDialogOpen] = React.useState<boolean>(false)
+  const [wontFixDialogOpen, setWontFixDialogOpen] = React.useState<boolean>(false)
   const [selectedIssue, setSelectedIssue] = React.useState<SiteIssueItem | null>(null)
   const [inspectSheetOpen, setInspectSheetOpen] = React.useState<boolean>(false)
 
   // Form states
-  const [newIssueType, setNewIssueType] = React.useState<string>('SITE_BLOCKER')
+  const [newIssueType, setNewIssueType] = React.useState<string>('OTHER')
   const [newSeverity, setNewSeverity] = React.useState<string>('MEDIUM')
   const [newNarrative, setNewNarrative] = React.useState<string>('')
   const [newDelayMins, setNewDelayMins] = React.useState<string>('30')
@@ -258,6 +261,33 @@ export default function OperationsIssuesPage() {
     }
   }
 
+  const handleAcknowledgeIssue = async (issue: SiteIssueItem) => {
+    try {
+      await acknowledgeSiteIssueApi(issue.id)
+      toast.success('Issue Acknowledged', `Issue ${issue.id.slice(0, 8)} marked as ACKNOWLEDGED.`)
+      loadIssues()
+    } catch {
+      toast.error('Acknowledge Failed', 'Could not acknowledge issue. Please try again.')
+    }
+  }
+
+  const handleWontFixIssue = async () => {
+    if (!selectedIssue) return
+    setSubmitting(true)
+    try {
+      await wontFixSiteIssueApi(selectedIssue.id, resolutionNotes)
+      toast.success('Marked as Won\'t Fix', `Issue ${selectedIssue.id.slice(0, 8)} closed as WONT_FIX.`)
+      setWontFixDialogOpen(false)
+      setSelectedIssue(null)
+      setResolutionNotes('')
+      loadIssues()
+    } catch {
+      toast.error('Update Failed', 'Could not update issue. Please try again.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4 w-full max-w-full relative pb-12">
 
@@ -362,8 +392,9 @@ export default function OperationsIssuesPage() {
             <SelectContent>
               <SelectItem value="ALL">All Statuses</SelectItem>
               <SelectItem value="OPEN">OPEN</SelectItem>
-              <SelectItem value="INVESTIGATING">INVESTIGATING</SelectItem>
+              <SelectItem value="ACKNOWLEDGED">ACKNOWLEDGED</SelectItem>
               <SelectItem value="RESOLVED">RESOLVED</SelectItem>
+              <SelectItem value="WONT_FIX">WON'T FIX</SelectItem>
             </SelectContent>
           </Select>
 
@@ -464,7 +495,17 @@ export default function OperationsIssuesPage() {
                       >
                         Inspect
                       </Button>
-                      {item.status.toUpperCase() !== 'RESOLVED' && (
+                      {item.status.toUpperCase() === 'OPEN' && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-xs px-2 gap-1 border-sky-500/40 text-sky-600 hover:bg-sky-500/10"
+                          onClick={() => handleAcknowledgeIssue(item)}
+                        >
+                          Acknowledge
+                        </Button>
+                      )}
+                      {!['RESOLVED', 'WONT_FIX'].includes(item.status.toUpperCase()) && (
                         <Button
                           variant="outline"
                           size="sm"
@@ -476,6 +517,19 @@ export default function OperationsIssuesPage() {
                         >
                           <Check className="size-3" />
                           Resolve
+                        </Button>
+                      )}
+                      {!['RESOLVED', 'WONT_FIX'].includes(item.status.toUpperCase()) && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-xs px-2 gap-1 text-muted-foreground hover:text-foreground"
+                          onClick={() => {
+                            setSelectedIssue(item)
+                            setWontFixDialogOpen(true)
+                          }}
+                        >
+                          Won't Fix
                         </Button>
                       )}
                     </div>
@@ -503,19 +557,31 @@ export default function OperationsIssuesPage() {
 
               <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-2 border-t font-mono">
                 <span>{getStatusBadge(item.status)}</span>
-                {item.status.toUpperCase() !== 'RESOLVED' && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-6 text-[10px] px-2 border-emerald-500/40 text-emerald-600 hover:bg-emerald-500/10"
-                    onClick={() => {
-                      setSelectedIssue(item)
-                      setResolveDialogOpen(true)
-                    }}
-                  >
-                    Resolve
-                  </Button>
-                )}
+                <div className="flex items-center gap-1">
+                  {item.status.toUpperCase() === 'OPEN' && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-6 text-[10px] px-2 border-sky-500/40 text-sky-600 hover:bg-sky-500/10"
+                      onClick={() => handleAcknowledgeIssue(item)}
+                    >
+                      Acknowledge
+                    </Button>
+                  )}
+                  {!['RESOLVED', 'WONT_FIX'].includes(item.status.toUpperCase()) && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-6 text-[10px] px-2 border-emerald-500/40 text-emerald-600 hover:bg-emerald-500/10"
+                      onClick={() => {
+                        setSelectedIssue(item)
+                        setResolveDialogOpen(true)
+                      }}
+                    >
+                      Resolve
+                    </Button>
+                  )}
+                </div>
               </div>
             </Card>
           ))}
@@ -544,12 +610,14 @@ export default function OperationsIssuesPage() {
                     <SelectValue placeholder="Select type" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="SITE_BLOCKER">SITE_BLOCKER</SelectItem>
-                    <SelectItem value="WEATHER_INTERRUPTION">WEATHER_INTERRUPTION</SelectItem>
-                    <SelectItem value="EQUIPMENT_BREAKDOWN">EQUIPMENT_BREAKDOWN</SelectItem>
+                    <SelectItem value="WEATHER">WEATHER</SelectItem>
                     <SelectItem value="MATERIAL_SHORTAGE">MATERIAL_SHORTAGE</SelectItem>
                     <SelectItem value="LABOUR_SHORTAGE">LABOUR_SHORTAGE</SelectItem>
-                    <SelectItem value="SAFETY_HAZARD">SAFETY_HAZARD</SelectItem>
+                    <SelectItem value="DRAWING_PENDING">DRAWING_PENDING</SelectItem>
+                    <SelectItem value="EQUIPMENT_BREAKDOWN">EQUIPMENT_BREAKDOWN</SelectItem>
+                    <SelectItem value="INSPECTION_WAITING">INSPECTION_WAITING</SelectItem>
+                    <SelectItem value="ACCESS">ACCESS</SelectItem>
+                    <SelectItem value="OTHER">OTHER</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -640,6 +708,46 @@ export default function OperationsIssuesPage() {
             </Button>
             <Button disabled={submitting} onClick={handleResolveIssue} className="h-8 text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700">
               {submitting ? 'Resolving...' : 'Confirm Resolution'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Won't Fix Dialog ── */}
+      <Dialog open={wontFixDialogOpen} onOpenChange={setWontFixDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold flex items-center gap-2">
+              <ShieldAlert className="size-5 text-muted-foreground" />
+              Mark as Won't Fix
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Close issue {selectedIssue?.id.slice(0, 8)} without resolving it (e.g. no longer relevant).
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-3 text-xs">
+            <div className="p-3 rounded-lg bg-muted/20 border text-muted-foreground">
+              <strong>Narrative:</strong> {selectedIssue?.narrative || 'No narrative provided'}
+            </div>
+
+            <div className="space-y-1">
+              <label className="font-bold text-foreground">Reason</label>
+              <textarea
+                value={resolutionNotes}
+                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setResolutionNotes(e.target.value)}
+                placeholder="Explain why this issue will not be fixed..."
+                className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-xs shadow-2xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring min-h-20"
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setWontFixDialogOpen(false)} className="h-8 text-xs">
+              Cancel
+            </Button>
+            <Button disabled={submitting} onClick={handleWontFixIssue} className="h-8 text-xs font-bold bg-zinc-700 text-white hover:bg-zinc-800">
+              {submitting ? 'Updating...' : "Confirm Won't Fix"}
             </Button>
           </DialogFooter>
         </DialogContent>

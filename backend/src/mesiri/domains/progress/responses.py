@@ -107,7 +107,7 @@ class CreateSiteIssueRequest(BaseModel):
     activity_id: uuid.UUID | None = None
     work_package_id: uuid.UUID | None = None
     location_id: uuid.UUID | None = None
-    issue_type: str = "SITE_BLOCKER"
+    issue_type: str = "OTHER"
     severity: str = "MEDIUM"
     narrative: str | None = None
     delay_duration_minutes: int | None = None
@@ -115,5 +115,9 @@ class CreateSiteIssueRequest(BaseModel):
 
 
 class ResolveSiteIssueRequest(BaseModel):
+    resolution_notes: str | None = None
+
+
+class WontFixSiteIssueRequest(BaseModel):
     resolution_notes: str | None = None
 

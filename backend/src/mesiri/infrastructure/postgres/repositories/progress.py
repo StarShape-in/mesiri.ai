@@ -11,11 +11,32 @@ method here, only reads. Mirrors workforce.py's read/write split.
 from __future__ import annotations
 
 import datetime
+import json
 import uuid
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
+
+# site_issue_type / site_issue_status enum members (migration 0430) — kept
+# here rather than in domains/progress/validation.py because that file only
+# validates the WhatsApp-confirmed command path (CreateActivityCommand /
+# AddProgressUpdateCommand); Site Issues are written directly by this
+# dashboard-facing REST path (no confirm step), so their own validation lives
+# next to the SQL it guards.
+VALID_ISSUE_TYPES = frozenset(
+    {
+        "WEATHER",
+        "MATERIAL_SHORTAGE",
+        "LABOUR_SHORTAGE",
+        "DRAWING_PENDING",
+        "EQUIPMENT_BREAKDOWN",
+        "INSPECTION_WAITING",
+        "ACCESS",
+        "OTHER",
+    }
+)
+VALID_ISSUE_SEVERITIES = frozenset({"LOW", "MEDIUM", "HIGH", "CRITICAL"})
 
 
 class PostgresProgressReadRepository:
@@ -231,11 +252,46 @@ class PostgresProgressReadRepository:
         )
         return dict(row) if row is not None else None
 
+    async def _emit_issue_event(
+        self,
+        *,
+        issue_id: uuid.UUID,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> None:
+        """INSERT one outbox_events row for a Site Issue lifecycle change,
+        the same generic mechanism progress_execution.py uses for
+        Activity/Progress Update events. Site Issues have no confirm step
+        (dashboard-only, no WhatsApp draft), so there is no
+        idempotency_key/correlation_id here — just a plain fact for
+        timeline_projector.py to pick up (registered as aggregate_type
+        'site_issue' in AGGREGATE_TABLES)."""
+        await self._conn.execute(
+            text(
+                "INSERT INTO outbox_events "
+                "(id, aggregate_type, aggregate_id, event_type, payload) "
+                "VALUES (:id, 'site_issue', :aggregate_id, :event_type, CAST(:payload AS jsonb))"
+            ),
+            {
+                "id": uuid.uuid4(),
+                "aggregate_id": issue_id,
+                "event_type": event_type,
+                "payload": json.dumps(payload, default=str),
+            },
+        )
+
     async def create_issue(
         self, organization_id: uuid.UUID, user_id: uuid.UUID, payload: dict[str, Any]
     ) -> dict[str, Any]:
         issue_id = uuid.uuid4()
         now = datetime.datetime.now(datetime.UTC)
+        issue_type = payload.get("issue_type") or "OTHER"
+        severity = payload.get("severity") or "MEDIUM"
+        if issue_type not in VALID_ISSUE_TYPES:
+            raise ValueError(f"invalid issue_type: {issue_type}")
+        if severity not in VALID_ISSUE_SEVERITIES:
+            raise ValueError(f"invalid severity: {severity}")
+
         query = """
             INSERT INTO site_issues (
                 id, organization_id, project_id, site_id, activity_id, work_package_id,
@@ -259,8 +315,8 @@ class PostgresProgressReadRepository:
             "activity_id": payload.get("activity_id"),
             "work_package_id": payload.get("work_package_id"),
             "location_id": payload.get("location_id"),
-            "issue_type": payload.get("issue_type", "SITE_BLOCKER"),
-            "severity": payload.get("severity", "MEDIUM"),
+            "issue_type": issue_type,
+            "severity": severity,
             "narrative": payload.get("narrative"),
             "delay_duration_minutes": payload.get("delay_duration_minutes"),
             "occurred_at": now,
@@ -269,7 +325,57 @@ class PostgresProgressReadRepository:
             "now": now,
         }
         res = (await self._conn.execute(text(query), params)).mappings().first()
-        return dict(res)
+        result = dict(res)
+
+        await self._emit_issue_event(
+            issue_id=issue_id,
+            event_type="SiteIssueReported",
+            payload={
+                "issue_type": issue_type,
+                "severity": severity,
+                "narrative": payload.get("narrative"),
+                "delay_duration_minutes": payload.get("delay_duration_minutes"),
+            },
+        )
+        return result
+
+    async def acknowledge_issue(
+        self, organization_id: uuid.UUID, issue_id: uuid.UUID
+    ) -> bool:
+        """OPEN -> ACKNOWLEDGED only. Mirrors resolve_issue's shape but
+        narrower: acknowledging an already-ACKNOWLEDGED/RESOLVED/WONT_FIX
+        issue is a no-op (returns False), same as re-resolving one does."""
+        now = datetime.datetime.now(datetime.UTC)
+        query = """
+            UPDATE site_issues
+            SET status = 'ACKNOWLEDGED', updated_at = :now
+            WHERE organization_id = :org_id AND id = :id AND status = 'OPEN'
+        """
+        res = await self._conn.execute(text(query), {"org_id": organization_id, "id": issue_id, "now": now})
+        if res.rowcount > 0:
+            await self._emit_issue_event(issue_id=issue_id, event_type="SiteIssueAcknowledged", payload={})
+        return res.rowcount > 0
+
+    async def wont_fix_issue(
+        self, organization_id: uuid.UUID, issue_id: uuid.UUID, notes: str | None
+    ) -> bool:
+        """OPEN/ACKNOWLEDGED -> WONT_FIX. Terminal, like RESOLVED — a
+        WONT_FIX issue is not later resolved or reopened; if the underlying
+        problem turns out to matter after all, that's a new site issue."""
+        now = datetime.datetime.now(datetime.UTC)
+        query = """
+            UPDATE site_issues
+            SET status = 'WONT_FIX', resolved_at = :now, resolution_notes = :notes, updated_at = :now
+            WHERE organization_id = :org_id AND id = :id AND status IN ('OPEN', 'ACKNOWLEDGED')
+        """
+        res = await self._conn.execute(
+            text(query), {"org_id": organization_id, "id": issue_id, "notes": notes, "now": now}
+        )
+        if res.rowcount > 0:
+            await self._emit_issue_event(
+                issue_id=issue_id, event_type="SiteIssueWontFix", payload={"resolution_notes": notes}
+            )
+        return res.rowcount > 0
 
     async def resolve_issue(
         self, organization_id: uuid.UUID, issue_id: uuid.UUID, notes: str | None
@@ -281,5 +387,9 @@ class PostgresProgressReadRepository:
             WHERE organization_id = :org_id AND id = :id AND status != 'RESOLVED'
         """
         res = await self._conn.execute(text(query), {"org_id": organization_id, "id": issue_id, "notes": notes, "now": now})
+        if res.rowcount > 0:
+            await self._emit_issue_event(
+                issue_id=issue_id, event_type="SiteIssueResolved", payload={"resolution_notes": notes}
+            )
         return res.rowcount > 0
 

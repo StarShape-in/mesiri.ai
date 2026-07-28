@@ -39,7 +39,9 @@ import { useScope } from '@/lib/ScopeContext'
 import {
   fetchDailyReportsApi,
   fetchDailyReportDetailApi,
+  submitDailyReportForReviewApi,
   approveDailyReportApi,
+  publishDailyReportApi,
   createDailyReportApi,
   fetchWorkersApi,
   type DailyReportSummary,
@@ -117,18 +119,18 @@ function DPRStatusBadge({ status }: { status: string }) {
           Approved
         </Badge>
       )
-    case 'frozen':
+    case 'published':
       return (
         <Badge variant="outline" className="bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/30 gap-1 font-semibold text-[11px]">
           <Lock className="size-3" />
-          Frozen & Signed
+          Published & Signed
         </Badge>
       )
-    case 'under_review':
+    case 'in_review':
       return (
         <Badge variant="outline" className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30 gap-1 font-semibold text-[11px]">
           <Clock className="size-3" />
-          Under Review
+          In Review
         </Badge>
       )
     case 'draft':
@@ -136,6 +138,13 @@ function DPRStatusBadge({ status }: { status: string }) {
         <Badge variant="outline" className="bg-zinc-500/10 text-zinc-600 dark:text-zinc-400 border-zinc-500/30 gap-1 font-semibold text-[11px]">
           <FileText className="size-3" />
           Draft
+        </Badge>
+      )
+    case 'not_reported':
+      return (
+        <Badge variant="outline" className="bg-muted text-muted-foreground border-border/60 gap-1 font-semibold text-[11px]">
+          <AlertTriangle className="size-3" />
+          Not Reported
         </Badge>
       )
     default:
@@ -310,9 +319,10 @@ function DPRCalendarView({
                     className={cn(
                       'w-full text-left p-1.5 rounded-md border transition-all hover:scale-[1.02] shadow-2xs text-[10px] flex flex-col gap-0.5',
                       r.workflow_status.toLowerCase() === 'approved' && 'bg-emerald-500/10 border-emerald-500/30 text-emerald-950 dark:text-emerald-200',
-                      r.workflow_status.toLowerCase() === 'frozen' && 'bg-indigo-500/10 border-indigo-500/30 text-indigo-950 dark:text-indigo-200',
-                      r.workflow_status.toLowerCase() === 'under_review' && 'bg-amber-500/10 border-amber-500/30 text-amber-950 dark:text-amber-200',
-                      r.workflow_status.toLowerCase() === 'draft' && 'bg-zinc-500/10 border-zinc-500/30 text-zinc-900 dark:text-zinc-200'
+                      r.workflow_status.toLowerCase() === 'published' && 'bg-indigo-500/10 border-indigo-500/30 text-indigo-950 dark:text-indigo-200',
+                      r.workflow_status.toLowerCase() === 'in_review' && 'bg-amber-500/10 border-amber-500/30 text-amber-950 dark:text-amber-200',
+                      r.workflow_status.toLowerCase() === 'draft' && 'bg-zinc-500/10 border-zinc-500/30 text-zinc-900 dark:text-zinc-200',
+                      r.workflow_status.toLowerCase() === 'not_reported' && 'bg-muted border-border/60 text-muted-foreground'
                     )}
                   >
                     <div className="flex items-center justify-between gap-1 font-bold">
@@ -545,8 +555,8 @@ export default function DailyReportsPage() {
   // Executive Metrics
   const stats = React.useMemo(() => {
     const totalCount = reports.length
-    const approved = reports.filter((r) => ['approved', 'frozen'].includes(r.workflow_status.toLowerCase())).length
-    const underReview = reports.filter((r) => r.workflow_status.toLowerCase() === 'under_review').length
+    const approved = reports.filter((r) => ['approved', 'published'].includes(r.workflow_status.toLowerCase())).length
+    const underReview = reports.filter((r) => r.workflow_status.toLowerCase() === 'in_review').length
     const drafts = reports.filter((r) => r.workflow_status.toLowerCase() === 'draft').length
     const totalIssues = reports.reduce((acc, r) => acc + (r.issues_count || 0), 0)
     const totalWorkers = reports.reduce((acc, r) => acc + (r.labour_count || 0), 0)
@@ -730,9 +740,10 @@ export default function DailyReportsPage() {
               <SelectContent>
                 <SelectItem value="ALL">All Statuses</SelectItem>
                 <SelectItem value="DRAFT">Draft</SelectItem>
-                <SelectItem value="UNDER_REVIEW">Under Review</SelectItem>
+                <SelectItem value="IN_REVIEW">In Review</SelectItem>
                 <SelectItem value="APPROVED">Approved</SelectItem>
-                <SelectItem value="FROZEN">Frozen & Signed</SelectItem>
+                <SelectItem value="PUBLISHED">Published & Signed</SelectItem>
+                <SelectItem value="NOT_REPORTED">Not Reported</SelectItem>
               </SelectContent>
             </Select>
 
@@ -1146,7 +1157,31 @@ export default function DailyReportsPage() {
               <div className="space-y-5 text-xs">
 
                 {/* Workflow Status Banner */}
-                {detailData.workflow_status.toLowerCase() === 'under_review' && (
+                {detailData.workflow_status.toLowerCase() === 'draft' && (
+                  <div className="p-3.5 rounded-lg border border-zinc-500/30 bg-zinc-500/10 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 text-zinc-700 dark:text-zinc-300">
+                      <FileText className="size-4 shrink-0" />
+                      <span className="text-xs font-semibold">
+                        Draft report — not yet submitted for review.
+                      </span>
+                    </div>
+                    <Button
+                      size="sm"
+                      className="h-7 text-xs bg-amber-600 hover:bg-amber-700 text-white font-bold gap-1 shrink-0"
+                      onClick={async () => {
+                        await submitDailyReportForReviewApi(detailData.id)
+                        setDetailData((prev) => prev ? { ...prev, workflow_status: 'in_review' } : null)
+                        toast.success('Submitted for Review', `${detailData.dpr_number} sent for Site Engineer review`)
+                        fetchList()
+                      }}
+                    >
+                      <Clock className="size-3.5" />
+                      Submit for Review
+                    </Button>
+                  </div>
+                )}
+
+                {detailData.workflow_status.toLowerCase() === 'in_review' && (
                   <div className="p-3.5 rounded-lg border border-amber-500/30 bg-amber-500/10 flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2 text-amber-700 dark:text-amber-300">
                       <Clock className="size-4 shrink-0" />
@@ -1171,9 +1206,33 @@ export default function DailyReportsPage() {
                 )}
 
                 {detailData.workflow_status.toLowerCase() === 'approved' && (
-                  <div className="p-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 flex items-center gap-2 text-emerald-700 dark:text-emerald-300 text-xs font-medium">
-                    <CheckCircle2 className="size-4 shrink-0" />
-                    <span>Approved by {detailData.reviewer_name || 'Site Lead'} on {detailData.reviewed_at || 'recent date'}.</span>
+                  <div className="p-3.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-300">
+                      <CheckCircle2 className="size-4 shrink-0" />
+                      <span className="text-xs font-medium">
+                        Approved by {detailData.reviewer_name || 'Site Lead'} on {detailData.reviewed_at || 'recent date'}.
+                      </span>
+                    </div>
+                    <Button
+                      size="sm"
+                      className="h-7 text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold gap-1 shrink-0"
+                      onClick={async () => {
+                        await publishDailyReportApi(detailData.id)
+                        setDetailData((prev) => prev ? { ...prev, workflow_status: 'published' } : null)
+                        toast.success('DPR Published', `${detailData.dpr_number} frozen and signed off`)
+                        fetchList()
+                      }}
+                    >
+                      <Lock className="size-3.5" />
+                      Publish Report
+                    </Button>
+                  </div>
+                )}
+
+                {detailData.workflow_status.toLowerCase() === 'published' && (
+                  <div className="p-3 rounded-lg border border-indigo-500/30 bg-indigo-500/10 flex items-center gap-2 text-indigo-700 dark:text-indigo-300 text-xs font-medium">
+                    <Lock className="size-4 shrink-0" />
+                    <span>Published & signed — this report is frozen.</span>
                   </div>
                 )}
 

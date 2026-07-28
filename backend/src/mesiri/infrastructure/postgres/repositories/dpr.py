@@ -204,13 +204,46 @@ class PostgresDprRepository:
 
         return res_dict
 
+    async def submit_for_review(
+        self, organization_id: uuid.UUID, report_id: uuid.UUID
+    ) -> bool:
+        """DRAFT -> IN_REVIEW. The step a manually-created report was
+        missing entirely: without it, a report sat in DRAFT forever since
+        approve_report only ever fired from the (unreachable) 'in_review'
+        state the dashboard's detail view checks for."""
+        query = """
+            UPDATE daily_reports
+            SET status = 'IN_REVIEW', updated_at = now()
+            WHERE organization_id = :org_id AND id = :id AND status = 'DRAFT'
+        """
+        res = await self._conn.execute(text(query), {"org_id": organization_id, "id": report_id})
+        return res.rowcount > 0
+
     async def approve_report(
         self, organization_id: uuid.UUID, user_id: uuid.UUID, report_id: uuid.UUID, notes: str | None
     ) -> bool:
+        # Accepts DRAFT or IN_REVIEW -> APPROVED. Kept permissive (not
+        # restricted to IN_REVIEW only) so the existing bulk-approve action,
+        # which never calls submit_for_review first, keeps working.
         query = """
             UPDATE daily_reports
             SET status = 'APPROVED', updated_at = now()
-            WHERE organization_id = :org_id AND id = :id AND status != 'APPROVED'
+            WHERE organization_id = :org_id AND id = :id AND status IN ('DRAFT', 'IN_REVIEW')
+        """
+        res = await self._conn.execute(text(query), {"org_id": organization_id, "id": report_id})
+        return res.rowcount > 0
+
+    async def publish_report(
+        self, organization_id: uuid.UUID, report_id: uuid.UUID
+    ) -> bool:
+        """APPROVED -> PUBLISHED. Terminal per P7 (create_version already
+        refuses to regenerate a payload once status is APPROVED/PUBLISHED);
+        this is the explicit sign-off action the dashboard's 'Frozen &
+        Signed' badge described but nothing ever set."""
+        query = """
+            UPDATE daily_reports
+            SET status = 'PUBLISHED', updated_at = now()
+            WHERE organization_id = :org_id AND id = :id AND status = 'APPROVED'
         """
         res = await self._conn.execute(text(query), {"org_id": organization_id, "id": report_id})
         return res.rowcount > 0

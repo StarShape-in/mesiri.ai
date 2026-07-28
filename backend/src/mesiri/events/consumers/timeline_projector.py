@@ -107,15 +107,33 @@ _activities = sa.Table(
     sa.Column("started_at", sa.Time, key="occurred_time"),
 )
 
+# site_issues has no occurred_date/occurred_time split — occurred_at is
+# already a single timestamp (migration 0430), so this table is keyed
+# directly as "occurred_at" rather than aliased into the occurred_date/
+# occurred_time shape every other aggregate above uses. The batch loop below
+# checks for either column name rather than assuming one shape fits all
+# aggregates (this is the "extend the projector to accept a column-name
+# mapping" option _activities' own comment flagged as the alternative to
+# aliasing).
+_site_issues = sa.Table(
+    "site_issues",
+    sa.MetaData(),
+    sa.Column("id", sa.UUID(as_uuid=True)),
+    sa.Column("organization_id", sa.UUID(as_uuid=True)),
+    sa.Column("project_id", sa.UUID(as_uuid=True)),
+    sa.Column("site_id", sa.UUID(as_uuid=True)),
+    sa.Column("occurred_at", sa.DateTime(timezone=True)),
+)
+
 # Extension point: a new domain's aggregate is one entry here — the table
-# must expose organization_id, project_id, site_id, occurred_date.
-# occurred_time is optional (see _labour_attendance_reports above); the batch
-# loop checks for it rather than assuming every aggregate has one.
+# must expose organization_id, project_id, site_id, and either
+# occurred_date (+ optional occurred_time) or a single occurred_at timestamp.
 AGGREGATE_TABLES: dict[str, sa.Table] = {
     "material_receipt": _material_receipts,
     "material_usage": _material_usage,
     "labour_attendance_report": _labour_attendance_reports,
     "activity": _activities,
+    "site_issue": _site_issues,
 }
 
 
@@ -153,6 +171,13 @@ EVENT_SUMMARY_BUILDERS: dict[str, Callable[[dict[str, Any]], str]] = {
         f"Progress update: {p.get('update_kind', 'PROGRESS').title()}"
     ),
     "ActivityEvidenceAttached": lambda p: "Photo evidence attached",
+    "SiteIssueReported": lambda p: (
+        f"{p.get('issue_type', 'Issue').replace('_', ' ').title()} reported"
+        + (f" ({p['severity'].title()})" if p.get("severity") else "")
+    ),
+    "SiteIssueAcknowledged": lambda p: "Site issue acknowledged",
+    "SiteIssueResolved": lambda p: "Site issue resolved",
+    "SiteIssueWontFix": lambda p: "Site issue marked as won't fix",
 }
 
 
@@ -200,20 +225,24 @@ async def project_pending_events(conn: AsyncConnection, batch_size: int = 100) -
         source_table = AGGREGATE_TABLES.get(row["aggregate_type"])
         source = None
         if source_table is not None:
-            # occurred_time is optional per-aggregate (labour_attendance_reports
-            # has none -- attendance is a whole-day fact). Selected only when the
-            # table actually declares it, rather than assuming every aggregate
-            # has one; occurred_at below already treats a missing time as
-            # midnight, so this only changes whether the column is asked for.
             select_columns = [
                 source_table.c.organization_id,
                 source_table.c.project_id,
                 source_table.c.site_id,
-                source_table.c.occurred_date,
             ]
-            has_occurred_time = "occurred_time" in source_table.c
-            if has_occurred_time:
-                select_columns.append(source_table.c.occurred_time)
+            if "occurred_date" in source_table.c:
+                # occurred_time is optional per-aggregate (labour_attendance_reports
+                # has none -- attendance is a whole-day fact). Selected only when the
+                # table actually declares it, rather than assuming every aggregate
+                # has one; occurred_at below already treats a missing time as
+                # midnight, so this only changes whether the column is asked for.
+                select_columns.append(source_table.c.occurred_date)
+                if "occurred_time" in source_table.c:
+                    select_columns.append(source_table.c.occurred_time)
+            elif "occurred_at" in source_table.c:
+                # site_issues' shape: a single timestamp column, no
+                # date/time split to recombine.
+                select_columns.append(source_table.c.occurred_at)
             source = (
                 (
                     await conn.execute(
@@ -238,10 +267,12 @@ async def project_pending_events(conn: AsyncConnection, batch_size: int = 100) -
         payload = _coerce_payload(row["payload"])
 
         occurred_at = row["created_at"]
-        if source["occurred_date"] is not None:
+        if source.get("occurred_date") is not None:
             occurred_at = datetime.datetime.combine(
                 source["occurred_date"], source.get("occurred_time") or datetime.time.min
             )
+        elif source.get("occurred_at") is not None:
+            occurred_at = source["occurred_at"]
 
         await conn.execute(
             sa.text(
