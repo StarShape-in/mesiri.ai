@@ -38,7 +38,6 @@ from .responses import (
     WontFixSiteIssueRequest,
 )
 
-
 router = APIRouter(prefix="/progress", tags=["progress"])
 
 
