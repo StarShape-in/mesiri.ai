@@ -76,7 +76,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/health", tags=["ops"])
     async def health() -> dict:
-        return {"status": "ok"}
+        # build carries the running commit. Without it there is no way to
+        # tell a fix that did not work from a fix that never shipped, which
+        # cost days of chasing a bug that had already been fixed.
+        from runtime.build_info import build_sha
+
+        return {"status": "ok", "build": build_sha()}
 
     # Alias matching the documented liveness-probe convention
     # (README.md / backend/src/mesiri/http/app.py) -- infra/mesiri.service's
