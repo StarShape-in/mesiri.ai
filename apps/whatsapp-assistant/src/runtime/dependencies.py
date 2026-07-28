@@ -352,10 +352,12 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from mesiri.application.progress.dispatcher import (
         AddProgressUpdateExecutionDispatcher,
         CreateActivityExecutionDispatcher,
+        ReportSiteIssueExecutionDispatcher,
     )
     from mesiri.application.progress.handlers import (
         ExecuteConfirmedAddProgressUpdateHandler,
         ExecuteConfirmedCreateActivityHandler,
+        ExecuteConfirmedReportSiteIssueHandler,
     )
     from mesiri.application.progress.resolution import PostgresProgressUnitResolver
     from mesiri.infrastructure.postgres.repositories.progress_execution import (
@@ -383,6 +385,15 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     add_progress_update_dispatcher = AddProgressUpdateExecutionDispatcher(
         add_progress_update_handler
     )
+    # Site Issue Report: same repo as Activity creation/continuation above --
+    # all three commands persist to tables PostgresProgressExecutionRepository
+    # owns, so this is the same shared instance, not a new one. No resolver
+    # (issue_type/severity are closed enums, nothing to resolve).
+    report_site_issue_handler = ExecuteConfirmedReportSiteIssueHandler(
+        db=material_db,
+        repo=progress_execution_repo,
+    )
+    report_site_issue_dispatcher = ReportSiteIssueExecutionDispatcher(report_site_issue_handler)
 
     execution_dispatcher = ActionTypeRoutingDispatcher(
         {
@@ -395,6 +406,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             DraftActionType.RECORD_LABOUR_ATTENDANCE: labour_dispatcher,
             DraftActionType.CREATE_ACTIVITY: create_activity_dispatcher,
             DraftActionType.ADD_PROGRESS_UPDATE: add_progress_update_dispatcher,
+            DraftActionType.RECORD_SITE_ISSUE: report_site_issue_dispatcher,
         }
     )
     # Read-only inventory lookups for the material.inventory_query workflow --

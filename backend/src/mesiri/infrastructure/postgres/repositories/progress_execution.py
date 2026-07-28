@@ -21,6 +21,7 @@ aggregate type, whichever is less invasive at the time.
 
 from __future__ import annotations
 
+import datetime
 import json
 import uuid
 from typing import TYPE_CHECKING
@@ -34,6 +35,7 @@ from mesiri_contracts.application.commands.progress import (
     AddProgressUpdateCommand,
     AttachEvidenceCommand,
     CreateActivityCommand,
+    ReportSiteIssueCommand,
 )
 from mesiri_contracts.application.results.execution_result import (
     ExecutionResult,
@@ -324,6 +326,103 @@ class PostgresProgressExecutionRepository(ProgressExecutionRepository):
             # actually created, not the parent activity.
             material_row_id=str(update_id),
             conflict_note=conflict_note,
+        )
+        await conn.execute(
+            text(
+                "UPDATE idempotency_keys "
+                "SET status = 'completed', result = CAST(:result AS jsonb), completed_at = now() "
+                "WHERE key = :key"
+            ),
+            {"result": result.model_dump_json(), "key": cmd.idempotency_key},
+        )
+
+        await self._transition(conn, cmd.idempotency_key, WorkflowPhase.COMPLETED)
+        return result
+
+    async def persist_report_site_issue_success(
+        self, conn: AsyncConnection, cmd: ReportSiteIssueCommand
+    ) -> ExecutionResult:
+        """Insert a new site_issues row (status OPEN) + outbox event. Emits
+        the same 'SiteIssueReported' event type the REST-only direct-write
+        path (infrastructure/postgres/repositories/progress.py's create_issue)
+        already emits -- both paths write the same aggregate, registered as
+        'site_issue' in timeline_projector.py's AGGREGATE_TABLES, so they
+        must produce identical event_type strings for the Timeline
+        projection to treat them uniformly."""
+        from sqlalchemy import text
+
+        if not await self._try_claim(conn, cmd.idempotency_key, "report_site_issue"):
+            existing = await self.check_idempotency(conn, cmd.idempotency_key)
+            assert existing is not None
+            return as_replay(existing)
+
+        organization_id = uuid.UUID(cmd.organization_id)
+        project_id = _optional_uuid(cmd.project_id)
+        site_id = _optional_uuid(cmd.site_id)
+        created_by = uuid.UUID(cmd.created_by)
+
+        if project_id is None or site_id is None:
+            # domains/progress/validation.py already rejects a missing
+            # project before this is ever called; defensive guard against
+            # calling this method directly with an unvalidated command,
+            # matching persist_create_activity_success's identical check
+            # (site_issues.project_id/site_id are NOT NULL).
+            raise RuntimeError("project_id and site_id are required to persist a site issue")
+
+        issue_id = uuid.uuid4()
+        occurred_at = datetime.datetime.combine(cmd.occurred_date, datetime.time.min)
+        await conn.execute(
+            text(
+                "INSERT INTO site_issues "
+                "(id, organization_id, project_id, site_id, activity_id, issue_type, severity, "
+                "narrative, delay_duration_minutes, occurred_at, status, reported_by_user_id, "
+                "correlation_id) "
+                "VALUES (:id, :organization_id, :project_id, :site_id, :activity_id, :issue_type, "
+                ":severity, :narrative, :delay_duration_minutes, :occurred_at, 'OPEN', "
+                ":reported_by_user_id, :correlation_id)"
+            ),
+            {
+                "id": issue_id,
+                "organization_id": organization_id,
+                "project_id": project_id,
+                "site_id": site_id,
+                "activity_id": _optional_uuid(cmd.activity_id),
+                "issue_type": cmd.issue_type,
+                "severity": cmd.severity,
+                "narrative": cmd.narrative,
+                "delay_duration_minutes": cmd.delay_duration_minutes,
+                "occurred_at": occurred_at,
+                "reported_by_user_id": created_by,
+                "correlation_id": cmd.correlation_id,
+            },
+        )
+
+        payload = {
+            "issue_type": cmd.issue_type,
+            "severity": cmd.severity,
+            "narrative": cmd.narrative,
+            "delay_duration_minutes": cmd.delay_duration_minutes,
+            "source": cmd.source,
+        }
+        await conn.execute(
+            text(
+                "INSERT INTO outbox_events "
+                "(id, aggregate_type, aggregate_id, event_type, payload, correlation_id) "
+                "VALUES (:id, 'site_issue', :aggregate_id, 'SiteIssueReported', "
+                "CAST(:payload AS jsonb), :correlation_id)"
+            ),
+            {
+                "id": uuid.uuid4(),
+                "aggregate_id": issue_id,
+                "payload": json.dumps(payload, default=str),
+                "correlation_id": cmd.correlation_id,
+            },
+        )
+
+        result = ExecutionResult(
+            status=ExecutionStatus.SUCCEEDED,
+            idempotency_key=cmd.idempotency_key,
+            material_row_id=str(issue_id),
         )
         await conn.execute(
             text(

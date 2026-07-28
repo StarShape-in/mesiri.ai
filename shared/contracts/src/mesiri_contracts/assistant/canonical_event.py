@@ -40,6 +40,10 @@ class CanonicalEventType(str, Enum):
     # absent/STARTED -> a new activity) -- same pattern as MATERIAL_UPDATE's
     # `direction` split (see canonicalization/mapping.py's resolve_event_type).
     ACTIVITY_CONTINUATION_REQUESTED = "ActivityContinuationRequested"
+    # SemanticType.SITE_ISSUE -> a reported blocker/delay, always a new
+    # site_issues row (no continuation split like GENERAL_SITE_UPDATE has --
+    # each report is its own record, never appended to a prior one).
+    SITE_ISSUE_REPORTED = "SiteIssueReported"
     GENERAL_QUESTION_ASKED = "GeneralQuestionAsked"
     IDENTITY_LOOKUP_REQUESTED = "IdentityLookupRequested"
     INVENTORY_QUERY_ASKED = "InventoryQueryAsked"

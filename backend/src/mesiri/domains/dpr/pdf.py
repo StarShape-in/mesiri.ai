@@ -1,0 +1,160 @@
+"""On-demand DPR PDF rendering, backend-native (no Playwright).
+
+The nightly cron (apps/whatsapp-assistant/src/runtime/render_pending_dpr_pdfs.py)
+already renders a polished Playwright/Jinja PDF from the same `payload` JSON
+and stores it at `daily_report_versions.rendered_object_key` -- that stays the
+canonical artifact whenever it exists (best fidelity, matches what WhatsApp
+sees). This module exists for the gap before that cron run catches up, or for
+a report whose PDF generation is wanted synchronously from the dashboard: a
+plain-tabular PDF built directly from the same payload shape
+(application/dpr/assembly.py::build_site_report_payload), using fpdf2 (pure
+Python, no headless browser) rather than reversing ADR-D8's decision to keep
+Playwright out of the backend process.
+
+Pure function, no I/O -- unit-testable without a live database, same
+reasoning as application/dpr/assembly.py itself. fpdf2 is imported lazily so
+the core test suite runs without it installed (mirrors channel/receipt/
+render.py's lazy Playwright import).
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+_PAGE_WIDTH_MM = 210 - 2 * 15  # A4 minus 15mm margins each side
+
+
+def _truncate(text: str | None, max_len: int) -> str:
+    if not text:
+        return "-"
+    return text if len(text) <= max_len else text[: max_len - 1] + '...'
+
+
+def render_dpr_pdf_bytes(
+    *,
+    code: str | None,
+    report_date: str,
+    project_name: str | None,
+    site_name: str | None,
+    workflow_status: str,
+    payload: dict[str, Any],
+) -> bytes:
+    """Render one DPR version's payload to PDF bytes.
+
+    `payload` is the dict shape `build_site_report_payload` produces:
+    project_name/site_name/report_date, activities[] (work_type, narrative,
+    status, contractor, quantities[], evidence_count), activity_count,
+    issues[] (issue_type, severity, narrative, status,
+    delay_duration_minutes), open_issue_count, evidence_count.
+    """
+    from fpdf import FPDF
+
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.set_margins(15, 15, 15)
+    pdf.add_page()
+
+    # Header
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(0, 8, "Daily Progress Report", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(90, 90, 90)
+    pdf.cell(0, 6, f"{code or 'DPR'}  |  {report_date}  |  {workflow_status.upper()}", new_x="LMARGIN", new_y="NEXT")
+    location = " / ".join(part for part in [project_name, site_name] if part)
+    if location:
+        pdf.cell(0, 6, location, new_x="LMARGIN", new_y="NEXT")
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(4)
+
+    # Meta tiles
+    activities = payload.get("activities") or []
+    issues = payload.get("issues") or []
+    tiles = [
+        ("Activities Logged", str(payload.get("activity_count", len(activities)))),
+        ("Open Issues", str(payload.get("open_issue_count", 0))),
+        ("Evidence Photos", str(payload.get("evidence_count", 0))),
+    ]
+    tile_w = _PAGE_WIDTH_MM / len(tiles)
+    pdf.set_font("Helvetica", "B", 12)
+    for label, value in tiles:
+        x = pdf.get_x()
+        y = pdf.get_y()
+        pdf.rect(x, y, tile_w - 4, 16)
+        pdf.set_xy(x, y + 3)
+        pdf.set_font("Helvetica", "B", 13)
+        pdf.cell(tile_w - 4, 6, value, align="C")
+        pdf.set_xy(x, y + 10)
+        pdf.set_font("Helvetica", "", 8)
+        pdf.cell(tile_w - 4, 5, label, align="C")
+        pdf.set_xy(x + tile_w, y)
+    pdf.ln(20)
+
+    # Activities table
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, "Activities", new_x="LMARGIN", new_y="NEXT")
+    col_widths = [30, 55, 25, 30, 40]
+    headers = ["Work Type", "Narrative", "Status", "Contractor", "Quantities"]
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_fill_color(230, 230, 230)
+    for header, width in zip(headers, col_widths, strict=False):
+        pdf.cell(width, 7, header, border=1, fill=True)
+    pdf.ln()
+    pdf.set_font("Helvetica", "", 8)
+    if not activities:
+        pdf.cell(sum(col_widths), 7, "No activities recorded for this date.", border=1)
+        pdf.ln()
+    for activity in activities:
+        quantities = activity.get("quantities") or []
+        qty_text = ", ".join(
+            f"{q.get('quantity')} {q.get('unit') or ''}".strip() for q in quantities
+        ) or "-"
+        row = [
+            _truncate(activity.get("work_type"), 18),
+            _truncate(activity.get("narrative"), 34),
+            _truncate(activity.get("status"), 14),
+            _truncate(activity.get("contractor"), 18),
+            _truncate(qty_text, 24),
+        ]
+        for value, width in zip(row, col_widths, strict=False):
+            pdf.cell(width, 7, value, border=1)
+        pdf.ln()
+
+    pdf.ln(4)
+
+    # Site issues table
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, "Site Issues", new_x="LMARGIN", new_y="NEXT")
+    issue_col_widths = [32, 20, 65, 25, 38]
+    issue_headers = ["Type", "Severity", "Narrative", "Status", "Delay (min)"]
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_fill_color(230, 230, 230)
+    for header, width in zip(issue_headers, issue_col_widths, strict=False):
+        pdf.cell(width, 7, header, border=1, fill=True)
+    pdf.ln()
+    pdf.set_font("Helvetica", "", 8)
+    if not issues:
+        pdf.cell(sum(issue_col_widths), 7, "No site issues recorded for this date.", border=1)
+        pdf.ln()
+    for issue in issues:
+        row = [
+            _truncate(issue.get("issue_type"), 20),
+            _truncate(issue.get("severity"), 12),
+            _truncate(issue.get("narrative"), 42),
+            _truncate(issue.get("status"), 14),
+            str(issue.get("delay_duration_minutes") or "-"),
+        ]
+        for value, width in zip(row, issue_col_widths, strict=False):
+            pdf.cell(width, 7, value, border=1)
+        pdf.ln()
+
+    # Footer -- auto_page_break must be off here: moving to within 20mm of
+    # the bottom margin with it still on triggers fpdf2 to start a fresh
+    # page before drawing the cell (the exact break-margin math it uses for
+    # in-flow content), leaving the footer alone on a near-blank page 2.
+    pdf.set_auto_page_break(auto=False)
+    pdf.set_y(-20)
+    pdf.set_font("Helvetica", "I", 8)
+    pdf.set_text_color(120, 120, 120)
+    pdf.cell(0, 10, "Generated on-demand by Mesiri", align="C")
+
+    return bytes(pdf.output())

@@ -15,7 +15,7 @@ venv: ## Create the local virtualenv
 	uv venv --python 3.10
 
 install: ## Install runtime + dev + infra + provider dependencies
-	uv pip install -e ".[dev,infra,providers]"
+	uv pip install -e ".[dev,infra,providers,reports]"
 
 dev: ## Start the local stack (Postgres + Redis)
 	docker compose up -d

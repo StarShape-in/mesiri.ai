@@ -80,6 +80,16 @@ class GeneralSiteUpdateCandidate(Candidate):
     # Conventional keys: summary, activity, location, weather.
 
 
+class SiteIssueCandidate(Candidate):
+    semantic_type: SemanticType = SemanticType.SITE_ISSUE
+    # Conventional keys: issue_type (required to route -- see
+    # canonicalization/mapping.py; one of WEATHER/MATERIAL_SHORTAGE/
+    # LABOUR_SHORTAGE/DRAWING_PENDING/EQUIPMENT_BREAKDOWN/
+    # INSPECTION_WAITING/ACCESS/OTHER), severity (LOW/MEDIUM/HIGH/CRITICAL),
+    # narrative, delay_duration_minutes, occurred_on. A reported blocker/
+    # delay -- never a question about existing ones (that's activity_query).
+
+
 class GeneralQuestionCandidate(Candidate):
     semantic_type: SemanticType = SemanticType.GENERAL_QUESTION
     # Conventional keys: question, topic.
@@ -141,6 +151,7 @@ CANDIDATE_TYPES: dict[SemanticType, type[Candidate]] = {
     SemanticType.MATERIAL_UPDATE: MaterialUpdateCandidate,
     SemanticType.LABOUR_UPDATE: LabourUpdateCandidate,
     SemanticType.GENERAL_SITE_UPDATE: GeneralSiteUpdateCandidate,
+    SemanticType.SITE_ISSUE: SiteIssueCandidate,
     SemanticType.GENERAL_QUESTION: GeneralQuestionCandidate,
     SemanticType.INVENTORY_QUERY: InventoryQueryCandidate,
     SemanticType.LABOUR_QUERY: LabourQueryCandidate,

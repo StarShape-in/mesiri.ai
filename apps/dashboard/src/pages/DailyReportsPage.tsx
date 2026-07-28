@@ -42,6 +42,7 @@ import {
   submitDailyReportForReviewApi,
   approveDailyReportApi,
   publishDailyReportApi,
+  fetchDailyReportPdfApi,
   createDailyReportApi,
   fetchWorkersApi,
   type DailyReportSummary,
@@ -65,6 +66,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { cn, toLocalISODate } from '@/lib/utils'
+import { exportCsv, downloadBlob } from '@/lib/export'
 
 // ─── Weather Badge ────────────────────────────────────────────────────────────
 
@@ -384,6 +386,7 @@ export default function DailyReportsPage() {
   const [selectedReportId, setSelectedReportId] = React.useState<string | null>(null)
   const [detailData, setDetailData] = React.useState<DailyReportDetailResponse | null>(null)
   const [detailLoading, setDetailLoading] = React.useState<boolean>(false)
+  const [pdfDownloading, setPdfDownloading] = React.useState<boolean>(false)
 
   // Create Modal state
   const [createDialogOpen, setCreateDialogOpen] = React.useState<boolean>(false)
@@ -547,9 +550,44 @@ export default function DailyReportsPage() {
     toast.success(`${count} DPRs Approved`, 'Signed off and recorded in project timeline')
   }
 
+  const dprCsvHeaders = [
+    'DPR Number', 'Report Date', 'Project', 'Site', 'Status', 'Weather', 'Shift',
+    'Activities', 'Labour Count', 'Issues', 'Prepared By', 'Created At',
+  ]
+
+  const dprToCsvRow = (r: DailyReportSummary) => [
+    r.dpr_number, r.report_date, r.project_name, r.site_name, r.workflow_status,
+    r.weather, r.shift, r.activities_count, r.labour_count, r.issues_count,
+    r.prepared_by_name, r.created_at,
+  ]
+
+  const handleExportCSV = () => {
+    exportCsv(`DPR_Ledger_${toLocalISODate()}.csv`, dprCsvHeaders, filteredReports.map(dprToCsvRow))
+    toast.success('DPR Ledger Exported', `${filteredReports.length} reports downloaded as CSV`)
+  }
+
   const handleBulkExportCSV = () => {
-    toast.info('Exporting Selected DPRs', `Generating CSV for ${selectedIds.length} reports`)
+    const selected = reports.filter((r) => selectedIds.includes(r.id))
+    exportCsv(`DPR_Selected_${toLocalISODate()}.csv`, dprCsvHeaders, selected.map(dprToCsvRow))
+    toast.success('Selected DPRs Exported', `${selected.length} reports downloaded as CSV`)
     setSelectedIds([])
+  }
+
+  const handleDownloadPdf = async () => {
+    if (!detailData) return
+    setPdfDownloading(true)
+    try {
+      const blob = await fetchDailyReportPdfApi(detailData.id)
+      downloadBlob(`${detailData.dpr_number || 'DPR'}.pdf`, blob)
+      toast.success('PDF Downloaded', `${detailData.dpr_number} exported as PDF`)
+    } catch {
+      toast.error(
+        'PDF Not Available',
+        'This report has no generated content yet (no activities recorded, or it was created manually).'
+      )
+    } finally {
+      setPdfDownloading(false)
+    }
   }
 
   // Executive Metrics
@@ -647,7 +685,7 @@ export default function DailyReportsPage() {
             size="sm"
             variant="outline"
             className="h-8 gap-1.5 text-xs font-medium"
-            onClick={() => toast.info('Exporting DPR Ledger', 'Downloading CSV summary')}
+            onClick={handleExportCSV}
           >
             <Download className="size-3.5" />
             Export CSV
@@ -1136,11 +1174,12 @@ export default function DailyReportsPage() {
                   size="sm"
                   variant="outline"
                   className="h-7 text-xs gap-1"
-                  onClick={() => window.print()}
-                  title="Print Official DPR Signoff"
+                  onClick={handleDownloadPdf}
+                  disabled={pdfDownloading}
+                  title="Download the rendered DPR PDF"
                 >
                   <Printer className="size-3.5" />
-                  Print
+                  {pdfDownloading ? 'Downloading...' : 'Download PDF'}
                 </Button>
               </div>
             </div>

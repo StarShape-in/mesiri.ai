@@ -54,7 +54,7 @@ _EXTRACTION_PROMPT = (
     '"detected_language" (the source language\'s common English name, e.g. '
     '"Malayalam", "English"), '
     '"semantic_type" (one of: expense, equipment_usage, material_update, '
-    "labour_update, general_site_update, general_question, whoami_question, "
+    "labour_update, general_site_update, site_issue, general_question, whoami_question, "
     "inventory_query, labour_query, activity_query, dpr_request, finance_query, transfer, "
     "petty_cash, "
     "reversal, account_admin, unknown), "
@@ -103,16 +103,54 @@ _EXTRACTION_PROMPT = (
     '"started" only for explicitly new work, "completed" only when explicitly '
     'finished, "progress" for a further update to work already underway '
     '(including a bare quantity with no other context, e.g. "180 sqm"). Never '
-    "for problems/delays/blockers.\n"
+    "for problems/delays/blockers (those are site_issue).\n"
+    "- site_issue: issue_type, severity, narrative, delay_duration_minutes, project_name, "
+    'occurred_on. issue_type MUST be exactly one of "WEATHER", "MATERIAL_SHORTAGE", '
+    '"LABOUR_SHORTAGE", "DRAWING_PENDING", "EQUIPMENT_BREAKDOWN", "INSPECTION_WAITING", '
+    '"ACCESS", "OTHER" -- infer from context (e.g. "no cement left" -> MATERIAL_SHORTAGE, '
+    '"JCB broke down" -> EQUIPMENT_BREAKDOWN, "raining since morning" -> WEATHER), '
+    'defaulting to "OTHER" only when genuinely unclear. severity MUST be exactly one of '
+    '"LOW", "MEDIUM", "HIGH", "CRITICAL" -- infer from the language used (e.g. "completely '
+    'stopped", "urgent" -> HIGH/CRITICAL; a minor inconvenience -> LOW/MEDIUM), defaulting '
+    'to "MEDIUM" when unclear. narrative is the blocker description in the sender\'s own '
+    "words. delay_duration_minutes is a plain number of minutes only when stated -- omit "
+    "if not stated. This type is specifically for a NEW problem/delay/blocker that stops "
+    "or slows down work -- never for a plain progress report (general_site_update) and "
+    'never for a QUESTION about existing issues ("any open issues?" is activity_query).\n'
     "- general_question: question, topic\n"
     "- whoami_question: question\n"
-    "- inventory_query: material_name, project_name (omit material_name if asking about all "
-    'materials, e.g. "show inventory"). Use this type for questions about how '
+    "- inventory_query: material_name, output_format, project_name (omit material_name if "
+    'asking about all materials, e.g. "show inventory"). Use this type for questions about how '
     'much of a material is currently in stock (e.g. "how much cement is left?", '
     '"current stock of steel") or its movement history '
-    '(e.g. "show today\'s cement history"). This is a question, never an update.\n'
+    '(e.g. "show today\'s cement history"). This is a question, never an update. '
+    'output_format is "pdf" ONLY when the user explicitly asks for the answer as a file/'
+    'document (e.g. "send me the stock levels as pdf") -- omit entirely for a plain question.\n'
+    "- labour_query: date_range, trade, output_format, project_name. Use this type for QUESTIONS "
+    'about who worked and what labour cost (e.g. "how many workers today?", '
+    '"who worked yesterday?", "labour cost this week", "how many masons on site?"). '
+    "date_range is exactly one of \"today\", \"this_week\", \"this_month\" if a period "
+    "is stated or implied; omit if none is. trade narrows to one trade when asked "
+    '(e.g. "how many masons today" -> trade "mason"); omit for all trades. '
+    'output_format is "pdf" ONLY when the user explicitly asks for the answer as a file/'
+    'document (e.g. "send me the attendance list as pdf") -- omit entirely for a plain '
+    "question. CRITICAL: this is a question ABOUT existing records, never a new attendance "
+    'report. "14 workers today" is a labour_update (recording who worked); '
+    '"how many workers today?" is a labour_query (asking). Getting this backwards '
+    "would record workers instead of counting them.\n"
+    "- activity_query: date_range, project_name, work_type, output_format. Use this type for "
+    'QUESTIONS about progress already logged or open site issues (e.g. "what did I log today?", '
+    '"what happened on site X yesterday?", "show today\'s site log", "any open issues?"). '
+    'date_range is exactly one of "today", "this_week", "this_month" if a period is stated or '
+    "implied; omit if none is. work_type narrows to one kind of work when asked; omit for "
+    'everything. output_format is "pdf" ONLY when the user explicitly asks for the answer as a '
+    'file/document (e.g. "send me today\'s site log as pdf") -- omit entirely for a plain '
+    "question. CRITICAL: this is a question ABOUT existing progress/issue records, never a new "
+    'report. "180 sqm plastering done" is a general_site_update (recording work); "what did I '
+    'log today?" is an activity_query (asking). Getting this backwards would try to record a '
+    "report instead of answering a question.\n"
     "- finance_query: query_kind, account_name, category_name, date_range, missing_receipts, "
-    "project_name. "
+    "output_format, project_name. "
     'query_kind MUST be exactly "balance" or "expenses" -- never any other word. '
     'Use "balance" for questions about how much money/cash is in an account '
     '(e.g. "how much cash do I have?", "balance of Site Cash", "how much money is left?"). '
@@ -127,6 +165,10 @@ _EXTRACTION_PROMPT = (
     '"expenses" and the question is specifically about which expenses have no receipt/bill '
     'attached (e.g. "which expenses are missing receipts?", "show expenses without a bill", '
     '"who hasn\'t uploaded a receipt yet") -- omit entirely otherwise, never set it to false. '
+    'output_format is "pdf" ONLY when the user explicitly asks for the answer as a file/'
+    'document (e.g. "send me my balance as pdf", "export my expenses as pdf", "pdf of '
+    'today\'s expenses", "can I get that as a document") -- omit entirely for a plain '
+    "question that expects a normal chat reply. "
     "This is always a question, never an update -- "
     "never confuse with expense (which records a NEW expense being reported).\n"
     "- transfer: amount, from_account_name, to_account_name, description, project_name. "

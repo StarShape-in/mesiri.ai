@@ -29,7 +29,7 @@ jobs:
           python-version: '3.11'
           enable-cache: true
       - run: uv venv --python 3.11 --clear
-      - run: uv pip install -e ".[dev,infra,providers]"
+      - run: uv pip install -e ".[dev,infra,providers,reports]"
       - name: Lint
         run: uv run ruff check .
       - name: Unit tests (fakes only)
@@ -153,7 +153,7 @@ jobs:
           git reset --hard origin/main
 
           echo "→ Installing Python dependencies..."
-          ~/.local/bin/uv pip install --python ${VENV}/bin/python -e ".[infra,providers,workflow,receipt]" --quiet
+          ~/.local/bin/uv pip install --python ${VENV}/bin/python -e ".[infra,providers,workflow,receipt,reports]" --quiet
 
           echo "→ Clearing stale Python bytecode cache..."
           # Moved to run BEFORE migrations (2026-07-27): `git reset --hard`
@@ -223,7 +223,7 @@ jobs:
             echo "Reverting to ${PREV_SHA}"
             cd "${REPO}"
             git reset --hard "${PREV_SHA}"
-            ~/.local/bin/uv pip install --python ${VENV}/bin/python -e ".[infra,providers,workflow,receipt]" --quiet
+            ~/.local/bin/uv pip install --python ${VENV}/bin/python -e ".[infra,providers,workflow,receipt,reports]" --quiet
             systemctl restart mesiri
             # Give the old code a moment to come back up so the VPS stays live
             sleep 3

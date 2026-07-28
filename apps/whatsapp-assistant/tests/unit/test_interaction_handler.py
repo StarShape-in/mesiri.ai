@@ -367,7 +367,7 @@ def test_greeting_trigger_returns_the_menu_for_a_bare_hi():
     spec = handler.handle_greeting_trigger(_message("hi"))
     assert spec is not None
     assert spec.list_rows is not None
-    assert len(spec.list_rows) == 4
+    assert len(spec.list_rows) == 5
 
 
 def test_greeting_trigger_is_none_for_a_real_report():

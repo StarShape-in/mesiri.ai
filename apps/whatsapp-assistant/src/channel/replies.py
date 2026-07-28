@@ -62,14 +62,15 @@ CONFIRM_BUTTONS: tuple[ListRow, ...] = (
 )
 
 
-# The four v1 domain modules, per the locked architecture scope (Material ·
-# Equipment & Machinery · Labour · Expense). Row ids are matched verbatim in
+# The v1 domain modules (Material · Equipment & Machinery · Labour ·
+# Expense · Site Issue). Row ids are matched verbatim in
 # runtime/dependencies.py's category-tap fast path -- keep the two in sync.
 CATEGORY_ROWS: tuple[ListRow, ...] = (
     ListRow("cat_material", "Material", "Arrived or used on site"),
     ListRow("cat_equipment", "Equipment & Machinery", "Usage, hours, movement"),
     ListRow("cat_labour", "Labour", "Headcount and attendance"),
     ListRow("cat_expense", "Expense", "Petty cash spent"),
+    ListRow("cat_site_issue", "Site Issue", "Blocker or delay"),
 )
 
 # What to say once a category is picked -- deterministic, no AI involved (see
@@ -82,6 +83,9 @@ _CATEGORY_PROMPTS: dict[str, str] = {
     "cat_equipment": 'Tell me about the equipment — for example:\n  • "JCB ran for 4 hours"',
     "cat_labour": 'Tell me the headcount — for example:\n  • "12 workers on site today"',
     "cat_expense": 'Tell me the expense — for example:\n  • "Paid 1500 to ABC Hardware"',
+    "cat_site_issue": (
+        'Tell me the issue — for example:\n  • "Ran out of cement, work stopped"'
+    ),
 }
 
 # Tapping "Material" asks this before anything else -- a button tap can't be
@@ -116,6 +120,7 @@ CATEGORY_SEMANTIC_HINT: dict[str, str] = {
     "cat_equipment": "equipment_usage",
     "cat_labour": "labour_update",
     "cat_expense": "expense",
+    "cat_site_issue": "site_issue",
 }
 
 # A photo's purpose is never assumed from the AI's own guess at what the

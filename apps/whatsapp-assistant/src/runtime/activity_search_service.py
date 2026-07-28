@@ -158,6 +158,7 @@ class ActivitySearchService:
                 site_issues.c.issue_type,
                 site_issues.c.severity,
                 site_issues.c.narrative,
+                site_issues.c.occurred_at,
             )
             .where(*issue_conditions)
             .order_by(site_issues.c.occurred_at.desc())
@@ -179,6 +180,12 @@ class ActivitySearchService:
                     "work_type": row["work_type"],
                     "narrative": row["narrative"],
                     "status": row["status"],
+                    # Selected above only for ORDER BY until this was added --
+                    # a tabular export (PDF) needs the date on every row, not
+                    # just the query's own sort order.
+                    "activity_date": row["activity_date"].isoformat()
+                    if row["activity_date"]
+                    else None,
                 }
                 for row in activity_rows
             ],
@@ -188,6 +195,7 @@ class ActivitySearchService:
                     "issue_type": row["issue_type"],
                     "severity": row["severity"],
                     "narrative": row["narrative"],
+                    "occurred_at": row["occurred_at"].isoformat() if row["occurred_at"] else None,
                 }
                 for row in issue_rows
             ],

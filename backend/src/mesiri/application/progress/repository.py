@@ -24,6 +24,7 @@ from mesiri_contracts.application.commands.progress import (
     AddProgressUpdateCommand,
     AttachEvidenceCommand,
     CreateActivityCommand,
+    ReportSiteIssueCommand,
 )
 from mesiri_contracts.application.results.execution_result import ExecutionResult
 
@@ -66,6 +67,17 @@ class ProgressExecutionRepository(ABC):
         AttachEvidenceCommand's docstring). Returns the created attachment
         ids, in the same order as media_object_keys, so the caller can
         report exactly how many landed."""
+        ...
+
+    @abstractmethod
+    async def persist_report_site_issue_success(
+        self, conn: AsyncConnection, cmd: ReportSiteIssueCommand
+    ) -> ExecutionResult:
+        """Claim the idempotency key, insert the site_issues row (status
+        OPEN) + outbox event, cache SUCCEEDED, and transition the workflow
+        to COMPLETED. Always a new row -- unlike Progress Updates, a Site
+        Issue report never continues a prior one (see
+        ReportSiteIssueCommand's docstring)."""
         ...
 
     @abstractmethod

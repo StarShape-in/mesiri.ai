@@ -14,6 +14,7 @@ from mesiri_contracts.assistant.candidates import (
     MaterialUpdateCandidate,
     PettyCashCandidate,
     ReversalCandidate,
+    SiteIssueCandidate,
     TransferCandidate,
 )
 from mesiri_contracts.assistant.canonical_event import CanonicalEventType, IntentCompleteness
@@ -261,6 +262,50 @@ def test_expense_missing_amount_needs_clarification():
     assert event.event_type is CanonicalEventType.CLARIFICATION_REQUIRED
     assert event.completeness is IntentCompleteness.NEEDS_CLARIFICATION
     assert "amount" in event.missing_fields
+
+
+def test_site_issue_complete_is_actionable():
+    understanding = _understanding(
+        semantic_type=SemanticType.SITE_ISSUE,
+        candidates=[
+            SiteIssueCandidate(
+                fields={"issue_type": "MATERIAL_SHORTAGE", "narrative": "Ran out of cement"}
+            )
+        ],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.SITE_ISSUE_REPORTED
+    assert event.completeness is IntentCompleteness.ACTIONABLE
+    assert event.fields["narrative"] == "Ran out of cement"
+
+
+def test_site_issue_missing_issue_type_needs_clarification():
+    understanding = _understanding(
+        semantic_type=SemanticType.SITE_ISSUE,
+        candidates=[SiteIssueCandidate(fields={"narrative": "Something is blocking us"})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.CLARIFICATION_REQUIRED
+    assert event.completeness is IntentCompleteness.NEEDS_CLARIFICATION
+    assert "issue_type" in event.missing_fields
+
+
+def test_site_issue_severity_and_delay_pass_through_to_canonical_event():
+    understanding = _understanding(
+        semantic_type=SemanticType.SITE_ISSUE,
+        candidates=[
+            SiteIssueCandidate(
+                fields={
+                    "issue_type": "EQUIPMENT_BREAKDOWN",
+                    "severity": "HIGH",
+                    "delay_duration_minutes": 120,
+                }
+            )
+        ],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.fields["severity"] == "HIGH"
+    assert event.fields["delay_duration_minutes"] == 120
 
 
 def test_inventory_query_with_material_name_is_actionable():

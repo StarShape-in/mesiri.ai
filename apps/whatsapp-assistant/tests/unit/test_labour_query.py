@@ -116,6 +116,35 @@ def test_a_junk_headcount_falls_back_to_one_rather_than_breaking_the_answer():
     assert summary["headcount"] == 1
 
 
+def test_rows_preserves_every_line_the_aggregates_above_collapse_away():
+    """A tabular export (PDF) needs one entry per attendance line -- every
+    individual wage and every day a name appears -- none of which headcount/
+    total_cost/named/days preserve on their own."""
+    summary = _summarize(
+        [
+            _row("Ravi", "mason", wage="800", day=MONDAY),
+            _row("Ravi", "mason", wage="800", day=MONDAY + datetime.timedelta(days=1)),
+            _row(None, "helper", headcount=12, wage="600", day=MONDAY),
+        ]
+    )
+    assert len(summary["rows"]) == 3
+    assert summary["rows"][0] == {
+        "occurred_date": MONDAY.isoformat(),
+        "worker_name": "Ravi",
+        "trade": "mason",
+        "headcount": 1,
+        "daily_wage": "800",
+    }
+    assert summary["rows"][2]["worker_name"] is None
+    assert summary["rows"][2]["headcount"] == 12
+
+
+def test_rows_is_empty_for_no_attendance():
+    from runtime.labour_query_service import _empty_summary
+
+    assert _empty_summary()["rows"] == []
+
+
 # --- the reply -------------------------------------------------------------
 
 

@@ -32,6 +32,13 @@ class SemanticType(str, Enum):
     MATERIAL_UPDATE = "material_update"
     LABOUR_UPDATE = "labour_update"
     GENERAL_SITE_UPDATE = "general_site_update"
+    # A problem, delay, or blocker that stops or slows down work (e.g. "ran
+    # out of cement", "JCB broke down", "raining since morning") -- a
+    # business-affecting write, unlike ACTIVITY_QUERY's "any open issues?"
+    # question. Distinct from GENERAL_SITE_UPDATE the same way EXPENSE is
+    # distinct from FINANCE_QUERY: this reports a problem, GENERAL_SITE_UPDATE
+    # reports work done or in progress -- never confuse the two.
+    SITE_ISSUE = "site_issue"
     GENERAL_QUESTION = "general_question"
     # A deterministically recognized "who am i"/"my profile"/etc (see
     # mesiri_ai.whoami_classifier) -- distinct from GENERAL_QUESTION/UNKNOWN

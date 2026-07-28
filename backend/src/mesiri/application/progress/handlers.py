@@ -26,7 +26,11 @@ from mesiri.infrastructure.postgres.database import PostgresDatabase
 from mesiri_contracts.application.results.execution_result import ExecutionResult, as_replay
 from mesiri_contracts.assistant.v2.confirmed_action import ConfirmedActionV2
 
-from .mapper import build_add_progress_update_command, build_create_activity_command
+from .mapper import (
+    build_add_progress_update_command,
+    build_create_activity_command,
+    build_report_site_issue_command,
+)
 from .repository import ProgressExecutionRepository
 from .resolution import ProgressUnitResolver
 
@@ -106,3 +110,28 @@ class ExecuteConfirmedAddProgressUpdateHandler:
                     conn, cmd.idempotency_key, "add_progress_update", reasons
                 )
             return await self._repo.persist_add_progress_update_success(conn, cmd)
+
+
+class ExecuteConfirmedReportSiteIssueHandler:
+    """No resolver -- issue_type/severity are closed enums with nothing to
+    resolve against units_of_measure or any other lookup table (see
+    ReportSiteIssueCommand's docstring), unlike the two Handlers above."""
+
+    def __init__(self, db: PostgresDatabase, repo: ProgressExecutionRepository) -> None:
+        self._db = db
+        self._repo = repo
+
+    async def handle(self, confirmed: ConfirmedActionV2) -> ExecutionResult:
+        cmd = build_report_site_issue_command(confirmed)
+        reasons = validation.validate_report_site_issue(cmd)
+
+        async with self._db.transaction() as conn:
+            existing = await self._repo.check_idempotency(conn, cmd.idempotency_key)
+            if existing is not None:
+                return as_replay(existing)
+
+            if reasons:
+                return await self._repo.persist_rejection(
+                    conn, cmd.idempotency_key, "report_site_issue", reasons
+                )
+            return await self._repo.persist_report_site_issue_success(conn, cmd)

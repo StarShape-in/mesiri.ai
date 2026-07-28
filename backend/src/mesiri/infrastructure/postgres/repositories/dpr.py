@@ -507,6 +507,45 @@ class PostgresDprRepository:
         )
         return {"id": version_id, "daily_report_id": daily_report_id, "version_no": version_no}
 
+    async def get_report_for_pdf(
+        self, *, organization_id: uuid.UUID, report_id: uuid.UUID
+    ) -> dict[str, Any] | None:
+        """Everything a PDF export needs for one report: its current
+        version's `payload` (the same JSON the assistant-side Playwright
+        renderer already consumes, see application/dpr/assembly.py) plus
+        whatever `rendered_object_key` that version already has, if the
+        nightly cron (runtime/render_pending_dpr_pdfs.py) got to it first.
+
+        Returns None for a report with no `current_version_id` at all --
+        i.e. one created through the manual-entry form (create_report),
+        which never gets a payload/version row. There is nothing real to
+        render for those; the router surfaces that as a 404 rather than
+        fabricating a PDF from fields that don't exist.
+        """
+        row = (
+            await self._conn.execute(
+                text(
+                    """
+                    SELECT
+                        dr.id, dr.code, dr.report_date::text AS report_date,
+                        dr.status::text AS workflow_status,
+                        p.name AS project_name,
+                        s.name AS site_name,
+                        v.id AS version_id, v.payload, v.rendered_object_key
+                    FROM daily_reports dr
+                    JOIN projects p ON p.id = dr.project_id
+                    LEFT JOIN sites s ON s.id = dr.site_id
+                    LEFT JOIN daily_report_versions v ON v.id = dr.current_version_id
+                    WHERE dr.organization_id = :org_id AND dr.id = :id
+                    """
+                ),
+                {"org_id": organization_id, "id": report_id},
+            )
+        ).mappings().first()
+        if row is None or row["version_id"] is None:
+            return None
+        return dict(row)
+
     async def set_rendered_object_key(self, *, version_id: uuid.UUID, object_key: str) -> None:
         await self._conn.execute(
             text(
