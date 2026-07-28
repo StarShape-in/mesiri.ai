@@ -252,6 +252,49 @@ class PostgresProgressReadRepository:
         )
         return dict(row) if row is not None else None
 
+    async def find_latest_by_status(
+        self,
+        organization_id: uuid.UUID,
+        project_id: uuid.UUID | None,
+        site_id: uuid.UUID | None,
+        statuses: tuple[str, ...],
+    ) -> dict[str, Any] | None:
+        """The most recently CREATED site issue in one of `statuses` --
+        WhatsApp's "acknowledge/resolve/wont-fix my last issue" close-out
+        workflow's target resolution (runtime/site_issue_query.py). Ordered
+        by created_at DESC (row-insertion time), not occurred_at (the
+        business moment) -- list_issues above orders by occurred_at for its
+        own display purposes, but "my last issue" means the one most
+        recently reported, matching the precedent
+        PostgresExpenseRepository.find_latest_confirmed /
+        PostgresMoneyTransactionRepository.find_latest_reversible_transfer
+        already set for Reversal's identical "most recent record" need."""
+        where = ["organization_id = :organization_id", "status = ANY(:statuses)"]
+        params: dict[str, Any] = {"organization_id": organization_id, "statuses": list(statuses)}
+        if project_id is not None:
+            where.append("project_id = :project_id")
+            params["project_id"] = project_id
+        if site_id is not None:
+            where.append("site_id = :site_id")
+            params["site_id"] = site_id
+        where_clause = " AND ".join(where)
+
+        row = (
+            (
+                await self._conn.execute(
+                    text(
+                        f"SELECT id, issue_type, severity, narrative, status "
+                        f"FROM site_issues WHERE {where_clause} "
+                        f"ORDER BY created_at DESC LIMIT 1"
+                    ),
+                    params,
+                )
+            )
+            .mappings()
+            .first()
+        )
+        return dict(row) if row is not None else None
+
     async def _emit_issue_event(
         self,
         *,

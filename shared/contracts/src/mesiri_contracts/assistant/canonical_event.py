@@ -44,6 +44,13 @@ class CanonicalEventType(str, Enum):
     # site_issues row (no continuation split like GENERAL_SITE_UPDATE has --
     # each report is its own record, never appended to a prior one).
     SITE_ISSUE_REPORTED = "SiteIssueReported"
+    # SemanticType.SITE_ISSUE_UPDATE split by the extracted `action` field --
+    # same pattern EXPENSE_REVERSAL_REQUESTED/TRANSFER_REVERSAL_REQUESTED
+    # use for `target_kind` below. All three route to the single
+    # WorkflowKey.SITE_ISSUE_CLOSE (see planner/routing.py).
+    SITE_ISSUE_ACKNOWLEDGE_REQUESTED = "SiteIssueAcknowledgeRequested"
+    SITE_ISSUE_RESOLVE_REQUESTED = "SiteIssueResolveRequested"
+    SITE_ISSUE_WONT_FIX_REQUESTED = "SiteIssueWontFixRequested"
     GENERAL_QUESTION_ASKED = "GeneralQuestionAsked"
     IDENTITY_LOOKUP_REQUESTED = "IdentityLookupRequested"
     INVENTORY_QUERY_ASKED = "InventoryQueryAsked"

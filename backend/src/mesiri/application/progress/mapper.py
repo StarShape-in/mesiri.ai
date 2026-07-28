@@ -22,6 +22,7 @@ from typing import Any
 from mesiri_contracts.application.commands.progress import (
     ActivityQuantityInput,
     AddProgressUpdateCommand,
+    CloseSiteIssueCommand,
     CreateActivityCommand,
     ReportSiteIssueCommand,
 )
@@ -173,5 +174,21 @@ def build_report_site_issue_command(confirmed: ConfirmedActionV2) -> ReportSiteI
         occurred_date=_activity_date(fields),
         occurred_date_source=str(fields.get("occurred_date_source") or "inferred_at_confirmation"),
         source=str(fields.get("source") or "whatsapp_text"),
+        created_by=confirmed.confirmed_by_user_id,
+    )
+
+
+def build_close_site_issue_command(confirmed: ConfirmedActionV2) -> CloseSiteIssueCommand:
+    draft = confirmed.draft_action
+    fields = draft.fields
+
+    return CloseSiteIssueCommand(
+        command_id=new_id("cmd"),
+        idempotency_key=confirmed.workflow_instance_id,
+        correlation_id=confirmed.correlation_id,
+        organization_id=draft.organization_id,
+        site_issue_id=fields.get("site_issue_id"),
+        action=str(fields.get("action") or "").strip().lower(),
+        resolution_notes=fields.get("resolution_notes"),
         created_by=confirmed.confirmed_by_user_id,
     )

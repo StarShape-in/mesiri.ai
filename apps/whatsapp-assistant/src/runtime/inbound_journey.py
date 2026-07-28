@@ -84,6 +84,7 @@ from runtime.org_settings_query import OrganizationSettingsQueryService
 from runtime.petty_cash_query import PettyCashRecipientQueryService
 from runtime.reply_dispatch import send_reply_spec
 from runtime.reversal_query import ReversalTargetQueryService
+from runtime.site_issue_query import SiteIssueTargetQueryService
 from runtime.vendor_query import VendorQueryService
 from runtime.workforce_query import WorkforceQueryService
 from understanding.pipeline import UnderstandingPipeline
@@ -760,6 +761,46 @@ async def _seed_reversal_target(
         event.fields["reversal_amount"] = expense["amount"]
         event.fields["reversal_description"] = expense["description"]
         event.fields["reversal_occurred_date"] = expense["occurred_date"]
+
+
+async def _seed_site_issue_close_target(
+    event: CanonicalEventV2,
+    decision: PlannerDecisionV2,
+    site_issue_query: SiteIssueTargetQueryService | None,
+    actor: ActorIdentity | None,
+) -> None:
+    """Resolve "my last reported issue" into a concrete site_issue_id --
+    same "most recent record of a kind" pattern as _seed_reversal_target
+    above, just with one kind (no target_kind-style split needed: `action`
+    already says what to do, not what to find). Only ever runs for
+    SITE_ISSUE_CLOSE; finding nothing simply leaves site_issue_id unset --
+    workflows/site_issue_close/nodes.py's build_draft then completes with a
+    "nothing to close" reply instead of a draft (see that module's
+    docstring and `WorkflowDefinition.allows_completion_without_draft` in
+    workflows/registry.py)."""
+    if site_issue_query is None or actor is None or not actor.organization_id:
+        return
+    if decision.workflow_key is not WorkflowKey.SITE_ISSUE_CLOSE:
+        return
+
+    action = str(event.fields.get("action", "")).strip().lower()
+    # Acknowledge only ever targets a strictly OPEN issue (mirrors
+    # infrastructure/postgres/repositories/progress.py's acknowledge_issue
+    # WHERE clause); resolve/wont_fix may also target one already
+    # ACKNOWLEDGED (mirrors resolve_issue/wont_fix_issue).
+    statuses = ("OPEN",) if action == "acknowledge" else ("OPEN", "ACKNOWLEDGED")
+    target = await site_issue_query.find_latest(
+        organization_id=actor.organization_id,
+        project_id=event.project_id,
+        site_id=event.site_id,
+        statuses=statuses,
+    )
+    if target is None:
+        return
+    event.fields["site_issue_id"] = target["site_issue_id"]
+    event.fields["site_issue_type"] = target["issue_type"]
+    event.fields["site_issue_severity"] = target["severity"]
+    event.fields["site_issue_narrative"] = target["narrative"]
 
 
 def _seed_account_admin_role(event: CanonicalEventV2, decision: PlannerDecisionV2, actor: ActorIdentity | None) -> None:
@@ -1544,6 +1585,7 @@ async def process_inbound_message(
     money_account_query: MoneyAccountQueryService | None = None,
     petty_cash_query: PettyCashRecipientQueryService | None = None,
     reversal_query: ReversalTargetQueryService | None = None,
+    site_issue_query: SiteIssueTargetQueryService | None = None,
     duplicate_expense_query: DuplicateExpenseQueryService | None = None,
     workforce_query: WorkforceQueryService | None = None,
     labour_query_service: LabourQueryService | None = None,
@@ -2018,6 +2060,9 @@ async def process_inbound_message(
                         ),
                         _seed_reversal_target(
                             canonical_event, planner_decision, reversal_query, actor
+                        ),
+                        _seed_site_issue_close_target(
+                            canonical_event, planner_decision, site_issue_query, actor
                         ),
                         _seed_worker_candidates(
                             canonical_event, planner_decision, workforce_query, actor

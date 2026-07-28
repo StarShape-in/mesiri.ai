@@ -70,7 +70,7 @@ _EXTRACTION_PROMPT = (
     '"detected_language" (the source language\'s common English name, e.g. '
     '"Malayalam", "English"), '
     '"semantic_type" (expense|equipment_usage|material_update|labour_update|'
-    "general_site_update|site_issue|general_question|whoami_question|inventory_query|"
+    "general_site_update|site_issue|site_issue_update|general_question|whoami_question|inventory_query|"
     "labour_query|activity_query|dpr_request|finance_query|transfer|petty_cash|reversal|"
     "account_admin|unknown), "
     '"fields" (object, values in English except proper nouns/names -- see '
@@ -182,6 +182,17 @@ _EXTRACTION_PROMPT = (
     "progress report (general_site_update) and never for a QUESTION about existing issues "
     '("any open issues?" is activity_query, asking; "ran out of cement, work stopped" is '
     "site_issue, reporting).\n"
+    "- site_issue_update: action, resolution_notes. Use this type when the user wants to "
+    "acknowledge, resolve, or mark won't-fix their most recently reported site issue "
+    '(e.g. "acknowledge that issue", "that\'s fixed now, mark it resolved", "we can\'t fix '
+    'that, mark it as won\'t fix", "close that blocker"). action MUST be exactly '
+    '"acknowledge", "resolve", or "wont_fix" -- never any other word; infer it from what '
+    "the user says. resolution_notes is optional freeform text explaining how it was "
+    'resolved or why it won\'t be fixed (e.g. "pump replaced", "not worth fixing, site '
+    'closing next week") -- omit if not stated. This ALWAYS targets the single most '
+    "recently reported issue in the right status -- never extract an issue type, "
+    "severity, or narrative to identify which one; that resolution happens elsewhere. "
+    "Never confuse with site_issue (which reports a brand NEW problem).\n"
     "- general_question: question, topic\n"
     "- whoami_question: question\n"
     "- inventory_query: material_name, output_format, project_name (omit material_name if "

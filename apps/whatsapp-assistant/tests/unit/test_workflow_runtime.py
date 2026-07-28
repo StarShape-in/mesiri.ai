@@ -612,6 +612,11 @@ def test_informational_and_no_draft_keys_are_pinned() -> None:
         # stated by the user, so a bare narrative ("finished") is a complete,
         # actionable continuation with no draft fields to fill.
         WorkflowKey.ACTIVITY_CONTINUATION,
+        # Same reasoning as REVERSE: the target issue is resolved by seeding
+        # (runtime/inbound_journey.py's _seed_site_issue_close_target), never
+        # stated by the user -- "nothing to acknowledge/resolve/wont_fix" is
+        # a legitimate no-draft completion, not a failure.
+        WorkflowKey.SITE_ISSUE_CLOSE,
     }
 
 

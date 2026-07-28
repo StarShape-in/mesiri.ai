@@ -15,6 +15,7 @@ from mesiri_contracts.assistant.candidates import (
     PettyCashCandidate,
     ReversalCandidate,
     SiteIssueCandidate,
+    SiteIssueUpdateCandidate,
     TransferCandidate,
 )
 from mesiri_contracts.assistant.canonical_event import CanonicalEventType, IntentCompleteness
@@ -306,6 +307,46 @@ def test_site_issue_severity_and_delay_pass_through_to_canonical_event():
     event = build_canonical_event(understanding, _context())
     assert event.fields["severity"] == "HIGH"
     assert event.fields["delay_duration_minutes"] == 120
+
+
+def test_site_issue_update_acknowledge_maps_to_acknowledge_requested():
+    understanding = _understanding(
+        semantic_type=SemanticType.SITE_ISSUE_UPDATE,
+        candidates=[SiteIssueUpdateCandidate(fields={"action": "acknowledge"})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.SITE_ISSUE_ACKNOWLEDGE_REQUESTED
+    assert event.completeness is IntentCompleteness.ACTIONABLE
+
+
+def test_site_issue_update_resolve_maps_to_resolve_requested():
+    understanding = _understanding(
+        semantic_type=SemanticType.SITE_ISSUE_UPDATE,
+        candidates=[
+            SiteIssueUpdateCandidate(fields={"action": "resolve", "resolution_notes": "Fixed"})
+        ],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.SITE_ISSUE_RESOLVE_REQUESTED
+    assert event.fields["resolution_notes"] == "Fixed"
+
+
+def test_site_issue_update_wont_fix_maps_to_wont_fix_requested():
+    understanding = _understanding(
+        semantic_type=SemanticType.SITE_ISSUE_UPDATE,
+        candidates=[SiteIssueUpdateCandidate(fields={"action": "wont_fix"})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.SITE_ISSUE_WONT_FIX_REQUESTED
+
+
+def test_site_issue_update_unrecognized_action_falls_back_to_unrecognized():
+    understanding = _understanding(
+        semantic_type=SemanticType.SITE_ISSUE_UPDATE,
+        candidates=[SiteIssueUpdateCandidate(fields={"action": "delete"})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.UNRECOGNIZED
 
 
 def test_inventory_query_with_material_name_is_actionable():

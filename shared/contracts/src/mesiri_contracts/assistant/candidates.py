@@ -90,6 +90,15 @@ class SiteIssueCandidate(Candidate):
     # delay -- never a question about existing ones (that's activity_query).
 
 
+class SiteIssueUpdateCandidate(Candidate):
+    semantic_type: SemanticType = SemanticType.SITE_ISSUE_UPDATE
+    # Conventional keys: action (required to route -- see
+    # canonicalization/mapping.py; one of acknowledge/resolve/wont_fix),
+    # resolution_notes. Always targets the most recently reported issue in
+    # the right status, resolved by seeding -- never a new report (that's
+    # site_issue).
+
+
 class GeneralQuestionCandidate(Candidate):
     semantic_type: SemanticType = SemanticType.GENERAL_QUESTION
     # Conventional keys: question, topic.
@@ -152,6 +161,7 @@ CANDIDATE_TYPES: dict[SemanticType, type[Candidate]] = {
     SemanticType.LABOUR_UPDATE: LabourUpdateCandidate,
     SemanticType.GENERAL_SITE_UPDATE: GeneralSiteUpdateCandidate,
     SemanticType.SITE_ISSUE: SiteIssueCandidate,
+    SemanticType.SITE_ISSUE_UPDATE: SiteIssueUpdateCandidate,
     SemanticType.GENERAL_QUESTION: GeneralQuestionCandidate,
     SemanticType.INVENTORY_QUERY: InventoryQueryCandidate,
     SemanticType.LABOUR_QUERY: LabourQueryCandidate,
