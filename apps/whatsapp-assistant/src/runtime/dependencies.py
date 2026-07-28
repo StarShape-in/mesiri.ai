@@ -200,6 +200,32 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     )
 
     _backend_settings = _get_backend_settings()
+
+    # The backend refuses to start on the fake adapter in production
+    # (Settings.validate_runtime); the assistant historically did not, so it
+    # would accept photos into an in-memory store that cannot outlive the
+    # process and hands back memory:// URLs the dashboard shows as "Photo
+    # unavailable". That reads as a broken feature and is a missing
+    # environment variable.
+    #
+    # Logged rather than raised on purpose: refusing to boot would take
+    # WhatsApp down entirely over photos, and attendance capture -- the part
+    # that actually matters -- works fine without object storage. Loud in the
+    # log, and visible on /health, without holding the rest hostage.
+    from mesiri.bootstrap.settings import ObjectStorageProvider as _StorageProvider
+
+    if (
+        _backend_settings.environment.is_production_like
+        and _backend_settings.object_storage.provider is _StorageProvider.FAKE
+    ):
+        _logging.getLogger("mesiri.startup").error(
+            "object storage is the FAKE adapter in a %s environment -- every photo "
+            "will be written to memory, lost on restart, and undisplayable in the "
+            "dashboard. Set MESIRI_OBJECT_STORAGE__PROVIDER=r2 with its endpoint "
+            "and credentials.",
+            _backend_settings.environment.value,
+        )
+
     object_storage = RecentWritesCachingObjectStorage(build_object_storage(_backend_settings))
 
     # Redis for the active context store.  Use a real RedisClient when

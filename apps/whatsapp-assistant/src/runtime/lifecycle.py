@@ -72,6 +72,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # otherwise.
                 await app.state.container.receipt_renderer.close()
 
+    def _media_storage_provider() -> str:
+        """Which object-storage adapter is live, or why we cannot tell."""
+        try:
+            from mesiri.bootstrap.settings import get_settings
+
+            return str(get_settings().object_storage.provider.value)
+        except Exception:  # noqa: BLE001 -- a probe never fails over a label
+            return "unknown"
+
+
     app = FastAPI(title="Mesiri WhatsApp Assistant", lifespan=lifespan)
 
     @app.get("/health", tags=["ops"])
@@ -79,9 +89,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # build carries the running commit. Without it there is no way to
         # tell a fix that did not work from a fix that never shipped, which
         # cost days of chasing a bug that had already been fixed.
+        #
+        # media_storage is here for the same reason. With the fake adapter
+        # selected, every photo is written to memory and every URL comes back
+        # as memory://, which the dashboard renders as "Photo unavailable" --
+        # a symptom that looks like a broken feature and is actually a
+        # missing environment variable. The provider name only; never a
+        # credential.
         from runtime.build_info import build_sha
 
-        return {"status": "ok", "build": build_sha()}
+        return {
+            "status": "ok",
+            "build": build_sha(),
+            "media_storage": _media_storage_provider(),
+        }
 
     # Alias matching the documented liveness-probe convention
     # (README.md / backend/src/mesiri/http/app.py) -- infra/mesiri.service's

@@ -44,3 +44,24 @@ def test_it_degrades_instead_of_raising(monkeypatch):
         assert build_sha() == _UNKNOWN
     finally:
         build_sha.cache_clear()
+
+
+def test_health_reports_which_media_storage_is_live():
+    """The symptom this answers: a photo attaches fine and then shows as
+    "Photo unavailable" in the dashboard. That is the fake adapter handing
+    back memory:// URLs -- a missing environment variable, not a broken
+    feature -- and there was no way to tell the two apart from outside.
+
+    The provider name only. A credential must never reach a public probe.
+    """
+    from fastapi.testclient import TestClient
+
+    from runtime.lifecycle import create_app
+
+    with TestClient(create_app()) as client:
+        body = client.get("/health").json()
+
+    assert body["status"] == "ok"
+    assert body["media_storage"] in {"fake", "r2", "unknown"}
+    assert "secret" not in str(body).lower()
+    assert "key" not in str(body).lower()
