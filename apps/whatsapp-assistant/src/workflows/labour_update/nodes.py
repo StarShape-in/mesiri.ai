@@ -59,7 +59,7 @@ from mesiri.domains.workforce.matching import (
     WorkerCandidate,
     match_worker,
 )
-from mesiri.domains.workforce.workers import normalize_trade
+from mesiri.domains.workforce.workers import normalize_name, normalize_trade
 from mesiri_contracts.assistant.draft_action import DraftActionType
 from mesiri_contracts.assistant.v2.draft_action import DraftActionV2
 from mesiri_contracts.common.ids import new_id
@@ -86,6 +86,46 @@ _SOMEONE_NEW_LABEL = "Someone new"
 #: Written onto a line once matching has decided it, so a later pass skips it.
 #: Workflow bookkeeping, never part of the command — stripped in `build_draft`.
 _RESOLVED_FLAG = "worker_match_resolved"
+
+#: Where a "Akhil -> Akhilesh" correction is handed to this node. Set on the
+#: pending draft by the correction path (interactions/handler.py), consumed
+#: at the top of match_workers, and never persisted beyond that pass.
+NAME_CORRECTIONS_FIELD = "_name_corrections"
+
+
+def _apply_name_corrections(
+    lines: list[dict[str, Any]], corrections: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Rewrite worker names on the extracted lines, and un-decide those lines.
+
+    Matching against the *old* spelling is exactly what the user is telling
+    us was wrong, so any decision already recorded for a corrected line --
+    the matched worker_id and the resolved flag -- is thrown away and the
+    line goes back through matching from scratch. Keeping it would leave
+    "Akhilesh" linked to whoever "Akhil" resolved to, which is the silent
+    false merge this module exists to prevent (P4).
+
+    Matching on the name is case- and space-insensitive so the correction can
+    be typed the way it reads on screen. `worker_name_original` is left
+    untouched: it records what was actually written on the sheet or said out
+    loud, and a correction does not change that history.
+    """
+    wanted = {normalize_name(old): new for old, new in corrections.items() if str(new).strip()}
+    if not wanted:
+        return lines
+
+    corrected: list[dict[str, Any]] = []
+    for line in lines:
+        name = str(line.get("worker_name") or "")
+        replacement = wanted.get(normalize_name(name)) if name else None
+        if replacement is None:
+            corrected.append(line)
+            continue
+        updated = {**line, "worker_name": str(replacement).strip()}
+        updated.pop(_RESOLVED_FLAG, None)
+        updated["worker_id"] = None
+        corrected.append(updated)
+    return corrected
 
 
 # --- Reading the seeded state ---------------------------------------------
@@ -292,6 +332,18 @@ def match_workers(state: WorkflowGraphState) -> dict:
     candidates = _as_candidates(fields)
     answer_text = fields.pop("_slot_answer_text", None)
     awaiting = state.get("awaiting_slot") or ""
+
+    # Name corrections ("Akhil -> Akhilesh") arrive as a field on the pending
+    # draft and are applied here, at the top, so everything below re-runs
+    # against the corrected names: matching is re-scored, the register is
+    # re-consulted, and the preview is rebuilt. A corrected name is a
+    # different person as far as matching is concerned, so a decision already
+    # made about the old spelling has to be discarded rather than carried
+    # over -- see _apply_name_corrections.
+    corrections = fields.pop(NAME_CORRECTIONS_FIELD, None)
+    if isinstance(corrections, dict) and corrections:
+        lines = _apply_name_corrections(lines, corrections)
+        fields["lines"] = lines
 
     if awaiting.startswith(WORKER_MATCH_SLOT_PREFIX) and answer_text is not None:
         index = _slot_index(awaiting)

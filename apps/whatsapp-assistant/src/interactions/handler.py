@@ -43,7 +43,8 @@ from mesiri_contracts.application.results.execution_result import ExecutionResul
 from mesiri_contracts.assistant.draft_action import DraftActionType
 from mesiri_contracts.assistant.enums import InputModality
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage
-from mesiri_contracts.assistant.v2.interaction_spec import InteractionIntent
+from mesiri_contracts.assistant.planner_decision import WorkflowKey
+from mesiri_contracts.assistant.v2.interaction_spec import FieldCorrection, InteractionIntent
 from planner import Planner
 from workflows import WorkflowResumeResult, WorkflowResumeStatus, WorkflowRunResult, WorkflowRuntime
 from workflows.batch import (
@@ -53,11 +54,13 @@ from workflows.batch import (
     summarize_batch_outcome,
 )
 from workflows.batch_store import PendingBatchStore
+from workflows.ports import LoadedWorkflowInstance
 from workflows.who_am_i import is_whoami_trigger
 
 from .classifier import classify_reply
 from .classifier_port import InteractionClassifierPort
 from .completion_photo_hint import CompletionPhotoHintStore
+from .name_corrections import parse_name_corrections
 from .policy import InteractionRoute, decide
 from .ports import ExecutionDispatcher, ReceiptBuilder
 from .response_handler import render_execution_reply, render_resume_reply, render_workflow_run_reply
@@ -260,6 +263,15 @@ class InteractionHandler:
         if loaded is None:
             return None  # no pending workflow → normal journey
 
+        # "Akhil -> Akhilesh" while an attendance preview is pending. Checked
+        # before classify_reply, which would read it as an unrelated message
+        # and start a new journey, losing the report the user is trying to
+        # fix. Deterministic and free -- see interactions/name_corrections.py
+        # for why this is not an AI classification.
+        corrected = await self._maybe_correct_worker_names(user_id, loaded, message)
+        if corrected is not None:
+            return corrected
+
         intent = classify_reply(message.text)
         decision = decide(intent)
         if decision.route is InteractionRoute.NEW_JOURNEY:
@@ -281,6 +293,54 @@ class InteractionHandler:
             reply_text=reply_text,
             execution_result=execution_result,
             receipt_coro=receipt_coro,
+            project_id=str(loaded.state.project_id) if loaded.state.project_id else None,
+            site_id=str(loaded.state.site_id) if loaded.state.site_id else None,
+        )
+
+    async def _maybe_correct_worker_names(
+        self,
+        user_id: str,
+        loaded: LoadedWorkflowInstance,
+        message: NormalizedMessage,
+    ) -> InteractionHandled | None:
+        """Apply "old -> new" name corrections to a pending attendance draft.
+
+        Returns None for anything that isn't one, so the caller falls through
+        to the normal confirm/reject handling unchanged.
+
+        Scoped to labour attendance on purpose: it is the only workflow whose
+        fields are a list of *names read by a machine*, where a one-character
+        misread is both likely and expensive. Other workflows correct their
+        scalar fields through the existing LLM-classified CORRECTION path.
+
+        The correction is handed to the graph as a field and applied inside
+        match_workers, so the whole pass re-runs: names change, matching is
+        re-scored against the register, and the preview is rebuilt. Nothing is
+        saved -- the draft simply goes back to awaiting confirmation.
+        """
+        from workflows.labour_update.nodes import NAME_CORRECTIONS_FIELD
+
+        if loaded.state.workflow_key is not WorkflowKey.LABOUR_ATTENDANCE:
+            return None
+        if message.modality not in (InputModality.TEXT, InputModality.INTERACTIVE):
+            return None
+        corrections = parse_name_corrections(message.text or "")
+        if not corrections:
+            return None
+
+        result = await self._runtime.correct(
+            loaded,
+            [FieldCorrection(field_name=NAME_CORRECTIONS_FIELD, new_value=corrections)],
+        )
+        logger.info(
+            "interaction.worker_names_corrected user=%s count=%d status=%s",
+            user_id,
+            len(corrections),
+            result.status.value,
+        )
+        return InteractionHandled(
+            result=result,
+            reply_text=render_workflow_run_reply(result, pending_prompt=result.pending_prompt),
             project_id=str(loaded.state.project_id) if loaded.state.project_id else None,
             site_id=str(loaded.state.site_id) if loaded.state.site_id else None,
         )
