@@ -1529,6 +1529,14 @@ export async function publishDailyReportApi(reportId: string): Promise<void> {
   await api.post(`/dpr/daily-reports/${reportId}/publish`)
 }
 
+/** Fetches the DPR PDF as a Blob -- GET /dpr/daily-reports/{id}/pdf serves
+ * either the already-rendered Playwright artifact (if the nightly cron has
+ * caught up) or an on-demand fpdf2 fallback, transparently to the caller. */
+export async function fetchDailyReportPdfApi(reportId: string): Promise<Blob> {
+  const res = await api.get(`/dpr/daily-reports/${reportId}/pdf`, { responseType: 'blob' })
+  return res.data
+}
+
 export interface CreateDailyReportPayload {
   report_date: string
   project_id?: string

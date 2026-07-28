@@ -15,13 +15,17 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from mesiri.authorization.context import AuthorizationContext
+from mesiri.domains.dpr.pdf import render_dpr_pdf_bytes
 from mesiri.domains.projects.router import get_auth_context
+from mesiri.infrastructure.objectstorage.dependency import get_object_storage
 from mesiri.infrastructure.postgres.dependency import get_db_conn
 from mesiri.infrastructure.postgres.repositories.dpr import PostgresDprRepository
+from mesiri_contracts.common.storage import ObjectStoragePort
 
 logger = logging.getLogger(__name__)
 
@@ -174,3 +178,62 @@ async def publish_daily_report(
     if not success:
         raise HTTPException(status_code=404, detail="Report not found or not in APPROVED status")
     return {"status": "success"}
+
+
+@router.get("/daily-reports/{report_id}/pdf")
+async def get_daily_report_pdf(
+    report_id: uuid.UUID,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+    object_storage: ObjectStoragePort = Depends(get_object_storage),
+):
+    """Serve one DPR as a downloadable PDF.
+
+    If the nightly cron (runtime/render_pending_dpr_pdfs.py) has already
+    rendered this version, that polished Playwright/Jinja artifact is
+    fetched from object storage and returned as-is (best fidelity, matches
+    what WhatsApp sees). Otherwise a plain-tabular PDF is rendered on the
+    spot from the same payload via fpdf2 (see domains/dpr/pdf.py) so the
+    dashboard never has to show "come back later" for a report that has a
+    real payload but hasn't been picked up by the cron yet.
+
+    404s (not 200-with-empty-body) for a report with no current version at
+    all -- the manual-entry creation path (POST /dpr/daily-reports with no
+    activities behind it) has nothing real to render.
+    """
+    repo = PostgresDprRepository(conn)
+    report = await repo.get_report_for_pdf(
+        organization_id=auth_context.organization_id, report_id=report_id
+    )
+    if report is None:
+        raise HTTPException(
+            status_code=404,
+            detail="This report has no generated content yet (no activities recorded, or it "
+            "was created manually without a payload).",
+        )
+
+    filename = f"{report['code'] or 'DPR'}.pdf"
+
+    if report["rendered_object_key"]:
+        stored = await object_storage.get_object(report["rendered_object_key"])
+        pdf_bytes = stored.data
+    else:
+        payload = report["payload"]
+        if isinstance(payload, str):
+            import json
+
+            payload = json.loads(payload)
+        pdf_bytes = render_dpr_pdf_bytes(
+            code=report["code"],
+            report_date=report["report_date"],
+            project_name=report["project_name"],
+            site_name=report["site_name"],
+            workflow_status=report["workflow_status"],
+            payload=payload,
+        )
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
