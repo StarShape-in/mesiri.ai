@@ -128,6 +128,19 @@ def _coerce_headcount(raw: object, *, named: bool) -> int:
     return value if value > 0 else 1
 
 
+def _is_non_latin(name: str) -> bool:
+    """True when a name carries no Latin letters at all.
+
+    Used only to notice that transliteration did not happen. Deliberately
+    "no Latin letters" rather than "any non-Latin character": a genuinely
+    transliterated name can still carry a diacritic or an apostrophe, and
+    flagging those would bury the real cases in noise.
+    """
+    return bool(name.strip()) and not any(
+        "a" <= char.lower() <= "z" for char in name
+    )
+
+
 def _labour_line(raw: dict) -> dict | None:
     """Normalize one extracted worker entry, or None if it says nothing."""
     name = next((raw[k] for k in _LABOUR_NAME_ALIASES if raw.get(k)), None)
@@ -153,6 +166,18 @@ def _labour_line(raw: dict) -> dict | None:
     original = raw.get("name_original") or raw.get("original_name")
     if original and str(original).strip() and str(original).strip() != name:
         line["worker_name_original"] = str(original).strip()
+    elif name and _is_non_latin(name):
+        # The model was asked to transliterate and did not. Record what it
+        # actually returned as the original, so the native spelling is never
+        # lost and the preview shows it -- a supervisor can then fix the
+        # reading with a plain "രവി is Ravi" (see interactions/
+        # name_corrections.py) instead of redoing the report.
+        #
+        # The name itself is left as-is rather than guessed at: there is no
+        # transliteration table here, and inventing one would put a wrong
+        # name on a wage record. Leaving it visibly wrong is recoverable;
+        # silently inventing a plausible-looking name is not.
+        line["worker_name_original"] = name
     if wage is not None:
         line["daily_wage"] = wage
     for key in ("contractor", "activity"):

@@ -12,6 +12,8 @@ the material/finance aliasing.
 
 from __future__ import annotations
 
+import pytest
+
 from canonicalization import build_canonical_event
 from mesiri_contracts.assistant.candidates import LabourUpdateCandidate
 from mesiri_contracts.assistant.canonical_event import CanonicalEventType, IntentCompleteness
@@ -338,3 +340,65 @@ def test_every_labour_event_carries_a_date():
     fields = _event({"headcount": 12, "trade": "helper"}).fields
     assert "occurred_date" in fields
     assert "occurred_date_source" in fields
+
+
+# ---------------------------------------------------------------------------
+# Non-Latin names (Phase 4)
+# ---------------------------------------------------------------------------
+
+#: "Ravi" in Malayalam script -- the single most common case on these sites.
+MALAYALAM_RAVI = "\u0d30\u0d35\u0d3f"
+
+
+def test_the_native_spelling_is_kept_when_the_model_transliterates():
+    """The intended path: "Ravi" is what matches the register, and the native
+    spelling is what the supervisor recognises when checking the preview."""
+    from canonicalization.builder import _labour_line
+
+    line = _labour_line(
+        {"name": "Ravi", "name_original": MALAYALAM_RAVI, "trade": "mason"}
+    )
+
+    assert line["worker_name"] == "Ravi"
+    assert line["worker_name_original"] == MALAYALAM_RAVI
+
+
+def test_a_name_left_in_its_own_script_is_still_recorded_as_the_original():
+    """The backstop. Every provider is now asked to transliterate, but a model
+    that ignores it must not silently drop the native spelling -- preserved,
+    the preview shows what was actually said and one plain correction fixes
+    the reading rather than the whole report being redone.
+
+    The name is deliberately not guessed at: there is no transliteration
+    table here, and a wrong invented name on a wage record is worse than a
+    visibly wrong one.
+    """
+    from canonicalization.builder import _labour_line
+
+    line = _labour_line({"name": MALAYALAM_RAVI, "trade": "mason"})
+
+    assert line["worker_name_original"] == MALAYALAM_RAVI
+
+
+def test_a_latin_name_gains_no_original_field():
+    """A Latin-script report must not sprout a duplicate of every name -- it
+    would read as "Ravi (Ravi)" on the preview."""
+    from canonicalization.builder import _labour_line
+
+    assert "worker_name_original" not in _labour_line({"name": "Ravi", "trade": "mason"})
+
+
+@pytest.mark.parametrize("name", ["José", "O'Brien", "Ravi-Kumar", "Mary Anne"])
+def test_an_accent_or_punctuation_is_not_mistaken_for_another_script(name):
+    """"Any non-Latin character" would flag all of these and bury the real
+    cases in noise, so the check is "no Latin letters at all"."""
+    from canonicalization.builder import _is_non_latin
+
+    assert _is_non_latin(name) is False
+
+
+def test_a_headcount_group_never_gains_an_original_name():
+    """"12 helpers" names nobody, so there is no spelling to preserve."""
+    from canonicalization.builder import _labour_line
+
+    assert "worker_name_original" not in _labour_line({"trade": "helper", "headcount": 12})

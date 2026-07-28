@@ -89,7 +89,28 @@ _EXTRACTION_PROMPT = (
     "work_item is only for used material: the activity or task it was used for "
     '(e.g. "slabing the footing area", "column casting"). Omit work_item entirely '
     "for received material.\n"
-    "- labour_update: headcount, trade, hours, contractor, project_name\n"
+    "- labour_update: workers (array), contractor, hours, project_name, occurred_on. "
+    "Each item in workers is ONE line of the attendance report, with keys: "
+    '"name" (the person\'s name -- omit entirely for an unnamed group), '
+    '"trade" (mason, helper, painter, carpenter, electrician, plumber, welder, '
+    'bar bender, fitter, supervisor, operator, driver, ...), '
+    '"headcount" (how many people this line covers -- always 1 for a named '
+    'person), "daily_wage" (plain number, only when stated). '
+    "Sites report named workers and plain headcounts interchangeably, often in "
+    'the same message. "Ravi mason, Arun painter, 12 helpers, 4 carpenters" -> '
+    'workers: [{"name":"Ravi","trade":"mason","headcount":1}, '
+    '{"name":"Arun","trade":"painter","headcount":1}, '
+    '{"trade":"helper","headcount":12}, {"trade":"carpenter","headcount":4}]. '
+    "NEVER invent a name: if the text only says \"12 helpers\", omit \"name\" for "
+    "that line. NEVER merge two named people into one line, and never collapse a "
+    "named person into a count. A message with no names at all is still valid -- "
+    'emit one workers entry per trade mentioned. "20 workers today" (no trade) '
+    '-> workers: [{"headcount":20}]. '
+    "If a name is spoken or written in a non-Latin script, transliterate the "
+    'sound into Latin for "name" (രവി -> "Ravi") and keep the original '
+    'spelling in "name_original" -- never translate a name into an English '
+    "word, and never leave the name in the original script. Translate trades "
+    "into the English trade word.\n"
     "- general_site_update: narrative, work_type, quantities (array), location, "
     "contractor, project_name, occurred_on, update_kind. "
     "narrative is the report in the sender's own words. work_type is the single "
