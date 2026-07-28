@@ -26,7 +26,6 @@ import {
 } from 'lucide-react'
 import { useScope } from '@/lib/ScopeContext'
 import { fetchTimelineEntriesApi } from '@/lib/api'
-
 import { KpiCard } from '@/components/ui/kpi-card'
 import { useToast } from '@/components/ui/toast-notification'
 import { Badge } from '@/components/ui/badge'
@@ -54,98 +53,6 @@ export interface EnrichedTimelineEntry {
   aiVisionCaption?: string
   payloadDetails?: Record<string, any>
 }
-
-// ─── Sample Fallback Timeline Data ───────────────────────────────────────────
-
-const SAMPLE_TIMELINE_ENTRIES: EnrichedTimelineEntry[] = [
-  {
-    id: 'evt_101',
-    projectId: 'proj_01',
-    siteId: 'site_01',
-    eventType: 'DPR_APPROVED',
-    summary: 'Daily Progress Report DPR-2026-0728-01 approved and frozen by Project Lead.',
-    occurredAt: '2026-07-28T10:15:00Z',
-    category: 'progress',
-    actorName: 'Ilan Usman',
-    actorRole: 'Project Director',
-    locationName: 'Tower A Foundation',
-    metricsTag: '120 m³ Concrete',
-    aiVisionCaption: 'Visual check confirmed grade C30 concrete pour at Grid B-4.',
-    payloadDetails: { dpr_number: 'DPR-2026-0728-01', work_package: 'Concrete Works', status: 'FROZEN' },
-  },
-  {
-    id: 'evt_102',
-    projectId: 'proj_01',
-    siteId: 'site_01',
-    eventType: 'EXPENSE_RECORDED',
-    summary: 'Site Petty Cash Expense of ₹14,500 approved for ReadyMix Concrete Additive batch.',
-    occurredAt: '2026-07-28T09:40:00Z',
-    category: 'finance',
-    actorName: 'Vikram Singh',
-    actorRole: 'Site Engineer',
-    locationName: 'Tower A Yard',
-    metricsTag: '₹14,500 Incurred',
-    aiVisionCaption: 'Receipt voucher OCR verified matching UltraTech chemical invoice.',
-    payloadDetails: { voucher_code: 'VND-089', payment_method: 'Petty Cash', category: 'Site Chemicals' },
-  },
-  {
-    id: 'evt_103',
-    projectId: 'proj_01',
-    siteId: 'site_01',
-    eventType: 'WORKFORCE_ATTENDANCE_CHECKIN',
-    summary: 'Shift attendance verified: 42 workers checked in across 3 trade categories.',
-    occurredAt: '2026-07-28T08:00:00Z',
-    category: 'workforce',
-    actorName: 'Rajput Labour Supervisor',
-    actorRole: 'Subcontractor Lead',
-    locationName: 'Main Entrance Gate',
-    metricsTag: '42 On-Site Workers',
-    payloadDetails: { masons: 16, bar_benders: 14, helpers: 12, shift: 'day' },
-  },
-  {
-    id: 'evt_104',
-    projectId: 'proj_01',
-    siteId: 'site_01',
-    eventType: 'SITE_BLOCKER_FLAGGED',
-    summary: 'Transit Mixer Entry Queue bottleneck reported: 45 minute delay at main sector gate.',
-    occurredAt: '2026-07-27T16:30:00Z',
-    category: 'blocker',
-    actorName: 'Amit Verma',
-    actorRole: 'Safety Inspector',
-    locationName: 'Gate 2 Access Road',
-    metricsTag: '45m Delay',
-    payloadDetails: { severity: 'MEDIUM', root_cause: 'TRAFFIC_CONGESTION', resolved: true },
-  },
-  {
-    id: 'evt_105',
-    projectId: 'proj_01',
-    siteId: 'site_01',
-    eventType: 'MATERIAL_DELIVERY_RECEIVED',
-    summary: '500 Bags of OPC 53 Grade Cement received and stacked in dry storage shed.',
-    occurredAt: '2026-07-27T14:15:00Z',
-    category: 'materials',
-    actorName: 'Store Keeper Manager',
-    actorRole: 'Logistics',
-    locationName: 'Warehouse Storage B',
-    metricsTag: '500 Cement Bags',
-    aiVisionCaption: 'Delivery slip OCR matched invoice #INV-99420.',
-    payloadDetails: { material_code: 'MAT-CEM-01', vendor: 'Ambuja Cements', batch: 'B-772' },
-  },
-  {
-    id: 'evt_106',
-    projectId: 'proj_01',
-    siteId: 'site_01',
-    eventType: 'WEATHER_INTERRUPTION',
-    summary: 'Heavy afternoon rainfall suspended outdoor rebar tying for 2.5 hours.',
-    occurredAt: '2026-07-26T12:00:00Z',
-    category: 'blocker',
-    actorName: 'System Monitor',
-    actorRole: 'Automated Weather Sentry',
-    locationName: 'Foundation Pit',
-    metricsTag: '2.5h Rain Delay',
-    payloadDetails: { rainfall_mm: 38, dewatering_pumps_active: 2 },
-  },
-]
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -244,7 +151,7 @@ export default function OperationsTimelinePage() {
         limit: 100,
       })
 
-      if (res && res.items && res.items.length > 0) {
+      if (res && res.items) {
         const enriched: EnrichedTimelineEntry[] = res.items.map((e) => ({
           id: e.id,
           projectId: e.project_id,
@@ -253,16 +160,16 @@ export default function OperationsTimelinePage() {
           summary: e.summary,
           occurredAt: e.occurred_at,
           category: deriveCategory(e.event_type),
-          actorName: 'Site Supervisor',
+          actorName: 'Site System',
           locationName: currentSiteName,
           payloadDetails: e.payload,
         }))
         setEntries(enriched)
       } else {
-        setEntries(SAMPLE_TIMELINE_ENTRIES)
+        setEntries([])
       }
     } catch {
-      setEntries(SAMPLE_TIMELINE_ENTRIES)
+      setEntries([])
     } finally {
       setLoading(false)
     }
@@ -281,7 +188,7 @@ export default function OperationsTimelinePage() {
         siteId: scopeFilter.siteId,
         limit: 10,
       }).then((res) => {
-        if (res && res.items && res.items.length > 0) {
+        if (res && res.items) {
           const enriched: EnrichedTimelineEntry[] = res.items.map((e) => ({
             id: e.id,
             projectId: e.project_id,
@@ -290,7 +197,7 @@ export default function OperationsTimelinePage() {
             summary: e.summary,
             occurredAt: e.occurred_at,
             category: deriveCategory(e.event_type),
-            actorName: 'Site Engineer',
+            actorName: 'Site System',
             locationName: currentSiteName,
             payloadDetails: e.payload,
           }))
@@ -652,12 +559,14 @@ export default function OperationsTimelinePage() {
                 <Activity className="size-5 text-muted-foreground/50" />
               </div>
               <div>
-                <p className="text-sm font-semibold text-foreground">No timeline events match filters</p>
-                <p className="text-xs text-muted-foreground mt-1">Try clearing your search query or category filter.</p>
+                <p className="text-sm font-semibold text-foreground">No operational events recorded in backend</p>
+                <p className="text-xs text-muted-foreground mt-1">Events will appear live as DPRs are submitted, expenses recorded, and site activities logged.</p>
               </div>
-              <Button variant="outline" size="sm" onClick={resetFilters} className="text-xs h-8 mt-1">
-                Clear Filters
-              </Button>
+              {hasActiveFilters && (
+                <Button variant="outline" size="sm" onClick={resetFilters} className="text-xs h-8 mt-1">
+                  Clear Filters
+                </Button>
+              )}
             </Card>
           ) : (
             Object.entries(groupedEntries).map(([dateStr, dateEntries]) => (

@@ -99,3 +99,21 @@ class SiteIssueResponse(BaseModel):
 class SiteIssuesListResponse(BaseModel):
     items: list[SiteIssueResponse]
     total: int
+
+
+class CreateSiteIssueRequest(BaseModel):
+    project_id: uuid.UUID
+    site_id: uuid.UUID
+    activity_id: uuid.UUID | None = None
+    work_package_id: uuid.UUID | None = None
+    location_id: uuid.UUID | None = None
+    issue_type: str = "SITE_BLOCKER"
+    severity: str = "MEDIUM"
+    narrative: str | None = None
+    delay_duration_minutes: int | None = None
+    assigned_user_id: uuid.UUID | None = None
+
+
+class ResolveSiteIssueRequest(BaseModel):
+    resolution_notes: str | None = None
+

@@ -30,6 +30,8 @@ import TransactionsPage from '@/pages/TransactionsPage'
 import VendorsPage from '@/pages/VendorsPage'
 import CategoriesPage from '@/pages/CategoriesPage'
 import OperationsTimelinePage from '@/pages/OperationsTimelinePage'
+import OperationsIssuesPage from '@/pages/OperationsIssuesPage'
+
 
 import { OperationalPlaceholder } from '@/components/operational-placeholder'
 
@@ -66,7 +68,8 @@ export default function App() {
         <Route path="operations/activities" element={<ActivitiesPage />} />
         <Route path="operations/timeline" element={<OperationsTimelinePage />} />
         <Route path="operations/daily-reports" element={<DailyReportsPage />} />
-        <Route path="operations/issues" element={<OperationalPlaceholder title="Operations Issues" />} />
+        <Route path="operations/issues" element={<OperationsIssuesPage />} />
+
         <Route path="operations/gallery" element={<OperationalPlaceholder title="Operations Gallery" />} />
         <Route path="operations/analytics" element={<OperationalPlaceholder title="Operations Analytics" />} />
         <Route path="operations/settings" element={<OperationalPlaceholder title="Operations Settings" />} />

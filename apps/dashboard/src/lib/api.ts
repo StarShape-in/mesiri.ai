@@ -296,7 +296,80 @@ export async function fetchTimelineEntriesApi(params: {
   return res.data
 }
 
+export interface SiteIssueItem {
+
+  id: string
+  organization_id: string
+  project_id: string
+  site_id: string
+  activity_id?: string | null
+  work_package_id?: string | null
+  location_id?: string | null
+  issue_type: string
+  severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | string
+  narrative?: string | null
+  delay_duration_minutes?: number | null
+  occurred_at: string
+  resolved_at?: string | null
+  status: 'OPEN' | 'INVESTIGATING' | 'RESOLVED' | 'BLOCKED' | string
+  resolution_notes?: string | null
+  assigned_user_id?: string | null
+  reported_by_user_id?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface SiteIssuesListResponse {
+  items: SiteIssueItem[]
+  total: number
+}
+
+export async function fetchSiteIssuesApi(params: {
+  projectId?: string
+  siteId?: string
+  status?: string
+  severity?: string
+  limit?: number
+  offset?: number
+} = {}): Promise<SiteIssuesListResponse> {
+  const res = await api.get<SiteIssuesListResponse>('/progress/issues', {
+    params: {
+      project_id: params.projectId,
+      site_id: params.siteId,
+      status: params.status && params.status !== 'ALL' ? params.status : undefined,
+      severity: params.severity && params.severity !== 'ALL' ? params.severity : undefined,
+      limit: params.limit ?? 50,
+      offset: params.offset ?? 0,
+    },
+  })
+  return res.data
+}
+
+export async function createSiteIssueApi(payload: {
+  project_id: string
+  site_id: string
+  issue_type: string
+  severity: string
+  narrative?: string
+  delay_duration_minutes?: number
+}): Promise<SiteIssueItem> {
+  const res = await api.post<SiteIssueItem>('/progress/issues', payload)
+  return res.data
+}
+
+export async function resolveSiteIssueApi(
+  issueId: string,
+  resolutionNotes?: string
+): Promise<{ status: string; message: string }> {
+  const res = await api.post<{ status: string; message: string }>(
+    `/progress/issues/${issueId}/resolve`,
+    { resolution_notes: resolutionNotes }
+  )
+  return res.data
+}
+
 export async function fetchCompany(): Promise<Company> {
+
 
   const res = await api.get<Company>('/company')
   return res.data

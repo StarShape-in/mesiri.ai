@@ -230,3 +230,56 @@ class PostgresProgressReadRepository:
             .first()
         )
         return dict(row) if row is not None else None
+
+    async def create_issue(
+        self, organization_id: uuid.UUID, user_id: uuid.UUID, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        issue_id = uuid.uuid4()
+        now = datetime.datetime.now(datetime.timezone.utc)
+        query = """
+            INSERT INTO site_issues (
+                id, organization_id, project_id, site_id, activity_id, work_package_id,
+                location_id, issue_type, severity, narrative, delay_duration_minutes,
+                occurred_at, status, assigned_user_id, reported_by_user_id, created_at, updated_at
+            ) VALUES (
+                :id, :organization_id, :project_id, :site_id, :activity_id, :work_package_id,
+                :location_id, :issue_type, :severity, :narrative, :delay_duration_minutes,
+                :occurred_at, 'OPEN', :assigned_user_id, :reported_by_user_id, :now, :now
+            ) RETURNING id, organization_id, project_id, site_id, activity_id,
+                        work_package_id, location_id, issue_type, severity, narrative,
+                        delay_duration_minutes, occurred_at, resolved_at, status,
+                        resolution_notes, assigned_user_id, reported_by_user_id,
+                        created_at, updated_at
+        """
+        params = {
+            "id": issue_id,
+            "organization_id": organization_id,
+            "project_id": payload["project_id"],
+            "site_id": payload["site_id"],
+            "activity_id": payload.get("activity_id"),
+            "work_package_id": payload.get("work_package_id"),
+            "location_id": payload.get("location_id"),
+            "issue_type": payload.get("issue_type", "SITE_BLOCKER"),
+            "severity": payload.get("severity", "MEDIUM"),
+            "narrative": payload.get("narrative"),
+            "delay_duration_minutes": payload.get("delay_duration_minutes"),
+            "occurred_at": now,
+            "assigned_user_id": payload.get("assigned_user_id"),
+            "reported_by_user_id": user_id,
+            "now": now,
+        }
+        res = (await self._conn.execute(text(query), params)).mappings().first()
+        return dict(res)
+
+    async def resolve_issue(
+        self, organization_id: uuid.UUID, issue_id: uuid.UUID, notes: str | None
+    ) -> bool:
+        now = datetime.datetime.now(datetime.timezone.utc)
+        query = """
+            UPDATE site_issues
+            SET status = 'RESOLVED', resolved_at = :now, resolution_notes = :notes, updated_at = :now
+            WHERE organization_id = :org_id AND id = :id AND status != 'RESOLVED'
+        """
+        res = await self._conn.execute(text(query), {"org_id": organization_id, "id": issue_id, "notes": notes, "now": now})
+        return res.rowcount > 0
+

@@ -29,11 +29,14 @@ from mesiri.infrastructure.postgres.repositories.progress import PostgresProgres
 from .responses import (
     ActivitiesListResponse,
     ActivityDetailResponse,
+    CreateSiteIssueRequest,
+    ResolveSiteIssueRequest,
     SiteIssueResponse,
     SiteIssuesListResponse,
 )
 
 router = APIRouter(prefix="/progress", tags=["progress"])
+
 
 
 def _resolve_project_ids(
@@ -165,3 +168,50 @@ async def get_issue(
         raise HTTPException(status_code=403, detail="Not authorized for this issue")
 
     return item
+
+
+@router.post("/issues", response_model=SiteIssueResponse, status_code=201)
+async def create_issue(
+    payload: CreateSiteIssueRequest,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Create a new site issue / blocker."""
+    _project_ids, denied = _resolve_project_ids(auth_context, payload.project_id)
+    if denied or _site_filter_denied(auth_context, payload.project_id, payload.site_id):
+        raise HTTPException(status_code=403, detail="Not authorized for target project or site")
+
+    repo = PostgresProgressReadRepository(conn)
+    item = await repo.create_issue(
+        organization_id=auth_context.organization_id,
+        user_id=auth_context.user_id,
+        payload=payload.model_dump(),
+    )
+    return item
+
+
+@router.post("/issues/{issue_id}/resolve")
+async def resolve_issue(
+    issue_id: uuid.UUID,
+    payload: ResolveSiteIssueRequest,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Mark a site issue as RESOLVED with resolution notes."""
+    repo = PostgresProgressReadRepository(conn)
+    existing = await repo.get_issue(auth_context.organization_id, issue_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Issue not found")
+    if _site_filter_denied(auth_context, existing["project_id"], existing["site_id"]):
+        raise HTTPException(status_code=403, detail="Not authorized for this issue")
+
+    success = await repo.resolve_issue(
+        organization_id=auth_context.organization_id,
+        issue_id=issue_id,
+        notes=payload.resolution_notes,
+    )
+    if not success:
+        raise HTTPException(status_code=400, detail="Issue is already resolved or cannot be updated")
+
+    return {"status": "success", "message": "Site issue resolved"}
+
