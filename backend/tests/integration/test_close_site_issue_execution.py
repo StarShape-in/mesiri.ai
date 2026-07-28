@@ -192,7 +192,14 @@ async def _seed_workflow_instance(
     return workflow_instance_id
 
 
-def _confirmed_action(workflow_instance_id: str, scenario: dict) -> ConfirmedActionV2:
+def _confirmed_action(
+    workflow_instance_id: str, scenario: dict, action: str, resolution_notes: str | None = None
+) -> ConfirmedActionV2:
+    """mapper.py's build_close_site_issue_command reads site_issue_id/action/
+    resolution_notes from *this* ConfirmedActionV2's own draft_action.fields
+    -- not from the workflow_instances row seeded above (that row only feeds
+    _transition's read-modify-write of the durable phase). Both must carry
+    the same fields for the test to model a real confirm accurately."""
     draft = DraftActionV2(
         draft_id=f"draft-{uuid.uuid4()}",
         correlation_id=f"corr-{workflow_instance_id}",
@@ -202,7 +209,11 @@ def _confirmed_action(workflow_instance_id: str, scenario: dict) -> ConfirmedAct
         user_id=str(scenario["user_id"]),
         project_id=str(scenario["project_id"]),
         site_id=str(scenario["site_id"]),
-        fields={},
+        fields={
+            "site_issue_id": str(scenario["issue_id"]),
+            "action": action,
+            "resolution_notes": resolution_notes,
+        },
     )
     return ConfirmedActionV2(
         confirmed_action_id=f"confirmed-{uuid.uuid4()}",
@@ -226,7 +237,9 @@ async def test_confirmed_resolve_moves_status_and_workflow_and_emits_outbox_even
     )
 
     handler = _handler(db)
-    result = await handler.handle(_confirmed_action(workflow_instance_id, scenario))
+    result = await handler.handle(
+        _confirmed_action(workflow_instance_id, scenario, action="resolve", resolution_notes="Cement delivered")
+    )
 
     assert result.status == ExecutionStatus.SUCCEEDED
 
@@ -269,7 +282,7 @@ async def test_confirmed_acknowledge_moves_status_to_acknowledged(
     workflow_instance_id = await _seed_workflow_instance(engine, scenario, action="acknowledge")
 
     handler = _handler(db)
-    result = await handler.handle(_confirmed_action(workflow_instance_id, scenario))
+    result = await handler.handle(_confirmed_action(workflow_instance_id, scenario, action="acknowledge"))
 
     assert result.status == ExecutionStatus.SUCCEEDED
     async with engine.connect() as conn:
@@ -299,7 +312,9 @@ async def test_confirmed_wont_fix_moves_status_and_writes_notes(
     )
 
     handler = _handler(db)
-    result = await handler.handle(_confirmed_action(workflow_instance_id, scenario))
+    result = await handler.handle(
+        _confirmed_action(workflow_instance_id, scenario, action="wont_fix", resolution_notes="Accepted risk")
+    )
 
     assert result.status == ExecutionStatus.SUCCEEDED
     async with engine.connect() as conn:
@@ -332,7 +347,7 @@ async def test_acknowledging_an_already_resolved_issue_is_rejected_and_workflow_
     workflow_instance_id = await _seed_workflow_instance(engine, scenario, action="acknowledge")
 
     handler = _handler(db)
-    result = await handler.handle(_confirmed_action(workflow_instance_id, scenario))
+    result = await handler.handle(_confirmed_action(workflow_instance_id, scenario, action="acknowledge"))
 
     assert result.status == ExecutionStatus.REJECTED
     assert "already resolved" in result.rejection_reasons[0]
@@ -360,7 +375,7 @@ async def test_replayed_confirmation_does_not_double_transition_status(
     """Same workflow_instance_id (== idempotency_key, per mapper.py) confirmed
     twice (retry/duplicate webhook) must not re-run the status transition."""
     workflow_instance_id = await _seed_workflow_instance(engine, scenario, action="resolve")
-    confirmed = _confirmed_action(workflow_instance_id, scenario)
+    confirmed = _confirmed_action(workflow_instance_id, scenario, action="resolve")
 
     handler = _handler(db)
     first = await handler.handle(confirmed)
