@@ -21,6 +21,8 @@ import {
   Sparkles,
   TrendingUp,
   User,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react'
 import { useScope } from '@/lib/ScopeContext'
 import { fetchPortfolioTimeline, type PortfolioTimelineEntry } from '@/lib/portfolio'
@@ -200,6 +202,7 @@ export default function OperationsTimelinePage() {
   const [entries, setEntries] = React.useState<EnrichedTimelineEntry[]>([])
   const [loading, setLoading] = React.useState<boolean>(true)
   const [liveStreamActive, setLiveStreamActive] = React.useState<boolean>(true)
+  const [isFullView, setIsFullView] = React.useState<boolean>(false)
 
   // Filters
   const [searchQuery, setSearchQuery] = React.useState<string>('')
@@ -332,7 +335,10 @@ export default function OperationsTimelinePage() {
   const hasActiveFilters = categoryFilter !== 'ALL' || datePreset !== 'ALL' || !!dateFrom || !!dateTo || !!searchQuery
 
   return (
-    <div className="flex flex-col gap-4 w-full max-w-full relative pb-12">
+    <div className={cn(
+      "flex flex-col gap-4 w-full max-w-full relative pb-12 transition-all",
+      isFullView && "fixed inset-0 z-50 bg-background/98 backdrop-blur-2xl p-6 overflow-y-auto pb-16"
+    )}>
 
       {/* ── Page Header ── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-3.5">
@@ -344,7 +350,7 @@ export default function OperationsTimelinePage() {
             <h1 className="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
               Site Operations Timeline
               <Badge variant="outline" className="text-[10px] font-mono border-indigo-500/30 text-indigo-600 dark:text-indigo-400">
-                Real-Time Event Stream
+                {isFullView ? 'Fullscreen Command Theater' : 'Real-Time Event Stream'}
               </Badge>
             </h1>
             <p className="text-xs text-muted-foreground font-medium">{scopeLabel}</p>
@@ -352,6 +358,23 @@ export default function OperationsTimelinePage() {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Full View / Fullscreen Toggle Button */}
+          <Button
+            size="sm"
+            variant={isFullView ? 'secondary' : 'outline'}
+            className={cn(
+              "h-8 gap-1.5 text-xs font-bold transition-all shadow-2xs",
+              isFullView && "bg-indigo-600 text-white hover:bg-indigo-700"
+            )}
+            onClick={() => {
+              setIsFullView((prev) => !prev)
+              toast.info(isFullView ? 'Exited Full View' : 'Entered Full View Command Theater', 'Expanded viewport for executive site presentation')
+            }}
+          >
+            {isFullView ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+            {isFullView ? 'Exit Full View' : 'Full View'}
+          </Button>
+
           {/* Live Auto-Refresh Stream Toggle */}
           <Button
             size="sm"
@@ -598,7 +621,10 @@ export default function OperationsTimelinePage() {
                         {/* Event Card */}
                         <div
                           onClick={() => setSelectedEntry(item)}
-                          className="p-3.5 rounded-lg border border-border/80 bg-card hover:border-indigo-500/40 hover:shadow-md transition-all cursor-pointer space-y-2"
+                          className={cn(
+                            "p-3.5 rounded-lg border border-border/80 bg-card hover:border-indigo-500/40 hover:shadow-md transition-all cursor-pointer space-y-2",
+                            isFullView && "p-5 border-border/90 shadow-sm"
+                          )}
                         >
                           <div className="flex items-start justify-between gap-3">
                             <div className="flex items-center gap-2 flex-wrap">
@@ -606,7 +632,7 @@ export default function OperationsTimelinePage() {
                                 {style.icon}
                                 {item.category}
                               </Badge>
-                              <span className="font-mono text-xs font-bold text-foreground">
+                              <span className={cn("font-mono text-xs font-bold text-foreground", isFullView && "text-sm")}>
                                 {item.eventType}
                               </span>
                               {item.metricsTag && (
@@ -623,7 +649,7 @@ export default function OperationsTimelinePage() {
                           </div>
 
                           {/* Event Summary */}
-                          <p className="text-xs text-foreground leading-relaxed font-medium">
+                          <p className={cn("text-xs text-foreground leading-relaxed font-medium", isFullView && "text-sm leading-relaxed")}>
                             {item.summary}
                           </p>
 
