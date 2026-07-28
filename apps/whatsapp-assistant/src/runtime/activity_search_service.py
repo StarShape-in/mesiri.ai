@@ -27,6 +27,8 @@ import datetime
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy.dialects.postgresql import ENUM as PG_ENUM
+
 if TYPE_CHECKING:
     from mesiri.infrastructure.postgres.database import PostgresDatabase
 
@@ -34,6 +36,19 @@ if TYPE_CHECKING:
 #: displays (_MAX_ENTRIES_SHOWN); this is the ceiling on what is even read
 #: from the database for one answer.
 _MAX_ROWS = 20
+
+#: Mirror the `activity_status`/`site_issue_status` Postgres enums from
+#: migrations/versions/0430_progress_add_activities_and_updates.py. An
+#: untyped sa.column("status") binds string literals as VARCHAR, and Postgres
+#: has no `<enum> = varchar` operator -- create_type=False since both types
+#: already exist in the database (see runtime/activity_query.py's identical
+#: fix for the same failure mode).
+_ACTIVITY_STATUS_TYPE = PG_ENUM(
+    "PLANNED", "IN_PROGRESS", "COMPLETED", "STOPPED", name="activity_status", create_type=False
+)
+_SITE_ISSUE_STATUS_TYPE = PG_ENUM(
+    "OPEN", "ACKNOWLEDGED", "RESOLVED", "WONT_FIX", name="site_issue_status", create_type=False
+)
 
 
 class ActivitySearchService:
@@ -85,7 +100,7 @@ class ActivitySearchService:
             sa.column("site_id"),
             sa.column("work_type"),
             sa.column("narrative"),
-            sa.column("status"),
+            sa.column("status", _ACTIVITY_STATUS_TYPE),
             sa.column("activity_date"),
             sa.column("deleted_at"),
             sa.column("updated_at"),
@@ -99,7 +114,7 @@ class ActivitySearchService:
             sa.column("issue_type"),
             sa.column("severity"),
             sa.column("narrative"),
-            sa.column("status"),
+            sa.column("status", _SITE_ISSUE_STATUS_TYPE),
             sa.column("occurred_at"),
         )
 
