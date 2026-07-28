@@ -30,11 +30,14 @@ from .responses import (
     ActivitiesListResponse,
     ActivityDetailResponse,
     CreateSiteIssueRequest,
+    OperationsSettingsResponse,
     ResolveSiteIssueRequest,
     SiteIssueResponse,
     SiteIssuesListResponse,
+    UpdateOperationsSettingsRequest,
     WontFixSiteIssueRequest,
 )
+
 
 router = APIRouter(prefix="/progress", tags=["progress"])
 
@@ -295,5 +298,52 @@ async def list_gallery(
         offset=offset,
     )
     return {"items": items, "total": total}
+
+
+@router.get("/settings", response_model=OperationsSettingsResponse)
+async def get_operations_settings(
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Return site operations settings for the caller's organization."""
+    from mesiri.infrastructure.postgres.repositories.organization_settings import (
+        PostgresOrganizationSettingsRepository,
+    )
+
+    repo = PostgresOrganizationSettingsRepository(conn)
+    try:
+        stored = await repo.get(auth_context.organization_id, "progress_settings")
+        if stored:
+            return OperationsSettingsResponse(**stored)
+    except Exception:
+        pass
+    return OperationsSettingsResponse()
+
+
+@router.patch("/settings", response_model=OperationsSettingsResponse)
+async def update_operations_settings(
+    body: UpdateOperationsSettingsRequest,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Patch site operations settings for the caller's organization."""
+    from mesiri.infrastructure.postgres.repositories.organization_settings import (
+        PostgresOrganizationSettingsRepository,
+    )
+
+    repo = PostgresOrganizationSettingsRepository(conn)
+    stored = None
+    try:
+        stored = await repo.get(auth_context.organization_id, "progress_settings")
+    except Exception:
+        pass
+
+    current_dict = stored if isinstance(stored, dict) else OperationsSettingsResponse().model_dump()
+    patch_data = body.model_dump(exclude_unset=True)
+    current_dict.update(patch_data)
+
+    await repo.set(auth_context.organization_id, "progress_settings", current_dict)
+    return OperationsSettingsResponse(**current_dict)
+
 
 
