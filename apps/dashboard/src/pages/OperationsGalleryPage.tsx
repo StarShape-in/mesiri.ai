@@ -5,8 +5,6 @@ import {
   RefreshCw,
   Clock,
   Download,
-  Layers,
-  ShieldAlert,
   LayoutGrid,
   List,
   Sparkles,
@@ -35,20 +33,37 @@ import { cn } from '@/lib/utils'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+// The only value the backend has ever written to progress_attachments.
+// attachment_type is a free-text column with no CHECK constraint
+// (migration 0430), so this switches on the one real value known today and
+// falls back to a generic label for anything else recorded in the future,
+// rather than fabricating a category taxonomy (SITE_PROGRESS/RECEIPT/
+// SAFETY_HAZARD) that never matches real data.
 function getCategoryBadge(type: string) {
-  switch (type.toUpperCase()) {
-    case 'SITE_PROGRESS':
-    case 'PROGRESS':
-      return <Badge variant="outline" className="border-indigo-500/40 text-indigo-600 dark:text-indigo-400 font-bold text-[10px] uppercase gap-1"><Layers className="size-3" /> PROGRESS</Badge>
-    case 'RECEIPT':
-    case 'INVOICE':
-      return <Badge variant="outline" className="border-emerald-500/40 text-emerald-600 dark:text-emerald-400 font-bold text-[10px] uppercase gap-1"><FileText className="size-3" /> RECEIPT</Badge>
-    case 'SAFETY_HAZARD':
-    case 'SAFETY':
-      return <Badge variant="destructive" className="font-bold text-[10px] uppercase gap-1"><ShieldAlert className="size-3" /> SAFETY</Badge>
+  switch (type.toLowerCase()) {
+    case 'site_photo':
+      return <Badge variant="outline" className="border-indigo-500/40 text-indigo-600 dark:text-indigo-400 font-bold text-[10px] uppercase gap-1"><Camera className="size-3" /> SITE PHOTO</Badge>
     default:
-      return <Badge variant="secondary" className="font-bold text-[10px] uppercase gap-1"><Camera className="size-3" /> EVIDENCE</Badge>
+      return (
+        <Badge variant="secondary" className="font-bold text-[10px] uppercase gap-1">
+          <FileText className="size-3" /> {type.replace(/_/g, ' ') || 'EVIDENCE'}
+        </Badge>
+      )
   }
+}
+
+// role (BEFORE/AFTER/GENERAL, migration 0430) is a real column the backend
+// never actually sets yet -- rendered when present rather than assumed.
+function getRoleBadge(role: string | null | undefined) {
+  if (!role) return null
+  const upper = role.toUpperCase()
+  const style =
+    upper === 'BEFORE'
+      ? 'border-amber-500/40 text-amber-600 dark:text-amber-400'
+      : upper === 'AFTER'
+        ? 'border-emerald-500/40 text-emerald-600 dark:text-emerald-400'
+        : 'border-zinc-500/40 text-zinc-600 dark:text-zinc-400'
+  return <Badge variant="outline" className={cn('font-bold text-[9px] uppercase', style)}>{upper}</Badge>
 }
 
 // ─── Main Operations Gallery Page (Enhanced Media Studio) ──────────────────────
@@ -71,7 +86,7 @@ export default function OperationsGalleryPage() {
   const [uploadDialogOpen, setUploadDialogOpen] = React.useState<boolean>(false)
 
   // Upload Form State
-  const [uploadType, setUploadType] = React.useState<string>('SITE_PROGRESS')
+  const [uploadType, setUploadType] = React.useState<string>('site_photo')
   const [uploadCaption, setUploadCaption] = React.useState<string>('')
   const [uploading, setUploading] = React.useState<boolean>(false)
 
@@ -91,10 +106,13 @@ export default function OperationsGalleryPage() {
   const loadGallery = React.useCallback(async () => {
     setLoading(true)
     try {
+      // categoryFilter is applied client-side below (see filteredItems) rather
+      // than sent as attachmentType here -- the dropdown's own options are
+      // derived from this unfiltered `items` set, so filtering server-side
+      // would make every other option disappear the moment one was selected.
       const res = await fetchSiteGalleryApi({
         projectId: scopeFilter.projectId,
         siteId: scopeFilter.siteId,
-        attachmentType: categoryFilter !== 'ALL' ? categoryFilter : undefined,
         limit: 100,
       })
       setItems(res.items || [])
@@ -103,15 +121,18 @@ export default function OperationsGalleryPage() {
     } finally {
       setLoading(false)
     }
-  }, [scopeFilter, categoryFilter])
+  }, [scopeFilter])
 
   React.useEffect(() => {
     loadGallery()
   }, [loadGallery])
 
-  // Filtered client side search
+  // Filtered client side search + category
   const filteredItems = React.useMemo(() => {
     return items.filter((item) => {
+      if (categoryFilter !== 'ALL' && item.attachment_type !== categoryFilter) {
+        return false
+      }
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase()
         const match =
@@ -123,16 +144,25 @@ export default function OperationsGalleryPage() {
       }
       return true
     })
-  }, [items, searchQuery])
+  }, [items, searchQuery, categoryFilter])
 
-  // Micro KPI Statistics Bar
+  // Micro KPI Statistics Bar -- computed from attachment_type/role as the
+  // backend actually writes them, not a fabricated RECEIPT/SAFETY taxonomy
+  // that never occurs in progress_attachments (only 'site_photo' does today).
   const stats = React.useMemo(() => {
     const total = items.length
     const aiCount = items.filter((i) => Boolean(i.ai_caption)).length
-    const receiptCount = items.filter((i) => i.attachment_type.toUpperCase().includes('RECEIPT')).length
-    const safetyCount = items.filter((i) => i.attachment_type.toUpperCase().includes('SAFETY') || i.attachment_type.toUpperCase().includes('HAZARD')).length
+    const sitePhotoCount = items.filter((i) => i.attachment_type.toLowerCase() === 'site_photo').length
+    const otherCount = total - sitePhotoCount
 
-    return { total, aiCount, receiptCount, safetyCount }
+    return { total, aiCount, sitePhotoCount, otherCount }
+  }, [items])
+
+  // Distinct attachment_type values actually present in the loaded data --
+  // the filter dropdown reflects reality instead of an invented category
+  // list, since attachment_type has no backend CHECK constraint.
+  const availableCategories = React.useMemo(() => {
+    return Array.from(new Set(items.map((i) => i.attachment_type))).sort()
   }, [items])
 
   const scopeLabel = React.useMemo(() => {
@@ -238,15 +268,15 @@ export default function OperationsGalleryPage() {
         </div>
 
         <div className="px-3 py-1.5 rounded-full border border-sky-500/30 bg-sky-500/10 flex items-center gap-2 shrink-0 font-mono">
-          <FileText className="size-3.5 text-sky-600" />
-          <span className="text-muted-foreground text-[11px]">Receipt Captures:</span>
-          <strong className="text-sky-600 dark:text-sky-400 font-bold">{stats.receiptCount}</strong>
+          <Camera className="size-3.5 text-sky-600" />
+          <span className="text-muted-foreground text-[11px]">Site Photos:</span>
+          <strong className="text-sky-600 dark:text-sky-400 font-bold">{stats.sitePhotoCount}</strong>
         </div>
 
-        <div className="px-3 py-1.5 rounded-full border border-rose-500/30 bg-rose-500/10 flex items-center gap-2 shrink-0 font-mono">
-          <ShieldAlert className="size-3.5 text-rose-600" />
-          <span className="text-muted-foreground text-[11px]">Hazard Snapshots:</span>
-          <strong className="text-rose-600 dark:text-rose-400 font-bold">{stats.safetyCount}</strong>
+        <div className="px-3 py-1.5 rounded-full border border-zinc-500/30 bg-zinc-500/10 flex items-center gap-2 shrink-0 font-mono">
+          <FileText className="size-3.5 text-zinc-600" />
+          <span className="text-muted-foreground text-[11px]">Other Evidence:</span>
+          <strong className="text-zinc-600 dark:text-zinc-400 font-bold">{stats.otherCount}</strong>
         </div>
       </div>
 
@@ -270,9 +300,11 @@ export default function OperationsGalleryPage() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="ALL">All Asset Types</SelectItem>
-              <SelectItem value="SITE_PROGRESS">🏗️ Site Progress</SelectItem>
-              <SelectItem value="RECEIPT">📄 Receipts & Invoices</SelectItem>
-              <SelectItem value="SAFETY_HAZARD">⚠️ Safety & Hazards</SelectItem>
+              {availableCategories.map((cat) => (
+                <SelectItem key={cat} value={cat}>
+                  {cat.replace(/_/g, ' ').toUpperCase()}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
@@ -370,8 +402,9 @@ export default function OperationsGalleryPage() {
                     </span>
                   </div>
 
-                  <div className="absolute top-2 left-2">
+                  <div className="absolute top-2 left-2 flex items-center gap-1">
                     {getCategoryBadge(item.attachment_type)}
+                    {getRoleBadge(item.role)}
                   </div>
 
                   <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -441,7 +474,12 @@ export default function OperationsGalleryPage() {
                     />
                   </TableCell>
                   <TableCell className="font-mono font-bold">{item.media_object_key}</TableCell>
-                  <TableCell>{getCategoryBadge(item.attachment_type)}</TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1">
+                      {getCategoryBadge(item.attachment_type)}
+                      {getRoleBadge(item.role)}
+                    </div>
+                  </TableCell>
                   <TableCell className="max-w-xs truncate">{item.caption || '—'}</TableCell>
                   <TableCell className="max-w-xs truncate italic text-indigo-600 dark:text-indigo-400 font-medium">
                     {item.ai_caption || '—'}
@@ -489,9 +527,7 @@ export default function OperationsGalleryPage() {
                     <SelectValue placeholder="Select type" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="SITE_PROGRESS">SITE_PROGRESS</SelectItem>
-                    <SelectItem value="RECEIPT">RECEIPT & INVOICE</SelectItem>
-                    <SelectItem value="SAFETY_HAZARD">SAFETY_HAZARD</SelectItem>
+                    <SelectItem value="site_photo">SITE PHOTO</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -570,6 +606,12 @@ export default function OperationsGalleryPage() {
                       {selectedMedia.parent_type} ({selectedMedia.parent_id.slice(0, 8)})
                     </span>
                   </div>
+                  {selectedMedia.role && (
+                    <div>
+                      <span className="text-muted-foreground block text-[11px]">Photo Role</span>
+                      <span className="mt-0.5 block">{getRoleBadge(selectedMedia.role)}</span>
+                    </div>
+                  )}
                 </div>
 
                 {selectedMedia.caption && (
