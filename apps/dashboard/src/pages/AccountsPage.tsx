@@ -16,6 +16,7 @@ import {
   ChevronRight,
   AlertTriangle,
   Trash2,
+  Pencil,
 } from 'lucide-react'
 import { useScope } from '@/lib/ScopeContext'
 import { KpiCard } from '@/components/ui/kpi-card'
@@ -47,6 +48,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { CreateAccountDialog } from '@/components/accounts/create-account-dialog'
 import { TransferMoneyDialog } from '@/components/accounts/transfer-money-dialog'
+import { RenameAccountDialog } from '@/components/accounts/rename-account-dialog'
 import { AccountDetailSheet } from '@/components/accounts/account-detail-sheet'
 
 export interface MoneyAccountItem {
@@ -158,6 +160,8 @@ export default function AccountsPage() {
   // Dialog & Sheet state
   const [createDialogOpen, setCreateDialogOpen] = React.useState(false)
   const [transferDialogOpen, setTransferDialogOpen] = React.useState(false)
+  const [renameDialogOpen, setRenameDialogOpen] = React.useState(false)
+  const [accountToRename, setAccountToRename] = React.useState<MoneyAccountItem | null>(null)
   const [selectedAccount, setSelectedAccount] = React.useState<MoneyAccountItem | null>(null)
   const [sheetOpen, setSheetOpen] = React.useState(false)
 
@@ -232,6 +236,11 @@ export default function AccountsPage() {
 
   const handleAccountCreated = (newAccount: MoneyAccountItem) => {
     setAccounts((prev) => [newAccount, ...prev])
+  }
+
+  const handleAccountRenamed = (accountId: string, newName: string) => {
+    setAccounts((prev) => prev.map((a) => (a.id === accountId ? { ...a, name: newName } : a)))
+    toast.success('Account renamed', `Now shown as "${newName}"`)
   }
 
   const handleTransferCompleted = (fromId: string, toId: string, amount: number) => {
@@ -622,6 +631,14 @@ export default function AccountsPage() {
                             <DropdownMenuItem onClick={() => setTransferDialogOpen(true)}>
                               <ArrowLeftRight className="size-3.5 mr-1.5 text-cyan-500" /> Transfer Funds
                             </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setAccountToRename(acc)
+                                setRenameDialogOpen(true)
+                              }}
+                            >
+                              <Pencil className="size-3.5 mr-1.5 text-indigo-500" /> Rename Account
+                            </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => handleDeactivateAccount(acc)} className="text-rose-600 focus:text-rose-600">
                               <Trash2 className="size-3.5 mr-1.5" /> Deactivate Account
                             </DropdownMenuItem>
@@ -722,6 +739,14 @@ export default function AccountsPage() {
         open={sheetOpen}
         onOpenChange={setSheetOpen}
         onDepositClick={() => setTransferDialogOpen(true)}
+      />
+
+      <RenameAccountDialog
+        open={renameDialogOpen}
+        onOpenChange={setRenameDialogOpen}
+        accountId={accountToRename?.id ?? null}
+        currentName={accountToRename?.name ?? ''}
+        onRenamed={handleAccountRenamed}
       />
     </div>
   )

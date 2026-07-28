@@ -33,11 +33,13 @@ import {
 import {
   fetchTransactionsApi,
   fetchAccountsApi,
+  reverseTransferApi,
   type MoneyTransactionItem,
 } from '@/lib/api'
 import { AccountDetailSheet } from '@/components/accounts/account-detail-sheet'
 import { ExpenseDetailSheet } from '@/components/expenses/expense-detail-sheet'
 import { WhatsAppTraceModal } from '@/components/whatsapp/whatsapp-trace-modal'
+import { useToast } from '@/components/ui/toast-notification'
 
 interface SimpleAccountItem {
   id: string
@@ -101,8 +103,10 @@ function getTransactionTypeBadge(type: string) {
 
 export default function TransactionsPage() {
   const { scope } = useScope()
+  const toast = useToast()
 
   const [transactions, setTransactions] = React.useState<MoneyTransactionItem[]>([])
+  const [reversingId, setReversingId] = React.useState<string | null>(null)
   const [accounts, setAccounts] = React.useState<SimpleAccountItem[]>([])
   const [loading, setLoading] = React.useState(true)
   const [search, setSearch] = React.useState('')
@@ -138,6 +142,22 @@ export default function TransactionsPage() {
   React.useEffect(() => {
     loadData()
   }, [loadData])
+
+  const handleReverseTransfer = async (tx: MoneyTransactionItem) => {
+    if (!confirm('Reverse this transfer? This posts an offsetting entry and cannot be undone.')) return
+    setReversingId(tx.id)
+    try {
+      await reverseTransferApi(tx.id)
+      toast.success('Transfer reversed', 'An offsetting ledger entry has been posted.')
+      loadData()
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail
+      const msg = Array.isArray(detail) ? detail.join(', ') : detail || err.message || 'Reverse failed'
+      toast.error('Reverse failed', msg)
+    } finally {
+      setReversingId(null)
+    }
+  }
 
   const filteredTransactions = React.useMemo(() => {
     return transactions.filter((tx) => {
@@ -317,6 +337,7 @@ export default function TransactionsPage() {
                 <TableHead className="text-xs font-semibold h-10">To Account</TableHead>
                 <TableHead className="text-xs font-semibold h-10">Description / Payee</TableHead>
                 <TableHead className="text-xs font-semibold h-10 text-right">Amount (₹)</TableHead>
+                <TableHead className="text-xs font-semibold h-10 text-right">Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -389,6 +410,21 @@ export default function TransactionsPage() {
                       >
                         {formatCurrency(amount)}
                       </span>
+                    </TableCell>
+
+                    <TableCell className="text-right">
+                      {tType === 'transfer' && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-xs px-2 gap-1 text-purple-600 hover:text-purple-700"
+                          disabled={reversingId === tx.id}
+                          onClick={() => handleReverseTransfer(tx)}
+                        >
+                          <RotateCcw className="size-3" />
+                          {reversingId === tx.id ? 'Reversing...' : 'Reverse'}
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 )

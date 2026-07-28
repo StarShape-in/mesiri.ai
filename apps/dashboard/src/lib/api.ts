@@ -818,6 +818,11 @@ export async function deleteAccountApi(accountId: string) {
   return res.data
 }
 
+export async function renameAccountApi(accountId: string, name: string) {
+  const res = await api.patch(`/finance/accounts/${accountId}`, { name })
+  return res.data
+}
+
 export async function fetchAccountsApi(params?: { project_id?: string; site_id?: string }) {
   const res = await api.get('/finance/accounts', { params })
   return res.data
@@ -835,6 +840,15 @@ export async function transferMoneyApi(payload: TransferMoneyApiPayload, idempot
   const res = await api.post('/finance/transfers', payload, {
     headers: { 'Idempotency-Key': idempotencyKey },
   })
+  return res.data
+}
+
+export async function reverseTransferApi(transferId: string) {
+  const res = await api.post(
+    `/finance/transfers/${transferId}/reverse`,
+    {},
+    { headers: { 'Idempotency-Key': `rev-${transferId}-${Date.now()}` } }
+  )
   return res.data
 }
 
