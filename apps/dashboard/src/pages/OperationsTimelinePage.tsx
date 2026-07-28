@@ -234,7 +234,7 @@ export default function OperationsTimelinePage() {
     })
   }, [entries, categoryFilter, searchQuery, dateFrom, dateTo])
 
-  // Group entries by Date
+  // Group entries by Date for Stream View
   const groupedEntries = React.useMemo(() => {
     const groups: Record<string, EnrichedTimelineEntry[]> = {}
     filteredEntries.forEach((item) => {
@@ -243,6 +243,27 @@ export default function OperationsTimelinePage() {
       groups[day].push(item)
     })
     return groups
+  }, [filteredEntries])
+
+  // Real Matrix View Computation from backend data
+  const matrixGrouped = React.useMemo(() => {
+    const packages: Record<string, EnrichedTimelineEntry[]> = {}
+    filteredEntries.forEach((item) => {
+      const pkg = item.category.toUpperCase()
+      if (!packages[pkg]) packages[pkg] = []
+      packages[pkg].push(item)
+    })
+    return packages
+  }, [filteredEntries])
+
+  // Real Density Heatmap View Computation from backend data
+  const densityHeatmap = React.useMemo(() => {
+    const counts: Record<string, number> = {}
+    filteredEntries.forEach((item) => {
+      const day = item.occurredAt.split('T')[0]
+      counts[day] = (counts[day] || 0) + 1
+    })
+    return counts
   }, [filteredEntries])
 
   // KPI Metrics
@@ -674,85 +695,93 @@ export default function OperationsTimelinePage() {
           )}
         </div>
       ) : viewMode === 'matrix' ? (
-        /* Milestone Matrix View */
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Card className="rounded-lg border-border/80 shadow-2xs">
-            <CardHeader className="pb-3 border-b bg-muted/10">
-              <CardTitle className="text-sm font-bold flex items-center gap-2">
-                <Layers className="size-4 text-indigo-600" />
-                Concrete & Foundation Package
-              </CardTitle>
-              <CardDescription className="text-xs">Raft slab pouring and structural beam grid</CardDescription>
-            </CardHeader>
-            <CardContent className="pt-3 space-y-3 text-xs">
-              <div className="flex justify-between items-center font-semibold">
-                <span>Progress Completion</span>
-                <span className="font-mono text-indigo-600 font-bold">80% Executed</span>
-              </div>
-              <div className="w-full h-2 rounded-full bg-muted overflow-hidden">
-                <div className="h-full bg-indigo-600 rounded-full" style={{ width: '80%' }} />
-              </div>
-              <div className="grid grid-cols-2 gap-2 text-muted-foreground pt-1 text-[11px]">
-                <div>Executed: <strong>120 / 150 m³</strong></div>
-                <div>Status: <Badge variant="outline" className="text-[10px] text-emerald-600">On Track</Badge></div>
-              </div>
-            </CardContent>
+        /* Real Data-Driven Milestone Matrix View */
+        Object.keys(matrixGrouped).length === 0 ? (
+          <Card className="p-12 text-center flex flex-col items-center justify-center gap-3">
+            <div className="size-12 rounded-full bg-muted border flex items-center justify-center">
+              <Layers className="size-5 text-muted-foreground/50" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-foreground">No category matrix items found in backend</p>
+              <p className="text-xs text-muted-foreground mt-1">Matrix packages will populate as real events are recorded.</p>
+            </div>
           </Card>
-
-          <Card className="rounded-lg border-border/80 shadow-2xs">
-            <CardHeader className="pb-3 border-b bg-muted/10">
-              <CardTitle className="text-sm font-bold flex items-center gap-2">
-                <HardHat className="size-4 text-sky-600" />
-                Column Rebar Tying Mesh
-              </CardTitle>
-              <CardDescription className="text-xs">16mm TMT structural steel reinforcement</CardDescription>
-            </CardHeader>
-            <CardContent className="pt-3 space-y-3 text-xs">
-              <div className="flex justify-between items-center font-semibold">
-                <span>Progress Completion</span>
-                <span className="font-mono text-emerald-600 font-bold">100% Completed</span>
-              </div>
-              <div className="w-full h-2 rounded-full bg-muted overflow-hidden">
-                <div className="h-full bg-emerald-600 rounded-full" style={{ width: '100%' }} />
-              </div>
-              <div className="grid grid-cols-2 gap-2 text-muted-foreground pt-1 text-[11px]">
-                <div>Executed: <strong>8 / 8 MT</strong></div>
-                <div>Status: <Badge variant="outline" className="text-[10px] text-emerald-600">Completed</Badge></div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {Object.entries(matrixGrouped).map(([categoryName, catEntries]) => {
+              const style = getCategoryColor(categoryName.toLowerCase())
+              return (
+                <Card key={categoryName} className="rounded-lg border-border/80 shadow-2xs">
+                  <CardHeader className="pb-3 border-b bg-muted/10">
+                    <CardTitle className="text-sm font-bold flex items-center justify-between">
+                      <span className="flex items-center gap-2">
+                        {style.icon}
+                        {categoryName} Package Ledger
+                      </span>
+                      <Badge variant="outline" className="font-mono text-[10px] text-indigo-600">
+                        {catEntries.length} Recorded
+                      </Badge>
+                    </CardTitle>
+                    <CardDescription className="text-xs">
+                      Live event stream entries grouped by operational module category
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="pt-3 space-y-3 text-xs">
+                    <div className="space-y-2">
+                      {catEntries.slice(0, 3).map((item) => (
+                        <div key={item.id} className="p-2 rounded-md bg-muted/20 border text-[11px] space-y-1">
+                          <div className="flex items-center justify-between font-bold">
+                            <span className="font-mono text-foreground">{item.eventType}</span>
+                            <span className="text-muted-foreground text-[10px]">
+                              {new Date(item.occurredAt).toLocaleDateString()}
+                            </span>
+                          </div>
+                          <p className="text-muted-foreground line-clamp-1">{item.summary}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )
+            })}
+          </div>
+        )
       ) : (
-        /* Event Activity Density Heatmap */
+        /* Real Data-Driven Event Density Heatmap View */
         <Card className="rounded-lg border-border/80 p-6 space-y-4 shadow-2xs">
           <div className="flex items-center justify-between border-b pb-3">
             <div>
               <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
                 <TrendingUp className="size-4 text-indigo-600" />
-                Daily Event Activity Density
+                Live Event Activity Density
               </h2>
-              <p className="text-xs text-muted-foreground">Volume of operational entries recorded per day</p>
+              <p className="text-xs text-muted-foreground">Recorded event volume per day from backend</p>
             </div>
-            <Badge variant="outline" className="font-mono text-xs">July 2026</Badge>
+            <Badge variant="outline" className="font-mono text-xs">{filteredEntries.length} Total Events</Badge>
           </div>
 
-          <div className="grid grid-cols-7 gap-2 text-center text-xs font-mono">
-            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
-              <div key={d} className="font-bold text-muted-foreground uppercase text-[10px] py-1">{d}</div>
-            ))}
-            {Array.from({ length: 28 }).map((_, i) => (
-              <div
-                key={i}
-                className={cn(
-                  'h-12 rounded-md border flex flex-col justify-between p-1.5 transition-all hover:scale-105 shadow-2xs',
-                  i % 4 === 0 ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-950 dark:text-indigo-200' : 'bg-muted/30 border-border/60'
-                )}
-              >
-                <span className="text-[10px] font-bold text-left">{i + 1}</span>
-                <span className="text-[9px] font-mono text-right opacity-80">{i % 4 === 0 ? `${(i + 1) * 3} evts` : '1 evt'}</span>
-              </div>
-            ))}
-          </div>
+          {Object.keys(densityHeatmap).length === 0 ? (
+            <div className="p-8 text-center text-xs text-muted-foreground">
+              No daily event activity recorded in database yet.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs font-mono">
+              {Object.entries(densityHeatmap).map(([dayStr, count]) => (
+                <div
+                  key={dayStr}
+                  className="p-3 rounded-lg border border-indigo-500/30 bg-indigo-500/10 flex items-center justify-between shadow-2xs"
+                >
+                  <div>
+                    <span className="font-bold text-foreground block">{dayStr}</span>
+                    <span className="text-[10px] text-muted-foreground">Operational Entries</span>
+                  </div>
+                  <Badge variant="secondary" className="font-bold text-indigo-600 text-xs">
+                    {count} {count === 1 ? 'evt' : 'evts'}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+          )}
         </Card>
       )}
 
