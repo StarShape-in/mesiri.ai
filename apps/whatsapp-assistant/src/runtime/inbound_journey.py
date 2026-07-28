@@ -1300,18 +1300,25 @@ async def _seed_finance_query_context(
         }
 
 
-def _build_finance_query_pdf(
-    workflow_key: WorkflowKey, fields: dict[str, Any]
-) -> tuple[bytes, str] | None:
-    """Build (pdf_bytes, filename) for a finance query's output_format="pdf"
-    request, or None if `workflow_key` isn't one of the two finance query
-    workflows. Pure -- reads only the balance_results/expense_results
-    _seed_finance_query_context already seeded into `fields`, so this is
+_QUERY_PDF_WORKFLOW_KEYS = (
+    WorkflowKey.ACCOUNT_BALANCE_QUERY,
+    WorkflowKey.EXPENSE_QUERY,
+    WorkflowKey.MATERIAL_INVENTORY_QUERY,
+    WorkflowKey.ACTIVITY_QUERY,
+    WorkflowKey.LABOUR_QUERY,
+)
+
+
+def _build_query_pdf(workflow_key: WorkflowKey, fields: dict[str, Any]) -> tuple[bytes, str] | None:
+    """Build (pdf_bytes, filename) for any read-only query's output_format=
+    "pdf" request, or None if `workflow_key` isn't one of the five query
+    workflows this covers. Pure -- reads only the *_results/*_levels keys
+    the relevant _seed_* function already seeded into `fields`, so this is
     testable without constructing a full inbound journey. See
     domains/reports/pdf_table.py (backend, imported in-process -- same
     convention runtime/dpr_request_query.py and friends use for their own
     repository calls) for the actual rendering."""
-    if workflow_key not in (WorkflowKey.ACCOUNT_BALANCE_QUERY, WorkflowKey.EXPENSE_QUERY):
+    if workflow_key not in _QUERY_PDF_WORKFLOW_KEYS:
         return None
 
     from mesiri.domains.reports.pdf_table import render_table_pdf
@@ -1328,24 +1335,95 @@ def _build_finance_query_pdf(
         )
         return pdf_bytes, "Account_Balances.pdf"
 
-    expense_results = fields.get("expense_results") or {}
-    items = expense_results.get("items") or []
-    label = expense_results.get("date_range_label") or "All Time"
+    if workflow_key is WorkflowKey.EXPENSE_QUERY:
+        expense_results = fields.get("expense_results") or {}
+        items = expense_results.get("items") or []
+        label = expense_results.get("date_range_label") or "All Time"
+        pdf_bytes = render_table_pdf(
+            title="Expenses",
+            subtitle=(
+                f"{label}  |  {expense_results.get('count', 0)} expenses  |  "
+                f"Total: {expense_results.get('total', '0')}"
+            ),
+            columns=["Date", "Amount", "Description"],
+            rows=[
+                [item.get("occurred_date"), item.get("amount"), item.get("description")]
+                for item in items
+            ],
+            column_widths=[35, 35, 110],
+            empty_message="No matching expenses found.",
+        )
+        return pdf_bytes, "Expenses.pdf"
+
+    if workflow_key is WorkflowKey.MATERIAL_INVENTORY_QUERY:
+        levels = fields.get("inventory_levels") or []
+        pdf_bytes = render_table_pdf(
+            title="Material Inventory",
+            subtitle=None,
+            columns=["Material", "Received", "Used", "Current Stock", "Unit"],
+            rows=[
+                [
+                    lvl.get("material_name"),
+                    lvl.get("received"),
+                    lvl.get("used"),
+                    lvl.get("current_stock"),
+                    lvl.get("unit"),
+                ]
+                for lvl in levels
+            ],
+            column_widths=[60, 30, 30, 35, 25],
+            empty_message="No recorded material stock found.",
+        )
+        return pdf_bytes, "Material_Inventory.pdf"
+
+    if workflow_key is WorkflowKey.ACTIVITY_QUERY:
+        results = fields.get("activity_search_results") or {}
+        activities = results.get("activities") or []
+        open_issues = results.get("open_issues") or []
+        label = results.get("date_range_label") or "All Time"
+        # Activities only, not open_issues -- render_table_pdf renders one
+        # flat table; the issue count still appears in the subtitle, and the
+        # text reply sent alongside this PDF already lists open issues.
+        pdf_bytes = render_table_pdf(
+            title="Site Activity Log",
+            subtitle=(
+                f"{label}  |  {results.get('activity_count', 0)} activities logged  |  "
+                f"{results.get('open_issue_count', len(open_issues))} open issues"
+            ),
+            columns=["Date", "Work Type", "Narrative", "Status"],
+            rows=[
+                [a.get("activity_date"), a.get("work_type"), a.get("narrative"), a.get("status")]
+                for a in activities
+            ],
+            column_widths=[30, 35, 80, 25],
+            empty_message="No activities logged for this period.",
+        )
+        return pdf_bytes, "Site_Activity_Log.pdf"
+
+    labour_results = fields.get("labour_results") or {}
+    rows = labour_results.get("rows") or []
+    label = labour_results.get("date_range_label") or "All Time"
     pdf_bytes = render_table_pdf(
-        title="Expenses",
+        title="Labour Attendance",
         subtitle=(
-            f"{label}  |  {expense_results.get('count', 0)} expenses  |  "
-            f"Total: {expense_results.get('total', '0')}"
+            f"{label}  |  {labour_results.get('headcount', 0)} worker-days  |  "
+            f"Cost: {labour_results.get('total_cost', '0')}"
         ),
-        columns=["Date", "Amount", "Description"],
+        columns=["Date", "Worker", "Trade", "Headcount", "Daily Wage"],
         rows=[
-            [item.get("occurred_date"), item.get("amount"), item.get("description")]
-            for item in items
+            [
+                r.get("occurred_date"),
+                r.get("worker_name"),
+                r.get("trade"),
+                r.get("headcount"),
+                r.get("daily_wage"),
+            ]
+            for r in rows
         ],
-        column_widths=[35, 35, 110],
-        empty_message="No matching expenses found.",
+        column_widths=[28, 45, 32, 25, 30],
+        empty_message="No attendance recorded for this period.",
     )
-    return pdf_bytes, "Expenses.pdf"
+    return pdf_bytes, "Labour_Attendance.pdf"
 
 
 async def _plan_and_run(
@@ -2154,20 +2232,21 @@ async def process_inbound_message(
                 "dpr_request.document_send_failed correlation_id=%s", correlation_id, exc_info=True
             )
 
-    # Finance query "send as PDF": the text reply above always goes first
-    # (same reasoning as the DPR side-channel just above), and a PDF follows
-    # only when the extractor set output_format="pdf" on the request (see
+    # Query "send as PDF": the text reply above always goes first (same
+    # reasoning as the DPR side-channel just above), and a PDF follows only
+    # when the extractor set output_format="pdf" on the request (see
     # platform/ai/src/mesiri_ai/adapters/{gemini,deepseek}/adapter.py's
-    # finance_query field docs). Unlike DPR, there is no R2 artifact to fetch
-    # -- _build_finance_query_pdf renders on the fly from the balance_results/
-    # expense_results _seed_finance_query_context already seeded.
+    # finance_query/inventory_query/labour_query/activity_query field docs).
+    # Unlike DPR, there is no R2 artifact to fetch -- _build_query_pdf
+    # renders on the fly from whichever *_results/*_levels key the matching
+    # _seed_* function already seeded.
     if (
         workflow_run is not None
         and canonical_event is not None
         and canonical_event.fields.get("output_format") == "pdf"
         and send_document is not None
     ):
-        built = _build_finance_query_pdf(workflow_run.workflow_key, canonical_event.fields)
+        built = _build_query_pdf(workflow_run.workflow_key, canonical_event.fields)
         if built is not None:
             pdf_bytes, filename = built
             try:
@@ -2175,7 +2254,7 @@ async def process_inbound_message(
             except Exception:  # noqa: BLE001 -- the status text was already sent; a
                 # failed PDF build/send must not fail the whole journey.
                 _log.warning(
-                    "finance_query.pdf_send_failed correlation_id=%s",
+                    "query_pdf.send_failed correlation_id=%s",
                     correlation_id,
                     exc_info=True,
                 )

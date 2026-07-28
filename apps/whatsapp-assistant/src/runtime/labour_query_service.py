@@ -145,7 +145,7 @@ class LabourQueryService:
 
 
 def _empty_summary() -> dict[str, Any]:
-    return {"headcount": 0, "total_cost": "0", "named": [], "trades": [], "days": 0}
+    return {"headcount": 0, "total_cost": "0", "named": [], "trades": [], "days": 0, "rows": []}
 
 
 def _summarize(rows: list[Any]) -> dict[str, Any]:
@@ -155,12 +155,19 @@ def _summarize(rows: list[Any]) -> dict[str, Any]:
     five days is one person, and a "who worked this week" answer listing the
     same name five times would be useless. Headcount is NOT de-duplicated —
     it is worker-days, which is what cost is calculated from.
+
+    `rows` (added alongside the aggregates, not in place of them) keeps one
+    entry per attendance line -- every individual wage and every day a name
+    appears, none of which the aggregates above preserve. Additive only: the
+    text reply node still reads just the aggregate keys, unaware this exists;
+    only a tabular export (PDF) needs it.
     """
     headcount = 0
     total = Decimal("0")
     named: list[str] = []
     trades: list[str] = []
     days: set[datetime.date] = set()
+    raw_rows: list[dict[str, Any]] = []
 
     for row in rows:
         try:
@@ -187,6 +194,16 @@ def _summarize(rows: list[Any]) -> dict[str, Any]:
         if row["occurred_date"] is not None:
             days.add(row["occurred_date"])
 
+        raw_rows.append(
+            {
+                "occurred_date": row["occurred_date"].isoformat() if row["occurred_date"] else None,
+                "worker_name": row["worker_name"],
+                "trade": row["trade"],
+                "headcount": count,
+                "daily_wage": str(wage) if wage is not None else None,
+            }
+        )
+
     return {
         "headcount": headcount,
         "total_cost": str(total),
@@ -194,4 +211,5 @@ def _summarize(rows: list[Any]) -> dict[str, Any]:
         "named_total": len(named),
         "trades": trades,
         "days": len(days),
+        "rows": raw_rows,
     }

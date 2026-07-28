@@ -119,11 +119,36 @@ _EXTRACTION_PROMPT = (
     'never for a QUESTION about existing issues ("any open issues?" is activity_query).\n'
     "- general_question: question, topic\n"
     "- whoami_question: question\n"
-    "- inventory_query: material_name, project_name (omit material_name if asking about all "
-    'materials, e.g. "show inventory"). Use this type for questions about how '
+    "- inventory_query: material_name, output_format, project_name (omit material_name if "
+    'asking about all materials, e.g. "show inventory"). Use this type for questions about how '
     'much of a material is currently in stock (e.g. "how much cement is left?", '
     '"current stock of steel") or its movement history '
-    '(e.g. "show today\'s cement history"). This is a question, never an update.\n'
+    '(e.g. "show today\'s cement history"). This is a question, never an update. '
+    'output_format is "pdf" ONLY when the user explicitly asks for the answer as a file/'
+    'document (e.g. "send me the stock levels as pdf") -- omit entirely for a plain question.\n'
+    "- labour_query: date_range, trade, output_format, project_name. Use this type for QUESTIONS "
+    'about who worked and what labour cost (e.g. "how many workers today?", '
+    '"who worked yesterday?", "labour cost this week", "how many masons on site?"). '
+    "date_range is exactly one of \"today\", \"this_week\", \"this_month\" if a period "
+    "is stated or implied; omit if none is. trade narrows to one trade when asked "
+    '(e.g. "how many masons today" -> trade "mason"); omit for all trades. '
+    'output_format is "pdf" ONLY when the user explicitly asks for the answer as a file/'
+    'document (e.g. "send me the attendance list as pdf") -- omit entirely for a plain '
+    "question. CRITICAL: this is a question ABOUT existing records, never a new attendance "
+    'report. "14 workers today" is a labour_update (recording who worked); '
+    '"how many workers today?" is a labour_query (asking). Getting this backwards '
+    "would record workers instead of counting them.\n"
+    "- activity_query: date_range, project_name, work_type, output_format. Use this type for "
+    'QUESTIONS about progress already logged or open site issues (e.g. "what did I log today?", '
+    '"what happened on site X yesterday?", "show today\'s site log", "any open issues?"). '
+    'date_range is exactly one of "today", "this_week", "this_month" if a period is stated or '
+    "implied; omit if none is. work_type narrows to one kind of work when asked; omit for "
+    'everything. output_format is "pdf" ONLY when the user explicitly asks for the answer as a '
+    'file/document (e.g. "send me today\'s site log as pdf") -- omit entirely for a plain '
+    "question. CRITICAL: this is a question ABOUT existing progress/issue records, never a new "
+    'report. "180 sqm plastering done" is a general_site_update (recording work); "what did I '
+    'log today?" is an activity_query (asking). Getting this backwards would try to record a '
+    "report instead of answering a question.\n"
     "- finance_query: query_kind, account_name, category_name, date_range, missing_receipts, "
     "output_format, project_name. "
     'query_kind MUST be exactly "balance" or "expenses" -- never any other word. '
