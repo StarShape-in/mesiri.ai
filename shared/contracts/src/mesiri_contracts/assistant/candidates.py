@@ -141,6 +141,14 @@ class ReversalCandidate(Candidate):
     # runtime/reversal_query.py, not stated by the user.
 
 
+class ProjectCreateCandidate(Candidate):
+    semantic_type: SemanticType = SemanticType.PROJECT_CREATE
+    # Conventional keys: name (required to route -- see canonicalization/
+    # mapping.py), location, client. Best-effort hints as stated -- no
+    # resolution against existing records needed (unlike account_admin's
+    # target_name/new_name), since this always creates a brand new row.
+
+
 class AccountAdminCandidate(Candidate):
     semantic_type: SemanticType = SemanticType.ACCOUNT_ADMIN
     # Conventional keys: action (create/rename/deactivate, required to
@@ -170,4 +178,5 @@ CANDIDATE_TYPES: dict[SemanticType, type[Candidate]] = {
     SemanticType.PETTY_CASH: PettyCashCandidate,
     SemanticType.REVERSAL: ReversalCandidate,
     SemanticType.ACCOUNT_ADMIN: AccountAdminCandidate,
+    SemanticType.PROJECT_CREATE: ProjectCreateCandidate,
 }

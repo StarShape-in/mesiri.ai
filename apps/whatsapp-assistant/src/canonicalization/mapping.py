@@ -23,6 +23,7 @@ _SIMPLE_EVENT_TYPE: dict[SemanticType, CanonicalEventType] = {
     SemanticType.DPR_REQUEST: CanonicalEventType.DPR_REQUESTED,
     SemanticType.TRANSFER: CanonicalEventType.TRANSFER_REQUESTED,
     SemanticType.ACCOUNT_ADMIN: CanonicalEventType.ACCOUNT_ADMIN_REQUESTED,
+    SemanticType.PROJECT_CREATE: CanonicalEventType.PROJECT_CREATE_REQUESTED,
     # Always a new site_issues row -- no candidate-field split (issue_type/
     # severity are closed enums the AI picks directly, unlike direction/
     # query_kind/target_kind/update_kind), so this belongs here rather than
@@ -133,6 +134,9 @@ REQUIRED_FIELDS: dict[CanonicalEventType, tuple[str, ...]] = {
     # mirroring reverse/nodes.py's own "nothing to reverse" completeness
     # check.
     CanonicalEventType.ACCOUNT_ADMIN_REQUESTED: ("action",),
+    # Only field this project has: a plain create with a required name --
+    # unlike account_admin, there's no second action to route around.
+    CanonicalEventType.PROJECT_CREATE_REQUESTED: ("name",),
     # Mirrors EXPENSE_REQUESTED: ("amount",) -- one required field (the
     # closed-enum issue_type), everything else (severity, narrative, delay)
     # optional.

@@ -125,4 +125,15 @@ class SemanticType(str, Enum):
     # this type alone existing here does not grant a lower-privileged role
     # the ability to act on it.
     ACCOUNT_ADMIN = "account_admin"
+    # Creating a new Project record itself (e.g. "create a new project called
+    # Skyline Towers") -- never an activity/site issue/expense *at* an
+    # existing project, which is every other semantic type here. Mirrors
+    # ACCOUNT_ADMIN's shape: ADMIN/PROJECT_MANAGER only, enforced
+    # independently of Understanding (see runtime/inbound_journey.py and
+    # application/projects/validation.py) the same way ACCOUNT_ADMIN is --
+    # this type alone existing here does not grant a lower-privileged role
+    # the ability to act on it. Deliberately create-only for now (no rename/
+    # archive companion actions the way account_admin has) -- those aren't
+    # built, and this type does not imply they exist.
+    PROJECT_CREATE = "project_create"
     UNKNOWN = "unknown"

@@ -72,6 +72,10 @@ class CanonicalEventType(str, Enum):
     # voice, non-English) the AI pipeline understood. Both converge on the
     # same WorkflowKey.ACCOUNT_ADMIN graph and the same role enforcement.
     ACCOUNT_ADMIN_REQUESTED = "AccountAdminRequested"
+    # SemanticType.PROJECT_CREATE -> a new project record. No candidate-field
+    # split (unlike MATERIAL_UPDATE/PETTY_CASH/REVERSAL/SITE_ISSUE_UPDATE
+    # above) since there is only one action (create).
+    PROJECT_CREATE_REQUESTED = "ProjectCreateRequested"
     CLARIFICATION_REQUIRED = "ClarificationRequired"
     UNRECOGNIZED = "Unrecognized"
 

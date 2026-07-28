@@ -72,7 +72,7 @@ _EXTRACTION_PROMPT = (
     '"semantic_type" (expense|equipment_usage|material_update|labour_update|'
     "general_site_update|site_issue|site_issue_update|general_question|whoami_question|inventory_query|"
     "labour_query|activity_query|dpr_request|finance_query|transfer|petty_cash|reversal|"
-    "account_admin|unknown), "
+    "account_admin|project_create|unknown), "
     '"fields" (object, values in English except proper nouns/names -- see '
     "per-type rules below for how to handle names), "
     '"missing_fields" (array), '
@@ -309,7 +309,15 @@ _EXTRACTION_PROMPT = (
     "matched against the organization's actual accounts afterwards. Never "
     "confuse with transfer (moving money between accounts) or petty_cash "
     "(money to/from a person) -- this only ever changes an account record "
-    "itself, never moves money."
+    "itself, never moves money.\n"
+    "- project_create: name, location, client. Use this type when the user "
+    "wants to create a brand new Project record itself (e.g. \"create a new "
+    "project called Skyline Towers\", \"start a new project at Kochi for "
+    "client ABC Builders\") -- never an activity, site issue, or expense "
+    "logged at an existing project (those use their own semantic types "
+    "above). name is the new project's name -- always extract it even if "
+    "you're not sure how it will be used afterwards. location and client "
+    "are optional hints, stated as-is."
 )
 
 

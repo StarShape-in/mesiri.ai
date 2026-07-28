@@ -6,11 +6,23 @@ and authorization. They do not contain HTTP concerns or SQL.
 
 from __future__ import annotations
 
-from mesiri.authorization.context import AuthorizationContext
+from typing import TYPE_CHECKING
 
+from mesiri.authorization.context import AuthorizationContext
+from mesiri.infrastructure.postgres.database import PostgresDatabase
+from mesiri_contracts.application.results.execution_result import ExecutionResult, as_replay
+from mesiri_contracts.assistant.v2.confirmed_action import ConfirmedActionV2
+
+from .create_mapper import build_command
+from .create_validation import validate
 from .dtos import ProjectDTO
 from .queries import ListProjects
-from .repository import ProjectRepository
+from .repository import CreateProjectExecutionRepository, ProjectRepository
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncConnection
+
+    from .create_commands import CreateProjectCommand
 
 
 class ListProjectsHandler:
@@ -49,3 +61,37 @@ class ListProjectsHandler:
             all_projects=scope.grants_all_org_projects,
             project_ids=scope.project_ids if not scope.grants_all_org_projects else None,
         )
+
+
+class CreateProjectHandler:
+    """Confirmed-message (WhatsApp) Project creation. Mirrors
+    application/finance/handlers.py's ManageMoneyAccountHandler shape --
+    handle() takes an externally-supplied connection (REST/tests can drive
+    it directly); handle_confirmed() is the CQRS entry point that owns the
+    one transaction."""
+
+    def __init__(
+        self,
+        repo: CreateProjectExecutionRepository,
+        db: PostgresDatabase | None = None,
+    ) -> None:
+        self._repo = repo
+        self._db = db
+
+    async def handle(self, conn: AsyncConnection, cmd: CreateProjectCommand) -> ExecutionResult:
+        reasons = validate(cmd)
+
+        existing = await self._repo.check_idempotency(conn, cmd.idempotency_key)
+        if existing is not None:
+            return as_replay(existing)
+
+        if reasons:
+            return await self._repo.persist_rejection(conn, cmd.idempotency_key, reasons)
+        return await self._repo.persist_success(conn, cmd)
+
+    async def handle_confirmed(self, confirmed: ConfirmedActionV2) -> ExecutionResult:
+        """CQRS entry point (WhatsApp M8 path) — owns the one transaction."""
+        assert self._db is not None, "handle_confirmed requires db to be wired"
+        cmd = build_command(confirmed)
+        async with self._db.transaction() as conn:
+            return await self.handle(conn, cmd)

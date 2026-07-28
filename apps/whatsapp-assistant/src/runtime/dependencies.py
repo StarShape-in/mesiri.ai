@@ -406,6 +406,21 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         repo=progress_execution_repo,
     )
     close_site_issue_dispatcher = CloseSiteIssueExecutionDispatcher(close_site_issue_handler)
+    # Project creation: same in-process capability-boundary wiring as the
+    # Progress handlers above, reusing the same material_db transaction
+    # pool. No resolver -- there is nothing to look up (create is the only
+    # action, unlike account admin's rename/deactivate).
+    from mesiri.application.projects.create_dispatcher import CreateProjectExecutionDispatcher
+    from mesiri.application.projects.handlers import CreateProjectHandler
+    from mesiri.infrastructure.postgres.repositories.project_execution import (
+        PostgresCreateProjectExecutionRepository,
+    )
+
+    create_project_handler = CreateProjectHandler(
+        PostgresCreateProjectExecutionRepository(),
+        db=material_db,
+    )
+    create_project_dispatcher = CreateProjectExecutionDispatcher(create_project_handler)
 
     execution_dispatcher = ActionTypeRoutingDispatcher(
         {
@@ -420,6 +435,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             DraftActionType.ADD_PROGRESS_UPDATE: add_progress_update_dispatcher,
             DraftActionType.RECORD_SITE_ISSUE: report_site_issue_dispatcher,
             DraftActionType.CLOSE_SITE_ISSUE: close_site_issue_dispatcher,
+            DraftActionType.CREATE_PROJECT: create_project_dispatcher,
         }
     )
     # Read-only inventory lookups for the material.inventory_query workflow --
