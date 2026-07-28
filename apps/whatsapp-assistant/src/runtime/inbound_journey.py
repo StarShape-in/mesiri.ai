@@ -1003,9 +1003,14 @@ async def _maybe_trigger_worker_promotion(
     actor: Any,
     wa_id: str,
     send_text_fn: Callable[[str, str], Awaitable[Any]],
-) -> None:
+) -> bool:
     """After a confirmed RECORD_LABOUR_ATTENDANCE execution, send a follow-up
     offer to add named temporary workers to the Worker Register.
+
+    Returns True when an offer was actually put on screen. The caller uses
+    that to decide whether the team-photo prompt follows now or waits for the
+    promotion answer -- two prompts arriving together would read as one
+    confusing wall of text.
 
     Fires only when:
     - The confirmed action type is RECORD_LABOUR_ATTENDANCE
@@ -1031,20 +1036,20 @@ async def _maybe_trigger_worker_promotion(
     # Guard: only after a successful RECORD_LABOUR_ATTENDANCE execution.
     if not isinstance(handled.result, WorkflowResumeResult):
         _skip("not_a_resume", got=type(handled.result).__name__)
-        return
+        return False
     if handled.result.status is not WorkflowResumeStatus.CONFIRMED:
         _skip("not_confirmed", status=handled.result.status.value)
-        return
+        return False
     confirmed = handled.result.confirmed_action
     if confirmed is None:
         _skip("no_confirmed_action")
-        return
+        return False
     if confirmed.draft_action.action_type is not DraftActionType.RECORD_LABOUR_ATTENDANCE:
         _skip("not_attendance", action=confirmed.draft_action.action_type.value)
-        return
+        return False
     if handled.execution_result is None:
         _skip("no_execution_result")
-        return
+        return False
     # Import here to avoid circular dependency at module load time.
     from mesiri_contracts.application.results.execution_result import ExecutionStatus
     if handled.execution_result.status is not ExecutionStatus.SUCCEEDED:
@@ -1052,12 +1057,12 @@ async def _maybe_trigger_worker_promotion(
         # same confirmation. Worth seeing, because it also means the offer for
         # that report was already made once.
         _skip("execution_not_succeeded", status=handled.execution_result.status.value)
-        return
+        return False
 
     org_id = str(getattr(actor, "organization_id", None) or "")
     if not org_id:
         _skip("no_organization_on_actor", actor=type(actor).__name__)
-        return
+        return False
 
     # Extract named temporary workers from the confirmed attendance lines.
     lines = confirmed.draft_action.fields.get("lines") or []
@@ -1078,7 +1083,7 @@ async def _maybe_trigger_worker_promotion(
 
     if not promotable:
         _skip("no_new_named_workers", lines=len(lines))
-        return
+        return False
 
     # Seed the register so the promotion node can screen each chosen worker
     # against it (name + trade + contractor) before writing. A node must never
@@ -1139,7 +1144,7 @@ async def _maybe_trigger_worker_promotion(
         promo_run = await workflow_runtime.start(promotion_decision, promotion_event)
     except Exception:  # noqa: BLE001 — promotion failure never blocks or retries
         _log.exception("worker_promotion.start_failed org=%s", org_id)
-        return
+        return False
 
     # Pass 1 result: the promotion node ran, built the offer message, and
     # saved the state as COLLECTING_FIELDS waiting for the user's choice.
@@ -1151,6 +1156,7 @@ async def _maybe_trigger_worker_promotion(
             promo_run.status.value,
         )
         await _safe(send_text_fn(wa_id, promo_run.pending_prompt))
+        return True
     else:
         # The run produced no message -- the offer exists nowhere the user can
         # see. Loud, because this is indistinguishable from the feature being
@@ -1161,6 +1167,83 @@ async def _maybe_trigger_worker_promotion(
             promo_run.status.value,
             len(promotable),
         )
+    return False
+
+
+def _recorded_attendance_report_id(handled: InteractionHandled) -> str | None:
+    """The attendance report just written, or None if this wasn't one.
+
+    material_row_id is the shared "the thing you created" field on
+    ExecutionResult; for labour it carries the attendance report id (see
+    repositories/labour_execution.py). Read here rather than threaded through
+    the promotion trigger so the team-photo offer does not depend on whether
+    promotion ran at all.
+    """
+    from mesiri_contracts.application.results.execution_result import ExecutionStatus
+
+    result = handled.result
+    if not isinstance(result, WorkflowResumeResult):
+        return None
+    if result.status is not WorkflowResumeStatus.CONFIRMED:
+        return None
+    confirmed = result.confirmed_action
+    if confirmed is None:
+        return None
+    if confirmed.draft_action.action_type is not DraftActionType.RECORD_LABOUR_ATTENDANCE:
+        return None
+    execution = handled.execution_result
+    if execution is None or execution.status is not ExecutionStatus.SUCCEEDED:
+        return None
+    return execution.material_row_id
+
+
+def _promotion_just_finished(result: WorkflowRunResult | WorkflowResumeResult) -> bool:
+    """True when this slot answer completed the worker-promotion workflow.
+
+    The slot-answer path carries every workflow's answers, so the team-photo
+    offer has to identify its own cue rather than firing on any completed
+    question.
+    """
+    return (
+        isinstance(result, WorkflowRunResult)
+        and result.workflow_key is WorkflowKey.WORKER_PROMOTION
+        and result.status is WorkflowRunStatus.COMPLETED
+    )
+
+
+async def _offer_team_photo(
+    report_id: str,
+    actor: Any,
+    wa_id: str,
+    team_photo_hint_store: Any,
+    send_reply: Callable[..., Awaitable[Any]],
+) -> None:
+    """Offer to attach a photo of the crew, once the record is safely saved.
+
+    Sent after the promotion step is settled rather than beside it, so the
+    supervisor is answering one question at a time.
+
+    The report id is parked in Redis rather than asked for again: the next
+    photo this user sends is plainly the answer to the question just asked,
+    and making them re-state which day it belongs to would be absurd. The
+    hint is pop-once and expires -- see interactions/team_photo_hint.py for
+    why a photo sent an hour later must not silently land on a closed day.
+
+    Recommended, never required. Attendance is already recorded by the time
+    this is sent, and nothing here can undo that.
+    """
+    from channel.replies import render_team_photo_offer
+
+    user_id = str(getattr(actor, "user_id", None) or "")
+    if not user_id or not report_id:
+        return
+    try:
+        await team_photo_hint_store.set_hint(user_id=user_id, report_id=report_id)
+    except Exception:  # noqa: BLE001 -- a hint is never worth failing a reply over
+        _log.warning("team_photo.hint_failed user=%s", user_id)
+        return
+    _log.info("team_photo.offered user=%s report=%s", user_id, report_id)
+    await _safe(send_reply(render_team_photo_offer(), wa_id))
 
 
 async def _create_promoted_workers(

@@ -155,6 +155,47 @@ def render_image_purpose_picker() -> ReplySpec:
     )
 
 
+#: Buttons on the team-photo offer. "Upload Photo" is not a command Mesiri
+#: can execute -- tapping it just acknowledges and waits for the picture --
+#: but offering it beside Skip makes the choice explicit rather than leaving
+#: the supervisor unsure whether silence counts as declining.
+TEAM_PHOTO_BUTTONS: tuple[ListRow, ...] = (
+    ListRow("team_photo_upload", "Upload Photo"),
+    ListRow("team_photo_skip", "Skip"),
+)
+
+
+def render_team_photo_offer() -> ReplySpec:
+    """Offered once attendance is recorded and the promotion step is settled.
+
+    Recommended, never required: the attendance is already saved by the time
+    this is sent, and the wording says so first, so a supervisor who ignores
+    it has lost nothing. Blocking the record on a photo would make the
+    fastest, most common report -- a plain headcount with no camera involved
+    -- worse for everyone.
+    """
+    return ReplySpec(
+        text=(
+            "✅ Attendance recorded.\n\n"
+            "📷 Want to add a team photo for today? It gets attached to this "
+            "record as verification, and shows up later in reports and the "
+            "site timeline.\n\n"
+            "Send the photo now, or tap Skip."
+        ),
+        buttons=TEAM_PHOTO_BUTTONS,
+    )
+
+
+def render_team_photo_attached_reply() -> str:
+    return "📷 Team photo attached to today's attendance. Thank you."
+
+
+def render_team_photo_skipped_reply() -> str:
+    """Deliberately closes the loop rather than going silent -- otherwise a
+    tap on Skip looks identical to a message that failed to send."""
+    return "👍 No problem — today's attendance is recorded and complete."
+
+
 def render_completion_photo_followup() -> str:
     """#25 AI Follow-up: appended to the confirmation reply once an Activity
     is marked COMPLETED. Deliberately a plain question, not an interactive

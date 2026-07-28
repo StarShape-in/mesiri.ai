@@ -89,6 +89,17 @@ class WorkforceQueryService(Protocol):
         """Insert a new active permanent worker and return its UUID string."""
         ...
 
+    async def attach_team_photo(
+        self,
+        *,
+        organization_id: str,
+        report_id: str,
+        media_object_key: str,
+        created_by: str | None = None,
+    ) -> str | None:
+        """Attach a team photo to a recorded attendance report."""
+        ...
+
 
 class PostgresWorkforceQueryService:
     """Reads the real register, annotated with where each worker has worked."""
@@ -259,6 +270,70 @@ class PostgresWorkforceQueryService:
 
         return str(worker_id)
 
+    async def attach_team_photo(
+        self,
+        *,
+        organization_id: str,
+        report_id: str,
+        media_object_key: str,
+        created_by: str | None = None,
+    ) -> str | None:
+        """Link a photo of the crew to an already-recorded attendance report.
+
+        Written under its own attachment_type ('attendance_team_photo') rather
+        than alongside the photographed sheet: the sheet is the *source* a
+        report was read from, this is *corroboration* taken afterwards. A
+        gallery, a daily report or a future verification step can then ask for
+        one without getting the other.
+
+        Attendance itself is append-only (P5) and is not touched here -- an
+        attachment is a separate row pointing at the report, so adding one
+        later neither rewrites nor supersedes what was recorded.
+
+        The organization is checked against the report rather than trusted
+        from the caller, so a photo can never be pinned to another tenant's
+        record. Returns the new attachment id, or None when the report does
+        not exist or belongs to somebody else.
+        """
+        import sqlalchemy as sa
+
+        try:
+            org_id = uuid.UUID(organization_id)
+            report_uuid = uuid.UUID(report_id)
+        except (TypeError, ValueError):
+            return None
+        if not str(media_object_key or "").strip():
+            return None
+
+        attachment_id = uuid.uuid4()
+        async with self._db.transaction() as conn:
+            owner = (
+                await conn.execute(
+                    sa.text(
+                        "SELECT 1 FROM labour_attendance_reports "
+                        "WHERE id = :report_id AND organization_id = :org_id"
+                    ),
+                    {"report_id": report_uuid, "org_id": org_id},
+                )
+            ).first()
+            if owner is None:
+                return None
+
+            await conn.execute(
+                sa.text(
+                    "INSERT INTO labour_attendance_attachments "
+                    "(id, report_id, media_object_key, attachment_type, created_at, created_by) "
+                    "VALUES (:id, :report_id, :key, 'attendance_team_photo', now(), :created_by)"
+                ),
+                {
+                    "id": attachment_id,
+                    "report_id": report_uuid,
+                    "key": media_object_key,
+                    "created_by": uuid.UUID(created_by) if created_by else None,
+                },
+            )
+        return str(attachment_id)
+
 
 class StubWorkforceQueryService:
     """Empty register unless a roster is configured — local/test use only.
@@ -282,6 +357,7 @@ class StubWorkforceQueryService:
     def __init__(self, roster: list[dict[str, Any]] | None = None) -> None:
         self._roster = roster if roster is not None else _roster_from_env()
         self.created_workers: list[dict[str, Any]] = []
+        self.team_photos: list[dict[str, Any]] = []
 
     async def list_worker_candidates(
         self,
@@ -319,6 +395,30 @@ class StubWorkforceQueryService:
             }
         )
         return worker_id
+
+
+    async def attach_team_photo(
+        self,
+        *,
+        organization_id: str,
+        report_id: str,
+        media_object_key: str,
+        created_by: str | None = None,
+    ) -> str | None:
+        """Stub: records the call in self.team_photos for test assertions."""
+        import uuid as _uuid
+
+        attachment_id = str(_uuid.uuid4())
+        self.team_photos.append(
+            {
+                "attachment_id": attachment_id,
+                "organization_id": organization_id,
+                "report_id": report_id,
+                "media_object_key": media_object_key,
+                "created_by": created_by,
+            }
+        )
+        return attachment_id
 
 
 def _roster_from_env() -> list[dict[str, Any]]:

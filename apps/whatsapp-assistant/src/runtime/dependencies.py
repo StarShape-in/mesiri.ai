@@ -536,6 +536,13 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from interactions.completion_photo_hint import CompletionPhotoHintStore
 
     completion_photo_hint_store = CompletionPhotoHintStore(redis_client)
+
+    # Remembers which attendance report the next photo belongs to, after
+    # Mesiri offers a team photo. Same pop-once contract, same reasoning --
+    # see interactions/team_photo_hint.py.
+    from interactions.team_photo_hint import TeamPhotoHintStore
+
+    team_photo_hint_store = TeamPhotoHintStore(redis_client)
     # M19 conversation memory -- current project/site (existing
     # RedisActiveContextStore), current activity/date (new), and a capped
     # recent-turns history, composed behind one loader/coordinator pair. See
@@ -862,6 +869,56 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             await message_logger.mark_completed(correlation_id=message.correlation_id)
             return
 
+        async def _send_spec(spec, target_wa_id: str) -> None:
+            """Send a ReplySpec through whichever transport it asks for."""
+            await send_reply_spec(
+                spec,
+                target_wa_id,
+                send_text=sender.send_text,
+                send_list=sender.send_list,
+                send_button=sender.send_button,
+            )
+
+        async def _safe_pop_pending_report(store, user_id: str) -> str | None:
+            """Pop the pending team-photo report id, never raising.
+
+            Redis is a hint here, not a source of truth: if it is unreachable
+            the photo simply goes through the normal picker instead, which is
+            a worse experience but not a broken one.
+            """
+            try:
+                return await store.pop_hint(user_id=user_id)
+            except Exception:  # noqa: BLE001
+                _log.warning("team_photo.hint_read_failed user=%s", user_id)
+                return None
+
+        # A tap on the team-photo offer. Handled before everything else
+        # because both buttons are answers to a question Mesiri asked, and
+        # "Skip" in particular must not fall through to the confirmation
+        # classifier, which would read it as rejecting the attendance.
+        team_photo_tap = str((message.metadata or {}).get("interactive_reply_id") or "")
+        if team_photo_tap in ("team_photo_upload", "team_photo_skip"):
+            from channel.replies import render_team_photo_skipped_reply
+
+            if team_photo_tap == "team_photo_skip":
+                # Drop the hint, so a photo sent later for some other purpose
+                # is not quietly attached to an offer already declined.
+                try:
+                    await team_photo_hint_store.clear(user_id=ctx.user_id)
+                except Exception:  # noqa: BLE001
+                    _log.warning("team_photo.clear_failed user=%s", ctx.user_id)
+                reply_text = render_team_photo_skipped_reply()
+            else:
+                # "Upload Photo" is an acknowledgement, not a command -- the
+                # hint stays live and the next photo attaches to it.
+                reply_text = "📷 Go ahead — send the photo whenever you're ready."
+            await sender.send_text(wa_id, reply_text)
+            await message_logger.log_reply(
+                correlation_id=message.correlation_id, reply=reply_text
+            )
+            await message_logger.mark_completed(correlation_id=message.correlation_id)
+            return
+
         # M7: if the user has a workflow awaiting confirmation and this message
         # is a confirmation reply, resume it and stop — the AI pipeline (and its
         # token cost) is never touched. A plain "yes" ends here.
@@ -893,10 +950,14 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             # -- which is exactly why no promotion offer was ever sent.
             # Attendance text and receipt are already delivered above; this is
             # strictly a second-step offer that never delays either.
-            from runtime.inbound_journey import _maybe_trigger_worker_promotion
+            from runtime.inbound_journey import (
+                _maybe_trigger_worker_promotion,
+                _offer_team_photo,
+                _recorded_attendance_report_id,
+            )
 
             try:
-                await _maybe_trigger_worker_promotion(
+                promotion_offered = await _maybe_trigger_worker_promotion(
                     handled,
                     workflow_runtime,
                     workforce_query,
@@ -906,6 +967,17 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
                 )
             except Exception:  # noqa: BLE001 — promotion never disturbs saved attendance
                 _log.exception("worker_promotion.trigger_failed user=%s", ctx.user_id)
+                promotion_offered = False
+            # Team photo. Only when nothing is being promoted -- otherwise it
+            # waits until the promotion answer lands (see the slot-answer
+            # branch below), so the supervisor answers one question at a time
+            # rather than receiving two prompts at once.
+            if not promotion_offered:
+                report_id = _recorded_attendance_report_id(handled)
+                if report_id:
+                    await _offer_team_photo(
+                        report_id, ctx, wa_id, team_photo_hint_store, _send_spec
+                    )
             # Phase 8 perf: user reply is already sent above. These 4 writes
             # are order-independent audit rows -- run them concurrently.
             await asyncio.gather(
@@ -960,7 +1032,11 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             # write (it is pure), so the inserts happen on this side. Same
             # reason as the fast path above -- inbound_journey never runs for
             # a slot answer either.
-            from runtime.inbound_journey import _create_promoted_workers
+            from runtime.inbound_journey import (
+                _create_promoted_workers,
+                _offer_team_photo,
+                _promotion_just_finished,
+            )
 
             try:
                 await _create_promoted_workers(
@@ -972,6 +1048,17 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
                 )
             except Exception:  # noqa: BLE001 — never disturbs saved attendance
                 _log.exception("worker_promotion.create_failed user=%s", ctx.user_id)
+            # The promotion question is now answered, so the team-photo offer
+            # follows. The report id was parked when the attendance was
+            # confirmed; nothing here needs to know it.
+            if _promotion_just_finished(slot_handled.result):
+                pending_report = await _safe_pop_pending_report(
+                    team_photo_hint_store, ctx.user_id
+                )
+                if pending_report:
+                    await _offer_team_photo(
+                        pending_report, ctx, wa_id, team_photo_hint_store, _send_spec
+                    )
             await asyncio.gather(
                 message_logger.log_reply(
                     correlation_id=message.correlation_id, reply=reply.text
@@ -1456,6 +1543,57 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
                 reply_text = render_evidence_attached_reply(
                     count=len(created_ids), activity_summary=None
                 )
+                await sender.send_text(wa_id, reply_text)
+                await message_logger.log_reply(
+                    correlation_id=message.correlation_id, reply=reply_text
+                )
+                await message_logger.mark_completed(correlation_id=message.correlation_id)
+                return
+
+        # A photo sent right after Mesiri offered a team photo is plainly the
+        # answer to that offer, so it attaches straight to the attendance
+        # record. Checked before the purpose picker for the same reason the
+        # completion-photo hint is: asking "what is this photo for?" about a
+        # question Mesiri itself just asked is absurd, and the hint is
+        # pop-once so it must not be stepped past.
+        if message.modality is InputModality.IMAGE and message.media is not None:
+            team_photo_report_id = await _safe_pop_pending_report(
+                team_photo_hint_store, ctx.user_id
+            )
+            if team_photo_report_id is not None:
+                from channel.replies import render_team_photo_attached_reply
+
+                attachment_id = None
+                try:
+                    attachment_id = await workforce_query.attach_team_photo(
+                        organization_id=ctx.organization_id,
+                        report_id=team_photo_report_id,
+                        media_object_key=message.media.object_key,
+                        created_by=ctx.user_id,
+                    )
+                except Exception:  # noqa: BLE001 — a failed photo never unsettles attendance
+                    _log.exception(
+                        "team_photo.attach_failed user=%s report=%s",
+                        ctx.user_id,
+                        team_photo_report_id,
+                    )
+                if attachment_id:
+                    _log.info(
+                        "team_photo.attached user=%s report=%s attachment=%s",
+                        ctx.user_id,
+                        team_photo_report_id,
+                        attachment_id,
+                    )
+                    reply_text = render_team_photo_attached_reply()
+                else:
+                    # Say so rather than going quiet: a supervisor who sent a
+                    # photo and heard nothing cannot tell it failed from it
+                    # having worked.
+                    reply_text = (
+                        "⚠️ I couldn't attach that photo to today's attendance. "
+                        "The attendance itself is safely recorded — you can add "
+                        "the photo from the dashboard."
+                    )
                 await sender.send_text(wa_id, reply_text)
                 await message_logger.log_reply(
                     correlation_id=message.correlation_id, reply=reply_text

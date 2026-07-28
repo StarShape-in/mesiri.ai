@@ -75,3 +75,51 @@ def test_the_inbound_journey_does_not_pretend_to_handle_promotion():
         re.MULTILINE,
     )
     assert calls == [], f"promotion hooked into a path that never runs for it: {calls}"
+
+
+# ---------------------------------------------------------------------------
+# Team photo (Phase 4) is on the paths that carry its events
+# ---------------------------------------------------------------------------
+
+
+def test_the_team_photo_offer_follows_a_recorded_attendance():
+    """Fires from the confirmation fast path when nothing is being promoted,
+    so a report with no new names still gets the offer."""
+    block = _block_after(
+        _dependencies_source(),
+        "handle_fast_path(ctx.user_id, message, actor=ctx)",
+        "handle_slot_answer",
+    )
+    assert "await _offer_team_photo(" in block
+
+
+def test_the_team_photo_offer_also_follows_the_promotion_answer():
+    """The other entry point: when workers *were* promoted, the offer waits
+    for that answer rather than arriving beside it."""
+    block = _block_after(
+        _dependencies_source(),
+        "handle_slot_answer(ctx.user_id, message)",
+        "try_handle_account_admin_command",
+    )
+    assert "await _offer_team_photo(" in block
+
+
+def test_an_arriving_photo_is_checked_against_the_team_photo_hint():
+    """Checked before the "what is this photo for?" picker: asking that about
+    a photo sent in answer to Mesiri's own question is absurd, and the hint
+    is pop-once so it must not be stepped past."""
+    source = _dependencies_source()
+    hint_at = source.index("_safe_pop_pending_report(\n                team_photo_hint_store")
+    picker_at = source.index("try_hold_new_image_for_purpose_picker(")
+
+    assert hint_at < picker_at, "the team-photo hint must be read before the picker"
+
+
+def test_the_skip_tap_is_handled_before_the_confirmation_classifier():
+    """"Skip" must never reach the confirmation classifier, which would read
+    it as rejecting the attendance that was just recorded."""
+    source = _dependencies_source()
+    skip_at = source.index('team_photo_tap in ("team_photo_upload", "team_photo_skip")')
+    fast_path_at = source.index("handle_fast_path(ctx.user_id, message, actor=ctx)")
+
+    assert skip_at < fast_path_at

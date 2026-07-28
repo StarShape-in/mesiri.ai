@@ -30,6 +30,7 @@ from channel.replies import (
     CATEGORY_ROWS,
     IMAGE_PURPOSE_ROWS,
     IMAGE_PURPOSE_SEMANTIC_HINT,
+    TEAM_PHOTO_BUTTONS,
     ReplySpec,
     render_category_prompt,
     render_completion_photo_followup,
@@ -72,7 +73,7 @@ logger = logging.getLogger(__name__)
 #: question. Derived from the row definitions rather than written out, so a
 #: new row cannot be added to a picker without also being protected here.
 _FOREIGN_PICKER_IDS: frozenset[str] = frozenset(
-    row.id for row in (*IMAGE_PURPOSE_ROWS, *CATEGORY_ROWS)
+    row.id for row in (*IMAGE_PURPOSE_ROWS, *CATEGORY_ROWS, *TEAM_PHOTO_BUTTONS)
 )
 
 
