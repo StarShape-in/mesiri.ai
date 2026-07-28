@@ -235,7 +235,7 @@ class PostgresProgressReadRepository:
         self, organization_id: uuid.UUID, user_id: uuid.UUID, payload: dict[str, Any]
     ) -> dict[str, Any]:
         issue_id = uuid.uuid4()
-        now = datetime.datetime.now(datetime.timezone.utc)
+        now = datetime.datetime.now(datetime.UTC)
         query = """
             INSERT INTO site_issues (
                 id, organization_id, project_id, site_id, activity_id, work_package_id,
@@ -274,7 +274,7 @@ class PostgresProgressReadRepository:
     async def resolve_issue(
         self, organization_id: uuid.UUID, issue_id: uuid.UUID, notes: str | None
     ) -> bool:
-        now = datetime.datetime.now(datetime.timezone.utc)
+        now = datetime.datetime.now(datetime.UTC)
         query = """
             UPDATE site_issues
             SET status = 'RESOLVED', resolved_at = :now, resolution_notes = :notes, updated_at = :now

@@ -29,7 +29,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet'
 import { Card } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { cn } from '@/lib/utils'
+import { cn, toLocalISODate } from '@/lib/utils'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -66,6 +66,10 @@ export default function OperationsIssuesPage() {
   const toast = useToast()
 
   const [issues, setIssues] = React.useState<SiteIssueItem[]>([])
+  // The server's count of every matching issue. `issues` holds one page
+  // (limit 100), so counting that array under-reports the moment a site
+  // passes 100 issues -- silently, and only on the busiest sites.
+  const [totalCount, setTotalCount] = React.useState<number>(0)
   const [loading, setLoading] = React.useState<boolean>(true)
 
   // Filters
@@ -112,8 +116,10 @@ export default function OperationsIssuesPage() {
         limit: 100,
       })
       setIssues(res.items || [])
+      setTotalCount(res.total ?? (res.items || []).length)
     } catch {
       setIssues([])
+      setTotalCount(0)
     } finally {
       setLoading(false)
     }
@@ -138,15 +144,68 @@ export default function OperationsIssuesPage() {
     })
   }, [issues, searchQuery])
 
-  // KPI Metrics
+  // KPI Metrics.
+  //
+  // The sparklines are computed from occurred_at rather than supplied as
+  // constants. A hardcoded series with the live figure appended reads as a
+  // real trend and is not one -- it shows the same shape on a site with one
+  // blocker and a site with fifty, which is worse than showing nothing.
   const stats = React.useMemo(() => {
-    const total = issues.length
     const openCount = issues.filter((i) => i.status.toUpperCase() !== 'RESOLVED').length
     const criticalCount = issues.filter((i) => i.severity.toUpperCase() === 'CRITICAL' || i.severity.toUpperCase() === 'HIGH').length
     const totalMinsLost = issues.reduce((acc, i) => acc + (i.delay_duration_minutes || 0), 0)
 
-    return { total, openCount, criticalCount, totalMinsLost }
+    // Last 7 local calendar days, oldest first. Local, not UTC: an issue
+    // logged at 09:00 IST belongs to that day, not the previous one.
+    const days: string[] = []
+    for (let i = 6; i >= 0; i--) {
+      days.push(toLocalISODate(new Date(Date.now() - i * 86_400_000)))
+    }
+    const dayOf = (iso: string) => toLocalISODate(new Date(iso))
+
+    const openedPerDay = days.map(
+      (d) => issues.filter((i) => i.occurred_at && dayOf(i.occurred_at) === d).length,
+    )
+    const criticalPerDay = days.map(
+      (d) =>
+        issues.filter(
+          (i) =>
+            i.occurred_at &&
+            dayOf(i.occurred_at) === d &&
+            (i.severity.toUpperCase() === 'CRITICAL' || i.severity.toUpperCase() === 'HIGH'),
+        ).length,
+    )
+    const minsPerDay = days.map((d) =>
+      issues
+        .filter((i) => i.occurred_at && dayOf(i.occurred_at) === d)
+        .reduce((acc, i) => acc + (i.delay_duration_minutes || 0), 0),
+    )
+    // Cumulative, so this line reads as "issues logged to date" rather than
+    // repeating the daily count above it.
+    let running = 0
+    const cumulativePerDay = openedPerDay.map((n) => (running += n))
+
+    return {
+      openCount,
+      criticalCount,
+      totalMinsLost,
+      openedPerDay,
+      criticalPerDay,
+      minsPerDay,
+      cumulativePerDay,
+    }
   }, [issues])
+
+  /** Direction of the last day against the one before it. More issues is bad,
+   *  so a rise maps to 'down' on the card's good/bad scale. */
+  const directionOf = React.useCallback((series: number[]): 'up' | 'down' | 'neutral' => {
+    if (series.length < 2) return 'neutral'
+    const last = series[series.length - 1]
+    const prev = series[series.length - 2]
+    if (last > prev) return 'down'
+    if (last < prev) return 'up'
+    return 'neutral'
+  }, [])
 
   const scopeLabel = React.useMemo(() => {
     if (scope.mode === 'portfolio') return 'Portfolio Scope (All Projects)'
@@ -247,38 +306,38 @@ export default function OperationsIssuesPage() {
         <KpiCard
           title="Active Site Blockers"
           value={<span className="text-rose-600 dark:text-rose-400">{stats.openCount}</span>}
-          trend={stats.openCount > 0 ? 'down' : 'up'}
+          trend={directionOf(stats.openedPerDay)}
           trendValue={`${stats.openCount} Open`}
           description="Unresolved site interruptions"
           icon={<ShieldAlert className="text-rose-500" />}
-          chartData={[3, 5, 4, 6, 8, 5, 4, stats.openCount]}
+          chartData={stats.openedPerDay}
         />
         <KpiCard
           title="High & Critical Incidents"
           value={<span className="text-amber-600 dark:text-amber-400">{stats.criticalCount}</span>}
-          trend="neutral"
+          trend={directionOf(stats.criticalPerDay)}
           trendValue="Requires Priority"
           description="High severity bottlenecks"
           icon={<AlertTriangle className="text-amber-500" />}
-          chartData={[1, 2, 1, 3, 2, 4, 3, stats.criticalCount]}
+          chartData={stats.criticalPerDay}
         />
         <KpiCard
           title="Total Delay Duration"
           value={<span className="text-sky-600 dark:text-sky-400">{stats.totalMinsLost}m</span>}
-          trend="down"
+          trend={directionOf(stats.minsPerDay)}
           trendValue="Minutes Lost"
           description="Work hours lost to blockers"
           icon={<Clock className="text-sky-500" />}
-          chartData={[45, 90, 120, 150, 180, 210, stats.totalMinsLost]}
+          chartData={stats.minsPerDay}
         />
         <KpiCard
           title="Total Recorded Issues"
-          value={<span className="text-indigo-600 dark:text-indigo-400">{stats.total}</span>}
-          trend="up"
+          value={<span className="text-indigo-600 dark:text-indigo-400">{totalCount}</span>}
+          trend="neutral"
           trendValue="Historical Total"
           description="Tracked site issue entries"
           icon={<CheckCircle2 className="text-indigo-500" />}
-          chartData={[2, 4, 6, 8, 10, 12, stats.total]}
+          chartData={stats.cumulativePerDay}
         />
       </div>
 

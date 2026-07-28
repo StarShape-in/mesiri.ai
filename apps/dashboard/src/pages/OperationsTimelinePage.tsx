@@ -34,7 +34,7 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
-import { cn } from '@/lib/utils'
+import { cn, toLocalISODate } from '@/lib/utils'
 
 // ─── Extended Timeline Entry Model ───────────────────────────────────────────
 
@@ -495,12 +495,12 @@ export default function OperationsTimelinePage() {
                 const now = new Date()
                 if (val === 'ALL') { setDateFrom(''); setDateTo('') }
                 else if (val === 'TODAY') {
-                  const todayStr = now.toISOString().split('T')[0]
+                  const todayStr = toLocalISODate(now)
                   setDateFrom(todayStr); setDateTo(todayStr)
                 } else if (val === 'THIS_WEEK') {
                   const lastWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-                  setDateFrom(lastWeek.toISOString().split('T')[0])
-                  setDateTo(now.toISOString().split('T')[0])
+                  setDateFrom(toLocalISODate(lastWeek))
+                  setDateTo(toLocalISODate(now))
                 }
               }}>
                 <SelectTrigger className="h-9 text-xs w-full sm:w-36">
@@ -597,7 +597,7 @@ export default function OperationsTimelinePage() {
                 <div className="sticky top-12 z-10 flex items-center gap-2 py-1 bg-background/90 backdrop-blur-md">
                   <Badge variant="outline" className="bg-card shadow-2xs font-mono font-bold text-xs py-1 px-3 border-indigo-500/30 text-indigo-600 dark:text-indigo-400 gap-1.5">
                     <Calendar className="size-3.5" />
-                    {dateStr === new Date().toISOString().split('T')[0] ? `Today — ${dateStr}` : dateStr}
+                    {dateStr === toLocalISODate() ? `Today — ${dateStr}` : dateStr}
                   </Badge>
                   <div className="h-px flex-1 bg-border/60" />
                   <span className="text-[11px] font-mono text-muted-foreground font-semibold">
