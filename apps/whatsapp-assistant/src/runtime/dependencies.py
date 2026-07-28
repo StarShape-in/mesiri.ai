@@ -351,11 +351,13 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     # so those fields simply stay null when unresolved (P4).
     from mesiri.application.progress.dispatcher import (
         AddProgressUpdateExecutionDispatcher,
+        CloseSiteIssueExecutionDispatcher,
         CreateActivityExecutionDispatcher,
         ReportSiteIssueExecutionDispatcher,
     )
     from mesiri.application.progress.handlers import (
         ExecuteConfirmedAddProgressUpdateHandler,
+        ExecuteConfirmedCloseSiteIssueHandler,
         ExecuteConfirmedCreateActivityHandler,
         ExecuteConfirmedReportSiteIssueHandler,
     )
@@ -394,6 +396,31 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         repo=progress_execution_repo,
     )
     report_site_issue_dispatcher = ReportSiteIssueExecutionDispatcher(report_site_issue_handler)
+    # Site Issue Close-out (acknowledge/resolve/wont_fix): same repo as the
+    # three Progress handlers above -- no resolver here either (the
+    # CURRENT-status re-check is inlined in persist_close_site_issue_success
+    # itself, since it's a single self-contained row check, not a
+    # cross-repository lookup like Reversal's).
+    close_site_issue_handler = ExecuteConfirmedCloseSiteIssueHandler(
+        db=material_db,
+        repo=progress_execution_repo,
+    )
+    close_site_issue_dispatcher = CloseSiteIssueExecutionDispatcher(close_site_issue_handler)
+    # Project creation: same in-process capability-boundary wiring as the
+    # Progress handlers above, reusing the same material_db transaction
+    # pool. No resolver -- there is nothing to look up (create is the only
+    # action, unlike account admin's rename/deactivate).
+    from mesiri.application.projects.create_dispatcher import CreateProjectExecutionDispatcher
+    from mesiri.application.projects.handlers import CreateProjectHandler
+    from mesiri.infrastructure.postgres.repositories.project_execution import (
+        PostgresCreateProjectExecutionRepository,
+    )
+
+    create_project_handler = CreateProjectHandler(
+        PostgresCreateProjectExecutionRepository(),
+        db=material_db,
+    )
+    create_project_dispatcher = CreateProjectExecutionDispatcher(create_project_handler)
 
     execution_dispatcher = ActionTypeRoutingDispatcher(
         {
@@ -407,6 +434,8 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             DraftActionType.CREATE_ACTIVITY: create_activity_dispatcher,
             DraftActionType.ADD_PROGRESS_UPDATE: add_progress_update_dispatcher,
             DraftActionType.RECORD_SITE_ISSUE: report_site_issue_dispatcher,
+            DraftActionType.CLOSE_SITE_ISSUE: close_site_issue_dispatcher,
+            DraftActionType.CREATE_PROJECT: create_project_dispatcher,
         }
     )
     # Read-only inventory lookups for the material.inventory_query workflow --
@@ -454,6 +483,12 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from runtime.reversal_query import ReversalTargetQueryService
 
     reversal_query = ReversalTargetQueryService(material_db)
+    # Resolves "my last reported issue" for the site_issue_close workflow's
+    # target -- same reasoning and same material_db as reversal_query above.
+    # See runtime/site_issue_query.py.
+    from runtime.site_issue_query import SiteIssueTargetQueryService
+
+    site_issue_query = SiteIssueTargetQueryService(material_db)
     # Flags a likely-duplicate expense before expense_capture's graph runs
     # (Finance Module Slice 8) -- same reasoning and same material_db as
     # catalog_query above. See runtime/duplicate_expense_query.py.
@@ -1125,6 +1160,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
                 money_account_query=money_account_query,
                 petty_cash_query=petty_cash_query,
                 reversal_query=reversal_query,
+                site_issue_query=site_issue_query,
                 duplicate_expense_query=duplicate_expense_query,
                 workforce_query=workforce_query,
                 activity_query=activity_query,
@@ -1492,6 +1528,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             money_account_query=money_account_query,
             petty_cash_query=petty_cash_query,
             reversal_query=reversal_query,
+            site_issue_query=site_issue_query,
             duplicate_expense_query=duplicate_expense_query,
             workforce_query=workforce_query,
             activity_query=activity_query,

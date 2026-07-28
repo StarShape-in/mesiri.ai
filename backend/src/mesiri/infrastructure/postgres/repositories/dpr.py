@@ -507,6 +507,118 @@ class PostgresDprRepository:
         )
         return {"id": version_id, "daily_report_id": daily_report_id, "version_no": version_no}
 
+    async def get_report_scope(
+        self, *, organization_id: uuid.UUID, report_id: uuid.UUID
+    ) -> dict[str, Any] | None:
+        """The raw project_id/site_id/report_date/level/status a revision
+        needs to re-assemble a payload -- distinct from get_report/
+        get_report_for_pdf, which return display-shaped rows (names, joined
+        text), not the FK/date values assemble_site_report_payload takes."""
+        row = (
+            await self._conn.execute(
+                text(
+                    """
+                    SELECT project_id, site_id, report_date, level, status::text AS status,
+                           current_version_id
+                    FROM daily_reports
+                    WHERE organization_id = :org_id AND id = :id
+                    """
+                ),
+                {"org_id": organization_id, "id": report_id},
+            )
+        ).mappings().first()
+        return dict(row) if row else None
+
+    async def revise_version(
+        self,
+        *,
+        daily_report_id: uuid.UUID,
+        payload: dict[str, Any],
+        narrative_summary: str | None,
+        revision_reason: str,
+    ) -> dict[str, Any]:
+        """Create a new version that supersedes the current one, for a
+        report already APPROVED/PUBLISHED -- the counterpart create_version
+        deliberately refuses (see its docstring). Requires a non-empty
+        `revision_reason`, written to the version row alongside
+        `supersedes_version_id` so the correction is auditable, not a silent
+        overwrite.
+
+        Resets `daily_reports.status` back to DRAFT so the corrected
+        version goes through submit-for-review/approve/publish again, the
+        same lifecycle a fresh day's report follows -- P7's freeze exists to
+        stop an approved day being overwritten *silently*, not to make it
+        permanently uncorrectable.
+        """
+        if not revision_reason or not revision_reason.strip():
+            raise ValueError("revision_reason is required to revise an approved report")
+
+        report_row = (
+            await self._conn.execute(
+                text(
+                    "SELECT status, current_version_id FROM daily_reports WHERE id = :id"
+                ),
+                {"id": daily_report_id},
+            )
+        ).mappings().first()
+        if report_row is None:
+            raise ValueError(f"daily_report {daily_report_id} not found")
+        if report_row["status"] not in ("APPROVED", "PUBLISHED"):
+            raise ValueError(
+                f"daily_report {daily_report_id} is {report_row['status']}, not "
+                "APPROVED/PUBLISHED -- use create_version for a pre-approval correction"
+            )
+
+        next_version_row = (
+            await self._conn.execute(
+                text(
+                    "SELECT COALESCE(MAX(version_no), 0) + 1 AS next FROM daily_report_versions "
+                    "WHERE daily_report_id = :id"
+                ),
+                {"id": daily_report_id},
+            )
+        ).mappings().first()
+        version_no = next_version_row["next"]
+
+        version_id = uuid.uuid4()
+        import json
+
+        await self._conn.execute(
+            text(
+                """
+                INSERT INTO daily_report_versions (
+                    id, daily_report_id, version_no, payload, narrative_summary,
+                    supersedes_version_id, revision_reason
+                ) VALUES (
+                    :id, :daily_report_id, :version_no, CAST(:payload AS JSONB), :narrative_summary,
+                    :supersedes_version_id, :revision_reason
+                )
+                """
+            ),
+            {
+                "id": version_id,
+                "daily_report_id": daily_report_id,
+                "version_no": version_no,
+                "payload": json.dumps(payload),
+                "narrative_summary": narrative_summary,
+                "supersedes_version_id": report_row["current_version_id"],
+                "revision_reason": revision_reason,
+            },
+        )
+        await self._conn.execute(
+            text(
+                "UPDATE daily_reports SET current_version_id = :version_id, "
+                "status = 'DRAFT', updated_at = now() WHERE id = :id"
+            ),
+            {"version_id": version_id, "id": daily_report_id},
+        )
+        return {
+            "id": version_id,
+            "daily_report_id": daily_report_id,
+            "version_no": version_no,
+            "supersedes_version_id": report_row["current_version_id"],
+        }
+
     async def get_report_for_pdf(
         self, *, organization_id: uuid.UUID, report_id: uuid.UUID
     ) -> dict[str, Any] | None:

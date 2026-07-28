@@ -211,3 +211,31 @@ class ReportSiteIssueCommand(BaseModel):
     created_by: CanonicalUuid
 
     model_config = {"extra": "forbid"}
+
+
+class CloseSiteIssueCommand(BaseModel):
+    """Acknowledge / resolve / mark won't-fix an EXISTING Site Issue --
+    always targets "the most recently reported issue in the right status"
+    (resolved by seeding, never stated by the user), mirroring how
+    application/finance/reverse_commands.py's ReverseTransactionCommand
+    targets "the most recent record of a kind." Unlike
+    ReportSiteIssueCommand, this never creates a new row -- only
+    transitions an existing one's status (OPEN -> ACKNOWLEDGED,
+    OPEN/ACKNOWLEDGED -> RESOLVED or WONT_FIX)."""
+
+    version: str = CONTRACT_VERSION
+
+    command_id: str
+    idempotency_key: str
+    correlation_id: str
+
+    organization_id: CanonicalUuid
+    site_issue_id: CanonicalUuid
+
+    #: "acknowledge" | "resolve" | "wont_fix"
+    action: str
+    resolution_notes: str | None = None
+
+    created_by: CanonicalUuid
+
+    model_config = {"extra": "forbid"}

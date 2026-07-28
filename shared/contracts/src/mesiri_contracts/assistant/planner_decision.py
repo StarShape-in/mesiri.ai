@@ -59,6 +59,7 @@ class WorkflowKey(str, Enum):
     SITE_UPDATE = "site.update"
     ACTIVITY_CONTINUATION = "site.activity_continuation"
     SITE_ISSUE_REPORT = "site.issue_report"
+    SITE_ISSUE_CLOSE = "site.issue_close"
     WHO_AM_I = "who.am.i"
     MATERIAL_INVENTORY_QUERY = "material.inventory_query"
     LABOUR_QUERY = "labour.query"
@@ -70,6 +71,7 @@ class WorkflowKey(str, Enum):
     TRANSFER = "finance.transfer"
     PETTY_CASH = "finance.petty_cash"
     REVERSE = "finance.reverse"
+    PROJECT_CREATE = "project.create"
 
 
 class PlannerDecision(BaseModel):

@@ -39,6 +39,15 @@ class SemanticType(str, Enum):
     # distinct from FINANCE_QUERY: this reports a problem, GENERAL_SITE_UPDATE
     # reports work done or in progress -- never confuse the two.
     SITE_ISSUE = "site_issue"
+    # Acknowledge, resolve, or mark won't-fix an existing Site Issue --
+    # always targets the single most recently reported issue in the right
+    # status (resolved by seeding, never stated by the user), the same
+    # "most recent record of a kind" pattern REVERSAL uses. Splits into
+    # three CanonicalEventTypes by the extracted `action` field
+    # ("acknowledge"|"resolve"|"wont_fix"), the same way REVERSAL splits by
+    # `target_kind` (see canonicalization/mapping.py). Never creates a new
+    # site_issues row -- SITE_ISSUE (above) is the only report/create path.
+    SITE_ISSUE_UPDATE = "site_issue_update"
     GENERAL_QUESTION = "general_question"
     # A deterministically recognized "who am i"/"my profile"/etc (see
     # mesiri_ai.whoami_classifier) -- distinct from GENERAL_QUESTION/UNKNOWN
@@ -116,4 +125,15 @@ class SemanticType(str, Enum):
     # this type alone existing here does not grant a lower-privileged role
     # the ability to act on it.
     ACCOUNT_ADMIN = "account_admin"
+    # Creating a new Project record itself (e.g. "create a new project called
+    # Skyline Towers") -- never an activity/site issue/expense *at* an
+    # existing project, which is every other semantic type here. Mirrors
+    # ACCOUNT_ADMIN's shape: ADMIN/PROJECT_MANAGER only, enforced
+    # independently of Understanding (see runtime/inbound_journey.py and
+    # application/projects/validation.py) the same way ACCOUNT_ADMIN is --
+    # this type alone existing here does not grant a lower-privileged role
+    # the ability to act on it. Deliberately create-only for now (no rename/
+    # archive companion actions the way account_admin has) -- those aren't
+    # built, and this type does not imply they exist.
+    PROJECT_CREATE = "project_create"
     UNKNOWN = "unknown"

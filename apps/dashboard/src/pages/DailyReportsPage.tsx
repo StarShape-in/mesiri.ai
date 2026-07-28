@@ -42,6 +42,7 @@ import {
   submitDailyReportForReviewApi,
   approveDailyReportApi,
   publishDailyReportApi,
+  reviseDailyReportApi,
   fetchDailyReportPdfApi,
   createDailyReportApi,
   fetchWorkersApi,
@@ -387,6 +388,11 @@ export default function DailyReportsPage() {
   const [detailData, setDetailData] = React.useState<DailyReportDetailResponse | null>(null)
   const [detailLoading, setDetailLoading] = React.useState<boolean>(false)
   const [pdfDownloading, setPdfDownloading] = React.useState<boolean>(false)
+
+  // Revise Modal state -- correcting an already approved/published report
+  const [reviseDialogOpen, setReviseDialogOpen] = React.useState<boolean>(false)
+  const [reviseReason, setReviseReason] = React.useState<string>('')
+  const [revising, setRevising] = React.useState<boolean>(false)
 
   // Create Modal state
   const [createDialogOpen, setCreateDialogOpen] = React.useState<boolean>(false)
@@ -1252,26 +1258,48 @@ export default function DailyReportsPage() {
                         Approved by {detailData.reviewer_name || 'Site Lead'} on {detailData.reviewed_at || 'recent date'}.
                       </span>
                     </div>
-                    <Button
-                      size="sm"
-                      className="h-7 text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold gap-1 shrink-0"
-                      onClick={async () => {
-                        await publishDailyReportApi(detailData.id)
-                        setDetailData((prev) => prev ? { ...prev, workflow_status: 'published' } : null)
-                        toast.success('DPR Published', `${detailData.dpr_number} frozen and signed off`)
-                        fetchList()
-                      }}
-                    >
-                      <Lock className="size-3.5" />
-                      Publish Report
-                    </Button>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs font-bold gap-1"
+                        onClick={() => { setReviseReason(''); setReviseDialogOpen(true) }}
+                      >
+                        <FileText className="size-3.5" />
+                        Revise
+                      </Button>
+                      <Button
+                        size="sm"
+                        className="h-7 text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold gap-1"
+                        onClick={async () => {
+                          await publishDailyReportApi(detailData.id)
+                          setDetailData((prev) => prev ? { ...prev, workflow_status: 'published' } : null)
+                          toast.success('DPR Published', `${detailData.dpr_number} frozen and signed off`)
+                          fetchList()
+                        }}
+                      >
+                        <Lock className="size-3.5" />
+                        Publish Report
+                      </Button>
+                    </div>
                   </div>
                 )}
 
                 {detailData.workflow_status.toLowerCase() === 'published' && (
-                  <div className="p-3 rounded-lg border border-indigo-500/30 bg-indigo-500/10 flex items-center gap-2 text-indigo-700 dark:text-indigo-300 text-xs font-medium">
-                    <Lock className="size-4 shrink-0" />
-                    <span>Published & signed — this report is frozen.</span>
+                  <div className="p-3 rounded-lg border border-indigo-500/30 bg-indigo-500/10 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 text-indigo-700 dark:text-indigo-300 text-xs font-medium">
+                      <Lock className="size-4 shrink-0" />
+                      <span>Published & signed — this report is frozen.</span>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-xs font-bold gap-1 shrink-0"
+                      onClick={() => { setReviseReason(''); setReviseDialogOpen(true) }}
+                    >
+                      <FileText className="size-3.5" />
+                      Revise
+                    </Button>
                   </div>
                 )}
 
@@ -1794,6 +1822,58 @@ export default function DailyReportsPage() {
               </div>
             </Tabs>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Revise Modal -- corrects an already approved/published report by
+          re-assembling its payload and inserting a superseding version,
+          resetting status back to Draft for re-approval. */}
+      <Dialog open={reviseDialogOpen} onOpenChange={setReviseDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Revise Report</DialogTitle>
+            <DialogDescription>
+              This creates a new version from the latest recorded data and sends the report back
+              to Draft for re-approval. State why this correction is needed.
+            </DialogDescription>
+          </DialogHeader>
+          <div>
+            <label className="font-semibold block mb-1 text-xs">Revision Reason</label>
+            <textarea
+              rows={3}
+              value={reviseReason}
+              onChange={(e) => setReviseReason(e.target.value)}
+              placeholder="e.g. Quantity for RCC pour was corrected after site verification"
+              className="w-full rounded-md border border-border p-2.5 text-xs bg-background focus:outline-hidden focus:ring-1 focus:ring-primary leading-relaxed"
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => setReviseDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="h-8 text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold gap-1"
+              disabled={!reviseReason.trim() || revising}
+              onClick={async () => {
+                if (!detailData || !reviseReason.trim()) return
+                setRevising(true)
+                try {
+                  await reviseDailyReportApi(detailData.id, reviseReason.trim())
+                  const refreshed = await fetchDailyReportDetailApi(detailData.id)
+                  setDetailData(refreshed)
+                  setReviseDialogOpen(false)
+                  toast.success('Report Revised', `${detailData.dpr_number} corrected and returned to Draft`)
+                  fetchList()
+                } finally {
+                  setRevising(false)
+                }
+              }}
+            >
+              <FileText className="size-3.5" />
+              {revising ? 'Revising…' : 'Submit Revision'}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

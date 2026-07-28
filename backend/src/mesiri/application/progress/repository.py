@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 from mesiri_contracts.application.commands.progress import (
     AddProgressUpdateCommand,
     AttachEvidenceCommand,
+    CloseSiteIssueCommand,
     CreateActivityCommand,
     ReportSiteIssueCommand,
 )
@@ -78,6 +79,21 @@ class ProgressExecutionRepository(ABC):
         to COMPLETED. Always a new row -- unlike Progress Updates, a Site
         Issue report never continues a prior one (see
         ReportSiteIssueCommand's docstring)."""
+        ...
+
+    @abstractmethod
+    async def persist_close_site_issue_success(
+        self, conn: AsyncConnection, cmd: CloseSiteIssueCommand
+    ) -> ExecutionResult:
+        """Claim the idempotency key, transition the existing site_issues
+        row's status (acknowledge/resolve/wont_fix) + outbox event, cache
+        SUCCEEDED, and transition the workflow to COMPLETED. Re-verifies the
+        row's CURRENT status still allows the requested action inside the
+        same claimed transaction immediately before the UPDATE (time can
+        pass between the draft being built and the user replying YES) --
+        rejects via the same idempotency-keys/workflow_instance bookkeeping
+        as persist_rejection, without a second _try_claim call, if it no
+        longer does."""
         ...
 
     @abstractmethod

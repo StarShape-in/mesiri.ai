@@ -90,6 +90,15 @@ class SiteIssueCandidate(Candidate):
     # delay -- never a question about existing ones (that's activity_query).
 
 
+class SiteIssueUpdateCandidate(Candidate):
+    semantic_type: SemanticType = SemanticType.SITE_ISSUE_UPDATE
+    # Conventional keys: action (required to route -- see
+    # canonicalization/mapping.py; one of acknowledge/resolve/wont_fix),
+    # resolution_notes. Always targets the most recently reported issue in
+    # the right status, resolved by seeding -- never a new report (that's
+    # site_issue).
+
+
 class GeneralQuestionCandidate(Candidate):
     semantic_type: SemanticType = SemanticType.GENERAL_QUESTION
     # Conventional keys: question, topic.
@@ -132,6 +141,14 @@ class ReversalCandidate(Candidate):
     # runtime/reversal_query.py, not stated by the user.
 
 
+class ProjectCreateCandidate(Candidate):
+    semantic_type: SemanticType = SemanticType.PROJECT_CREATE
+    # Conventional keys: name (required to route -- see canonicalization/
+    # mapping.py), location, client. Best-effort hints as stated -- no
+    # resolution against existing records needed (unlike account_admin's
+    # target_name/new_name), since this always creates a brand new row.
+
+
 class AccountAdminCandidate(Candidate):
     semantic_type: SemanticType = SemanticType.ACCOUNT_ADMIN
     # Conventional keys: action (create/rename/deactivate, required to
@@ -152,6 +169,7 @@ CANDIDATE_TYPES: dict[SemanticType, type[Candidate]] = {
     SemanticType.LABOUR_UPDATE: LabourUpdateCandidate,
     SemanticType.GENERAL_SITE_UPDATE: GeneralSiteUpdateCandidate,
     SemanticType.SITE_ISSUE: SiteIssueCandidate,
+    SemanticType.SITE_ISSUE_UPDATE: SiteIssueUpdateCandidate,
     SemanticType.GENERAL_QUESTION: GeneralQuestionCandidate,
     SemanticType.INVENTORY_QUERY: InventoryQueryCandidate,
     SemanticType.LABOUR_QUERY: LabourQueryCandidate,
@@ -160,4 +178,5 @@ CANDIDATE_TYPES: dict[SemanticType, type[Candidate]] = {
     SemanticType.PETTY_CASH: PettyCashCandidate,
     SemanticType.REVERSAL: ReversalCandidate,
     SemanticType.ACCOUNT_ADMIN: AccountAdminCandidate,
+    SemanticType.PROJECT_CREATE: ProjectCreateCandidate,
 }

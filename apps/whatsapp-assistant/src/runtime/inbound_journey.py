@@ -84,6 +84,7 @@ from runtime.org_settings_query import OrganizationSettingsQueryService
 from runtime.petty_cash_query import PettyCashRecipientQueryService
 from runtime.reply_dispatch import send_reply_spec
 from runtime.reversal_query import ReversalTargetQueryService
+from runtime.site_issue_query import SiteIssueTargetQueryService
 from runtime.vendor_query import VendorQueryService
 from runtime.workforce_query import WorkforceQueryService
 from understanding.pipeline import UnderstandingPipeline
@@ -110,6 +111,13 @@ _log = logging.getLogger("mesiri.inbound_journey")
 # and tests/unit/test_account_admin_journey.py both cover the same role set.
 _ACCOUNT_ADMIN_ROLES = frozenset({"ADMIN", "FINANCE"})
 _ACCOUNT_ADMIN_DENIED_REPLY = "⛔ Only an admin or finance user can manage accounts."
+
+# Matches apps/whatsapp-assistant/src/projects/router.py's _CREATE_ROLES and
+# application/projects/create_validation.py's _PROJECT_CREATE_ROLES exactly --
+# same "should not even be an option" reasoning as _ACCOUNT_ADMIN_ROLES above,
+# gating WorkflowKey.PROJECT_CREATE before a draft is ever built.
+_PROJECT_CREATE_ROLES = frozenset({"ADMIN", "PROJECT_MANAGER"})
+_PROJECT_CREATE_DENIED_REPLY = "⛔ Only an admin or project manager can create a project."
 
 
 @dataclass(slots=True)
@@ -762,6 +770,46 @@ async def _seed_reversal_target(
         event.fields["reversal_occurred_date"] = expense["occurred_date"]
 
 
+async def _seed_site_issue_close_target(
+    event: CanonicalEventV2,
+    decision: PlannerDecisionV2,
+    site_issue_query: SiteIssueTargetQueryService | None,
+    actor: ActorIdentity | None,
+) -> None:
+    """Resolve "my last reported issue" into a concrete site_issue_id --
+    same "most recent record of a kind" pattern as _seed_reversal_target
+    above, just with one kind (no target_kind-style split needed: `action`
+    already says what to do, not what to find). Only ever runs for
+    SITE_ISSUE_CLOSE; finding nothing simply leaves site_issue_id unset --
+    workflows/site_issue_close/nodes.py's build_draft then completes with a
+    "nothing to close" reply instead of a draft (see that module's
+    docstring and `WorkflowDefinition.allows_completion_without_draft` in
+    workflows/registry.py)."""
+    if site_issue_query is None or actor is None or not actor.organization_id:
+        return
+    if decision.workflow_key is not WorkflowKey.SITE_ISSUE_CLOSE:
+        return
+
+    action = str(event.fields.get("action", "")).strip().lower()
+    # Acknowledge only ever targets a strictly OPEN issue (mirrors
+    # infrastructure/postgres/repositories/progress.py's acknowledge_issue
+    # WHERE clause); resolve/wont_fix may also target one already
+    # ACKNOWLEDGED (mirrors resolve_issue/wont_fix_issue).
+    statuses = ("OPEN",) if action == "acknowledge" else ("OPEN", "ACKNOWLEDGED")
+    target = await site_issue_query.find_latest(
+        organization_id=actor.organization_id,
+        project_id=event.project_id,
+        site_id=event.site_id,
+        statuses=statuses,
+    )
+    if target is None:
+        return
+    event.fields["site_issue_id"] = target["site_issue_id"]
+    event.fields["site_issue_type"] = target["issue_type"]
+    event.fields["site_issue_severity"] = target["severity"]
+    event.fields["site_issue_narrative"] = target["narrative"]
+
+
 def _seed_account_admin_role(event: CanonicalEventV2, decision: PlannerDecisionV2, actor: ActorIdentity | None) -> None:
     """Feed the sender's role into the draft the same way
     _seed_account_candidates does for TRANSFER/PETTY_CASH -- defense-in-depth
@@ -772,6 +820,20 @@ def _seed_account_admin_role(event: CanonicalEventV2, decision: PlannerDecisionV
     is ever bypassed. Only ever runs for ACCOUNT_ADMIN. No I/O -- actor.role
     is already resolved, same as _seed_account_candidates's created_by_role."""
     if actor is None or decision.workflow_key is not WorkflowKey.ACCOUNT_ADMIN:
+        return
+    event.fields["created_by_role"] = actor.role
+
+
+def _seed_project_create_role(
+    event: CanonicalEventV2, decision: PlannerDecisionV2, actor: ActorIdentity | None
+) -> None:
+    """Feed the sender's role into the draft, same reasoning as
+    _seed_account_admin_role -- defense-in-depth for
+    application/projects/create_validation.py's role check. Not the primary
+    gate: the _PROJECT_CREATE_ROLES check below (before workflow_runtime.
+    start()) already refuses a disallowed role before a draft is ever
+    built."""
+    if actor is None or decision.workflow_key is not WorkflowKey.PROJECT_CREATE:
         return
     event.fields["created_by_role"] = actor.role
 
@@ -1544,6 +1606,7 @@ async def process_inbound_message(
     money_account_query: MoneyAccountQueryService | None = None,
     petty_cash_query: PettyCashRecipientQueryService | None = None,
     reversal_query: ReversalTargetQueryService | None = None,
+    site_issue_query: SiteIssueTargetQueryService | None = None,
     duplicate_expense_query: DuplicateExpenseQueryService | None = None,
     workforce_query: WorkforceQueryService | None = None,
     labour_query_service: LabourQueryService | None = None,
@@ -2019,6 +2082,9 @@ async def process_inbound_message(
                         _seed_reversal_target(
                             canonical_event, planner_decision, reversal_query, actor
                         ),
+                        _seed_site_issue_close_target(
+                            canonical_event, planner_decision, site_issue_query, actor
+                        ),
                         _seed_worker_candidates(
                             canonical_event, planner_decision, workforce_query, actor
                         ),
@@ -2077,6 +2143,7 @@ async def process_inbound_message(
                     )
                     # Synchronous — not a coroutine, runs after the gather.
                     _seed_account_admin_role(canonical_event, planner_decision, actor)
+                    _seed_project_create_role(canonical_event, planner_decision, actor)
 
                     # Account-admin role gate: refused before the workflow
                     # even starts (no draft, no confirmation prompt) --
@@ -2097,6 +2164,31 @@ async def process_inbound_message(
                         await _safe(
                             mlog.log_reply(
                                 correlation_id=correlation_id, reply=_ACCOUNT_ADMIN_DENIED_REPLY
+                            )
+                        )
+                        await _safe(mlog.mark_completed(correlation_id=correlation_id))
+                        return JourneyResult(
+                            understanding=understanding,
+                            resolved_context=resolved,
+                            canonical_event=canonical_event,
+                            planner_decision=planner_decision,
+                            workflow_run=None,
+                        )
+
+                    # Project-create role gate: same "should not even be an
+                    # option" reasoning as the account-admin gate immediately
+                    # above. application/projects/create_validation.py's role
+                    # check (fed by _seed_project_create_role above) is the
+                    # defense-in-depth backstop if this is ever bypassed.
+                    if (
+                        planner_decision.workflow_key is WorkflowKey.PROJECT_CREATE
+                        and str(getattr(actor, "role", None) or "").strip().upper()
+                        not in _PROJECT_CREATE_ROLES
+                    ):
+                        await send_text(message.sender.wa_id, _PROJECT_CREATE_DENIED_REPLY)
+                        await _safe(
+                            mlog.log_reply(
+                                correlation_id=correlation_id, reply=_PROJECT_CREATE_DENIED_REPLY
                             )
                         )
                         await _safe(mlog.mark_completed(correlation_id=correlation_id))

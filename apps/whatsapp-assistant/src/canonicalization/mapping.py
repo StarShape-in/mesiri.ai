@@ -23,6 +23,7 @@ _SIMPLE_EVENT_TYPE: dict[SemanticType, CanonicalEventType] = {
     SemanticType.DPR_REQUEST: CanonicalEventType.DPR_REQUESTED,
     SemanticType.TRANSFER: CanonicalEventType.TRANSFER_REQUESTED,
     SemanticType.ACCOUNT_ADMIN: CanonicalEventType.ACCOUNT_ADMIN_REQUESTED,
+    SemanticType.PROJECT_CREATE: CanonicalEventType.PROJECT_CREATE_REQUESTED,
     # Always a new site_issues row -- no candidate-field split (issue_type/
     # severity are closed enums the AI picks directly, unlike direction/
     # query_kind/target_kind/update_kind), so this belongs here rather than
@@ -60,6 +61,15 @@ _PETTY_CASH_DIRECTION_EVENT_TYPE: dict[str, CanonicalEventType] = {
 _REVERSAL_TARGET_EVENT_TYPE: dict[str, CanonicalEventType] = {
     "expense": CanonicalEventType.EXPENSE_REVERSAL_REQUESTED,
     "transfer": CanonicalEventType.TRANSFER_REVERSAL_REQUESTED,
+}
+
+# SITE_ISSUE_UPDATE splits by the candidate's `action` field -- same pattern
+# as REVERSAL/target_kind above, all three routing to the single
+# WorkflowKey.SITE_ISSUE_CLOSE (see planner/routing.py).
+_SITE_ISSUE_ACTION_EVENT_TYPE: dict[str, CanonicalEventType] = {
+    "acknowledge": CanonicalEventType.SITE_ISSUE_ACKNOWLEDGE_REQUESTED,
+    "resolve": CanonicalEventType.SITE_ISSUE_RESOLVE_REQUESTED,
+    "wont_fix": CanonicalEventType.SITE_ISSUE_WONT_FIX_REQUESTED,
 }
 
 # GENERAL_SITE_UPDATE is the fifth semantic type that splits by a candidate
@@ -124,10 +134,20 @@ REQUIRED_FIELDS: dict[CanonicalEventType, tuple[str, ...]] = {
     # mirroring reverse/nodes.py's own "nothing to reverse" completeness
     # check.
     CanonicalEventType.ACCOUNT_ADMIN_REQUESTED: ("action",),
+    # Only field this project has: a plain create with a required name --
+    # unlike account_admin, there's no second action to route around.
+    CanonicalEventType.PROJECT_CREATE_REQUESTED: ("name",),
     # Mirrors EXPENSE_REQUESTED: ("amount",) -- one required field (the
     # closed-enum issue_type), everything else (severity, narrative, delay)
     # optional.
     CanonicalEventType.SITE_ISSUE_REPORTED: ("issue_type",),
+    # No required fields -- the target is always "the most recently
+    # reported issue in the right status", resolved by seeding
+    # (runtime/inbound_journey.py's _seed_site_issue_close_target), not
+    # stated by the user, same reasoning as the REVERSAL entries above.
+    CanonicalEventType.SITE_ISSUE_ACKNOWLEDGE_REQUESTED: (),
+    CanonicalEventType.SITE_ISSUE_RESOLVE_REQUESTED: (),
+    CanonicalEventType.SITE_ISSUE_WONT_FIX_REQUESTED: (),
     CanonicalEventType.CLARIFICATION_REQUIRED: (),
     CanonicalEventType.UNRECOGNIZED: (),
 }
@@ -164,6 +184,9 @@ def resolve_event_type(semantic_type: SemanticType, fields: dict) -> CanonicalEv
             # back onto fields before the confirmation prompt renders.
             return CanonicalEventType.EXPENSE_REVERSAL_REQUESTED
         return _REVERSAL_TARGET_EVENT_TYPE.get(target_kind, CanonicalEventType.UNRECOGNIZED)
+    if semantic_type is SemanticType.SITE_ISSUE_UPDATE:
+        action = str(fields.get("action", "")).strip().lower()
+        return _SITE_ISSUE_ACTION_EVENT_TYPE.get(action, CanonicalEventType.UNRECOGNIZED)
     if semantic_type is SemanticType.GENERAL_SITE_UPDATE:
         update_kind = str(fields.get("update_kind", "")).strip().lower()
         return _SITE_UPDATE_KIND_EVENT_TYPE.get(

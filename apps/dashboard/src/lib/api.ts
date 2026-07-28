@@ -1575,6 +1575,14 @@ export async function publishDailyReportApi(reportId: string): Promise<void> {
   await api.post(`/dpr/daily-reports/${reportId}/publish`)
 }
 
+/** Corrects an already approved/published report: re-assembles the payload
+ * from what's actually recorded now and inserts it as a new version
+ * superseding the current one, resetting status back to draft so the
+ * correction goes through submit-for-review/approve/publish again. */
+export async function reviseDailyReportApi(reportId: string, revisionReason: string): Promise<void> {
+  await api.post(`/dpr/daily-reports/${reportId}/revise`, { revision_reason: revisionReason })
+}
+
 /** Fetches the DPR PDF as a Blob -- GET /dpr/daily-reports/{id}/pdf serves
  * either the already-rendered Playwright artifact (if the nightly cron has
  * caught up) or an on-demand fpdf2 fallback, transparently to the caller. */

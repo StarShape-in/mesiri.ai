@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from mesiri_contracts.application.commands.progress import (
     AddProgressUpdateCommand,
+    CloseSiteIssueCommand,
     CreateActivityCommand,
     ReportSiteIssueCommand,
 )
@@ -96,4 +97,25 @@ def validate_report_site_issue(cmd: ReportSiteIssueCommand) -> list[str]:
         reasons.append(f"unrecognized issue_type: {cmd.issue_type}")
     if cmd.severity not in _VALID_ISSUE_SEVERITIES:
         reasons.append(f"unrecognized severity: {cmd.severity}")
+    return reasons
+
+
+_VALID_CLOSE_ACTIONS = frozenset({"acknowledge", "resolve", "wont_fix"})
+
+
+def validate_close_site_issue(cmd: CloseSiteIssueCommand) -> list[str]:
+    """Pure structural check only -- whether the target issue's CURRENT
+    status still allows this action is a DB-backed re-check, done inline by
+    persist_close_site_issue_success (infrastructure/postgres/repositories/
+    progress_execution.py) immediately before the UPDATE, mirroring
+    reverse_resolution.py's re-verify-at-confirm-time reasoning. site_issue_
+    id itself is never missing here in practice -- runtime/inbound_journey.
+    py's seeding step only ever builds a draft once a target was found
+    (workflows/site_issue_close/nodes.py's build_draft), but this is still
+    checked structurally for defense-in-depth."""
+    reasons: list[str] = []
+    if cmd.action not in _VALID_CLOSE_ACTIONS:
+        reasons.append(f"unknown action '{cmd.action}'")
+    if not cmd.site_issue_id:
+        reasons.append("no site issue to update")
     return reasons

@@ -34,6 +34,7 @@ from mesiri.infrastructure.postgres.workflow_instance import (
 from mesiri_contracts.application.commands.progress import (
     AddProgressUpdateCommand,
     AttachEvidenceCommand,
+    CloseSiteIssueCommand,
     CreateActivityCommand,
     ReportSiteIssueCommand,
 )
@@ -433,6 +434,135 @@ class PostgresProgressExecutionRepository(ProgressExecutionRepository):
             {"result": result.model_dump_json(), "key": cmd.idempotency_key},
         )
 
+        await self._transition(conn, cmd.idempotency_key, WorkflowPhase.COMPLETED)
+        return result
+
+    #: Which CURRENT status still allows each close-out action -- mirrors
+    #: infrastructure/postgres/repositories/progress.py's REST-only
+    #: acknowledge_issue (OPEN only) / resolve_issue / wont_fix_issue
+    #: (OPEN/ACKNOWLEDGED) WHERE clauses, re-checked here instead of trusted
+    #: from draft-build time since time can pass before the user replies YES.
+    _ALLOWED_CURRENT_STATUS_BY_ACTION = {
+        "acknowledge": {"OPEN"},
+        "resolve": {"OPEN", "ACKNOWLEDGED"},
+        "wont_fix": {"OPEN", "ACKNOWLEDGED"},
+    }
+
+    async def persist_close_site_issue_success(
+        self, conn: AsyncConnection, cmd: CloseSiteIssueCommand
+    ) -> ExecutionResult:
+        from sqlalchemy import text
+
+        if not await self._try_claim(conn, cmd.idempotency_key, "close_site_issue"):
+            existing = await self.check_idempotency(conn, cmd.idempotency_key)
+            assert existing is not None
+            return as_replay(existing)
+
+        issue_id = uuid.UUID(cmd.site_issue_id)
+        organization_id = uuid.UUID(cmd.organization_id)
+
+        # Defense-in-depth re-check, inline rather than a separate resolver
+        # step (unlike reverse_resolution.py's cross-repository lookup, this
+        # is a single self-contained status check on the row this same
+        # transaction is about to update) -- SELECT ... FOR UPDATE so a
+        # racing second confirmation can't both pass this check for the
+        # same row.
+        current = (
+            await conn.execute(
+                text(
+                    "SELECT status FROM site_issues "
+                    "WHERE organization_id = :org_id AND id = :id FOR UPDATE"
+                ),
+                {"org_id": organization_id, "id": issue_id},
+            )
+        ).mappings().first()
+        current_status = current["status"] if current is not None else None
+        allowed = self._ALLOWED_CURRENT_STATUS_BY_ACTION.get(cmd.action, set())
+        if current_status not in allowed:
+            reasons = (
+                ["that issue no longer exists"]
+                if current_status is None
+                else [f"that issue is already {current_status.lower()}"]
+            )
+            result = ExecutionResult(
+                status=ExecutionStatus.REJECTED,
+                idempotency_key=cmd.idempotency_key,
+                rejection_reasons=reasons,
+            )
+            await conn.execute(
+                text(
+                    "UPDATE idempotency_keys "
+                    "SET status = 'completed', result = CAST(:result AS jsonb), completed_at = now() "
+                    "WHERE key = :key"
+                ),
+                {"result": result.model_dump_json(), "key": cmd.idempotency_key},
+            )
+            await self._transition(conn, cmd.idempotency_key, WorkflowPhase.EXECUTION_REJECTED)
+            return result
+
+        now = datetime.datetime.now(datetime.UTC)
+        if cmd.action == "acknowledge":
+            await conn.execute(
+                text(
+                    "UPDATE site_issues SET status = 'ACKNOWLEDGED', updated_at = :now "
+                    "WHERE organization_id = :org_id AND id = :id"
+                ),
+                {"org_id": organization_id, "id": issue_id, "now": now},
+            )
+            event_type = "SiteIssueAcknowledged"
+            payload = {}
+        elif cmd.action == "wont_fix":
+            await conn.execute(
+                text(
+                    "UPDATE site_issues SET status = 'WONT_FIX', resolved_at = :now, "
+                    "resolution_notes = :notes, updated_at = :now "
+                    "WHERE organization_id = :org_id AND id = :id"
+                ),
+                {"org_id": organization_id, "id": issue_id, "now": now, "notes": cmd.resolution_notes},
+            )
+            event_type = "SiteIssueWontFix"
+            payload = {"resolution_notes": cmd.resolution_notes}
+        else:  # resolve
+            await conn.execute(
+                text(
+                    "UPDATE site_issues SET status = 'RESOLVED', resolved_at = :now, "
+                    "resolution_notes = :notes, updated_at = :now "
+                    "WHERE organization_id = :org_id AND id = :id"
+                ),
+                {"org_id": organization_id, "id": issue_id, "now": now, "notes": cmd.resolution_notes},
+            )
+            event_type = "SiteIssueResolved"
+            payload = {"resolution_notes": cmd.resolution_notes}
+
+        await conn.execute(
+            text(
+                "INSERT INTO outbox_events "
+                "(id, aggregate_type, aggregate_id, event_type, payload, correlation_id) "
+                "VALUES (:id, 'site_issue', :aggregate_id, :event_type, "
+                "CAST(:payload AS jsonb), :correlation_id)"
+            ),
+            {
+                "id": uuid.uuid4(),
+                "aggregate_id": issue_id,
+                "event_type": event_type,
+                "payload": json.dumps(payload, default=str),
+                "correlation_id": cmd.correlation_id,
+            },
+        )
+
+        result = ExecutionResult(
+            status=ExecutionStatus.SUCCEEDED,
+            idempotency_key=cmd.idempotency_key,
+            material_row_id=str(issue_id),
+        )
+        await conn.execute(
+            text(
+                "UPDATE idempotency_keys "
+                "SET status = 'completed', result = CAST(:result AS jsonb), completed_at = now() "
+                "WHERE key = :key"
+            ),
+            {"result": result.model_dump_json(), "key": cmd.idempotency_key},
+        )
         await self._transition(conn, cmd.idempotency_key, WorkflowPhase.COMPLETED)
         return result
 

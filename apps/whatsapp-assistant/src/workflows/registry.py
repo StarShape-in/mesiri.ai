@@ -27,7 +27,9 @@ from .labour_update.graph import build_labour_attendance_graph
 from .material import build_material_graph
 from .material_inventory_query.graph import build_material_inventory_query_graph
 from .petty_cash.graph import build_petty_cash_graph
+from .project_create.graph import build_project_create_graph
 from .reverse.graph import build_reverse_graph
+from .site_issue_close.graph import build_site_issue_close_graph
 from .site_issue_report.graph import build_site_issue_report_graph
 from .site_update.graph import build_activity_creation_graph
 from .transfer.graph import build_transfer_graph
@@ -48,6 +50,7 @@ class WorkflowCategory(str, Enum):
     LABOUR = "labour"
     IDENTITY = "identity"
     PROGRESS = "progress"
+    PROJECT = "project"
 
 
 @dataclass(frozen=True)
@@ -195,6 +198,18 @@ _DEFINITIONS: dict[WorkflowKey, WorkflowDefinition] = dict(
             WorkflowKey.SITE_ISSUE_REPORT,
             build_site_issue_report_graph,
             WorkflowCategory.PROGRESS,
+        ),
+        _define(
+            WorkflowKey.SITE_ISSUE_CLOSE,
+            build_site_issue_close_graph,
+            WorkflowCategory.PROGRESS,
+            allows_completion_without_draft=True,
+        ),
+        _define(
+            WorkflowKey.PROJECT_CREATE,
+            build_project_create_graph,
+            WorkflowCategory.PROJECT,
+            allows_completion_without_draft=True,
         ),
     )
 )

@@ -49,6 +49,7 @@ _REQUIRED_FIELDS: dict[SemanticType, tuple[str, ...]] = {
     SemanticType.LABOUR_UPDATE: ("workers",),
     SemanticType.GENERAL_SITE_UPDATE: (),
     SemanticType.SITE_ISSUE: ("issue_type",),
+    SemanticType.SITE_ISSUE_UPDATE: ("action",),
     SemanticType.GENERAL_QUESTION: (),
     SemanticType.WHOAMI_QUESTION: (),
     SemanticType.INVENTORY_QUERY: (),
