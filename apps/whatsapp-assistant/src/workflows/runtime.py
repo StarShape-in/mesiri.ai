@@ -713,6 +713,26 @@ class WorkflowRuntime:
             pending_prompt=pending_prompt,
         )
 
+    async def abandon_optional_question(self, user_id: str) -> bool:
+        """Close the user's open *optional* slot question, if there is one.
+
+        Called before raising a new optional question, so at most one is ever
+        outstanding. Two open promotion offers is not a hypothetical: the
+        offer is raised by the system rather than requested, so every
+        attendance report raises one, and without this the second report's
+        offer joins the first instead of replacing it. get_awaiting_input()
+        then answers whichever row is newest, and the user is looking at a
+        list built from a different report than the one being answered.
+
+        Returns True if something was closed. Never touches a question the
+        workflow genuinely needs answered.
+        """
+        loaded = await self._repo.get_awaiting_input(user_id)
+        if loaded is None or not is_informational(loaded.state.workflow_key):
+            return False
+        await self._abandon(loaded)
+        return True
+
     async def _abandon(self, loaded: LoadedWorkflowInstance) -> None:
         """Close out an optional question the user moved on from.
 

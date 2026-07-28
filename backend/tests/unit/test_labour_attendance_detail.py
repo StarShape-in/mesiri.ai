@@ -150,3 +150,51 @@ async def test_a_missing_report_returns_none_not_an_error():
     repo = PostgresWorkforceReadRepository(conn)
     item = await repo.get_report(ORG, REPORT_ID)
     assert item is None
+
+
+def test_an_attachment_with_no_usable_link_still_validates():
+    """Reported from the dashboard: opening a report showed the totals but no
+    worker names at all.
+
+    The endpoint presigns every attachment through assert_downloadable_url,
+    which *raises* when object storage hands back something unusable (a
+    misconfigured provider returning memory://, or a key it no longer
+    resolves). That took the whole response down -- including the worker
+    names, which have nothing to do with the photos. The link is now allowed
+    to be null so the attendance record still reaches the user.
+    """
+    payload = {
+        "id": REPORT_ID,
+        "organization_id": ORG,
+        "project_id": PRJ,
+        "site_id": None,
+        "occurred_date": datetime.date(2026, 7, 28),
+        "recorded_via": "whatsapp",
+        "notes": None,
+        "created_at": datetime.datetime(2026, 7, 28, tzinfo=datetime.UTC),
+        "line_count": 1,
+        "total_headcount": 3,
+        "total_cost": "2400.00",
+        "lines": [
+            {
+                "id": uuid.uuid4(),
+                "worker_id": None,
+                "worker_name": "Rahul Nair",
+                "worker_name_original": None,
+                "trade": "helper",
+                "headcount": 1,
+                "daily_wage": "800.00",
+                "contractor": None,
+                "activity": None,
+            }
+        ],
+        "attachments": [
+            {"id": uuid.uuid4(), "attachment_type": "attendance_sheet", "url": None}
+        ],
+    }
+
+    response = LabourAttendanceReportResponse.model_validate(payload)
+
+    # The point of the fix: the names survive an unusable photo link.
+    assert [line.worker_name for line in response.lines] == ["Rahul Nair"]
+    assert response.attachments[0].url is None

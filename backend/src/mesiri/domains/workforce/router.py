@@ -147,7 +147,12 @@ class LabourAttendanceLineResponse(BaseModel):
 class LabourAttendanceAttachmentResponse(BaseModel):
     id: uuid.UUID
     attachment_type: str
-    url: str
+    #: None when the link could not be produced (misconfigured object storage,
+    #: or a key the provider no longer resolves). The attachment is still
+    #: listed so the record stays truthful about what was captured -- it just
+    #: cannot be opened right now. Never let this take the whole report down:
+    #: the worker names in the same response do not depend on it.
+    url: str | None = None
 
 
 class LabourAttendanceReportSummaryResponse(BaseModel):
@@ -491,18 +496,32 @@ async def get_attendance_report(
     if denied:
         raise HTTPException(status_code=403, detail="Not authorized for this report")
 
-    item["attachments"] = [
-        {
-            "id": a["id"],
-            "attachment_type": a["attachment_type"],
-            "url": assert_downloadable_url(
+    # A photo that cannot be linked must not take the attendance record down
+    # with it. Reported from the dashboard: opening a report showed the totals
+    # but no worker names at all, because one unusable attachment URL raised
+    # and 500'd the whole response -- and the names have nothing to do with
+    # the photos. The link degrades to null (the UI shows the attachment as
+    # unavailable) while everything else is still served.
+    attachments: list[dict[str, Any]] = []
+    for a in item["attachments"]:
+        url: str | None
+        try:
+            url = assert_downloadable_url(
                 await object_storage.generate_presigned_url(
                     a["media_object_key"], expires_in_seconds=_ATTACHMENT_URL_TTL_SECONDS
                 )
-            ),
-        }
-        for a in item["attachments"]
-    ]
+            )
+        except Exception:  # noqa: BLE001 — a broken link is not a broken report
+            logger.warning(
+                "labour.attachment_url_unavailable report_id=%s attachment_id=%s",
+                report_id,
+                a["id"],
+            )
+            url = None
+        attachments.append(
+            {"id": a["id"], "attachment_type": a["attachment_type"], "url": url}
+        )
+    item["attachments"] = attachments
     return item
 
 

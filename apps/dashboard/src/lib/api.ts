@@ -1130,7 +1130,11 @@ export interface LabourAttendanceLineItem {
 export interface LabourAttendanceAttachmentItem {
   id: string
   attachment_type: string
-  url: string
+  /** Null when the photo cannot be linked right now (storage misconfigured,
+   *  or a key the provider no longer resolves). The attachment is still
+   *  listed, because the record should stay truthful about what was
+   *  captured even when the image can't be opened. */
+  url: string | null
 }
 
 export interface LabourAttendanceDetailItem extends LabourAttendanceSummaryItem {

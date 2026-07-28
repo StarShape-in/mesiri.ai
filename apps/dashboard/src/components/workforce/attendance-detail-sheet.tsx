@@ -6,6 +6,8 @@ import {
   Users,
   HardHat,
   ImageIcon,
+  ImageOff,
+  AlertCircle,
   Bot,
   Globe,
   Link2,
@@ -48,6 +50,11 @@ export function AttendanceDetailSheet({
 }: AttendanceDetailSheetProps) {
   const [detail, setDetail] = React.useState<LabourAttendanceDetailItem | null>(null)
   const [loading, setLoading] = React.useState(false)
+  // Surfaced, not swallowed. This used to console.warn and render an empty
+  // sheet, so a failing request looked identical to a report with no workers
+  // in it -- which is exactly how a 500 here got reported as "the worker
+  // names are missing".
+  const [loadError, setLoadError] = React.useState<string | null>(null)
   // The line currently being promoted -- drives both the "Save as permanent
   // worker" dialog's open state and what it's pre-filled with. null means
   // closed; kept as the whole line (not just booleans) so the dialog can
@@ -57,15 +64,20 @@ export function AttendanceDetailSheet({
   React.useEffect(() => {
     if (reportId && open) {
       setLoading(true)
+      setLoadError(null)
       fetchAttendanceReportDetailApi(reportId)
         .then((data) => setDetail(data))
         .catch((err) => {
           console.warn('Failed to load attendance report details:', err)
           setDetail(null)
+          setLoadError(
+            "Couldn't load this report's details. The attendance itself is safely recorded — please try again, or refresh the page.",
+          )
         })
         .finally(() => setLoading(false))
     } else {
       setDetail(null)
+      setLoadError(null)
     }
   }, [reportId, open])
 
@@ -110,6 +122,11 @@ export function AttendanceDetailSheet({
           {loading ? (
             <div className="py-12 text-center text-xs text-muted-foreground">
               Loading report details...
+            </div>
+          ) : loadError ? (
+            <div className="py-10 px-4 flex flex-col items-center gap-2 text-center">
+              <AlertCircle className="size-5 text-amber-600 dark:text-amber-400" />
+              <p className="text-xs text-foreground max-w-[320px]">{loadError}</p>
             </div>
           ) : !detail ? (
             <div className="py-12 text-center text-xs text-muted-foreground">
@@ -297,24 +314,39 @@ export function AttendanceDetailSheet({
                   </span>
 
                   <div className="grid grid-cols-2 gap-2">
-                    {detail.attachments.map((att, idx) => (
-                      <a
-                        key={att.id || idx}
-                        href={att.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="group relative rounded-lg border overflow-hidden bg-muted/40 aspect-video flex items-center justify-center hover:border-amber-500 transition-colors"
-                      >
-                        <img
-                          src={att.url}
-                          alt="Site Attendance Proof"
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
-                        />
-                        <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[10px] font-bold">
-                          Click to Expand
+                    {detail.attachments.map((att, idx) =>
+                      att.url ? (
+                        <a
+                          key={att.id || idx}
+                          href={att.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="group relative rounded-lg border overflow-hidden bg-muted/40 aspect-video flex items-center justify-center hover:border-amber-500 transition-colors"
+                        >
+                          <img
+                            src={att.url}
+                            alt="Site Attendance Proof"
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                          />
+                          <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[10px] font-bold">
+                            Click to Expand
+                          </div>
+                        </a>
+                      ) : (
+                        // The photo was captured but can't be served right
+                        // now. Say so plainly rather than rendering a broken
+                        // image, and never hide the attendance data behind it.
+                        <div
+                          key={att.id || idx}
+                          className="rounded-lg border border-dashed bg-muted/30 aspect-video flex flex-col items-center justify-center gap-1 text-center px-2"
+                        >
+                          <ImageOff className="size-4 text-muted-foreground" />
+                          <span className="text-[10px] text-muted-foreground leading-tight">
+                            Photo unavailable
+                          </span>
                         </div>
-                      </a>
-                    ))}
+                      ),
+                    )}
                   </div>
                 </div>
               )}

@@ -810,3 +810,70 @@ async def test_a_real_pending_question_still_blocks():
 
     assert result.status is WorkflowRunStatus.BLOCKED_PENDING_CONFIRMATION
     assert result.pending_prompt == "Which account?"
+
+
+async def test_abandon_optional_question_closes_an_open_offer():
+    """Reported from testing: after a second report added a third new worker,
+    the promotion list still showed the original two.
+
+    Every attendance report raises an offer the user never asked for, so
+    without replacing the previous one two sit open at once.
+    get_awaiting_input() then answers whichever row is newest, leaving the
+    user looking at a list built from a different report than the one being
+    answered. The trigger closes the old offer before raising the new one.
+    """
+    repo = FakeWorkflowInstanceRepository()
+    repo.seed(
+        WorkflowStateV2(
+            workflow_instance_id="wf_old_offer",
+            workflow_key=WorkflowKey.WORKER_PROMOTION,
+            correlation_id="cor_old",
+            organization_id=ORG,
+            user_id=USR,
+            phase=WorkflowPhase.COLLECTING_FIELDS,
+            collected_fields={"promotable_workers": [{"name": "Rahul"}, {"name": "Niyas"}]},
+            awaiting_slot="promotion_choice",
+            pending_prompt="Would you like to add any of these workers?",
+        ),
+        version=0,
+    )
+    runtime = WorkflowRuntime(registry=_FakeRegistry({}), repo=repo)
+
+    assert await runtime.abandon_optional_question(USR) is True
+
+    saved, _ = repo._rows["wf_old_offer"]  # noqa: SLF001 — test introspection
+    assert saved.phase is WorkflowPhase.CANCELLED
+    assert saved.awaiting_slot is None
+
+
+async def test_abandon_optional_question_leaves_a_needed_question_alone():
+    """"Which account?" is a question the workflow cannot proceed without --
+    only optional ones are ever dropped."""
+    repo = FakeWorkflowInstanceRepository()
+    repo.seed(
+        WorkflowStateV2(
+            workflow_instance_id="wf_expense",
+            workflow_key=WorkflowKey.EXPENSE_SUBMIT,
+            correlation_id="cor_1",
+            organization_id=ORG,
+            user_id=USR,
+            phase=WorkflowPhase.COLLECTING_FIELDS,
+            collected_fields={},
+            awaiting_slot="account_id",
+            pending_prompt="Which account?",
+        ),
+        version=0,
+    )
+    runtime = WorkflowRuntime(registry=_FakeRegistry({}), repo=repo)
+
+    assert await runtime.abandon_optional_question(USR) is False
+
+    saved, _ = repo._rows["wf_expense"]  # noqa: SLF001 — test introspection
+    assert saved.phase is WorkflowPhase.COLLECTING_FIELDS
+
+
+async def test_abandon_optional_question_is_a_no_op_when_nothing_is_open():
+    runtime = WorkflowRuntime(
+        registry=_FakeRegistry({}), repo=FakeWorkflowInstanceRepository()
+    )
+    assert await runtime.abandon_optional_question(USR) is False

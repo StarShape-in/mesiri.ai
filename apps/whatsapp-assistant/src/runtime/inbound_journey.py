@@ -1042,6 +1042,13 @@ async def _maybe_trigger_worker_promotion(
         },
     )
 
+    # Replace any offer still open from an earlier report rather than adding
+    # a second one. The list a supervisor is looking at must describe the
+    # report they just filed -- with two offers outstanding, the answer goes
+    # to whichever row is newest and the older list silently persists, which
+    # is how a newly named worker appeared to "never show up".
+    await _safe(workflow_runtime.abandon_optional_question(str(confirmed.draft_action.user_id)))
+
     try:
         promo_run = await workflow_runtime.start(promotion_decision, promotion_event)
     except Exception:  # noqa: BLE001 — promotion failure never blocks or retries

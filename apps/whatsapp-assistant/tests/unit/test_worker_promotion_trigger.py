@@ -92,6 +92,9 @@ class _FakeWorkflowRuntime:
         self.started_with: tuple | None = None
         self._pending_prompt = pending_prompt
 
+    async def abandon_optional_question(self, user_id: str) -> bool:
+        return False
+
     async def start(self, decision, event):
         self.started_with = (decision, event)
         return WorkflowRunResult.awaiting_input(
@@ -220,6 +223,9 @@ async def test_promotion_start_failure_never_raises():
     an error to the user or block anything upstream."""
 
     class _BrokenRuntime:
+        async def abandon_optional_question(self, user_id: str) -> bool:
+            return False
+
         async def start(self, decision, event):
             raise RuntimeError("boom")
 
@@ -229,3 +235,55 @@ async def test_promotion_start_failure_never_raises():
     await _maybe_trigger_worker_promotion(
         handled, _BrokenRuntime(), _FakeWorkforceQuery(), _FakeActor(), "wa123", send_text
     )
+
+
+async def test_an_earlier_offer_is_replaced_not_stacked():
+    """The list a supervisor sees must describe the report they just filed.
+
+    Two offers open at once means get_awaiting_input() answers whichever is
+    newest while the older list lingers -- which is how a newly named worker
+    appeared to "never show up" in the promotion list.
+    """
+    abandoned: list[str] = []
+
+    class _RuntimeRecordingAbandon(_FakeWorkflowRuntime):
+        async def abandon_optional_question(self, user_id: str) -> bool:
+            abandoned.append(user_id)
+            return True
+
+    handled = _handled([{"worker_name": "Ravi", "trade": "mason", "worker_id": None}])
+    runtime = _RuntimeRecordingAbandon()
+    _sent, send_text = await _send_text_recorder()
+
+    await _maybe_trigger_worker_promotion(
+        handled, runtime, _FakeWorkforceQuery(), _FakeActor(), "wa123", send_text
+    )
+
+    assert abandoned == [USR], "the previous offer must be closed before a new one opens"
+    assert runtime.started_with is not None
+
+
+async def test_the_offer_lists_exactly_the_new_named_workers_of_this_report():
+    """Built from this report's own lines every time -- never carried over."""
+    handled = _handled(
+        [
+            {"worker_name": "Ravi", "trade": "mason", "worker_id": None},
+            {"worker_name": "Niyas", "trade": "helper", "worker_id": None},
+            {"worker_name": "Ajith", "trade": "painter", "worker_id": None},
+            {"worker_name": "Ilan", "trade": "carpenter", "worker_id": RAVI_ID},
+            {"worker_name": None, "trade": "helper", "headcount": 12, "worker_id": None},
+        ]
+    )
+    runtime = _FakeWorkflowRuntime()
+    _sent, send_text = await _send_text_recorder()
+
+    await _maybe_trigger_worker_promotion(
+        handled, runtime, _FakeWorkforceQuery(), _FakeActor(), "wa123", send_text
+    )
+
+    _decision, event = runtime.started_with
+    assert [w["name"] for w in event.fields["promotable_workers"]] == [
+        "Ravi",
+        "Niyas",
+        "Ajith",
+    ]
