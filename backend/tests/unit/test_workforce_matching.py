@@ -455,12 +455,47 @@ def test_a_bare_first_name_is_never_auto_matched_by_the_full_name_rule():
     )
 
 
-def test_the_full_name_rule_ignores_case_and_spacing():
+@pytest.mark.parametrize(
+    "reported_name",
+    [
+        "ILAN USMAN",  # OCR block capitals — the common one on printed sheets
+        "ilan usman",
+        "Ilan Usman",
+        "iLaN uSmAn",
+        "  ILAN   USMAN  ",
+        "Ilan-Usman",
+        "ILAN USMAN.",
+    ],
+)
+def test_the_full_name_rule_ignores_case_spacing_and_punctuation(reported_name):
+    """However the sheet or the speaker renders the name, it is the same
+    worker. OCR in particular returns whole sheets in capitals."""
     result = match_worker(
-        ReportedWorker(name="  ilan   USMAN "),
+        ReportedWorker(name=reported_name),
         _candidates(WorkerCandidate("w1", "Ilan Usman")),
     )
     assert result.matched_worker_id == "w1"
+
+
+def test_a_register_entry_stored_in_capitals_is_matched_too():
+    """The same tolerance in the other direction — registers get typed in
+    capitals as often as sheets get printed that way."""
+    result = match_worker(
+        ReportedWorker(name="Ilan Usman"),
+        _candidates(WorkerCandidate("w1", "ILAN USMAN")),
+    )
+    assert result.matched_worker_id == "w1"
+
+
+@pytest.mark.parametrize("trade", ["CARPENTER", "Carpenter", "carpenter", "CARPENTRY"])
+def test_trade_casing_never_turns_a_match_into_a_mismatch(trade):
+    """A trade in a different case must corroborate, never contradict — a
+    false mismatch actively subtracts confidence."""
+    result = match_worker(
+        ReportedWorker(name="Ilan Usman", trade=trade),
+        _candidates(WorkerCandidate("w1", "Ilan Usman", trade="carpenter")),
+    )
+    assert result.outcome is MatchOutcome.AUTO_MATCHED
 
 
 def test_a_genuinely_new_full_name_is_still_no_match():

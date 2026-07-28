@@ -138,6 +138,53 @@ def test_a_multi_word_name_is_matched_as_a_whole():
     assert [c["name"] for c in created] == ["Ravi Kumar"]
 
 
+def test_a_name_read_in_capitals_is_selected_by_any_casing():
+    """OCR routinely returns attendance sheets in block capitals, so the name
+    on the list and the name the supervisor types rarely agree on case."""
+    shouty = {"name": "AJITH KUMAR", "trade": "mason"}
+    for reply in ("AJITH KUMAR", "ajith kumar", "Ajith Kumar", "  ajith   KUMAR "):
+        created, create_fn = _recorder()
+        _answer([shouty, NIYAS], reply, _create_worker_fn=create_fn)
+        assert [c["name"] for c in created] == ["AJITH KUMAR"], reply
+
+
+def test_a_first_name_selects_the_one_worker_it_identifies():
+    """Typing "Ajith" for a listed "Ajith Kumar" is the natural reply --
+    rejecting it made the question feel broken."""
+    ajith_kumar = {"name": "Ajith Kumar", "trade": "mason"}
+    created, create_fn = _recorder()
+    _answer([ajith_kumar, NIYAS], "Ajith", _create_worker_fn=create_fn)
+
+    assert [c["name"] for c in created] == ["Ajith Kumar"]
+
+
+def test_a_first_name_shared_by_two_listed_workers_re_asks():
+    """The guard on the rule above: promoting the wrong person is worse than
+    asking twice."""
+    created, create_fn = _recorder()
+    result = _answer(
+        [{"name": "Ajith Kumar"}, {"name": "Ajith Nair"}],
+        "Ajith",
+        _create_worker_fn=create_fn,
+    )
+
+    assert created == []
+    assert result["awaiting_slot"] == PROMOTION_SLOT
+
+
+def test_a_reply_mixing_a_full_name_and_a_first_name_keeps_both():
+    """"Ajith and Niyas" matches Niyas in full and Ajith only in part. An
+    earlier version stopped at the first pass and silently dropped Ajith."""
+    created, create_fn = _recorder()
+    _answer(
+        [{"name": "Ajith Kumar"}, NIYAS],
+        "Ajith and Niyas",
+        _create_worker_fn=create_fn,
+    )
+
+    assert [c["name"] for c in created] == ["Ajith Kumar", "Niyas"]
+
+
 def test_the_daily_wage_from_attendance_is_carried_into_the_register():
     created, create_fn = _recorder()
     _answer([AJITH], "Ajith", _create_worker_fn=create_fn)

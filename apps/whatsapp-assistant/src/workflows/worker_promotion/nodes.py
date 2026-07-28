@@ -138,7 +138,7 @@ def _select_by_name(text: str, workers: list[dict[str, Any]]) -> list[int] | Non
         return None
     reply_tokens = set(normalized_reply.split())
 
-    chosen: list[int] = []
+    chosen: set[int] = set()
     for i, worker in enumerate(workers):
         worker_name = normalize_name(str(worker["name"]))
         if not worker_name:
@@ -146,9 +146,28 @@ def _select_by_name(text: str, workers: list[dict[str, Any]]) -> list[int] | Non
         # The whole name as a phrase ("ravi kumar"), or every token of it
         # present somewhere in the reply.
         if worker_name in normalized_reply or set(worker_name.split()) <= reply_tokens:
-            chosen.append(i)
+            chosen.add(i)
 
-    return chosen or None
+    # Then part of a name: typing "Ajith" for a listed "Ajith Kumar" is the
+    # natural reply, and rejecting it made the question feel broken. Only
+    # counted when that part picks out exactly one worker on the list -- with
+    # both an "Ajith Kumar" and an "Ajith Nair" offered, "Ajith" is genuinely
+    # ambiguous and re-asking beats promoting the wrong person.
+    #
+    # This runs even when the pass above already matched somebody, because a
+    # reply can mix the two: "Ajith and Niyas" against a list holding "Ajith
+    # Kumar" and "Niyas" matches Niyas in full and Ajith only in part, and
+    # stopping early would silently drop Ajith.
+    for token in reply_tokens:
+        hits = [
+            i
+            for i, worker in enumerate(workers)
+            if token in normalize_name(str(worker["name"])).split()
+        ]
+        if len(hits) == 1:
+            chosen.add(hits[0])
+
+    return sorted(chosen) or None
 
 
 def _as_candidates(register: list[Any]) -> list[WorkerCandidate]:
