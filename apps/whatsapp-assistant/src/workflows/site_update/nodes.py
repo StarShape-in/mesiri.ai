@@ -33,6 +33,7 @@ both.
 
 from __future__ import annotations
 
+import re
 from datetime import date
 
 from mesiri_contracts.assistant.draft_action import DraftActionType
@@ -51,6 +52,16 @@ _TARGET_SLOT_NAME = "activity_target"
 #: correct a wrong guess about there being an ambiguity at all.
 NEW_ACTIVITY_SENTINEL = "new_activity"
 _NEW_WORK_LABEL = "This is new work"
+
+#: `match_slot_answer` (workflows/slots.py) only matches whole-string
+#: substring containment, so a reply that wraps the intended choice in
+#: justification -- "New cause it's 3rd floor" -- fails to match either
+#: candidate label and falls through to a re-ask, even though the user
+#: unambiguously picked the escape hatch. Since no other candidate label on
+#: this picker ever contains the standalone word "new" (they're work-type/
+#: narrative summaries), a bare "new" anywhere in the reply is treated as
+#: this one, checked only after the generic matcher comes up empty.
+_NEW_WORK_PATTERN = re.compile(r"\bnew\b", re.IGNORECASE)
 
 #: Plumbing carried through collected_fields between passes -- never a real
 #: business field, must never reach draft.fields or the confirmation prompt.
@@ -139,6 +150,8 @@ def resolve_target(state: WorkflowGraphState) -> dict:
     if answer_text is not None:
         options = _to_slot_candidates(candidates)
         matched = match_slot_answer(answer_text, options)
+        if matched is None and _NEW_WORK_PATTERN.search(answer_text):
+            matched = NEW_ACTIVITY_SENTINEL
         if matched is None:
             return {
                 "collected_fields": fields,

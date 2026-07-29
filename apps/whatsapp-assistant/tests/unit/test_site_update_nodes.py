@@ -166,6 +166,23 @@ def test_answering_this_is_new_work_proceeds_to_creation():
     assert update["awaiting_slot"] is None
 
 
+def test_answering_new_work_wrapped_in_justification_still_resolves():
+    """Regression: "New cause it's 3rd floor" wasn't a substring of "This is
+    new work" (or vice versa), so match_slot_answer returned None and the
+    user got re-asked the identical question. A bare "new" anywhere in the
+    reply now resolves to the escape hatch even when wrapped in extra words."""
+    state = _base_state(
+        {
+            "narrative": "180 sqm done",
+            "_open_activity_candidates": [_candidate(PLASTERING_ID, "plastering", "2nd floor")],
+            "_slot_answer_text": "New cause it's 3rd floor",
+        }
+    )
+    update = resolve_target(state)
+    assert "activity_id" not in update["collected_fields"]
+    assert update["awaiting_slot"] is None
+
+
 def test_unrecognized_answer_reasks_with_same_candidates():
     state = _base_state(
         {
