@@ -228,6 +228,10 @@ class WorkerStatisticsInput:
     last_seen: datetime.date | None
     trades: list[str | None] | None = None
     contractors: list[str | None] | None = None
+    #: Only populated by the single-worker lookup -- see the repository's
+    #: `include_dates`. Empty on the list endpoint, which is not a claim that
+    #: the worker has no dates.
+    dates_worked: list[datetime.date] | None = None
 
 
 def clean_history(values: list[str | None] | None) -> list[str]:
@@ -281,6 +285,10 @@ def build_worker_statistics(rows: list[WorkerStatisticsInput]) -> list[dict]:
                 "last_seen": row.last_seen,
                 "trades": clean_history(row.trades),
                 "contractors": clean_history(row.contractors),
+                # Chronological, and NULLs dropped the same way the history
+                # lists are -- array_agg brings them back for rows that
+                # aggregated nothing.
+                "dates_worked": sorted(d for d in (row.dates_worked or []) if d is not None),
             }
         )
     # Most days worked first -- the register's most-used people are the ones a

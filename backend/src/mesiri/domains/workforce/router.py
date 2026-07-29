@@ -280,6 +280,10 @@ class WorkerStatisticsResponse(BaseModel):
     #: current one on their register row.
     trades: list[str] = []
     contractors: list[str] = []
+    #: Every date this worker was present, for a calendar view. Returned only
+    #: by the single-worker endpoint -- an empty list on the list endpoint
+    #: means "not asked for", not "never worked".
+    dates_worked: list[datetime.date] = []
 
 
 class WorkerStatisticsListResponse(BaseModel):
@@ -442,6 +446,9 @@ async def get_worker_statistics(
         date_from=date_from,
         date_to=date_to,
         worker_id=worker_id,
+        # One worker, so the individual dates are affordable here and power
+        # the calendar. The list endpoint deliberately omits them.
+        include_dates=True,
     )
     items = build_worker_statistics([_statistics_input(row) for row in rows])
     if not items:
@@ -463,6 +470,7 @@ def _statistics_input(row: dict[str, Any]) -> WorkerStatisticsInput:
         last_seen=row["last_seen"],
         trades=list(row["trades"] or []),
         contractors=list(row["contractors"] or []),
+        dates_worked=list(row.get("dates_worked") or []),
     )
 
 

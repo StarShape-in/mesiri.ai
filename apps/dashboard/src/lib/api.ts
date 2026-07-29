@@ -1138,6 +1138,53 @@ export interface WorkforceWorkerItem {
   status: 'active' | 'inactive'
 }
 
+/** One worker's attendance history, derived on read from
+ *  labour_attendance_lines. Nothing here is stored or editable — these are
+ *  facts about what happened, not fields on a person. */
+export interface WorkerStatistics {
+  key: string
+  /** Null for a temporary worker never promoted into the register. */
+  worker_id: string | null
+  name: string
+  is_registered: boolean
+  /** Distinct dates present. Never an assumed 10 or 30. */
+  days_worked: number
+  /** Reports they appear in — higher than days_worked when someone is
+   *  recorded on two sites the same day. */
+  attendance_count: number
+  man_days: number
+  priced_man_days: number
+  unpriced_man_days: number
+  total_earnings: number
+  avg_daily_wage: number
+  first_seen: string | null
+  last_seen: string | null
+  /** Every trade/contractor they have actually worked under, not just the
+   *  current one on their register row. */
+  trades: string[]
+  contractors: string[]
+  /** Populated only by the single-worker endpoint. Empty from the list
+   *  endpoint means "not requested", not "never worked". */
+  dates_worked: string[]
+}
+
+export async function fetchWorkerStatisticsApi(params?: {
+  project_id?: string
+  site_id?: string
+  date_from?: string
+  date_to?: string
+}): Promise<{ items: WorkerStatistics[]; total: number }> {
+  const res = await api.get('/labour/workers/statistics', { params })
+  return res.data
+}
+
+export async function fetchOneWorkerStatisticsApi(
+  workerId: string
+): Promise<WorkerStatistics> {
+  const res = await api.get(`/labour/workers/${workerId}/statistics`)
+  return res.data
+}
+
 export interface CreateWorkerPayload {
   name: string
   trade?: string

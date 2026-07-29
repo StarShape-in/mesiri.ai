@@ -45,9 +45,16 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { fetchWorkersApi, updateWorkerApi, type WorkforceWorkerItem } from '@/lib/api'
+import {
+  fetchWorkersApi,
+  fetchWorkerStatisticsApi,
+  updateWorkerApi,
+  type WorkforceWorkerItem,
+  type WorkerStatistics,
+} from '@/lib/api'
 import { AddWorkerDialog } from '@/components/workforce/add-worker-dialog'
 import { EditWorkerSheet } from '@/components/workforce/edit-worker-sheet'
+import { WorkerStatisticsSheet } from '@/components/workforce/worker-statistics-sheet'
 import { toLocalISODate } from '@/lib/utils'
 
 type SortField = 'name' | 'trade' | 'type' | 'wage' | 'status'
@@ -76,6 +83,13 @@ export default function WorkersPage() {
   const [addOpen, setAddOpen] = React.useState(false)
   const [selectedWorker, setSelectedWorker] = React.useState<WorkforceWorkerItem | null>(null)
   const [editOpen, setEditOpen] = React.useState(false)
+  const [statsWorker, setStatsWorker] = React.useState<WorkforceWorkerItem | null>(null)
+  const [statsOpen, setStatsOpen] = React.useState(false)
+
+  //: Attendance history for the whole register, fetched once and joined by
+  //: worker id. One request for the page rather than one per row, and the
+  //: list endpoint deliberately omits per-day dates to stay small.
+  const [statsByWorkerId, setStatsByWorkerId] = React.useState<Record<string, WorkerStatistics>>({})
 
   const loadWorkers = React.useCallback(async () => {
     setLoading(true)
@@ -91,6 +105,27 @@ export default function WorkersPage() {
       setLoading(false)
     }
   }, [statusFilter, search])
+
+  // Separate from the roster load: a failure here must leave the history
+  // columns blank rather than take the register down with it. The roster is
+  // register data; this is attendance data; they fail independently.
+  const loadStatistics = React.useCallback(async () => {
+    try {
+      const data = await fetchWorkerStatisticsApi()
+      const byId: Record<string, WorkerStatistics> = {}
+      for (const s of data.items || []) {
+        if (s.worker_id) byId[s.worker_id] = s
+      }
+      setStatsByWorkerId(byId)
+    } catch (err) {
+      console.warn('Failed to load worker attendance history:', err)
+      setStatsByWorkerId({})
+    }
+  }, [])
+
+  React.useEffect(() => {
+    loadStatistics()
+  }, [loadStatistics])
 
   React.useEffect(() => {
     loadWorkers()
@@ -174,16 +209,29 @@ export default function WorkersPage() {
 
   // Export CSV
   const exportCsv = () => {
-    const headers = ['ID', 'Name', 'Trade', 'Worker Type', 'Daily Wage', 'Contractor', 'Status']
-    const rows = filteredWorkers.map((w) => [
-      w.id,
-      `"${w.name}"`,
-      `"${w.trade || ''}"`,
-      w.worker_type,
-      w.default_daily_wage || 0,
-      `"${w.contractor || ''}"`,
-      w.status,
-    ])
+    // Register fields first, then the attendance-derived history -- the two
+    // are different kinds of fact and the export should not blur them.
+    const headers = [
+      'ID', 'Name', 'Trade', 'Worker Type', 'Daily Wage', 'Contractor', 'Status',
+      'Days Worked', 'Attendance Records', 'First Seen', 'Last Seen', 'Total Earnings',
+    ]
+    const rows = filteredWorkers.map((w) => {
+      const s = statsByWorkerId[w.id]
+      return [
+        w.id,
+        `"${w.name}"`,
+        `"${w.trade || ''}"`,
+        w.worker_type,
+        w.default_daily_wage || 0,
+        `"${w.contractor || ''}"`,
+        w.status,
+        s ? s.days_worked : 0,
+        s ? s.attendance_count : 0,
+        s?.first_seen || '',
+        s?.last_seen || '',
+        s ? s.total_earnings : 0,
+      ]
+    })
     const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n')
     const encodedUri = encodeURI(csvContent)
     const link = document.createElement('a')
@@ -373,6 +421,12 @@ export default function WorkersPage() {
 
               <TableHead className="text-xs font-semibold h-10">Contractor / Agency</TableHead>
 
+              {/* Derived from attendance, not stored on the worker. Headed
+                  so nobody mistakes them for editable register fields. */}
+              <TableHead className="text-xs font-semibold h-10 text-center">Days Worked</TableHead>
+
+              <TableHead className="text-xs font-semibold h-10">Last Seen</TableHead>
+
               <TableHead
                 className="text-xs font-semibold h-10 text-center cursor-pointer select-none"
                 onClick={() => toggleSort('status')}
@@ -386,13 +440,13 @@ export default function WorkersPage() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={8} className="h-32 text-center text-xs text-muted-foreground">
+                <TableCell colSpan={10} className="h-32 text-center text-xs text-muted-foreground">
                   Loading worker roster...
                 </TableCell>
               </TableRow>
             ) : paginatedWorkers.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="h-32 text-center text-xs text-muted-foreground">
+                <TableCell colSpan={10} className="h-32 text-center text-xs text-muted-foreground">
                   No workers found matching the current search & status filters.
                 </TableCell>
               </TableRow>
@@ -451,6 +505,32 @@ export default function WorkersPage() {
 
                     <TableCell className="text-xs py-3 text-muted-foreground">
                       {item.contractor || 'Direct Payroll'}
+                    </TableCell>
+
+                    <TableCell className="text-xs py-3 text-center">
+                      {statsByWorkerId[item.id] ? (
+                        <button
+                          onClick={() => {
+                            setStatsWorker(item)
+                            setStatsOpen(true)
+                          }}
+                          className="font-mono font-bold text-amber-600 dark:text-amber-400 hover:underline"
+                          title="View attendance history"
+                        >
+                          {statsByWorkerId[item.id].days_worked}
+                        </button>
+                      ) : (
+                        <span
+                          className="text-muted-foreground/60"
+                          title="Never recorded in an attendance report"
+                        >
+                          —
+                        </span>
+                      )}
+                    </TableCell>
+
+                    <TableCell className="text-xs py-3 font-mono text-muted-foreground">
+                      {statsByWorkerId[item.id]?.last_seen || '—'}
                     </TableCell>
 
                     <TableCell className="text-xs py-3 text-center">
@@ -598,7 +678,19 @@ export default function WorkersPage() {
         worker={selectedWorker}
         open={editOpen}
         onOpenChange={setEditOpen}
-        onSuccess={loadWorkers}
+        onSuccess={() => {
+          loadWorkers()
+          // Editing a worker cannot change their history, but promoting one
+          // changes whether they are counted as registered -- cheap to refresh
+          // and wrong to leave stale.
+          loadStatistics()
+        }}
+      />
+      <WorkerStatisticsSheet
+        workerId={statsWorker?.id ?? null}
+        workerName={statsWorker?.name}
+        open={statsOpen}
+        onOpenChange={setStatsOpen}
       />
     </div>
   )

@@ -449,6 +449,7 @@ class PostgresWorkforceReadRepository:
         date_from: datetime.date | None = None,
         date_to: datetime.date | None = None,
         worker_id: uuid.UUID | None = None,
+        include_dates: bool = False,
     ) -> list[dict[str, Any]]:
         """Per-person attendance history, derived on read and never stored.
 
@@ -467,6 +468,11 @@ class PostgresWorkforceReadRepository:
         `days_worked` is distinct dates; `attendance_count` is the number of
         reports they appear in. The two differ when someone is recorded on two
         sites on one day, and the difference is real information, not an error.
+
+        `include_dates` adds the individual dates, for a calendar view. Off by
+        default and used only by the single-worker lookup: a register of 200
+        people with a year each would put ~70,000 date strings on the wire for
+        a list nobody asked to see day by day.
         """
         conditions = [
             _labour_attendance_reports.c.organization_id == organization_id,
@@ -532,6 +538,15 @@ class PostgresWorkforceReadRepository:
                     ),
                     sa.func.array_agg(sa.distinct(_labour_attendance_lines.c.contractor)).label(
                         "contractors"
+                    ),
+                    *(
+                        [
+                            sa.func.array_agg(
+                                sa.distinct(_labour_attendance_reports.c.occurred_date)
+                            ).label("dates_worked")
+                        ]
+                        if include_dates
+                        else []
                     ),
                 )
                 .select_from(
