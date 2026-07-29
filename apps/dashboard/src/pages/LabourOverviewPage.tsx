@@ -43,8 +43,10 @@ import {
 } from '@/components/ui/table'
 import {
   fetchAttendanceReportsApi,
+  fetchLabourStatementApi,
   fetchWorkersApi,
   type LabourAttendanceSummaryItem,
+  type LabourStatement,
   type WorkforceWorkerItem,
 } from '@/lib/api'
 import { AddWorkerDialog } from '@/components/workforce/add-worker-dialog'
@@ -65,6 +67,12 @@ export default function LabourOverviewPage() {
 
   const [reports, setReports] = React.useState<LabourAttendanceSummaryItem[]>([])
   const [workers, setWorkers] = React.useState<WorkforceWorkerItem[]>([])
+  // Backend-aggregated statements. These carry the whole organization's
+  // attendance, not the page of reports fetched for the table below, so the
+  // KPIs and charts are not silently capped at 100 reports the way they were.
+  const [tradeStatement, setTradeStatement] = React.useState<LabourStatement | null>(null)
+  const [contractorStatement, setContractorStatement] = React.useState<LabourStatement | null>(null)
+  const [dailyStatement, setDailyStatement] = React.useState<LabourStatement | null>(null)
   const [loading, setLoading] = React.useState(true)
 
   // Dialog & Detail Sheet states
@@ -74,17 +82,36 @@ export default function LabourOverviewPage() {
 
   const loadData = React.useCallback(async () => {
     setLoading(true)
+    const projectId = scope.mode === 'project' || scope.mode === 'site' ? scope.projectId : undefined
+    const siteId = scope.mode === 'site' ? scope.siteId : undefined
     try {
-      const [reportsData, workersData] = await Promise.all([
-        fetchAttendanceReportsApi({
-          project_id: scope.mode === 'project' || scope.mode === 'site' ? scope.projectId : undefined,
-          site_id: scope.mode === 'site' ? scope.siteId : undefined,
-          limit: 100,
-        }),
+      const [reportsData, workersData, trade, contractor, daily] = await Promise.all([
+        fetchAttendanceReportsApi({ project_id: projectId, site_id: siteId, limit: 100 }),
         fetchWorkersApi({ limit: 200 }),
+        // A failed statement must leave its widget empty rather than fall back
+        // to the register, which would quietly restore the very substitution
+        // this page was cleaned up to remove.
+        fetchLabourStatementApi({
+          report_type: 'trade_breakdown',
+          project_id: projectId,
+          site_id: siteId,
+        }).catch(() => null),
+        fetchLabourStatementApi({
+          report_type: 'subcontractor_ledger',
+          project_id: projectId,
+          site_id: siteId,
+        }).catch(() => null),
+        fetchLabourStatementApi({
+          report_type: 'daily_attendance',
+          project_id: projectId,
+          site_id: siteId,
+        }).catch(() => null),
       ])
       if (reportsData?.items) setReports(reportsData.items)
       if (workersData?.items) setWorkers(workersData.items)
+      setTradeStatement(trade)
+      setContractorStatement(contractor)
+      setDailyStatement(daily)
     } catch (err) {
       console.warn('Failed to load Labour Overview data:', err)
     } finally {
@@ -103,57 +130,56 @@ export default function LabourOverviewPage() {
     return `Site Scope: ${scope.projectName} / ${scope.siteName}`
   }, [scope])
 
-  // Key Metrics
+  // --- Key metrics ---------------------------------------------------------
+  // Registered workers is a fact about the register and is labelled as such.
+  // Everything else on this page comes from recorded attendance.
   const activeWorkersCount = workers.filter((w) => w.status === 'active').length
-  const totalHeadcount = reports.reduce((acc, r) => acc + (r.total_headcount || 0), 0)
-  const totalSpend = reports.reduce((acc, r) => acc + (r.total_cost || 0), 0)
+  const totalHeadcount = dailyStatement?.total_man_days ?? 0
+  const totalSpend = dailyStatement?.total_cost ?? 0
+  const unpricedManDays = dailyStatement?.unpriced_man_days ?? 0
+
   const whatsappCount = reports.filter((r) => r.recorded_via?.includes('whatsapp')).length
-  const whatsappRate = reports.length > 0 ? Math.round((whatsappCount / reports.length) * 100) : 100
+  // Null, not 100, when nothing has been recorded. A system with no reports at
+  // all was previously claiming a perfect automation rate.
+  const whatsappRate =
+    reports.length > 0 ? Math.round((whatsappCount / reports.length) * 100) : null
 
-  // Trade Distribution Chart Data
-  const tradeData = React.useMemo(() => {
-    const counts: Record<string, number> = {}
-    for (const w of workers) {
-      const trade = w.trade || 'General Labor'
-      counts[trade] = (counts[trade] || 0) + 1
-    }
-    return Object.entries(counts).map(([name, value]) => ({ name, value }))
-  }, [workers])
+  // Trade distribution, from attendance rather than the roster: this answers
+  // "which trades actually worked", not "which trades are on file".
+  const tradeData = React.useMemo(
+    () =>
+      (tradeStatement?.rows ?? [])
+        .filter((row) => row.man_days > 0)
+        .map((row) => ({ name: row.title, value: row.man_days })),
+    [tradeStatement]
+  )
 
-  // Attendance Trend Chart Data
-  const trendData = React.useMemo(() => {
-    const map: Record<string, { date: string; headcount: number; cost: number }> = {}
-    for (const r of reports) {
-      const date = r.occurred_date || 'Today'
-      if (!map[date]) {
-        map[date] = { date, headcount: 0, cost: 0 }
-      }
-      map[date].headcount += r.total_headcount || 0
-      map[date].cost += r.total_cost || 0
-    }
-    // Sort explicitly rather than relying on insertion order. `reports`
-    // arrives occurred_date DESC, so Object.values() was newest-first and
-    // `.slice(-7)` took the seven *oldest* days in the fetched window --
-    // with 100 reports loaded, a chart captioned "Last 7 Days" could be
-    // plotting three months ago, and today never appeared on it at all.
-    // Take the seven most recent, then flip to chronological so the x-axis
-    // reads left-to-right oldest-to-newest.
-    return Object.values(map)
-      .sort((a, b) => b.date.localeCompare(a.date))
-      .slice(0, 7)
-      .reverse()
-  }, [reports])
+  // Daily headcount, straight from the backend statement, so the seven days
+  // shown are the seven most recent that exist -- not the seven most recent
+  // within whatever page of reports the table happened to fetch.
+  const trendData = React.useMemo(
+    () =>
+      (dailyStatement?.rows ?? [])
+        .map((row) => ({
+          date: row.first_date ?? row.title,
+          headcount: row.man_days,
+          cost: row.total_cost,
+        }))
+        .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+        .slice(0, 7)
+        .reverse(),
+    [dailyStatement]
+  )
 
-  // Subcontractor Summary
-  const contractorSummary = React.useMemo(() => {
-    const map: Record<string, number> = {}
-    for (const w of workers) {
-      if (w.contractor) {
-        map[w.contractor] = (map[w.contractor] || 0) + 1
-      }
-    }
-    return Object.entries(map).map(([name, count]) => ({ name, count }))
-  }, [workers])
+  const contractorSummary = React.useMemo(
+    () =>
+      (contractorStatement?.rows ?? []).map((row) => ({
+        name: row.title,
+        manDays: row.man_days,
+        cost: row.total_cost,
+      })),
+    [contractorStatement]
+  )
 
   return (
     <div className="flex flex-col gap-4 w-full max-w-full relative pb-12">
@@ -196,36 +222,39 @@ export default function LabourOverviewPage() {
       {/* Top 4 KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <KpiCard
-          title="Active Workers Roster"
+          title="Active Workers (Register)"
           value={<span className="text-emerald-600 dark:text-emerald-400">{activeWorkersCount} Personnel</span>}
-          trend="up"
-          trendValue="Master Roster"
-          description="Registered site labor"
+          description="Registered, not necessarily present"
           icon={<UserCheck className="text-emerald-500" />}
-          chartData={[15, 25, 35, 50, 65, 85]}
         />
         <KpiCard
-          title="Cumulative Labor Spend"
+          title="Recorded Labour Cost"
           value={<span className="text-amber-600 dark:text-amber-400">₹{totalSpend.toLocaleString('en-IN')}</span>}
-          trend="up"
-          trendValue="Wage Cost"
-          description="Logged daily wage cost"
+          description={
+            unpricedManDays > 0
+              ? `Excludes ${unpricedManDays} man-days with no wage recorded`
+              : 'From recorded attendance'
+          }
           icon={<DollarSign className="text-amber-500" />}
         />
         <KpiCard
-          title="Cumulative Man-Days"
+          title="Recorded Man-Days"
           value={<span className="text-blue-600 dark:text-blue-400">{totalHeadcount} Man-Days</span>}
-          trend="up"
-          trendValue="Daily Attendance"
-          description="Logged headcount"
+          description="From recorded attendance"
           icon={<Users className="text-blue-500" />}
         />
         <KpiCard
-          title="WhatsApp Automation Rate"
-          value={<span className="text-purple-600 dark:text-purple-400">{whatsappRate}% Submissions</span>}
-          trend="neutral"
-          trendValue="AI Assistant"
-          description={`${whatsappCount} Bot vs ${reports.length - whatsappCount} Web`}
+          title="Reports via WhatsApp"
+          value={
+            <span className="text-purple-600 dark:text-purple-400">
+              {whatsappRate === null ? '—' : `${whatsappRate}%`}
+            </span>
+          }
+          description={
+            reports.length === 0
+              ? 'No attendance recorded yet'
+              : `${whatsappCount} WhatsApp vs ${reports.length - whatsappCount} web`
+          }
           icon={<Bot className="text-purple-500" />}
         />
       </div>
@@ -283,7 +312,10 @@ export default function LabourOverviewPage() {
           <div className="flex items-center justify-between border-b pb-2 mb-3">
             <div className="flex items-center gap-2">
               <PieChartIcon className="size-4 text-purple-500" />
-              <h2 className="text-sm font-bold text-foreground">Trade Skill Distribution</h2>
+              <h2 className="text-sm font-bold text-foreground">Man-Days by Trade</h2>
+              <Badge variant="outline" className="text-[9px] font-mono">
+                From attendance
+              </Badge>
             </div>
             <Link to="/labour/workers" className="text-xs text-amber-600 dark:text-amber-400 font-semibold hover:underline flex items-center">
               Roster <ChevronRight className="size-3 ml-0.5" />
@@ -294,7 +326,9 @@ export default function LabourOverviewPage() {
             {loading ? (
               <div className="text-xs text-muted-foreground">Loading trade distribution...</div>
             ) : tradeData.length === 0 ? (
-              <div className="text-xs text-muted-foreground">No registered trades found.</div>
+              <div className="text-xs text-muted-foreground">
+                No attendance recorded yet.
+              </div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
@@ -318,7 +352,7 @@ export default function LabourOverviewPage() {
                       borderRadius: '8px',
                       fontSize: '11px',
                     }}
-                    formatter={(val: any) => [`${val} Workers`, 'Count']}
+                    formatter={(val: any) => [`${val} man-days`, 'Recorded']}
                   />
                 </PieChart>
               </ResponsiveContainer>
@@ -438,17 +472,20 @@ export default function LabourOverviewPage() {
             <div className="flex items-center justify-between border-b pb-2 mb-3">
               <div className="flex items-center gap-2">
                 <Building className="size-4 text-purple-500" />
-                <h2 className="text-xs font-bold text-foreground">Subcontractor Agencies</h2>
+                <h2 className="text-xs font-bold text-foreground">Contractors by Man-Days</h2>
+                <Badge variant="outline" className="text-[9px] font-mono">
+                  From attendance
+                </Badge>
               </div>
               <Badge variant="outline" className="text-[10px] font-mono">
-                {contractorSummary.length} Agencies
+                {contractorSummary.length} Contractors
               </Badge>
             </div>
 
             <div className="space-y-2">
               {contractorSummary.length === 0 ? (
                 <div className="py-8 text-center text-xs text-muted-foreground">
-                  No subcontractor agencies assigned to active workers.
+                  No attendance recorded against a contractor yet.
                 </div>
               ) : (
                 contractorSummary.map((agency) => (
@@ -460,11 +497,16 @@ export default function LabourOverviewPage() {
                       <div className="size-7 rounded-md bg-purple-500/10 border border-purple-500/20 text-purple-600 dark:text-purple-400 flex items-center justify-center font-bold text-xs">
                         <Building className="size-3.5" />
                       </div>
-                      <span className="font-semibold text-xs text-foreground">{agency.name}</span>
+                      <div className="flex flex-col">
+                        <span className="font-semibold text-xs text-foreground">{agency.name}</span>
+                        <span className="text-[10px] text-muted-foreground font-mono">
+                          ₹{agency.cost.toLocaleString('en-IN')}
+                        </span>
+                      </div>
                     </div>
 
                     <Badge variant="outline" className="text-[10px] font-mono bg-background">
-                      {agency.count} Workers
+                      {agency.manDays} man-days
                     </Badge>
                   </div>
                 ))
