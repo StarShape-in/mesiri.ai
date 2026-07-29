@@ -28,3 +28,11 @@ from typing import Annotated
 from pydantic import PlainSerializer
 
 Money = Annotated[Decimal, PlainSerializer(float, return_type=float, when_used="json")]
+
+#: Same treatment for a non-money quantity that can be fractional. Man-days
+#: became fractional once a muster roll's half-day mark was captured (a half
+#: day is 0.5 man-days, while `headcount` stays an integer count of people),
+#: and a bare Decimal would have arrived at the dashboard as a string for the
+#: same reason Money documents above. Named separately so a reader can tell
+#: rupees from man-days at the field.
+Quantity = Annotated[Decimal, PlainSerializer(float, return_type=float, when_used="json")]

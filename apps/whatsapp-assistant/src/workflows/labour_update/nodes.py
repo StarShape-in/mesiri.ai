@@ -612,20 +612,55 @@ def _line_summary(line: dict[str, Any]) -> str:
             parts.append(trade)
         if wage is not None:
             parts.append(f"₹{_fmt_amount(wage)}")
+        marker = _status_marker(line)
+        if marker:
+            parts.append(marker)
         return " — ".join(parts)
 
     label = f"{headcount} × {trade}" if trade else f"{headcount} workers"
     if wage is not None:
         label = f"{label} — ₹{_fmt_amount(wage)} each"
+    marker = _status_marker(line)
+    if marker:
+        label = f"{label} — {marker}"
     return label
 
 
+def _status_marker(line: dict[str, Any]) -> str | None:
+    """How a non-present line is flagged in the confirmation.
+
+    Only ever shown for absent or half-day: annotating every present line
+    would bury the two that matter in noise. Attendance cannot be edited after
+    confirmation (P5), so this is the one moment a misread P/A/H column can be
+    caught."""
+    status = str(line.get("attendance_status") or "present")
+    if status == "absent":
+        return "absent"
+    if status == "half_day":
+        return "half day"
+    return None
+
+
 def _totals(lines: list[dict[str, Any]]) -> tuple[int, Decimal]:
-    """Headcount and cost. Operational cost only — not payroll: no overtime,
-    no deductions, no statutory contributions (all explicitly out of scope)."""
+    """Headcount and cost. Operational cost only — not payroll: no overtime
+    pay, no deductions, no statutory contributions (all explicitly out of
+    scope).
+
+    Absent lines are skipped and half days are halved, so the number the
+    supervisor is asked to confirm is people who worked, not rows on the
+    sheet. A photographed muster roll lists the whole crew including the
+    absentees; counting those would put a day's wage against someone the
+    sheet says was not there. Kept in step with _line_totals in
+    repositories/workforce.py -- the dashboard and this confirmation have
+    disagreed about the same report once already.
+    """
     headcount = 0
     cost = Decimal("0")
     for line in lines:
+        status = str(line.get("attendance_status") or "present")
+        if status == "absent":
+            continue
+        fraction = Decimal("0.5") if status == "half_day" else Decimal("1")
         try:
             count = int(line.get("headcount", 1))
         except (TypeError, ValueError):
@@ -635,7 +670,7 @@ def _totals(lines: list[dict[str, Any]]) -> tuple[int, Decimal]:
         if wage is None:
             continue
         try:
-            cost += Decimal(str(wage)) * count
+            cost += Decimal(str(wage)) * count * fraction
         except (InvalidOperation, ValueError):
             continue
     return headcount, cost

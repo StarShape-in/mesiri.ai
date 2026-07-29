@@ -105,15 +105,52 @@ class LabourAttendanceLine(BaseModel):
     #: reconstructed after the fact (principle P7).
     activity: str | None = None
 
+    #: P / A / H on a muster roll. "present" for everything a typed message
+    #: reports, because a supervisor writing names only ever names people who
+    #: worked. A photographed sheet lists the whole crew, absentees included --
+    #: without this a sheet would invent a day's work and a day's wage for
+    #: everyone who did not turn up.
+    #:
+    #: An absent line is still *recorded*: the sheet said so, and "nobody
+    #: reported Ravi" and "Ravi was marked absent" are different facts. It
+    #: simply contributes no man-days and no cost.
+    attendance_status: str = "present"
+
+    #: Overtime hours from the sheet's own OT column, kept separate from the
+    #: day's wage rather than folded into it -- a wage that has silently
+    #: absorbed overtime cannot be taken apart again. Nothing computes OT pay
+    #: yet: the rate rules differ per contractor and are not being guessed at.
+    overtime_hours: Decimal | None = None
+
+    #: The free-text column at the edge of every sheet ("left early", "site
+    #: closed 2pm"). Often the only explanation of why a day looks unusual.
+    remarks: str | None = None
+
+    #: Man-days this line actually contributes. Half a day is expressed here
+    #: rather than by making `headcount` fractional -- headcount is a count of
+    #: people, and 0.5 people is not a thing.
+    @property
+    def day_fraction(self) -> Decimal:
+        if self.attendance_status == "absent":
+            return Decimal("0")
+        if self.attendance_status == "half_day":
+            return Decimal("0.5")
+        return Decimal("1")
+
     model_config = {"extra": "forbid"}
 
     @property
     def line_cost(self) -> Decimal:
-        """Operational cost of this line. Not payroll — no overtime, no
-        deductions, no statutory contributions (all explicitly out of scope)."""
+        """Operational cost of this line. Not payroll — no overtime pay, no
+        deductions, no statutory contributions (all explicitly out of scope).
+
+        Scaled by the day fraction, so a half day costs half a day and an
+        absent line costs nothing. Charging a full wage against a sheet that
+        says "H" would be inventing money, which is the one thing this module
+        must never do."""
         if self.daily_wage is None:
             return Decimal("0")
-        return self.daily_wage * self.headcount
+        return self.daily_wage * self.headcount * self.day_fraction
 
 
 class RecordLabourAttendanceCommand(BaseModel):
@@ -171,7 +208,10 @@ class RecordLabourAttendanceCommand(BaseModel):
 
     @property
     def total_headcount(self) -> int:
-        return sum(line.headcount for line in self.lines)
+        """People actually present. An absent line is recorded but is not a
+        person who worked, so it must not appear in a headcount a supervisor
+        is asked to confirm -- a sheet of 20 with 3 absent is 17 workers."""
+        return sum(line.headcount for line in self.lines if line.attendance_status != "absent")
 
     @property
     def total_cost(self) -> Decimal:

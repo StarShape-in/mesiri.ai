@@ -34,7 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from mesiri.authorization.context import AuthorizationContext
 from mesiri.domains.projects.router import get_auth_context
 from mesiri.domains.shared.media import assert_downloadable_url
-from mesiri.domains.shared.money import Money
+from mesiri.domains.shared.money import Money, Quantity
 from mesiri.domains.workforce.matching import MatchOutcome, ReportedWorker, match_worker
 from mesiri.domains.workforce.reports import (
     DEFAULT_REPORT_TYPE,
@@ -150,6 +150,12 @@ class LabourAttendanceLineResponse(BaseModel):
     daily_wage: Money | None = None
     contractor: str | None = None
     activity: str | None = None
+    #: P / A / H from the sheet. Defaults to present for every line recorded
+    #: before migration 0456 and for every typed report, which is what those
+    #: lines meant.
+    attendance_status: str = "present"
+    overtime_hours: Quantity | None = None
+    remarks: str | None = None
 
 
 class LabourAttendanceAttachmentResponse(BaseModel):
@@ -214,10 +220,10 @@ class LabourReportRow(BaseModel):
     category: str | None = None
     contractor: str | None = None
     #: Person-days recorded for this group, summed from the attendance lines.
-    man_days: int
+    man_days: Quantity
     #: Of those, the ones whose line carried a wage. Below man_days whenever
     #: attendance was recorded without pay rates.
-    priced_man_days: int
+    priced_man_days: Quantity
     #: Distinct dates this group appears on -- never an assumed 10 or 30.
     days_worked: int
     first_date: datetime.date | None = None
@@ -242,9 +248,9 @@ class LabourReportStatementResponse(BaseModel):
     #: actually applied, rather than the one it believes it asked for.
     date_from: datetime.date | None = None
     date_to: datetime.date | None = None
-    total_man_days: int
-    priced_man_days: int
-    unpriced_man_days: int
+    total_man_days: Quantity
+    priced_man_days: Quantity
+    unpriced_man_days: Quantity
     total_cost: Money
     avg_daily_wage: Money
     rows: list[LabourReportRow]
@@ -269,9 +275,9 @@ class WorkerStatisticsResponse(BaseModel):
     #: Reports they appear in. Higher than days_worked when someone is
     #: recorded on two sites on the same day.
     attendance_count: int
-    man_days: int
-    priced_man_days: int
-    unpriced_man_days: int
+    man_days: Quantity
+    priced_man_days: Quantity
+    unpriced_man_days: Quantity
     total_earnings: Money
     avg_daily_wage: Money
     first_seen: datetime.date | None = None
@@ -463,8 +469,8 @@ def _statistics_input(row: dict[str, Any]) -> WorkerStatisticsInput:
         name=row["name"],
         days_worked=int(row["days_worked"] or 0),
         attendance_count=int(row["attendance_count"] or 0),
-        man_days=int(row["man_days"] or 0),
-        priced_man_days=int(row["priced_man_days"] or 0),
+        man_days=Decimal(str(row["man_days"] or 0)),
+        priced_man_days=Decimal(str(row["priced_man_days"] or 0)),
         total_earnings=Decimal(str(row["total_earnings"] or "0")),
         first_seen=row["first_seen"],
         last_seen=row["last_seen"],
@@ -777,8 +783,8 @@ async def generate_labour_report_statement(
         AggregateRow(
             key=str(row["key"]),
             label=row["label"],
-            man_days=int(row["man_days"] or 0),
-            priced_man_days=int(row["priced_man_days"] or 0),
+            man_days=Decimal(str(row["man_days"] or 0)),
+            priced_man_days=Decimal(str(row["priced_man_days"] or 0)),
             total_cost=Decimal(str(row["total_cost"] or "0")),
             days_worked=int(row["days_worked"] or 0),
             first_date=row["first_date"],

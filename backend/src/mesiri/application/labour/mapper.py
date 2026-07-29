@@ -58,7 +58,28 @@ def _build_line(raw: dict[str, Any]) -> LabourAttendanceLine:
         daily_wage=_optional_decimal(raw.get("daily_wage")),
         contractor=raw.get("contractor"),
         activity=raw.get("activity"),
+        # Defaulted rather than validated here: canonicalization already maps
+        # the sheet's P/A/H mark and leaves it unset when unreadable, and
+        # "present" is the right answer for every typed report.
+        attendance_status=_attendance_status(raw.get("attendance_status")),
+        overtime_hours=_optional_decimal(raw.get("overtime_hours")),
+        remarks=raw.get("remarks"),
     )
+
+
+_VALID_ATTENDANCE_STATUSES = frozenset({"present", "absent", "half_day"})
+
+
+def _attendance_status(raw: Any) -> str:
+    """Anything unrecognised falls back to present.
+
+    The command would reject an unknown value outright, which would throw away
+    an entire attendance report over one unreadable cell. Recording the day as
+    worked is both the overwhelmingly common case and the recoverable error --
+    a supervisor can see it in the confirmation and correct it; a rejected
+    report just disappears."""
+    text = str(raw or "").strip().lower()
+    return text if text in _VALID_ATTENDANCE_STATUSES else "present"
 
 
 def _attachment_object_keys(fields: dict[str, Any]) -> list[str]:

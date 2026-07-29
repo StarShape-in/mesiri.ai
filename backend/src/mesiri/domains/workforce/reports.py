@@ -90,8 +90,8 @@ class AggregateRow:
 
     key: str
     label: str | None
-    man_days: int
-    priced_man_days: int
+    man_days: Decimal
+    priced_man_days: Decimal
     total_cost: Decimal
     days_worked: int
     first_date: datetime.date | None = None
@@ -109,7 +109,7 @@ def resolve_group_by(report_type: str) -> str:
     return definition["group_by"]
 
 
-def average_daily_wage(total_cost: Decimal, priced_man_days: int) -> Decimal:
+def average_daily_wage(total_cost: Decimal, priced_man_days: Decimal | int) -> Decimal:
     """Cost divided by the man-days that actually carried a wage.
 
     Dividing by *all* man-days would understate the rate on any partly-priced
@@ -117,9 +117,10 @@ def average_daily_wage(total_cost: Decimal, priced_man_days: int) -> Decimal:
     a number no one was paid. Unpriced man-days are absent from the average,
     not zero in it.
     """
-    if priced_man_days <= 0:
+    priced = Decimal(str(priced_man_days))
+    if priced <= 0:
         return Decimal("0.00")
-    return (total_cost / Decimal(priced_man_days)).quantize(_CENTS)
+    return (total_cost / priced).quantize(_CENTS)
 
 
 def contribution_percentage(row_cost: Decimal, total_cost: Decimal) -> Decimal:
@@ -221,8 +222,8 @@ class WorkerStatisticsInput:
     name: str | None
     days_worked: int
     attendance_count: int
-    man_days: int
-    priced_man_days: int
+    man_days: Decimal
+    priced_man_days: Decimal
     total_earnings: Decimal
     first_seen: datetime.date | None
     last_seen: datetime.date | None

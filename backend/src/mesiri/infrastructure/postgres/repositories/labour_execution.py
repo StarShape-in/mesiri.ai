@@ -231,9 +231,11 @@ class PostgresLabourExecutionRepository(LabourExecutionRepository):
                 text(
                     "INSERT INTO labour_attendance_lines "
                     "(id, report_id, worker_id, worker_name, worker_name_original, trade, "
-                    "headcount, daily_wage, contractor, activity, created_at) "
+                    "headcount, daily_wage, contractor, activity, attendance_status, "
+                    "overtime_hours, remarks, created_at) "
                     "VALUES (:id, :report_id, :worker_id, :worker_name, :worker_name_original, "
-                    ":trade, :headcount, :daily_wage, :contractor, :activity, now())"
+                    ":trade, :headcount, :daily_wage, :contractor, :activity, "
+                    ":attendance_status, :overtime_hours, :remarks, now())"
                 ),
                 {
                     "id": uuid.uuid4(),
@@ -246,6 +248,9 @@ class PostgresLabourExecutionRepository(LabourExecutionRepository):
                     "daily_wage": line.daily_wage,
                     "contractor": line.contractor,
                     "activity": line.activity,
+                    "attendance_status": line.attendance_status,
+                    "overtime_hours": line.overtime_hours,
+                    "remarks": line.remarks,
                 },
             )
 

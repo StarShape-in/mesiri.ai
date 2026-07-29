@@ -180,10 +180,54 @@ def _labour_line(raw: dict) -> dict | None:
         line["worker_name_original"] = name
     if wage is not None:
         line["daily_wage"] = wage
-    for key in ("contractor", "activity"):
+    for key in ("contractor", "activity", "remarks"):
         if raw.get(key):
             line[key] = str(raw[key]).strip()
+
+    status = _labour_attendance_status(raw)
+    if status is not None:
+        line["attendance_status"] = status
+
+    overtime = raw.get("overtime_hours") or raw.get("ot_hours") or raw.get("overtime")
+    if overtime is not None:
+        line["overtime_hours"] = overtime
     return line
+
+
+#: What a muster roll actually writes in the P/A/H column, mapped to the three
+#: values the contract allows. Anything unrecognised is left unset rather than
+#: guessed: the default is "present", and a wrong guess here either deletes a
+#: day's pay or invents one.
+_ATTENDANCE_STATUS_ALIASES: dict[str, str] = {
+    "p": "present", "present": "present", "yes": "present", "y": "present",
+    "full": "present", "full_day": "present", "fullday": "present", "1": "present",
+    "a": "absent", "absent": "absent", "no": "absent", "n": "absent",
+    "leave": "absent", "off": "absent", "0": "absent",
+    "h": "half_day", "hd": "half_day", "half": "half_day",
+    "half_day": "half_day", "halfday": "half_day", "half day": "half_day",
+    "0.5": "half_day",
+}
+
+
+def _labour_attendance_status(raw: dict) -> str | None:
+    """Normalize the sheet's attendance mark, or None to leave the default.
+
+    Returns None for anything unrecognised on purpose. `attendance_status`
+    defaults to "present", which is correct for every typed report (a
+    supervisor listing names is listing who worked) and for a sheet whose
+    column the model could not read. Marking someone absent on a guess would
+    silently remove a day's wage from a real person.
+    """
+    for key in ("attendance_status", "status", "attendance", "present"):
+        value = raw.get(key)
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            return "present" if value else "absent"
+        text = str(value).strip().lower()
+        if text in _ATTENDANCE_STATUS_ALIASES:
+            return _ATTENDANCE_STATUS_ALIASES[text]
+    return None
 
 
 # How the report reached Mesiri, mapped from the real input modality of the

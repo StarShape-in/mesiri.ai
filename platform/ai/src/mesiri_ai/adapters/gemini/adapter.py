@@ -118,7 +118,22 @@ _EXTRACTION_PROMPT = (
     '"trade" (mason, helper, painter, carpenter, electrician, plumber, welder, '
     'bar bender, fitter, supervisor, operator, driver, ...), '
     '"headcount" (how many people this line covers -- always 1 for a named '
-    'person), "daily_wage" (plain number, only when stated). '
+    'person), "daily_wage" (plain number, only when stated), '
+    '"attendance_status" (one of "present", "absent", "half_day"), '
+    '"overtime_hours" (plain number, only from an explicit OT column or '
+    '"2 hours overtime"), "contractor" (this line\'s own contractor/agency, '
+    'when the sheet gives different ones per worker), "remarks" (the sheet\'s '
+    'free-text note for this person, verbatim), "activity" (the work item '
+    'this line worked on, when stated). '
+    "attendance_status: a printed muster roll marks each person P / A / H (or "
+    "Present / Absent / Half day, or a tick vs a cross). Map P/tick/present -> "
+    '"present", A/cross/absent/leave -> "absent", H/HD/half -> "half_day". '
+    "A typed message that simply names who worked is ALL present -- omit the "
+    "key entirely rather than writing it on every line. Only emit it when the "
+    "source actually distinguishes, which in practice means a photographed "
+    "sheet. NEVER mark someone absent because their row is blank or "
+    "unreadable: omit the line instead, since a blank cell and a cross mean "
+    "different things and guessing wrong deletes a day's pay. "
     "Sites report named workers and plain headcounts interchangeably, often in "
     'the same message. "Ravi mason, Arun painter, 12 helpers, 4 carpenters" -> '
     'workers: [{"name":"Ravi","trade":"mason","headcount":1}, '

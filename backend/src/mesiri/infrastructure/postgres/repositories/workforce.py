@@ -68,8 +68,28 @@ _labour_attendance_lines = sa.Table(
     sa.Column("daily_wage", sa.Numeric),
     sa.Column("contractor", sa.String),
     sa.Column("activity", sa.String),
+    sa.Column("attendance_status", sa.String),
+    sa.Column("overtime_hours", sa.Numeric),
+    sa.Column("remarks", sa.Text),
     sa.Column("created_at", sa.DateTime(timezone=True)),
 )
+
+
+def _day_fraction():
+    """Man-days one person on this line contributes: 1 present, 0.5 half day,
+    0 absent.
+
+    A photographed muster roll lists the whole crew, absentees included. Before
+    this existed every listed row was counted as a day worked, so reading one
+    sheet would invent a day's work -- and a day's wage -- for everyone who did
+    not turn up. NULL (every row written before migration 0456) reads as
+    present, which is what those rows meant.
+    """
+    return sa.case(
+        (_labour_attendance_lines.c.attendance_status == "absent", sa.literal(0)),
+        (_labour_attendance_lines.c.attendance_status == "half_day", sa.literal(Decimal("0.5"))),
+        else_=sa.literal(1),
+    )
 
 _labour_attendance_attachments = sa.Table(
     "labour_attendance_attachments",
@@ -102,11 +122,17 @@ def _line_totals(lines: list[dict[str, Any]]) -> tuple[int, Decimal]:
     headcount = 0
     cost = Decimal("0")
     for line in lines:
+        status = str(line.get("attendance_status") or "present")
+        # A person marked absent was reported, but did not work. Counting them
+        # would put a day's wage against someone the sheet says was not there.
+        if status == "absent":
+            continue
         count = int(line.get("headcount") or 1)
+        fraction = Decimal("0.5") if status == "half_day" else Decimal("1")
         headcount += count
         wage = line.get("daily_wage")
         if wage is not None:
-            cost += Decimal(str(wage)) * count
+            cost += Decimal(str(wage)) * count * fraction
     return headcount, cost.quantize(Decimal("0.01"))
 
 
@@ -403,14 +429,19 @@ class PostgresWorkforceReadRepository:
                 sa.select(
                     key_expr.label("key"),
                     label_expr.label("label"),
-                    sa.func.sum(headcount).label("man_days"),
+                    sa.func.sum(headcount * _day_fraction()).label("man_days"),
                     sa.func.coalesce(
-                        sa.func.sum(sa.case((priced, headcount), else_=0)), 0
+                        sa.func.sum(sa.case((priced, headcount * _day_fraction()), else_=0)), 0
                     ).label("priced_man_days"),
                     sa.func.coalesce(
                         sa.func.sum(
                             sa.case(
-                                (priced, headcount * _labour_attendance_lines.c.daily_wage),
+                                (
+                                    priced,
+                                    headcount
+                                    * _day_fraction()
+                                    * _labour_attendance_lines.c.daily_wage,
+                                ),
                                 else_=0,
                             )
                         ),
@@ -514,14 +545,19 @@ class PostgresWorkforceReadRepository:
                     sa.func.count(sa.distinct(_labour_attendance_lines.c.report_id)).label(
                         "attendance_count"
                     ),
-                    sa.func.sum(headcount).label("man_days"),
+                    sa.func.sum(headcount * _day_fraction()).label("man_days"),
                     sa.func.coalesce(
-                        sa.func.sum(sa.case((priced, headcount), else_=0)), 0
+                        sa.func.sum(sa.case((priced, headcount * _day_fraction()), else_=0)), 0
                     ).label("priced_man_days"),
                     sa.func.coalesce(
                         sa.func.sum(
                             sa.case(
-                                (priced, headcount * _labour_attendance_lines.c.daily_wage),
+                                (
+                                    priced,
+                                    headcount
+                                    * _day_fraction()
+                                    * _labour_attendance_lines.c.daily_wage,
+                                ),
                                 else_=0,
                             )
                         ),
