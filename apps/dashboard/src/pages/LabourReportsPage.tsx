@@ -164,33 +164,24 @@ export default function LabourReportsPage() {
         <KpiCard
           title="Total Statement Cost"
           value={<span className="text-amber-600 dark:text-amber-400">₹{statement ? statement.total_cost.toLocaleString('en-IN') : '0'}</span>}
-          trend="up"
-          trendValue="Statement Total"
           description="Total labor spend in statement"
           icon={<DollarSign className="text-amber-500" />}
-          chartData={[25, 40, 55, 70, 85, 100]}
         />
         <KpiCard
           title="Statement Man-Days"
           value={<span className="text-emerald-600 dark:text-emerald-400">{statement ? statement.total_headcount : 0} Headcount</span>}
-          trend="up"
-          trendValue="Cumulative"
           description="Total man-days in statement"
           icon={<Users className="text-emerald-500" />}
         />
         <KpiCard
           title="Active Trades / Agencies"
           value={<span className="text-blue-600 dark:text-blue-400">{statement ? statement.rows.length : 0} Items</span>}
-          trend="neutral"
-          trendValue="Breakdown"
           description="Categorized statement lines"
           icon={<Building className="text-blue-500" />}
         />
         <KpiCard
           title="Average Daily Wage"
           value={<span className="text-purple-600 dark:text-purple-400">₹{statement ? statement.avg_wage.toLocaleString('en-IN') : '0'}/day</span>}
-          trend="neutral"
-          trendValue="Rate Baseline"
           description="Average daily wage rate"
           icon={<HardHat className="text-purple-500" />}
         />

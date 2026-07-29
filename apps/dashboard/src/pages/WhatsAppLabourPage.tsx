@@ -153,16 +153,12 @@ export default function WhatsAppLabourPage() {
       <VpsHealthBar onOpenSandbox={() => setSandboxOpen(true)} />
 
       {/* KPI Cards Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        <KpiCard
-          title="Active Automations"
-          value={<span className="text-amber-600 dark:text-amber-400">4 Active Triggers</span>}
-          trend="up"
-          trendValue="VPS Active"
-          description="Attendance, Anomaly, Reminders"
-          icon={<Zap className="text-amber-500" />}
-          chartData={[15, 20, 35, 40, 60, 75]}
-        />
+      {/* "Active Automations: 4 Active Triggers" was hardcoded, and the four
+          it counted are the settings below -- which save but are not yet acted
+          on by anything. A card asserting they are running was the least
+          truthful thing on the page, so it is removed rather than relabelled.
+          It comes back when the settings have consumers. */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <KpiCard
           title="Registered Personnel"
           value={
@@ -170,8 +166,6 @@ export default function WhatsAppLabourPage() {
               {summary ? `${summary.total_users} Members` : 'Live DB'}
             </span>
           }
-          trend="neutral"
-          trendValue="Site Supervisors"
           description="Site personnel & foremen"
           icon={<Smartphone className="text-blue-500" />}
         />
@@ -182,8 +176,6 @@ export default function WhatsAppLabourPage() {
               {summary ? `${summary.total_projects} Projects` : 'Live DB'}
             </span>
           }
-          trend="up"
-          trendValue="Live Tracking"
           description="Managed site scopes"
           icon={<Users className="text-purple-500" />}
         />
@@ -194,8 +186,6 @@ export default function WhatsAppLabourPage() {
               {summary ? `${summary.total_sites} Sites` : 'Live DB'}
             </span>
           }
-          trend="neutral"
-          trendValue="Site Locations"
           description="Active construction sites"
           icon={<BellRing className="text-emerald-500" />}
         />

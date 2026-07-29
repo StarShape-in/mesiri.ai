@@ -1244,6 +1244,66 @@ export interface LabourReportRow {
   status: string | null
 }
 
+// --- Backend-generated labour statements -----------------------------------
+// GET /labour/reports/statement. Every figure is aggregated in SQL from
+// labour_attendance_lines, so nothing here is capped by a page size or
+// computed in the browser. `fetchLabourReportApi` below is the older
+// browser-side version still used by the Reports screen; it is replaced in
+// its own phase and must not be extended.
+
+export interface LabourStatementRow {
+  id: string
+  code: string | null
+  title: string
+  category: string | null
+  contractor: string | null
+  /** Person-days recorded. Not an assumed 10 or 30. */
+  man_days: number
+  /** Of those, the ones whose attendance line carried a wage. */
+  priced_man_days: number
+  days_worked: number
+  first_date: string | null
+  last_date: string | null
+  report_count: number
+  avg_daily_wage: number
+  total_cost: number
+  percentage: number
+}
+
+export interface LabourStatement {
+  report_type: string
+  title: string
+  subtitle: string
+  generated_at: string
+  date_from: string | null
+  date_to: string | null
+  total_man_days: number
+  priced_man_days: number
+  /** Above zero when some attendance was recorded without pay rates, so the
+   *  screen can say the cost covers only part of the man-days. */
+  unpriced_man_days: number
+  total_cost: number
+  avg_daily_wage: number
+  rows: LabourStatementRow[]
+}
+
+export type LabourStatementType =
+  | 'trade_breakdown'
+  | 'subcontractor_ledger'
+  | 'daily_attendance'
+  | 'worker_wages'
+
+export async function fetchLabourStatementApi(params?: {
+  report_type?: LabourStatementType
+  project_id?: string
+  site_id?: string
+  date_from?: string
+  date_to?: string
+}): Promise<LabourStatement> {
+  const res = await api.get('/labour/reports/statement', { params })
+  return res.data
+}
+
 export interface LabourReportStatementItem {
   report_type: string
   title: string

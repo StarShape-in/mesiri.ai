@@ -39,7 +39,9 @@ import {
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   fetchAttendanceReportsApi,
+  fetchLabourStatementApi,
   type LabourAttendanceSummaryItem,
+  type LabourStatement,
 } from '@/lib/api'
 import { AttendanceDetailSheet } from '@/components/workforce/attendance-detail-sheet'
 
@@ -49,6 +51,7 @@ type SortOrder = 'asc' | 'desc'
 export default function AttendancePage() {
   const { scope } = useScope()
   const [reports, setReports] = React.useState<LabourAttendanceSummaryItem[]>([])
+  const [statement, setStatement] = React.useState<LabourStatement | null>(null)
   const [loading, setLoading] = React.useState(true)
 
   // Filters state
@@ -86,12 +89,28 @@ export default function AttendancePage() {
         date_from = toLocalISODate(firstDay)
       }
 
-      const res = await fetchAttendanceReportsApi({
-        project_id: scope.mode === 'project' || scope.mode === 'site' ? scope.projectId : undefined,
-        site_id: scope.mode === 'site' ? scope.siteId : undefined,
-        date_from,
-      })
+      const projectId =
+        scope.mode === 'project' || scope.mode === 'site' ? scope.projectId : undefined
+      const siteId = scope.mode === 'site' ? scope.siteId : undefined
+
+      const [res, stmt] = await Promise.all([
+        fetchAttendanceReportsApi({
+          project_id: projectId,
+          site_id: siteId,
+          date_from,
+        }),
+        // Same scope and range as the list, so the totals above the table
+        // describe exactly what the filters select -- not the page of rows
+        // that happened to load.
+        fetchLabourStatementApi({
+          report_type: 'daily_attendance',
+          project_id: projectId,
+          site_id: siteId,
+          date_from,
+        }).catch(() => null),
+      ])
       setReports(res.items || [])
+      setStatement(stmt)
     } catch (err) {
       console.warn('Failed to load attendance reports:', err)
     } finally {
@@ -188,9 +207,14 @@ export default function AttendancePage() {
     document.body.removeChild(link)
   }
 
-  // Derived KPI Metrics
-  const totalHeadcount = reports.reduce((acc, r) => acc + (r.total_headcount || 0), 0)
-  const totalSpend = reports.reduce((acc, r) => acc + (r.total_cost || 0), 0)
+  // Man-days and cost come from the backend statement for the same scope and
+  // date range, not from summing the table below. The table is a page of at
+  // most 50 reports, so totalling it reported a truncated figure as if it
+  // were the whole range.
+  const totalHeadcount = statement?.total_man_days ?? 0
+  const totalSpend = statement?.total_cost ?? 0
+  const unpricedManDays = statement?.unpriced_man_days ?? 0
+  // These two are honestly about the loaded page, and say so on the card.
   const whatsappCount = reports.filter((r) => r.recorded_via?.includes('whatsapp')).length
 
   const scopeLabel = React.useMemo(() => {
@@ -232,40 +256,35 @@ export default function AttendancePage() {
       {/* KPI Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <KpiCard
-          title="Total Headcount Logged"
+          title="Man-Days in Range"
           value={<span className="text-emerald-600 dark:text-emerald-400">{totalHeadcount} Man-Days</span>}
-          trend="up"
-          trendValue="Site Labor"
-          description="Cumulative headcount"
+          description="Every report in the selected range"
           icon={<Users className="text-emerald-500" />}
-          chartData={[20, 35, 50, 65, 80, 95]}
         />
         <KpiCard
-          title="Total Labor Spend"
+          title="Labour Cost in Range"
           value={
             <span className="text-amber-600 dark:text-amber-400">
               ₹{totalSpend.toLocaleString('en-IN')}
             </span>
           }
-          trend="up"
-          trendValue="Wage Cost"
-          description="Total labor expense"
+          description={
+            unpricedManDays > 0
+              ? `Excludes ${unpricedManDays} man-days with no wage recorded`
+              : 'From recorded attendance'
+          }
           icon={<DollarSign className="text-amber-500" />}
         />
         <KpiCard
           title="WhatsApp Submissions"
-          value={<span className="text-blue-600 dark:text-blue-400">{whatsappCount} Bot Submissions</span>}
-          trend="neutral"
-          trendValue="AI Assistant"
-          description="Bot-parsed site logs"
+          value={<span className="text-blue-600 dark:text-blue-400">{whatsappCount} Reports</span>}
+          description="Of the reports loaded below"
           icon={<Bot className="text-blue-500" />}
         />
         <KpiCard
           title="Attendance Reports"
           value={<span className="text-purple-600 dark:text-purple-400">{reports.length} Reports</span>}
-          trend="neutral"
-          trendValue="Site Entries"
-          description="Logged daily reports"
+          description="Loaded in the table below"
           icon={<HardHat className="text-purple-500" />}
         />
       </div>

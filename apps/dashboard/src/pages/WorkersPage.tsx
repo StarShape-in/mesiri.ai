@@ -257,34 +257,25 @@ export default function WorkersPage() {
         <KpiCard
           title="Active Workers"
           value={<span className="text-emerald-600 dark:text-emerald-400">{activeCount} Registered</span>}
-          trend="up"
-          trendValue="Master Roster"
-          description="Active site labor"
+          description="Active on the register"
           icon={<UserCheck className="text-emerald-500" />}
-          chartData={[10, 20, 30, 45, 60, 80]}
         />
         <KpiCard
           title="Permanent Staff"
           value={<span className="text-blue-600 dark:text-blue-400">{permanentCount} Workers</span>}
-          trend="neutral"
-          trendValue="Company Direct"
           description="Direct payroll labor"
           icon={<Users className="text-blue-500" />}
         />
         <KpiCard
           title="Contractor Labor"
           value={<span className="text-purple-600 dark:text-purple-400">{contractorCount} Subcontracted</span>}
-          trend="neutral"
-          trendValue="Agency Labor"
           description="Subcontractor workers"
           icon={<Building className="text-purple-500" />}
         />
         <KpiCard
-          title="Average Daily Wage"
+          title="Register Baseline Wage"
           value={<span className="text-amber-600 dark:text-amber-400">₹{avgWage.toLocaleString('en-IN')}/day</span>}
-          trend="up"
-          trendValue="Daily Rate"
-          description="Average baseline wage"
+          description="Average of rates on file, not amounts paid"
           icon={<DollarSign className="text-amber-500" />}
         />
       </div>
