@@ -54,7 +54,15 @@ REPORT_DEFINITIONS: dict[str, dict[str, str]] = {
     "worker_wages": {
         "group_by": "worker",
         "title": "Labour Cost by Worker",
-        "subtitle": "Recorded attendance grouped by worker, permanent and temporary",
+        # Says the quiet part out loud: this statement's totals are lower than
+        # every other report's for the same range, because a headcount group
+        # ("7 masons") has nobody to credit a day to and is excluded here while
+        # still counting everywhere else. Without this note the difference
+        # reads as a bug.
+        "subtitle": (
+            "Recorded attendance grouped by worker, permanent and temporary. "
+            "Excludes unnamed headcount groups."
+        ),
         "code_prefix": "WRK",
     },
 }

@@ -267,3 +267,27 @@ def test_the_applied_date_range_is_echoed_back():
     )
     assert statement["date_from"] == datetime.date(2026, 7, 1)
     assert statement["date_to"] == datetime.date(2026, 7, 31)
+
+
+def test_the_worker_statement_warns_that_headcount_groups_are_missing():
+    """The per-worker report's totals are legitimately lower than every other
+    report's for the same range: an unnamed "7 masons" group has nobody to
+    credit a day to, so it is excluded here while still counting elsewhere.
+    Production shows 71 man-days here against 263 on the trade report, and
+    without the subtitle saying so that gap reads as a bug.
+    """
+    statement = build_statement(
+        report_type="worker_wages", rows=[], generated_at=GENERATED
+    )
+    assert "headcount group" in statement["subtitle"].lower()
+
+
+def test_the_other_statements_make_no_such_claim():
+    """Only the per-worker grouping drops rows, so only it should carry the
+    caveat -- an exclusion notice on a report that excludes nothing would be
+    its own small untruth."""
+    for report_type in ("trade_breakdown", "subcontractor_ledger", "daily_attendance"):
+        statement = build_statement(
+            report_type=report_type, rows=[], generated_at=GENERATED
+        )
+        assert "headcount group" not in statement["subtitle"].lower(), report_type
