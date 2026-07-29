@@ -164,3 +164,76 @@ def test_builds_labour_attendance_pdf_with_no_recorded_attendance():
     pdf_bytes, filename = _build_query_pdf(WorkflowKey.LABOUR_QUERY, {})
     assert pdf_bytes.startswith(b"%PDF")
     assert filename == "Labour_Attendance.pdf"
+
+
+def test_builds_project_detail_pdf():
+    fields = {
+        "project_detail_results": {
+            "level": "project",
+            "project": {
+                "id": "p1",
+                "name": "Skyline Towers",
+                "code": "SKY-001",
+                "location": "Kochi",
+                "status": "on_track",
+            },
+            "site": None,
+            "sites": [{"id": "s1", "name": "Block A"}, {"id": "s2", "name": "Block B"}],
+            "member_count": 5,
+            "activity_count": 3,
+            "open_issue_count": 2,
+            "open_issues": [
+                {"issue_type": "MATERIAL_SHORTAGE", "severity": "HIGH", "narrative": "Out of cement"}
+            ],
+            "headcount": 18,
+            "labour_cost": "27000",
+            "finance": {"total": "184500.00", "count": 42, "date_range_label": "This Month"},
+            "stock_levels": [{"material_name": "Cement", "current_stock": 180, "unit": "bags"}],
+        }
+    }
+    result = _build_query_pdf(WorkflowKey.PROJECT_DETAIL_QUERY, fields)
+    assert result is not None
+    pdf_bytes, filename = result
+    assert pdf_bytes.startswith(b"%PDF")
+    assert filename == "Skyline_Towers_Details.pdf"
+
+
+def test_builds_project_detail_pdf_with_empty_fields():
+    """No project_detail_results yet -- must still produce a valid PDF, not
+    crash on an entirely missing dict (mirrors every other query's own
+    empty-fields case)."""
+    pdf_bytes, filename = _build_query_pdf(WorkflowKey.PROJECT_DETAIL_QUERY, {})
+    assert pdf_bytes.startswith(b"%PDF")
+    assert filename == "Project_Details.pdf"
+
+
+def test_builds_project_detail_pdf_for_a_site_level_query_without_finance():
+    """A SITE_ENGINEER's site-level query: no 'sites'/'member_count' (site-
+    scoped, not project-scoped) and no 'finance' key (withheld by role) --
+    the PDF must omit the spend tile rather than showing a stale/zero value."""
+    fields = {
+        "project_detail_results": {
+            "level": "site",
+            "project": {
+                "id": "p1",
+                "name": "Skyline Towers",
+                "code": "SKY-001",
+                "location": "Kochi",
+                "status": "on_track",
+            },
+            "site": {"id": "s1", "name": "Block A"},
+            "sites": None,
+            "member_count": None,
+            "activity_count": 1,
+            "open_issue_count": 0,
+            "open_issues": [],
+            "headcount": 4,
+            "labour_cost": "6000",
+            "stock_levels": [],
+        }
+    }
+    result = _build_query_pdf(WorkflowKey.PROJECT_DETAIL_QUERY, fields)
+    assert result is not None
+    pdf_bytes, filename = result
+    assert pdf_bytes.startswith(b"%PDF")
+    assert filename == "Block_A_Details.pdf"

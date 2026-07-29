@@ -602,6 +602,9 @@ def test_informational_and_no_draft_keys_are_pinned() -> None:
         # answers with status text and stops -- the PDF itself (if ready) is
         # delivered as a side-channel document send, never a draft/confirm.
         WorkflowKey.DPR_REQUEST,
+        # "give me all details of this project/site" answers with a
+        # summary and stops -- same reasoning as ACTIVITY_QUERY/LABOUR_QUERY.
+        WorkflowKey.PROJECT_DETAIL_QUERY,
     }
     assert no_draft == informational | {
         WorkflowKey.REVERSE,

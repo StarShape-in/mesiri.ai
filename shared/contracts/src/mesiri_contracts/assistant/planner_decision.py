@@ -73,6 +73,7 @@ class WorkflowKey(str, Enum):
     REVERSE = "finance.reverse"
     PROJECT_CREATE = "project.create"
     SITE_CREATE = "site.create"
+    PROJECT_DETAIL_QUERY = "project.detail_query"
 
 
 class PlannerDecision(BaseModel):

@@ -149,6 +149,15 @@ class ProjectCreateCandidate(Candidate):
     # target_name/new_name), since this always creates a brand new row.
 
 
+class ProjectDetailQueryCandidate(Candidate):
+    semantic_type: SemanticType = SemanticType.PROJECT_DETAIL_QUERY
+    # Conventional keys: output_format ("pdf" to also send the summary as a
+    # document, same convention every other query candidate uses). Which
+    # project/site this asks about is NOT a candidate field here -- see
+    # SemanticType.PROJECT_DETAIL_QUERY's docstring; resolved by context,
+    # same as SITE_CREATE's project scope.
+
+
 class SiteCreateCandidate(Candidate):
     semantic_type: SemanticType = SemanticType.SITE_CREATE
     # Conventional keys: name (required to route -- see canonicalization/
@@ -188,4 +197,5 @@ CANDIDATE_TYPES: dict[SemanticType, type[Candidate]] = {
     SemanticType.ACCOUNT_ADMIN: AccountAdminCandidate,
     SemanticType.PROJECT_CREATE: ProjectCreateCandidate,
     SemanticType.SITE_CREATE: SiteCreateCandidate,
+    SemanticType.PROJECT_DETAIL_QUERY: ProjectDetailQueryCandidate,
 }

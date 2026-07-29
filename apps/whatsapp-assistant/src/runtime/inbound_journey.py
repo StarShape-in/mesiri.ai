@@ -82,6 +82,7 @@ from runtime.money_account_query import MoneyAccountQueryService
 from runtime.noop_loggers import NoopMessageLogger, NoopTraceLogger
 from runtime.org_settings_query import OrganizationSettingsQueryService
 from runtime.petty_cash_query import PettyCashRecipientQueryService
+from runtime.project_detail_query import ProjectDetailQueryService
 from runtime.reply_dispatch import send_reply_spec
 from runtime.reversal_query import ReversalTargetQueryService
 from runtime.site_issue_query import SiteIssueTargetQueryService
@@ -959,6 +960,130 @@ async def _seed_dpr_request(
     event.fields["dpr_code"] = result["code"]
 
 
+async def _seed_project_detail_query(
+    event: CanonicalEventV2,
+    decision: PlannerDecisionV2,
+    activity_search_service: ActivitySearchService | None,
+    labour_query_service: LabourQueryService | None,
+    expense_query_service: ExpenseQueryService | None,
+    inventory_query: MaterialInventoryQueryService | None,
+    project_detail_query: ProjectDetailQueryService | None,
+    actor: ActorIdentity | None,
+    timezone_name: str | None,
+) -> None:
+    """Compose "give me all details of this project/site" before the graph
+    runs -- same shape and reasoning as _seed_activity_search above. Only
+    ever runs for PROJECT_DETAIL_QUERY.
+
+    Record-card fields (name/code/location/status, the site list) come from
+    `actor.projects`/`.sites` -- already resolved once per inbound message
+    (see backend/postgres/actor.py), not a new query. Operational rollups
+    reuse the same runtime query services ACTIVITY_QUERY/LABOUR_QUERY/
+    MATERIAL_INVENTORY_QUERY already seed from. The financial section is
+    visibility-gated by role, not refused outright: a SITE_ENGINEER still
+    gets a full reply, just without the "finance" key (see enums.py's
+    SemanticType.PROJECT_DETAIL_QUERY docstring) -- unlike PROJECT_CREATE/
+    SITE_CREATE, which refuse the whole workflow for a disallowed role,
+    this is a read, so nothing is ever denied here, only withheld.
+    """
+    if actor is None or not actor.organization_id:
+        return
+    if decision.workflow_key is not WorkflowKey.PROJECT_DETAIL_QUERY:
+        return
+
+    project_id = event.project_id
+    site_id = event.site_id
+    if not project_id and not site_id:
+        # Context resolution came up with nothing specific (the sender
+        # belongs to more than one project and didn't name one) -- every
+        # downstream query service below treats a null project/site as
+        # "don't narrow", which would silently answer for the whole
+        # organization. "Give me all details" implies one specific target,
+        # so ask instead (see workflows/project_detail_query/nodes.py).
+        event.fields["project_detail_unresolved"] = True
+        return
+
+    site = next((s for s in actor.sites if s.id == site_id), None) if site_id else None
+    project = next((p for p in actor.projects if p.id == project_id), None) if project_id else None
+    level = "site" if site is not None else "project"
+
+    result: dict[str, Any] = {
+        "level": level,
+        "project": (
+            {
+                "id": project.id,
+                "name": project.name,
+                "code": project.code,
+                "location": project.location,
+                "status": project.status,
+            }
+            if project is not None
+            else None
+        ),
+        "site": {"id": site.id, "name": site.name} if site is not None else None,
+        "sites": None,
+        "member_count": None,
+    }
+    if level == "project" and project_id:
+        result["sites"] = [{"id": s.id, "name": s.name} for s in actor.sites if s.project_id == project_id]
+        if project_detail_query is not None:
+            result["member_count"] = await project_detail_query.count_members(project_id=project_id)
+
+    today = today_for(timezone_name)
+    activity_results: dict[str, Any] = {}
+    labour_results: dict[str, Any] = {}
+    stock_levels: list[dict[str, Any]] = []
+    if activity_search_service is not None:
+        activity_results = await activity_search_service.search(
+            organization_id=actor.organization_id,
+            project_id=project_id,
+            site_id=site_id,
+            start_date=today,
+            end_date=today,
+        )
+    if labour_query_service is not None:
+        labour_results = await labour_query_service.summarize_attendance(
+            organization_id=actor.organization_id,
+            project_id=project_id,
+            site_id=site_id,
+            start_date=today,
+            end_date=today,
+        )
+    if inventory_query is not None:
+        stock_levels = await inventory_query.query(
+            organization_id=actor.organization_id,
+            project_id=project_id,
+            site_id=site_id,
+            material_name=None,
+        )
+
+    result["activity_count"] = activity_results.get("activity_count", 0)
+    result["open_issue_count"] = activity_results.get("open_issue_count", 0)
+    result["open_issues"] = activity_results.get("open_issues") or []
+    result["headcount"] = labour_results.get("headcount", 0)
+    result["labour_cost"] = labour_results.get("total_cost", "0")
+    result["stock_levels"] = stock_levels
+
+    # Financial visibility: withheld entirely for SITE_ENGINEER -- a read,
+    # not a write, so the reply is never refused, only the money line.
+    if expense_query_service is not None and str(actor.role or "").strip().upper() != "SITE_ENGINEER":
+        start_date, end_date, date_range_label = resolve_date_range(None)
+        expenses = await expense_query_service.list_expenses(
+            organization_id=actor.organization_id,
+            project_id=project_id,
+            site_id=site_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        result["finance"] = {
+            "total": str(ExpenseQueryService.total(expenses)),
+            "count": len(expenses),
+            "date_range_label": date_range_label,
+        }
+
+    event.fields["project_detail_results"] = result
+
+
 async def _seed_worker_candidates(
     event: CanonicalEventV2,
     decision: PlannerDecisionV2,
@@ -1518,6 +1643,7 @@ _QUERY_PDF_WORKFLOW_KEYS = (
     WorkflowKey.MATERIAL_INVENTORY_QUERY,
     WorkflowKey.ACTIVITY_QUERY,
     WorkflowKey.LABOUR_QUERY,
+    WorkflowKey.PROJECT_DETAIL_QUERY,
 )
 
 
@@ -1611,6 +1737,32 @@ def _build_query_pdf(workflow_key: WorkflowKey, fields: dict[str, Any]) -> tuple
             empty_message="No activities logged for this period.",
         )
         return pdf_bytes, "Site_Activity_Log.pdf"
+
+    if workflow_key is WorkflowKey.PROJECT_DETAIL_QUERY:
+        from mesiri.domains.reports.project_detail_pdf import render_project_detail_pdf_bytes
+
+        results = fields.get("project_detail_results") or {}
+        project = results.get("project") or {}
+        site = results.get("site")
+        finance = results.get("finance")
+        pdf_bytes = render_project_detail_pdf_bytes(
+            name=(site.get("name") if site else None) or project.get("name") or "Untitled",
+            code=project.get("code"),
+            location=project.get("location"),
+            status=project.get("status"),
+            sites=results.get("sites"),
+            member_count=results.get("member_count"),
+            open_issue_count=results.get("open_issue_count", 0),
+            open_issues=results.get("open_issues") or [],
+            headcount=results.get("headcount", 0),
+            activity_count=results.get("activity_count", 0),
+            labour_cost=results.get("labour_cost", "0"),
+            expense_total=finance.get("total") if finance else None,
+            expense_date_range_label=finance.get("date_range_label") if finance else None,
+            stock_levels=results.get("stock_levels") or [],
+        )
+        filename = (site.get("name") if site else None) or project.get("name") or "Project"
+        return pdf_bytes, f"{filename.replace(' ', '_')}_Details.pdf"
 
     labour_results = fields.get("labour_results") or {}
     rows = labour_results.get("rows") or []
@@ -1707,6 +1859,7 @@ async def process_inbound_message(
     activity_query: ActivityQueryService | None = None,
     activity_search_service: ActivitySearchService | None = None,
     dpr_request_query: DprRequestQueryService | None = None,
+    project_detail_query: ProjectDetailQueryService | None = None,
     semantic_hint: str | None = None,
     direction_hint: str | None = None,
     pending_report_store: PendingReportStore | None = None,
@@ -2229,6 +2382,17 @@ async def process_inbound_message(
                             canonical_event,
                             planner_decision,
                             dpr_request_query,
+                            actor,
+                            timezone_name,
+                        ),
+                        _seed_project_detail_query(
+                            canonical_event,
+                            planner_decision,
+                            activity_search_service,
+                            labour_query_service,
+                            expense_query_service,
+                            inventory_query,
+                            project_detail_query,
                             actor,
                             timezone_name,
                         ),

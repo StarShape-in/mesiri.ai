@@ -79,6 +79,8 @@ class CanonicalEventType(str, Enum):
     # SemanticType.SITE_CREATE -> a new site record under the project
     # resolved by context (see enums.py's docstring on that type).
     SITE_CREATE_REQUESTED = "SiteCreateRequested"
+    # SemanticType.PROJECT_DETAIL_QUERY -> a read-only project/site summary.
+    PROJECT_DETAIL_QUERY_ASKED = "ProjectDetailQueryAsked"
     CLARIFICATION_REQUIRED = "ClarificationRequired"
     UNRECOGNIZED = "Unrecognized"
 

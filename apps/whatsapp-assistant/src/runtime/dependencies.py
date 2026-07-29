@@ -617,6 +617,12 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from runtime.dpr_request_query import DprRequestQueryService
 
     dpr_request_query = DprRequestQueryService(material_db)
+    # Project team-size lookup for the project.detail_query workflow ("give
+    # me all details of this project/site"). Reuses the same pool; never
+    # opens a write transaction. See runtime/project_detail_query.py.
+    from runtime.project_detail_query import ProjectDetailQueryService
+
+    project_detail_query = ProjectDetailQueryService(material_db)
     # Flags a vendor name that doesn't match any existing active vendor, fed
     # into expense_capture's "create this vendor?" slot -- same reasoning and
     # same material_db as catalog_query above. See runtime/vendor_query.py.
@@ -1320,6 +1326,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
                 labour_query_service=labour_query_service,
                 activity_search_service=activity_search_service,
                 dpr_request_query=dpr_request_query,
+                project_detail_query=project_detail_query,
                 vendor_query=vendor_query,
                 expense_query_service=expense_query_service,
                 pending_report_store=pending_report_store,
@@ -1739,6 +1746,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             labour_query_service=labour_query_service,
             activity_search_service=activity_search_service,
             dpr_request_query=dpr_request_query,
+            project_detail_query=project_detail_query,
             vendor_query=vendor_query,
             expense_query_service=expense_query_service,
             pending_report_store=pending_report_store,

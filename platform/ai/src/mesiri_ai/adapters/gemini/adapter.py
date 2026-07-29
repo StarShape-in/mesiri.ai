@@ -72,7 +72,7 @@ _EXTRACTION_PROMPT = (
     '"semantic_type" (expense|equipment_usage|material_update|labour_update|'
     "general_site_update|site_issue|site_issue_update|general_question|whoami_question|inventory_query|"
     "labour_query|activity_query|dpr_request|finance_query|transfer|petty_cash|reversal|"
-    "account_admin|project_create|site_create|unknown), "
+    "account_admin|project_create|site_create|project_detail_query|unknown), "
     '"fields" (object, values in English except proper nouns/names -- see '
     "per-type rules below for how to handle names), "
     '"missing_fields" (array), '
@@ -326,7 +326,17 @@ _EXTRACTION_PROMPT = (
     "the site belongs to is NOT extracted here -- omit it entirely even if "
     "a project name is mentioned elsewhere in the message; that is "
     "resolved separately. name is the new site's name -- always extract "
-    "it. location is an optional hint, stated as-is."
+    "it. location is an optional hint, stated as-is.\n"
+    "- project_detail_query: output_format. Use this type when the user asks "
+    "for a full summary/status/details of a project or site itself (e.g. "
+    "\"give me all details of Skyline Towers\", \"what's the status of "
+    "Block A\", \"tell me everything about this site\") -- distinct from "
+    "activity_query (a day's activity/issue log) and finance_query (just "
+    "balance/expenses): this is the project/site RECORD itself plus its "
+    "current operational snapshot. Which project/site is NOT extracted "
+    "here -- resolved separately, same as site_create. output_format is "
+    "\"pdf\" only when the user explicitly asks for a file/document -- omit "
+    "entirely for a plain question expecting a normal chat reply."
 )
 
 

@@ -147,4 +147,19 @@ class SemanticType(str, Enum):
     # Understanding (see runtime/inbound_journey.py and
     # application/projects/create_site_validation.py).
     SITE_CREATE = "site_create"
+    # A request for a full summary/status of a project or site itself (e.g.
+    # "give me all details of Skyline Towers", "what's the status of Block
+    # A", "tell me everything about this site") -- read-only, never an
+    # update. Distinct from ACTIVITY_QUERY (a day's activity/issue log) and
+    # FINANCE_QUERY (just balance/expenses): this is the project/site
+    # RECORD itself (name, code, client, location, status, sites, team)
+    # plus its current operational snapshot (open issues, labour today,
+    # activities today, stock, spend this month). The financial section is
+    # visibility-gated by role (see runtime/inbound_journey.py's
+    # _seed_project_detail_query) -- a SITE_ENGINEER still gets a full
+    # reply, just without the money line, unlike PROJECT_CREATE/SITE_CREATE
+    # where a disallowed role is refused outright (this is a read, not a
+    # write). Which project/site is never a candidate field -- resolved by
+    # context the same way PROJECT_CREATE/SITE_CREATE's project scope is.
+    PROJECT_DETAIL_QUERY = "project_detail_query"
     UNKNOWN = "unknown"
