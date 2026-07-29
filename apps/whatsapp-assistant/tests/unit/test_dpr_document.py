@@ -96,6 +96,57 @@ def test_render_html_shows_empty_state_for_no_activities_or_issues():
     assert "No issues reported" in html
 
 
+def test_build_document_data_maps_labour_and_materials():
+    payload = _payload(
+        labour={
+            "headcount": 13,
+            "named_count": 1,
+            "trades": [{"trade": "mason", "headcount": 1}, {"trade": "helper", "headcount": 12}],
+            "total_cost": "8000",
+        },
+        materials=[{"material_name": "cement", "unit": "bags", "received": "50", "used": "20"}],
+    )
+    data = build_document_data(code="DPR-1", payload=payload)
+    assert data.headcount == 13
+    assert data.labour_cost == "8000"
+    assert {t.trade: t.headcount for t in data.trades} == {"Mason": 1, "Helper": 12}
+    assert data.materials[0].material_name == "Cement"
+    assert data.materials[0].received == "50"
+    assert data.materials[0].used == "20"
+
+
+def test_build_document_data_defaults_labour_and_materials_when_absent():
+    """A payload built before this feature has neither key at all."""
+    data = build_document_data(code="DPR-1", payload=_payload())
+    assert data.headcount == 0
+    assert data.labour_cost == "0"
+    assert data.trades == []
+    assert data.materials == []
+
+
+def test_render_html_shows_labour_and_materials_sections():
+    payload = _payload(
+        labour={
+            "headcount": 13,
+            "trades": [{"trade": "mason", "headcount": 1}],
+            "total_cost": "8000",
+        },
+        materials=[{"material_name": "cement", "unit": "bags", "received": "50", "used": "20"}],
+    )
+    data = build_document_data(code="DPR-1", payload=payload)
+    html = render_html(data)
+    assert "Mason" in html
+    assert "Cement" in html
+    assert "8000" in html
+
+
+def test_render_html_shows_empty_state_for_no_labour_or_materials():
+    data = build_document_data(code="DPR-1", payload=_payload())
+    html = render_html(data)
+    assert "No attendance recorded" in html
+    assert "No material movements recorded" in html
+
+
 def test_render_html_lists_each_activity_and_issue():
     payload = _payload(
         activities=[

@@ -60,6 +60,7 @@ _DOCUMENT_TEMPLATE_SRC = """
     <div class="meta-item"><div class="label">Activities Logged</div><div class="value">{{ data.activity_count }}</div></div>
     <div class="meta-item"><div class="label">Open Issues</div><div class="value">{{ data.open_issue_count }}</div></div>
     <div class="meta-item"><div class="label">Evidence Photos</div><div class="value">{{ data.evidence_count }}</div></div>
+    <div class="meta-item"><div class="label">Workers Today</div><div class="value">{{ data.headcount }}</div></div>
   </div>
 
   <div class="section-title">Activities</div>
@@ -88,6 +89,31 @@ _DOCUMENT_TEMPLATE_SRC = """
         <td>{{ i.narrative }}</td><td>{{ i.status }}</td></tr>
       {% else %}
       <tr><td colspan="4" class="empty">No issues reported for this date.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="section-title">Labour{% if data.headcount %} (Total cost: {{ data.labour_cost }}){% endif %}</div>
+  <table>
+    <thead><tr><th style="width:80%">Trade</th><th style="width:20%">Headcount</th></tr></thead>
+    <tbody>
+      {% for t in data.trades %}
+      <tr><td>{{ t.trade }}</td><td>{{ t.headcount }}</td></tr>
+      {% else %}
+      <tr><td colspan="2" class="empty">No attendance recorded for this date.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="section-title">Materials</div>
+  <table>
+    <thead><tr><th style="width:40%">Material</th><th style="width:20%">Received</th>
+      <th style="width:20%">Used</th><th style="width:20%">Unit</th></tr></thead>
+    <tbody>
+      {% for m in data.materials %}
+      <tr><td>{{ m.material_name }}</td><td>{{ m.received }}</td><td>{{ m.used }}</td><td>{{ m.unit }}</td></tr>
+      {% else %}
+      <tr><td colspan="4" class="empty">No material movements recorded for this date.</td></tr>
       {% endfor %}
     </tbody>
   </table>

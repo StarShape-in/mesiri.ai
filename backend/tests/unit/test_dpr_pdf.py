@@ -82,6 +82,42 @@ def test_renders_without_error_for_an_empty_payload():
     assert pdf_bytes.startswith(b"%PDF")
 
 
+def test_renders_labour_and_material_sections_when_present():
+    payload = dict(
+        _EMPTY_PAYLOAD,
+        labour={
+            "headcount": 13,
+            "named_count": 1,
+            "trades": [{"trade": "Mason", "headcount": 1}, {"trade": "Helper", "headcount": 12}],
+            "total_cost": "8000",
+        },
+        materials=[{"material_name": "Cement", "unit": "bags", "received": "50", "used": "20"}],
+    )
+    pdf_bytes = render_dpr_pdf_bytes(
+        code="DPR-003",
+        report_date="2026-07-20",
+        project_name="Skyline Towers",
+        site_name="Site A",
+        workflow_status="draft",
+        payload=payload,
+    )
+    assert pdf_bytes.startswith(b"%PDF")
+
+
+def test_renders_without_error_when_labour_and_materials_keys_are_absent():
+    """Pre-existing payloads (created before this feature) never had these
+    keys at all -- must still render, not KeyError."""
+    pdf_bytes = render_dpr_pdf_bytes(
+        code="DPR-004",
+        report_date="2026-07-20",
+        project_name="Skyline Towers",
+        site_name="Site A",
+        workflow_status="draft",
+        payload=_EMPTY_PAYLOAD,
+    )
+    assert pdf_bytes.startswith(b"%PDF")
+
+
 def test_handles_missing_optional_fields_in_activity_and_issue_rows():
     """quantities/contractor/narrative etc. are all optional per
     build_site_report_payload -- a row with only the required keys must not

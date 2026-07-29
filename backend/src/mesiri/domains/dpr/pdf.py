@@ -69,10 +69,13 @@ def render_dpr_pdf_bytes(
     # Meta tiles
     activities = payload.get("activities") or []
     issues = payload.get("issues") or []
+    labour = payload.get("labour") or {}
+    materials = payload.get("materials") or []
     tiles = [
         ("Activities Logged", str(payload.get("activity_count", len(activities)))),
         ("Open Issues", str(payload.get("open_issue_count", 0))),
         ("Evidence Photos", str(payload.get("evidence_count", 0))),
+        ("Workers Today", str(labour.get("headcount", 0))),
     ]
     tile_w = _PAGE_WIDTH_MM / len(tiles)
     pdf.set_font("Helvetica", "B", 12)
@@ -144,6 +147,56 @@ def render_dpr_pdf_bytes(
             str(issue.get("delay_duration_minutes") or "-"),
         ]
         for value, width in zip(row, issue_col_widths, strict=False):
+            pdf.cell(width, 7, value, border=1)
+        pdf.ln()
+
+    pdf.ln(4)
+
+    # Labour table
+    pdf.set_font("Helvetica", "B", 12)
+    labour_subtitle = f" (Total cost: {labour.get('total_cost', '0')})" if labour.get("headcount") else ""
+    pdf.cell(0, 8, f"Labour{labour_subtitle}", new_x="LMARGIN", new_y="NEXT")
+    trade_col_widths = [80, 40]
+    trade_headers = ["Trade", "Headcount"]
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_fill_color(230, 230, 230)
+    for header, width in zip(trade_headers, trade_col_widths, strict=False):
+        pdf.cell(width, 7, header, border=1, fill=True)
+    pdf.ln()
+    pdf.set_font("Helvetica", "", 8)
+    trades = labour.get("trades") or []
+    if not trades:
+        pdf.cell(sum(trade_col_widths), 7, "No attendance recorded for this date.", border=1)
+        pdf.ln()
+    for trade in trades:
+        pdf.cell(trade_col_widths[0], 7, _truncate(trade.get("trade"), 44), border=1)
+        pdf.cell(trade_col_widths[1], 7, str(trade.get("headcount") or 0), border=1)
+        pdf.ln()
+
+    pdf.ln(4)
+
+    # Materials table
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, "Materials", new_x="LMARGIN", new_y="NEXT")
+    material_col_widths = [70, 35, 35, 35]
+    material_headers = ["Material", "Received", "Used", "Unit"]
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_fill_color(230, 230, 230)
+    for header, width in zip(material_headers, material_col_widths, strict=False):
+        pdf.cell(width, 7, header, border=1, fill=True)
+    pdf.ln()
+    pdf.set_font("Helvetica", "", 8)
+    if not materials:
+        pdf.cell(sum(material_col_widths), 7, "No material movements recorded for this date.", border=1)
+        pdf.ln()
+    for material in materials:
+        row = [
+            _truncate(material.get("material_name"), 46),
+            str(material.get("received") or "0"),
+            str(material.get("used") or "0"),
+            str(material.get("unit") or "-"),
+        ]
+        for value, width in zip(row, material_col_widths, strict=False):
             pdf.cell(width, 7, value, border=1)
         pdf.ln()
 

@@ -28,6 +28,20 @@ class DprIssueRow:
 
 
 @dataclass(frozen=True, slots=True)
+class DprTradeRow:
+    trade: str
+    headcount: int
+
+
+@dataclass(frozen=True, slots=True)
+class DprMaterialRow:
+    material_name: str
+    received: str
+    used: str
+    unit: str
+
+
+@dataclass(frozen=True, slots=True)
 class DprDocumentData:
     code: str
     project_name: str
@@ -38,6 +52,10 @@ class DprDocumentData:
     activity_count: int = 0
     open_issue_count: int = 0
     evidence_count: int = 0
+    trades: list[DprTradeRow] = field(default_factory=list)
+    headcount: int = 0
+    labour_cost: str = "0"
+    materials: list[DprMaterialRow] = field(default_factory=list)
 
 
 def _pretty(label: object) -> str:
@@ -80,6 +98,20 @@ def build_document_data(*, code: str, payload: dict[str, Any]) -> DprDocumentDat
         )
         for i in payload.get("issues", [])
     ]
+    labour = payload.get("labour") or {}
+    trades = [
+        DprTradeRow(trade=_pretty(t.get("trade")), headcount=int(t.get("headcount") or 0))
+        for t in labour.get("trades", [])
+    ]
+    materials = [
+        DprMaterialRow(
+            material_name=_pretty(m.get("material_name")),
+            received=str(m.get("received") or "0"),
+            used=str(m.get("used") or "0"),
+            unit=m.get("unit") or "—",
+        )
+        for m in payload.get("materials", [])
+    ]
     return DprDocumentData(
         code=code,
         project_name=payload.get("project_name") or "—",
@@ -90,4 +122,8 @@ def build_document_data(*, code: str, payload: dict[str, Any]) -> DprDocumentDat
         activity_count=int(payload.get("activity_count") or len(activities)),
         open_issue_count=int(payload.get("open_issue_count") or 0),
         evidence_count=int(payload.get("evidence_count") or 0),
+        trades=trades,
+        headcount=int(labour.get("headcount") or 0),
+        labour_cost=str(labour.get("total_cost") or "0"),
+        materials=materials,
     )

@@ -14,12 +14,15 @@ WhatsApp activity behind it, not something this generation path replaces.
 
 Scope, stated plainly (matches this session's other narrowing decisions):
 `assemble_site_report_payload` composes activities + site_issues +
-evidence *counts* for one SITE-level report. It does NOT pull in
-labour/equipment/expense records from their own modules -- that needs a
-cross-module read this repository has no business making on its own
-(#22 Cross-Module Trigger territory), and PROJECT-level composition from
-approved SITE versions (ADR-D9/P8, `daily_report_sources`) is not built
-here either. Both are natural next steps, not silently done halfway.
+evidence *counts* + labour attendance + material movements for one
+SITE-level report -- a cross-module read, deliberately: a report without
+manpower and material isn't one a client accepts, and both exist today
+(unlike finance, which genuinely can't participate yet -- expenses never
+emit to `outbox_events`, so there is no event trail this read could join
+against; equipment has no backend at all, no table, no read/write path).
+PROJECT-level composition from approved SITE versions (ADR-D9/P8,
+`daily_report_sources`) is not built here either -- a natural next step,
+not silently done halfway.
 """
 
 from __future__ import annotations
@@ -262,9 +265,17 @@ class PostgresDprRepository:
     ) -> dict[str, Any]:
         """Compose one SITE-level DPR payload from what was actually
         recorded on `report_date` -- activities (with their quantities),
-        open+resolved-today site issues, and an evidence count per
-        activity. Returns a plain JSON-safe dict, ready for
-        `create_version`'s `payload` column or a PDF renderer.
+        open+resolved-today site issues, an evidence count per activity,
+        the day's labour attendance, and the day's material movements.
+        Returns a plain JSON-safe dict, ready for `create_version`'s
+        `payload` column or a PDF renderer.
+
+        Labour and material live in their own modules (labour_attendance_*,
+        material_movements) with their own writers -- this method only
+        reads them, scoped to the same site+date every other section here
+        already uses, the same cross-module read every other section in
+        this method already is (see module docstring's scope note on why
+        this composition doesn't extend to finance).
 
         Photo bytes are NOT embedded here -- only counts and captions.
         Inlining actual thumbnails needs the object-storage read wired
@@ -373,6 +384,54 @@ class PostgresDprRepository:
             )
         ).mappings().all()
 
+        labour_query = text(
+            """
+            SELECT lal.worker_name, lal.trade, lal.headcount, lal.daily_wage, lal.contractor
+            FROM labour_attendance_lines lal
+            JOIN labour_attendance_reports lar ON lar.id = lal.report_id
+            WHERE lar.organization_id = :org_id
+              AND lar.project_id = :project_id
+              AND lar.site_id = :site_id
+              AND lar.occurred_date = :report_date
+            """
+        )
+        labour_rows = (
+            await self._conn.execute(
+                labour_query,
+                {
+                    "org_id": organization_id,
+                    "project_id": project_id,
+                    "site_id": site_id,
+                    "report_date": report_date,
+                },
+            )
+        ).mappings().all()
+
+        material_query = text(
+            """
+            SELECT mm.material_id, mc.name AS material_name, u.code AS unit,
+                   mm.movement_type, mm.quantity
+            FROM material_movements mm
+            JOIN materials_catalog mc ON mc.id = mm.material_id
+            JOIN units_of_measure u ON u.id = mm.unit_id
+            WHERE mm.organization_id = :org_id
+              AND mm.project_id = :project_id
+              AND mm.site_id = :site_id
+              AND mm.occurred_at::date = :report_date
+            """
+        )
+        material_rows = (
+            await self._conn.execute(
+                material_query,
+                {
+                    "org_id": organization_id,
+                    "project_id": project_id,
+                    "site_id": site_id,
+                    "report_date": report_date,
+                },
+            )
+        ).mappings().all()
+
         from mesiri.application.dpr.assembly import build_site_report_payload
 
         return build_site_report_payload(
@@ -383,6 +442,8 @@ class PostgresDprRepository:
             quantities_by_activity=quantities_by_activity,
             evidence_count_by_activity=evidence_count_by_activity,
             issue_rows=[dict(row) for row in issue_rows],
+            labour_lines=[dict(row) for row in labour_rows],
+            material_movement_rows=[dict(row) for row in material_rows],
         )
 
     async def get_or_create_daily_report(
