@@ -111,6 +111,7 @@ const LABOUR_CATEGORY: NavCategory = {
     { title: 'Overview', url: '/labour/overview', icon: PieChart },
     { title: 'Attendance', url: '/labour/attendance', icon: ClipboardCheck },
     { title: 'Workers Roster', url: '/labour/workers', icon: Users },
+    { title: 'Analytics', url: '/labour/analytics', icon: BarChart3 },
     { title: 'WhatsApp Automations', url: '/labour/whatsapp', icon: Bot },
     { title: 'Reports', url: '/labour/reports', icon: FileText },
     { title: 'Settings', url: '/labour/settings', icon: SlidersHorizontal },
