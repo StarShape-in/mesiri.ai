@@ -141,3 +141,52 @@ def test_handles_missing_optional_fields_in_activity_and_issue_rows():
         payload=payload,
     )
     assert pdf_bytes.startswith(b"%PDF")
+
+
+_PROJECT_PAYLOAD = {
+    "level": "PROJECT",
+    "project_name": "Skyline Towers",
+    "report_date": "2026-07-20",
+    "sites": [
+        {"site_name": "Block A", "reported": True, "activity_count": 3,
+         "open_issue_count": 1, "headcount": 10, "labour_cost": "5000"},
+        {"site_name": "Block B", "reported": False, "activity_count": 0,
+         "open_issue_count": 0, "headcount": 0, "labour_cost": "0"},
+    ],
+    "reported_site_count": 1,
+    "total_site_count": 2,
+    "activity_count": 3,
+    "open_issue_count": 1,
+    "evidence_count": 2,
+    "issues": [
+        {"site_name": "Block A", "issue_type": "MATERIAL_SHORTAGE", "severity": "HIGH",
+         "narrative": "Out of cement", "status": "OPEN"}
+    ],
+    "labour": {"headcount": 10, "total_cost": "5000", "trades": []},
+    "materials": [{"material_name": "Cement", "unit": "bags", "received": "50", "used": "20"}],
+}
+
+
+def test_renders_a_project_level_pdf_with_sites_table():
+    pdf_bytes = render_dpr_pdf_bytes(
+        code="DPR-P-1",
+        report_date="2026-07-20",
+        project_name="Skyline Towers",
+        site_name=None,
+        workflow_status="draft",
+        payload=_PROJECT_PAYLOAD,
+    )
+    assert pdf_bytes.startswith(b"%PDF")
+
+
+def test_renders_a_project_level_pdf_with_no_sites_yet():
+    payload = dict(_PROJECT_PAYLOAD, sites=[], reported_site_count=0, total_site_count=0, issues=[])
+    pdf_bytes = render_dpr_pdf_bytes(
+        code="DPR-P-2",
+        report_date="2026-07-20",
+        project_name="Skyline Towers",
+        site_name=None,
+        workflow_status="draft",
+        payload=payload,
+    )
+    assert pdf_bytes.startswith(b"%PDF")

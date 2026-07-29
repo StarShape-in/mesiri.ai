@@ -501,6 +501,181 @@ class PostgresDprRepository:
         )
         return report_id
 
+    async def get_or_create_project_daily_report(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        project_id: uuid.UUID,
+        report_date: datetime.date,
+    ) -> uuid.UUID:
+        """The PROJECT-level `daily_reports` row for this project+date --
+        `site_id` is always NULL at this level (ADR-D9/P8). Mirrors
+        `get_or_create_daily_report` exactly, one level up."""
+        existing = (
+            await self._conn.execute(
+                text(
+                    """
+                    SELECT id FROM daily_reports
+                    WHERE organization_id = :org_id AND project_id = :project_id
+                      AND site_id IS NULL AND report_date = :report_date AND level = 'PROJECT'
+                    """
+                ),
+                {"org_id": organization_id, "project_id": project_id, "report_date": report_date},
+            )
+        ).mappings().first()
+        if existing:
+            return existing["id"]
+
+        report_id = uuid.uuid4()
+        code = f"DPR-P-{report_date.strftime('%Y%m%d')}-{str(report_id)[:4].upper()}"
+        await self._conn.execute(
+            text(
+                """
+                INSERT INTO daily_reports (
+                    id, organization_id, project_id, site_id, level, report_date, code, status
+                ) VALUES (
+                    :id, :org_id, :project_id, NULL, 'PROJECT', :report_date, :code, 'DRAFT'
+                )
+                """
+            ),
+            {
+                "id": report_id,
+                "org_id": organization_id,
+                "project_id": project_id,
+                "report_date": report_date,
+                "code": code,
+            },
+        )
+        return report_id
+
+    async def assemble_project_report_payload(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        project_id: uuid.UUID,
+        report_date: datetime.date,
+    ) -> tuple[dict[str, Any], list[tuple[uuid.UUID, uuid.UUID | None]]]:
+        """Compose one PROJECT-level DPR payload from each of its active
+        sites' own APPROVED/PUBLISHED SITE-level version (ADR-D9/P8) --
+        never independently re-derived from raw activities/issues, so a
+        project report can never show something its own site reports
+        didn't already sign off on. A site with no approved version by the
+        time this runs is recorded NOT_REPORTED (via `payload=None` in the
+        pair below) -- the project rollup still composes and publishes,
+        per P8.
+
+        Also ensures a SITE-level `daily_reports` row exists for every
+        active site under the project (creating an empty DRAFT one for a
+        site that logged nothing at all) -- `daily_report_sources` needs a
+        real `site_daily_report_id` to point at even for a site with
+        nothing to report, so the missing report is a visible line rather
+        than an absent one.
+
+        Returns `(payload, sources)` -- `sources` is
+        `(site_daily_report_id, site_version_id | None)` pairs the caller
+        persists via `record_project_sources` once `create_version` (or
+        `revise_version`) has minted a real `project_version_id` to attach
+        them to.
+        """
+        project_row = (
+            await self._conn.execute(
+                text("SELECT name FROM projects WHERE id = :id"), {"id": project_id}
+            )
+        ).mappings().first()
+
+        site_rows = (
+            await self._conn.execute(
+                text(
+                    """
+                    SELECT id, name FROM sites
+                    WHERE organization_id = :org_id AND project_id = :project_id
+                      AND status = 'active'
+                    ORDER BY name
+                    """
+                ),
+                {"org_id": organization_id, "project_id": project_id},
+            )
+        ).mappings().all()
+
+        site_payloads: list[tuple[str | None, dict[str, Any] | None]] = []
+        sources: list[tuple[uuid.UUID, uuid.UUID | None]] = []
+
+        for site_row in site_rows:
+            site_daily_report_id = await self.get_or_create_daily_report(
+                organization_id=organization_id,
+                project_id=project_id,
+                site_id=site_row["id"],
+                report_date=report_date,
+            )
+            report_row = (
+                await self._conn.execute(
+                    text("SELECT status, current_version_id FROM daily_reports WHERE id = :id"),
+                    {"id": site_daily_report_id},
+                )
+            ).mappings().first()
+
+            payload: dict[str, Any] | None = None
+            site_version_id: uuid.UUID | None = None
+            if (
+                report_row is not None
+                and report_row["status"] in ("APPROVED", "PUBLISHED")
+                and report_row["current_version_id"] is not None
+            ):
+                version_row = (
+                    await self._conn.execute(
+                        text("SELECT payload FROM daily_report_versions WHERE id = :id"),
+                        {"id": report_row["current_version_id"]},
+                    )
+                ).mappings().first()
+                if version_row is not None:
+                    import json
+
+                    raw_payload = version_row["payload"]
+                    payload = raw_payload if isinstance(raw_payload, dict) else json.loads(raw_payload)
+                    site_version_id = report_row["current_version_id"]
+
+            site_payloads.append((site_row["name"], payload))
+            sources.append((site_daily_report_id, site_version_id))
+
+        from mesiri.application.dpr.assembly import build_project_report_payload
+
+        payload = build_project_report_payload(
+            project_name=project_row["name"] if project_row else None,
+            report_date=report_date,
+            site_payloads=site_payloads,
+        )
+        return payload, sources
+
+    async def record_project_sources(
+        self,
+        *,
+        project_version_id: uuid.UUID,
+        sources: list[tuple[uuid.UUID, uuid.UUID | None]],
+    ) -> None:
+        """Persist P8's composition trail: which SITE version (or none) each
+        site under the project contributed to this PROJECT version. Must
+        run after `create_version`/`revise_version` has minted
+        `project_version_id` -- `daily_report_sources` FKs to it."""
+        for site_daily_report_id, site_version_id in sources:
+            await self._conn.execute(
+                text(
+                    """
+                    INSERT INTO daily_report_sources (
+                        id, project_version_id, site_daily_report_id, site_version_id
+                    ) VALUES (
+                        :id, :project_version_id, :site_daily_report_id, :site_version_id
+                    )
+                    ON CONFLICT (project_version_id, site_daily_report_id) DO NOTHING
+                    """
+                ),
+                {
+                    "id": uuid.uuid4(),
+                    "project_version_id": project_version_id,
+                    "site_daily_report_id": site_daily_report_id,
+                    "site_version_id": site_version_id,
+                },
+            )
+
     async def create_version(
         self,
         *,

@@ -147,6 +147,82 @@ def test_render_html_shows_empty_state_for_no_labour_or_materials():
     assert "No material movements recorded" in html
 
 
+# --- PROJECT-level (ADR-D9/P8) ----------------------------------------------
+
+
+def _project_payload(**overrides):
+    base = {
+        "level": "PROJECT",
+        "project_name": "Skyline Towers",
+        "report_date": "2026-07-27",
+        "sites": [
+            {"site_name": "Block A", "reported": True, "activity_count": 3,
+             "open_issue_count": 1, "headcount": 10},
+            {"site_name": "Block B", "reported": False, "activity_count": 0,
+             "open_issue_count": 0, "headcount": 0},
+        ],
+        "reported_site_count": 1,
+        "total_site_count": 2,
+        "activity_count": 3,
+        "open_issue_count": 1,
+        "evidence_count": 0,
+        "issues": [
+            {"site_name": "block_a", "issue_type": "material_shortage", "severity": "high",
+             "narrative": "Out of cement", "status": "open"}
+        ],
+        "labour": {"headcount": 10, "total_cost": "5000", "trades": []},
+        "materials": [],
+    }
+    base.update(overrides)
+    return base
+
+
+def test_build_document_data_sets_is_project_from_payload_level():
+    data = build_document_data(code="DPR-P-1", payload=_project_payload())
+    assert data.is_project is True
+    assert build_document_data(code="DPR-1", payload=_payload()).is_project is False
+
+
+def test_build_document_data_maps_site_breakdown():
+    data = build_document_data(code="DPR-P-1", payload=_project_payload())
+    assert data.reported_site_count == 1
+    assert data.total_site_count == 2
+    site_a = next(s for s in data.sites if s.site_name == "Block A")
+    assert site_a.reported is True
+    assert site_a.activity_count == 3
+    site_b = next(s for s in data.sites if s.site_name == "Block B")
+    assert site_b.reported is False
+
+
+def test_build_document_data_tags_issues_with_site_name_at_project_level():
+    data = build_document_data(code="DPR-P-1", payload=_project_payload())
+    assert data.issues[0].site_name == "Block A"
+
+
+def test_build_document_data_issue_site_name_defaults_to_placeholder_at_site_level():
+    payload = _payload(
+        issues=[{"issue_type": "WEATHER", "severity": "HIGH", "narrative": "rain", "status": "OPEN"}]
+    )
+    data = build_document_data(code="DPR-1", payload=payload)
+    assert data.issues[0].site_name == "—"
+
+
+def test_render_html_shows_sites_table_and_site_column_for_project_level():
+    data = build_document_data(code="DPR-P-1", payload=_project_payload())
+    html = render_html(data)
+    assert "Sites Reporting" in html
+    assert "1/2" in html
+    assert "Block A" in html
+    assert "Block B" in html
+    assert "Not yet" in html
+
+
+def test_render_html_shows_activities_not_sites_for_site_level():
+    data = build_document_data(code="DPR-1", payload=_payload())
+    html = render_html(data)
+    assert "Sites Reporting" not in html
+
+
 def test_render_html_lists_each_activity_and_issue():
     payload = _payload(
         activities=[

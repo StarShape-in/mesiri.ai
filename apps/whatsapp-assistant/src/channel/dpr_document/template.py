@@ -57,12 +57,34 @@ _DOCUMENT_TEMPLATE_SRC = """
   </div>
 
   <div class="meta">
+    {% if data.is_project %}
+    <div class="meta-item"><div class="label">Sites Reporting</div><div class="value">{{ data.reported_site_count }}/{{ data.total_site_count }}</div></div>
+    {% else %}
     <div class="meta-item"><div class="label">Activities Logged</div><div class="value">{{ data.activity_count }}</div></div>
+    {% endif %}
     <div class="meta-item"><div class="label">Open Issues</div><div class="value">{{ data.open_issue_count }}</div></div>
+    {% if not data.is_project %}
     <div class="meta-item"><div class="label">Evidence Photos</div><div class="value">{{ data.evidence_count }}</div></div>
+    {% endif %}
     <div class="meta-item"><div class="label">Workers Today</div><div class="value">{{ data.headcount }}</div></div>
   </div>
 
+  {% if data.is_project %}
+  <div class="section-title">Sites</div>
+  <table>
+    <thead><tr><th style="width:34%">Site</th><th style="width:16%">Reported</th>
+      <th style="width:16%">Activities</th><th style="width:17%">Open Issues</th>
+      <th style="width:17%">Workers</th></tr></thead>
+    <tbody>
+      {% for s in data.sites %}
+      <tr><td>{{ s.site_name }}</td><td>{{ "Yes" if s.reported else "Not yet" }}</td>
+        <td>{{ s.activity_count }}</td><td>{{ s.open_issue_count }}</td><td>{{ s.headcount }}</td></tr>
+      {% else %}
+      <tr><td colspan="5" class="empty">No active sites under this project.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
   <div class="section-title">Activities</div>
   <table>
     <thead><tr><th style="width:16%">Work Type</th><th style="width:34%">Narrative</th>
@@ -77,18 +99,23 @@ _DOCUMENT_TEMPLATE_SRC = """
       {% endfor %}
     </tbody>
   </table>
+  {% endif %}
 
   <div class="section-title">Site Issues</div>
   <table>
-    <thead><tr><th style="width:18%">Type</th><th style="width:12%">Severity</th>
-      <th style="width:50%">Narrative</th><th style="width:20%">Status</th></tr></thead>
+    <thead><tr>
+      {% if data.is_project %}<th style="width:18%">Site</th>{% endif %}
+      <th style="width:18%">Type</th><th style="width:12%">Severity</th>
+      <th style="width:{{ '32%' if data.is_project else '50%' }}">Narrative</th><th style="width:20%">Status</th></tr></thead>
     <tbody>
       {% for i in data.issues %}
-      <tr><td>{{ i.issue_type }}</td>
+      <tr>
+        {% if data.is_project %}<td>{{ i.site_name }}</td>{% endif %}
+        <td>{{ i.issue_type }}</td>
         <td class="severity-{{ i.severity|lower }}">{{ i.severity }}</td>
         <td>{{ i.narrative }}</td><td>{{ i.status }}</td></tr>
       {% else %}
-      <tr><td colspan="4" class="empty">No issues reported for this date.</td></tr>
+      <tr><td colspan="{{ 5 if data.is_project else 4 }}" class="empty">No issues reported for this date.</td></tr>
       {% endfor %}
     </tbody>
   </table>

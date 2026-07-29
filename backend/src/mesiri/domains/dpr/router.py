@@ -199,9 +199,15 @@ async def revise_daily_report(
     current one, with a stated `revision_reason`. Status resets to DRAFT so
     the correction goes back through submit-for-review/approve/publish.
 
-    404s for a report with no site-level scope (the manual-entry path, or a
-    PROJECT-level roll-up) -- there is no live data to re-assemble a
-    revision from; only a generated SITE report has one.
+    Works for both SITE reports (re-assembled from current activities/
+    issues/labour/materials) and PROJECT roll-ups (re-assembled from
+    whichever SITE versions are current now, ADR-D9/P8 -- a site whose own
+    report changed since the roll-up was generated is what a project-level
+    revision exists to pick up).
+
+    404s for a report with no live data to re-assemble from at all -- the
+    manual-entry path (POST /dpr/daily-reports with a hand-typed payload),
+    which never gets composed from real records.
     """
     if not req.revision_reason or not req.revision_reason.strip():
         raise HTTPException(status_code=400, detail="revision_reason is required")
@@ -212,18 +218,27 @@ async def revise_daily_report(
     )
     if scope is None:
         raise HTTPException(status_code=404, detail="Daily report not found")
-    if scope["level"] != "SITE" or scope["site_id"] is None:
+
+    sources: list[tuple[uuid.UUID, uuid.UUID | None]] | None = None
+    if scope["level"] == "SITE" and scope["site_id"] is not None:
+        payload = await repo.assemble_site_report_payload(
+            organization_id=auth_context.organization_id,
+            project_id=scope["project_id"],
+            site_id=scope["site_id"],
+            report_date=scope["report_date"],
+        )
+    elif scope["level"] == "PROJECT":
+        payload, sources = await repo.assemble_project_report_payload(
+            organization_id=auth_context.organization_id,
+            project_id=scope["project_id"],
+            report_date=scope["report_date"],
+        )
+    else:
         raise HTTPException(
             status_code=400,
-            detail="Only a generated site-level report can be revised",
+            detail="Only a generated site-level or project-level report can be revised",
         )
 
-    payload = await repo.assemble_site_report_payload(
-        organization_id=auth_context.organization_id,
-        project_id=scope["project_id"],
-        site_id=scope["site_id"],
-        report_date=scope["report_date"],
-    )
     try:
         version = await repo.revise_version(
             daily_report_id=report_id,
@@ -233,6 +248,10 @@ async def revise_daily_report(
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    if sources is not None:
+        await repo.record_project_sources(project_version_id=version["id"], sources=sources)
+
     return {"status": "success", **{k: str(v) if v is not None else v for k, v in version.items()}}
 
 

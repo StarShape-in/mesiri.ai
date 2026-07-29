@@ -1,5 +1,7 @@
 """Generates/refreshes a SITE-level DPR draft for every site that logged
-activity or a site issue on the target date (#16 Daily Report Generation).
+activity or a site issue on the target date, then a PROJECT-level roll-up
+for every project with at least one active site (#16 Daily Report
+Generation, ADR-D9/P8).
 
 Invocable manually or via a cron entry -- not a persistent worker service,
 same convention as run_notification_checks.py and project_timeline_events.py.
@@ -16,8 +18,13 @@ touch an already-APPROVED/PUBLISHED report, see dpr.py). This is the
 natural way an engineer's afternoon updates show up in the same day's DPR
 without a separate "regenerate" trigger.
 
-Scope: SITE-level only. PROJECT-level composition from approved SITE
-versions (ADR-D9/P8) is not built here -- see dpr.py's module docstring.
+The PROJECT-level pass runs for every project with an active site,
+regardless of whether every one of its sites has an approved SITE version
+yet -- P8's "cutoff" model: a site that hasn't reported is recorded
+NOT_REPORTED on the roll-up, not something the whole project's reporting
+waits on. It also runs after ALL sites' SITE-level generation for the
+date, so same-day project rollups see whatever sites did get generated in
+this same run.
 
 Recommended VPS crontab entry (ops-managed, not tracked in this repo):
     0 20 * * * cd /opt/mesiri/backend && \\
@@ -38,6 +45,21 @@ import uuid
 from ..bootstrap.settings import Settings
 from ..infrastructure.postgres.database import PostgresDatabase
 from ..infrastructure.postgres.repositories.dpr import PostgresDprRepository
+
+
+async def _projects_with_active_sites(conn, *, organization_id: uuid.UUID):
+    from sqlalchemy import text
+
+    rows = (
+        await conn.execute(
+            text(
+                "SELECT DISTINCT project_id FROM sites "
+                "WHERE organization_id = :org_id AND status = 'active'"
+            ),
+            {"org_id": organization_id},
+        )
+    ).mappings().all()
+    return [row["project_id"] for row in rows]
 
 
 async def _sites_with_activity(conn, *, organization_id: uuid.UUID, report_date: datetime.date):
@@ -104,6 +126,37 @@ async def run(*, report_date: datetime.date | None = None) -> int:
                         # frozen day's payload (P7). Not a failure worth
                         # aborting the whole run over.
                         continue
+
+                # PROJECT-level roll-up (ADR-D9/P8): runs after every site's
+                # SITE-level pass above for this org+date, for every project
+                # with at least one active site -- regardless of whether
+                # every site has an approved version yet (a site that
+                # hasn't reported is recorded NOT_REPORTED, not something
+                # the project rollup waits on).
+                project_ids = await _projects_with_active_sites(
+                    conn, organization_id=organization_id
+                )
+                for project_id in project_ids:
+                    payload, sources = await repo.assemble_project_report_payload(
+                        organization_id=organization_id,
+                        project_id=project_id,
+                        report_date=target_date,
+                    )
+                    project_daily_report_id = await repo.get_or_create_project_daily_report(
+                        organization_id=organization_id,
+                        project_id=project_id,
+                        report_date=target_date,
+                    )
+                    try:
+                        version = await repo.create_version(
+                            daily_report_id=project_daily_report_id, payload=payload
+                        )
+                    except ValueError:
+                        continue
+                    await repo.record_project_sources(
+                        project_version_id=version["id"], sources=sources
+                    )
+                    total += 1
     finally:
         await db.disconnect()
     return total

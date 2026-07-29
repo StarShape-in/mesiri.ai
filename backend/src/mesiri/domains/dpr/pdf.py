@@ -66,17 +66,28 @@ def render_dpr_pdf_bytes(
     pdf.set_text_color(0, 0, 0)
     pdf.ln(4)
 
+    is_project = payload.get("level") == "PROJECT"
+
     # Meta tiles
     activities = payload.get("activities") or []
     issues = payload.get("issues") or []
     labour = payload.get("labour") or {}
     materials = payload.get("materials") or []
-    tiles = [
-        ("Activities Logged", str(payload.get("activity_count", len(activities)))),
-        ("Open Issues", str(payload.get("open_issue_count", 0))),
-        ("Evidence Photos", str(payload.get("evidence_count", 0))),
-        ("Workers Today", str(labour.get("headcount", 0))),
-    ]
+    sites = payload.get("sites") or []
+    tiles = (
+        [
+            ("Sites Reporting", f"{payload.get('reported_site_count', 0)}/{payload.get('total_site_count', len(sites))}"),
+            ("Open Issues", str(payload.get("open_issue_count", 0))),
+            ("Workers Today", str(labour.get("headcount", 0))),
+        ]
+        if is_project
+        else [
+            ("Activities Logged", str(payload.get("activity_count", len(activities)))),
+            ("Open Issues", str(payload.get("open_issue_count", 0))),
+            ("Evidence Photos", str(payload.get("evidence_count", 0))),
+            ("Workers Today", str(labour.get("headcount", 0))),
+        ]
+    )
     tile_w = _PAGE_WIDTH_MM / len(tiles)
     pdf.set_font("Helvetica", "B", 12)
     for label, value in tiles:
@@ -92,43 +103,77 @@ def render_dpr_pdf_bytes(
         pdf.set_xy(x + tile_w, y)
     pdf.ln(20)
 
-    # Activities table
-    pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 8, "Activities", new_x="LMARGIN", new_y="NEXT")
-    col_widths = [30, 55, 25, 30, 40]
-    headers = ["Work Type", "Narrative", "Status", "Contractor", "Quantities"]
-    pdf.set_font("Helvetica", "B", 9)
-    pdf.set_fill_color(230, 230, 230)
-    for header, width in zip(headers, col_widths, strict=False):
-        pdf.cell(width, 7, header, border=1, fill=True)
-    pdf.ln()
-    pdf.set_font("Helvetica", "", 8)
-    if not activities:
-        pdf.cell(sum(col_widths), 7, "No activities recorded for this date.", border=1)
+    if is_project:
+        # Sites table -- replaces the per-activity table at project level;
+        # each site's own activity/issue/labour figures are already signed
+        # off on its own SITE report (ADR-D9/P8), this is the roll-up view.
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 8, "Sites", new_x="LMARGIN", new_y="NEXT")
+        site_col_widths = [50, 30, 30, 30, 30]
+        site_headers = ["Site", "Reported", "Activities", "Open Issues", "Workers"]
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_fill_color(230, 230, 230)
+        for header, width in zip(site_headers, site_col_widths, strict=False):
+            pdf.cell(width, 7, header, border=1, fill=True)
         pdf.ln()
-    for activity in activities:
-        quantities = activity.get("quantities") or []
-        qty_text = ", ".join(
-            f"{q.get('quantity')} {q.get('unit') or ''}".strip() for q in quantities
-        ) or "-"
-        row = [
-            _truncate(activity.get("work_type"), 18),
-            _truncate(activity.get("narrative"), 34),
-            _truncate(activity.get("status"), 14),
-            _truncate(activity.get("contractor"), 18),
-            _truncate(qty_text, 24),
-        ]
-        for value, width in zip(row, col_widths, strict=False):
-            pdf.cell(width, 7, value, border=1)
+        pdf.set_font("Helvetica", "", 8)
+        if not sites:
+            pdf.cell(sum(site_col_widths), 7, "No active sites under this project.", border=1)
+            pdf.ln()
+        for site in sites:
+            row = [
+                _truncate(site.get("site_name"), 30),
+                "Yes" if site.get("reported") else "Not yet",
+                str(site.get("activity_count") or 0),
+                str(site.get("open_issue_count") or 0),
+                str(site.get("headcount") or 0),
+            ]
+            for value, width in zip(row, site_col_widths, strict=False):
+                pdf.cell(width, 7, value, border=1)
+            pdf.ln()
+    else:
+        # Activities table
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 8, "Activities", new_x="LMARGIN", new_y="NEXT")
+        col_widths = [30, 55, 25, 30, 40]
+        headers = ["Work Type", "Narrative", "Status", "Contractor", "Quantities"]
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_fill_color(230, 230, 230)
+        for header, width in zip(headers, col_widths, strict=False):
+            pdf.cell(width, 7, header, border=1, fill=True)
         pdf.ln()
+        pdf.set_font("Helvetica", "", 8)
+        if not activities:
+            pdf.cell(sum(col_widths), 7, "No activities recorded for this date.", border=1)
+            pdf.ln()
+        for activity in activities:
+            quantities = activity.get("quantities") or []
+            qty_text = ", ".join(
+                f"{q.get('quantity')} {q.get('unit') or ''}".strip() for q in quantities
+            ) or "-"
+            row = [
+                _truncate(activity.get("work_type"), 18),
+                _truncate(activity.get("narrative"), 34),
+                _truncate(activity.get("status"), 14),
+                _truncate(activity.get("contractor"), 18),
+                _truncate(qty_text, 24),
+            ]
+            for value, width in zip(row, col_widths, strict=False):
+                pdf.cell(width, 7, value, border=1)
+            pdf.ln()
 
     pdf.ln(4)
 
-    # Site issues table
+    # Site issues table -- a "Site" column is added at project level (each
+    # issue was tagged with its source site by build_project_report_payload)
     pdf.set_font("Helvetica", "B", 12)
     pdf.cell(0, 8, "Site Issues", new_x="LMARGIN", new_y="NEXT")
-    issue_col_widths = [32, 20, 65, 25, 38]
-    issue_headers = ["Type", "Severity", "Narrative", "Status", "Delay (min)"]
+    if is_project:
+        issue_col_widths = [30, 25, 15, 55, 25]
+        issue_headers = ["Site", "Type", "Severity", "Narrative", "Status"]
+    else:
+        issue_col_widths = [32, 20, 65, 25, 38]
+        issue_headers = ["Type", "Severity", "Narrative", "Status", "Delay (min)"]
     pdf.set_font("Helvetica", "B", 9)
     pdf.set_fill_color(230, 230, 230)
     for header, width in zip(issue_headers, issue_col_widths, strict=False):
@@ -139,13 +184,22 @@ def render_dpr_pdf_bytes(
         pdf.cell(sum(issue_col_widths), 7, "No site issues recorded for this date.", border=1)
         pdf.ln()
     for issue in issues:
-        row = [
-            _truncate(issue.get("issue_type"), 20),
-            _truncate(issue.get("severity"), 12),
-            _truncate(issue.get("narrative"), 42),
-            _truncate(issue.get("status"), 14),
-            str(issue.get("delay_duration_minutes") or "-"),
-        ]
+        if is_project:
+            row = [
+                _truncate(issue.get("site_name"), 24),
+                _truncate(issue.get("issue_type"), 18),
+                _truncate(issue.get("severity"), 12),
+                _truncate(issue.get("narrative"), 42),
+                _truncate(issue.get("status"), 14),
+            ]
+        else:
+            row = [
+                _truncate(issue.get("issue_type"), 20),
+                _truncate(issue.get("severity"), 12),
+                _truncate(issue.get("narrative"), 42),
+                _truncate(issue.get("status"), 14),
+                str(issue.get("delay_duration_minutes") or "-"),
+            ]
         for value, width in zip(row, issue_col_widths, strict=False):
             pdf.cell(width, 7, value, border=1)
         pdf.ln()

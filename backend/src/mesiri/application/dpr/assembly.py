@@ -125,6 +125,7 @@ def build_site_report_payload(
         for row in issue_rows
     ]
     return {
+        "level": "SITE",
         "project_name": project_name,
         "site_name": site_name,
         "report_date": report_date.isoformat(),
@@ -135,4 +136,111 @@ def build_site_report_payload(
         "evidence_count": sum(a["evidence_count"] for a in activities),
         "labour": _labour_summary(labour_lines or []),
         "materials": _material_summary(material_movement_rows or []),
+    }
+
+
+def build_project_report_payload(
+    *,
+    project_name: str | None,
+    report_date: datetime.date,
+    site_payloads: list[tuple[str | None, dict[str, Any] | None]],
+) -> dict[str, Any]:
+    """Compose the PROJECT-level payload (ADR-D9/P8) from each active site's
+    own already-approved SITE-level payload -- never independently
+    re-derived from raw activities/issues, so a project report can never
+    show something its own site reports didn't already sign off on.
+
+    `site_payloads` is `(site_name, payload)` pairs, one per active site
+    under the project: `payload` is `build_site_report_payload`'s own
+    output when that site has an APPROVED/PUBLISHED version by cutoff, or
+    `None` when it doesn't -- recorded as NOT_REPORTED (P8), which does not
+    block the project rollup from publishing; a missing site report is the
+    single most informative line on the page, not something the rest of
+    the project's reporting should wait on.
+
+    Per-trade labour breakdown is deliberately not composed across sites
+    for v1 (unlike the SITE payload's `labour.trades`) -- only the
+    aggregate headcount/cost, to keep this a genuine roll-up rather than a
+    second, subtly-different trade-matching pass across sites that may
+    name trades differently.
+    """
+    sites: list[dict[str, Any]] = []
+    activity_count = 0
+    open_issue_count = 0
+    evidence_count = 0
+    headcount = 0
+    total_cost = Decimal("0")
+    materials: dict[tuple[str | None, str | None], dict[str, Decimal]] = {}
+    issues: list[dict[str, Any]] = []
+
+    for site_name, payload in site_payloads:
+        if payload is None:
+            sites.append(
+                {
+                    "site_name": site_name,
+                    "reported": False,
+                    "activity_count": 0,
+                    "open_issue_count": 0,
+                    "headcount": 0,
+                    "labour_cost": "0",
+                }
+            )
+            continue
+
+        labour = payload.get("labour") or {}
+        site_activity_count = payload.get("activity_count", 0)
+        site_open_issue_count = payload.get("open_issue_count", 0)
+        site_headcount = labour.get("headcount", 0)
+        site_cost = labour.get("total_cost", "0")
+        sites.append(
+            {
+                "site_name": site_name,
+                "reported": True,
+                "activity_count": site_activity_count,
+                "open_issue_count": site_open_issue_count,
+                "headcount": site_headcount,
+                "labour_cost": site_cost,
+            }
+        )
+        activity_count += site_activity_count
+        open_issue_count += site_open_issue_count
+        evidence_count += payload.get("evidence_count", 0)
+        headcount += site_headcount
+        total_cost += Decimal(str(site_cost))
+
+        for material in payload.get("materials", []):
+            key = (material.get("material_name"), material.get("unit"))
+            entry = materials.setdefault(key, {"received": Decimal("0"), "used": Decimal("0")})
+            entry["received"] += Decimal(str(material.get("received") or 0))
+            entry["used"] += Decimal(str(material.get("used") or 0))
+
+        for issue in payload.get("issues", []):
+            issues.append({**issue, "site_name": site_name})
+
+    return {
+        "level": "PROJECT",
+        "project_name": project_name,
+        "report_date": report_date.isoformat(),
+        "sites": sites,
+        "reported_site_count": sum(1 for s in sites if s["reported"]),
+        "total_site_count": len(sites),
+        "activity_count": activity_count,
+        "open_issue_count": open_issue_count,
+        "evidence_count": evidence_count,
+        "issues": issues,
+        "labour": {
+            "headcount": headcount,
+            "named_count": 0,
+            "trades": [],
+            "total_cost": str(total_cost),
+        },
+        "materials": [
+            {
+                "material_name": name,
+                "unit": unit,
+                "received": str(entry["received"]),
+                "used": str(entry["used"]),
+            }
+            for (name, unit), entry in materials.items()
+        ],
     }

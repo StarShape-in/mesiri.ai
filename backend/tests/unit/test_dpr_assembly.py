@@ -12,7 +12,7 @@ from __future__ import annotations
 import datetime
 import uuid
 
-from mesiri.application.dpr.assembly import build_site_report_payload
+from mesiri.application.dpr.assembly import build_project_report_payload, build_site_report_payload
 
 ACTIVITY_1 = uuid.uuid4()
 ACTIVITY_2 = uuid.uuid4()
@@ -216,3 +216,120 @@ def test_material_movements_for_different_materials_stay_separate():
     assert materials["Cement"]["used"] == "0"
     assert materials["Steel"]["used"] == "120"
     assert materials["Steel"]["received"] == "0"
+
+
+# --- build_project_report_payload (ADR-D9/P8) ------------------------------
+
+
+def _site_payload(**overrides) -> dict:
+    base = build_site_report_payload(
+        project_name="Skyline Towers",
+        site_name="Block A",
+        report_date=datetime.date(2026, 7, 27),
+        activity_rows=[],
+        quantities_by_activity={},
+        evidence_count_by_activity={},
+        issue_rows=[],
+    )
+    base.update(overrides)
+    return base
+
+
+def test_project_payload_level_and_report_date():
+    payload = build_project_report_payload(
+        project_name="Skyline Towers", report_date=datetime.date(2026, 7, 27), site_payloads=[]
+    )
+    assert payload["level"] == "PROJECT"
+    assert payload["report_date"] == "2026-07-27"
+    assert payload["sites"] == []
+    assert payload["reported_site_count"] == 0
+    assert payload["total_site_count"] == 0
+
+
+def test_project_payload_marks_a_site_with_no_version_as_not_reported():
+    payload = build_project_report_payload(
+        project_name="Skyline Towers",
+        report_date=datetime.date(2026, 7, 27),
+        site_payloads=[("Block A", None)],
+    )
+    site = payload["sites"][0]
+    assert site["site_name"] == "Block A"
+    assert site["reported"] is False
+    assert payload["reported_site_count"] == 0
+    assert payload["total_site_count"] == 1
+
+
+def test_project_payload_aggregates_activity_and_issue_counts_across_sites():
+    payload = build_project_report_payload(
+        project_name="Skyline Towers",
+        report_date=datetime.date(2026, 7, 27),
+        site_payloads=[
+            ("Block A", _site_payload(activity_count=3, open_issue_count=1, evidence_count=2)),
+            ("Block B", _site_payload(activity_count=5, open_issue_count=0, evidence_count=1)),
+            ("Block C", None),
+        ],
+    )
+    assert payload["activity_count"] == 8
+    assert payload["open_issue_count"] == 1
+    assert payload["evidence_count"] == 3
+    assert payload["reported_site_count"] == 2
+    assert payload["total_site_count"] == 3
+
+
+def test_project_payload_aggregates_labour_headcount_and_cost_across_sites():
+    site_a = _site_payload(labour={"headcount": 10, "total_cost": "5000", "trades": []})
+    site_b = _site_payload(labour={"headcount": 4, "total_cost": "2000", "trades": []})
+    payload = build_project_report_payload(
+        project_name="X",
+        report_date=datetime.date(2026, 7, 27),
+        site_payloads=[("Block A", site_a), ("Block B", site_b)],
+    )
+    assert payload["labour"]["headcount"] == 14
+    assert payload["labour"]["total_cost"] == "7000"
+
+
+def test_project_payload_sums_material_movements_across_sites_by_name_and_unit():
+    site_a = _site_payload(
+        materials=[{"material_name": "Cement", "unit": "bags", "received": "50", "used": "20"}]
+    )
+    site_b = _site_payload(
+        materials=[{"material_name": "Cement", "unit": "bags", "received": "30", "used": "10"}]
+    )
+    payload = build_project_report_payload(
+        project_name="X",
+        report_date=datetime.date(2026, 7, 27),
+        site_payloads=[("Block A", site_a), ("Block B", site_b)],
+    )
+    assert len(payload["materials"]) == 1
+    assert payload["materials"][0]["received"] == "80"
+    assert payload["materials"][0]["used"] == "30"
+
+
+def test_project_payload_tags_each_issue_with_its_source_site():
+    site_a = _site_payload(
+        issues=[{"issue_type": "MATERIAL_SHORTAGE", "severity": "HIGH", "narrative": "x", "status": "OPEN"}]
+    )
+    payload = build_project_report_payload(
+        project_name="X",
+        report_date=datetime.date(2026, 7, 27),
+        site_payloads=[("Block A", site_a)],
+    )
+    assert payload["issues"][0]["site_name"] == "Block A"
+    assert payload["issues"][0]["issue_type"] == "MATERIAL_SHORTAGE"
+
+
+def test_project_payload_site_breakdown_reflects_each_sites_own_figures():
+    site_a = _site_payload(
+        activity_count=3, open_issue_count=1, labour={"headcount": 10, "total_cost": "5000", "trades": []}
+    )
+    payload = build_project_report_payload(
+        project_name="X",
+        report_date=datetime.date(2026, 7, 27),
+        site_payloads=[("Block A", site_a)],
+    )
+    site = payload["sites"][0]
+    assert site["reported"] is True
+    assert site["activity_count"] == 3
+    assert site["open_issue_count"] == 1
+    assert site["headcount"] == 10
+    assert site["labour_cost"] == "5000"
