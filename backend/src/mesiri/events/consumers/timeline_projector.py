@@ -205,6 +205,7 @@ EVENT_SUMMARY_BUILDERS: dict[str, Callable[[dict[str, Any]], str]] = {
     "ActivityProgressUpdateAdded": lambda p: (
         f"Progress update: {p.get('update_kind', 'PROGRESS').title()}"
     ),
+    "ActivityProgressUpdateCorrected": lambda p: f"Quantity corrected to {p.get('quantity')}",
     "ActivityEvidenceAttached": lambda p: "Photo evidence attached",
     "SiteIssueReported": lambda p: (
         f"{p.get('issue_type', 'Issue').replace('_', ' ').title()} reported"

@@ -54,7 +54,7 @@ _EXTRACTION_PROMPT = (
     '"detected_language" (the source language\'s common English name, e.g. '
     '"Malayalam", "English"), '
     '"semantic_type" (one of: expense, equipment_usage, material_update, '
-    "labour_update, general_site_update, site_issue, site_issue_update, general_question, whoami_question, "
+    "labour_update, general_site_update, activity_correction, site_issue, site_issue_update, general_question, whoami_question, "
     "inventory_query, labour_query, activity_query, dpr_request, finance_query, transfer, "
     "petty_cash, "
     "reversal, account_admin, project_create, site_create, "
@@ -126,6 +126,16 @@ _EXTRACTION_PROMPT = (
     'finished, "progress" for a further update to work already underway '
     '(including a bare quantity with no other context, e.g. "180 sqm"). Never '
     "for problems/delays/blockers (those are site_issue).\n"
+    "- activity_correction: new_quantity, unit, work_type. ONLY when the "
+    'sender is correcting a number already reported this conversation -- '
+    'explicit correction language: "make that X", "actually it was X", '
+    '"correct that to X", "sorry, it\'s X not Y", "should be X, not Y", '
+    '"I meant X". new_quantity is the corrected (right) number; unit is its '
+    "unit if stated; work_type only if the message itself names which work "
+    "the correction is about. NEVER for a plain new measurement "
+    '("another 40 sqm done", "180 sqm so far") -- those are '
+    "general_site_update/progress, genuinely new work, not a fix. The "
+    "signal is always explicit correction language, never the number alone.\n"
     "- site_issue: issue_type, severity, narrative, delay_duration_minutes, project_name, "
     'occurred_on. issue_type MUST be exactly one of "WEATHER", "MATERIAL_SHORTAGE", '
     '"LABOUR_SHORTAGE", "DRAWING_PENDING", "EQUIPMENT_BREAKDOWN", "INSPECTION_WAITING", '

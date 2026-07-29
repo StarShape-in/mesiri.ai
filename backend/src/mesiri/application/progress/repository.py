@@ -24,6 +24,7 @@ from mesiri_contracts.application.commands.progress import (
     AddProgressUpdateCommand,
     AttachEvidenceCommand,
     CloseSiteIssueCommand,
+    CorrectActivityQuantityCommand,
     CreateActivityCommand,
     ReportSiteIssueCommand,
 )
@@ -94,6 +95,20 @@ class ProgressExecutionRepository(ABC):
         rejects via the same idempotency-keys/workflow_instance bookkeeping
         as persist_rejection, without a second _try_claim call, if it no
         longer does."""
+        ...
+
+    @abstractmethod
+    async def persist_correct_activity_quantity_success(
+        self, conn: AsyncConnection, cmd: CorrectActivityQuantityCommand
+    ) -> ExecutionResult:
+        """Claim the idempotency key, append a new progress_updates row
+        superseding `cmd.progress_update_id` + outbox event, cache
+        SUCCEEDED, and transition the workflow to COMPLETED. Re-verifies
+        the target row still exists and isn't already superseded by a
+        newer correction inside the same claimed transaction immediately
+        before the INSERT (ADR-D14) -- same "recheck at confirm time"
+        reasoning as persist_close_site_issue_success above. Never edits
+        or deletes `cmd.progress_update_id` itself (P1)."""
         ...
 
     @abstractmethod

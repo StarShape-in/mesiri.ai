@@ -29,6 +29,7 @@ from mesiri_contracts.assistant.v2.confirmed_action import ConfirmedActionV2
 from .mapper import (
     build_add_progress_update_command,
     build_close_site_issue_command,
+    build_correct_activity_quantity_command,
     build_create_activity_command,
     build_report_site_issue_command,
 )
@@ -111,6 +112,55 @@ class ExecuteConfirmedAddProgressUpdateHandler:
                     conn, cmd.idempotency_key, "add_progress_update", reasons
                 )
             return await self._repo.persist_add_progress_update_success(conn, cmd)
+
+
+class ExecuteConfirmedCorrectActivityQuantityHandler:
+    """ADR-D14: "make that 180". Same unit-resolution shape as
+    ExecuteConfirmedAddProgressUpdateHandler above -- `new_unit` almost
+    always already carries a unit_id by confirmation time (workflows/
+    activity_correction/nodes.py's build_draft falls back to the original
+    unit when none is restated, and that original was resolved when the
+    Progress Update being corrected was itself created), but this Handler
+    re-resolves defensively rather than trust that invariant blindly."""
+
+    def __init__(
+        self,
+        db: PostgresDatabase,
+        repo: ProgressExecutionRepository,
+        resolver: ProgressUnitResolver,
+    ) -> None:
+        self._db = db
+        self._repo = repo
+        self._resolver = resolver
+
+    async def handle(self, confirmed: ConfirmedActionV2) -> ExecutionResult:
+        cmd = build_correct_activity_quantity_command(confirmed)
+        reasons = validation.validate_correct_activity_quantity(cmd)
+
+        async with self._db.transaction() as conn:
+            existing = await self._repo.check_idempotency(conn, cmd.idempotency_key)
+            if existing is not None:
+                return as_replay(existing)
+
+            if not reasons:
+                from mesiri_contracts.application.commands.progress import ActivityQuantityInput
+
+                result = await self._resolver.resolve_quantity(
+                    conn,
+                    ActivityQuantityInput(
+                        unit=cmd.new_unit or "", quantity=cmd.new_quantity, unit_id=cmd.new_unit_id
+                    ),
+                )
+                if result.reason is not None:
+                    reasons.append(result.reason)
+                else:
+                    cmd = cmd.model_copy(update={"new_unit_id": str(result.unit_id)})
+
+            if reasons:
+                return await self._repo.persist_rejection(
+                    conn, cmd.idempotency_key, "correct_activity_quantity", reasons
+                )
+            return await self._repo.persist_correct_activity_quantity_success(conn, cmd)
 
 
 class ExecuteConfirmedReportSiteIssueHandler:

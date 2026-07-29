@@ -70,7 +70,7 @@ _EXTRACTION_PROMPT = (
     '"detected_language" (the source language\'s common English name, e.g. '
     '"Malayalam", "English"), '
     '"semantic_type" (expense|equipment_usage|material_update|labour_update|'
-    "general_site_update|site_issue|site_issue_update|general_question|whoami_question|inventory_query|"
+    "general_site_update|activity_correction|site_issue|site_issue_update|general_question|whoami_question|inventory_query|"
     "labour_query|activity_query|dpr_request|finance_query|transfer|petty_cash|reversal|"
     "account_admin|project_create|site_create|project_detail_query|unknown), "
     '"fields" (object, values in English except proper nouns/names -- see '
@@ -164,6 +164,20 @@ _EXTRACTION_PROMPT = (
     "never how new work is first reported. This type is for reporting work done "
     "or in progress -- never for problems, delays, or blockers (those are "
     "site_issue, a different report type).\n"
+    "- activity_correction: new_quantity, unit, work_type. Use this type ONLY "
+    "when the sender is correcting a number they (or someone) already "
+    'reported this conversation -- explicit correction language: "make '
+    'that X", "actually it was X", "correct that to X", "sorry, it\'s X '
+    'not Y", "should be X, not Y", "I meant X". new_quantity is the '
+    "corrected number (the right one, not the wrong one being replaced); "
+    "unit is its unit if stated. work_type is only for when the message "
+    'itself names which work the correction is about (e.g. "the plastering '
+    'was actually 180, not 80") -- omit if it just restates a number with '
+    'no work named. NEVER use this type for a plain new measurement '
+    '("another 40 sqm done", "180 sqm so far", "completed 50 more") -- '
+    "those are general_site_update with update_kind=progress, reporting "
+    "genuinely new work, not fixing a mistake. The distinguishing signal is "
+    "always explicit correction language, never the number alone.\n"
     "- site_issue: issue_type, severity, narrative, delay_duration_minutes, project_name, "
     'occurred_on. issue_type MUST be exactly one of "WEATHER", "MATERIAL_SHORTAGE", '
     '"LABOUR_SHORTAGE", "DRAWING_PENDING", "EQUIPMENT_BREAKDOWN", "INSPECTION_WAITING", '

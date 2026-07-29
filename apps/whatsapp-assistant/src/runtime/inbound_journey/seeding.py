@@ -1392,6 +1392,54 @@ async def _seed_open_activity(
         ]
 
 
+async def _seed_correction_target(
+    event: CanonicalEventV2,
+    decision: PlannerDecisionV2,
+    activity_query: ActivityQueryService | None,
+    actor: ActorIdentity | None,
+    *,
+    remembered_activity_id: str | None = None,
+) -> None:
+    """Resolve "make that 180 sqm" into a concrete progress_update_id
+    (ADR-D14, docs/execution/ACTIVITY_RESOLUTION_AND_CORRECTION_PLAN.md).
+    Only ever runs for WorkflowKey.ACTIVITY_CORRECTION.
+
+    Deliberately scoped to the Activity THIS conversation just touched
+    (memory/conversation_scope.py's CurrentActivityStore) only -- same
+    same-session reasoning as undo (ADR-D15) and continuation
+    (_seed_open_activity above), not a broader "most recent in the org"
+    search: correcting a number makes sense only in reference to a number
+    just stated in this same exchange. No remembered activity -> nothing
+    seeded -> workflows/activity_correction/nodes.py's build_draft
+    completes with an honest "nothing to correct" reply and no draft.
+
+    Within that activity, targets its most recent quantity-bearing Progress
+    Update (`ActivityQueryService.get_latest_quantity_update`) -- never the
+    Activity's own initial quantity (stored in activity_quantities, a
+    different table this correction path does not touch; see that
+    method's docstring on why that's out of scope for V1)."""
+    if activity_query is None or actor is None or not actor.organization_id:
+        return
+    if decision.workflow_key is not WorkflowKey.ACTIVITY_CORRECTION:
+        return
+    if not remembered_activity_id:
+        return
+
+    target = await activity_query.get_latest_quantity_update(
+        organization_id=actor.organization_id, activity_id=remembered_activity_id
+    )
+    if target is None:
+        return
+
+    event.fields["progress_update_id"] = target["progress_update_id"]
+    event.fields["old_quantity"] = str(target["quantity"])
+    event.fields["old_unit_id"] = target.get("unit_id")
+    event.fields["old_unit"] = target.get("unit")
+    summary_bits = [b for b in (target.get("work_type"), target.get("narrative")) if b]
+    if summary_bits:
+        event.fields["correction_activity_summary"] = " — ".join(summary_bits)
+
+
 async def _seed_finance_query_context(
     event: CanonicalEventV2,
     decision: PlannerDecisionV2,

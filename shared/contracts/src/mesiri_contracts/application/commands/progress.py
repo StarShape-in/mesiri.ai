@@ -174,6 +174,43 @@ class AddProgressUpdateCommand(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+class CorrectActivityQuantityCommand(BaseModel):
+    """Correct a Progress Update's quantity/unit (ADR-D14: "make that 180",
+    not "another 180"). Never edits `progress_update_id` in place --
+    Progress Updates stay append-only (P1) even under correction. Persisting
+    this appends a NEW progress_updates row carrying `supersedes_id =
+    progress_update_id`; the row this corrects is never touched.
+
+    `narrative`/`work_type` are absent on purpose: a correction only ever
+    restates the number, never re-describes the work -- if the description
+    was also wrong, that is an Activity header correction
+    (correct_activity_fields, dashboard-only in V1), a different command
+    entirely."""
+
+    version: str = CONTRACT_VERSION
+
+    command_id: str
+    idempotency_key: str
+    correlation_id: str
+
+    organization_id: CanonicalUuid
+    #: The progress_updates row being corrected -- resolved by seeding
+    #: (runtime/inbound_journey.py's `_seed_correction_target`), never
+    #: stated by the user.
+    progress_update_id: CanonicalUuid
+
+    new_quantity: Decimal
+    new_unit: str | None = None
+    new_unit_id: CanonicalUuid | None = None
+
+    reason: str | None = None
+    source: str = "whatsapp_text"
+
+    created_by: CanonicalUuid
+
+    model_config = {"extra": "forbid"}
+
+
 class ReportSiteIssueCommand(BaseModel):
     """Report a Site Issue (blocker/delay) -- always a new site_issues row,
     never a continuation of a prior one (unlike AddProgressUpdateCommand,

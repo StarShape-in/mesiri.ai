@@ -28,6 +28,7 @@ WORKFLOW_KEY_BY_EVENT: dict[CanonicalEventType, WorkflowKey] = {
     # it goes through workflows/site_update/nodes.py's resolve_target
     # exactly like any other site update.
     CanonicalEventType.ACTIVITY_CONTINUATION_REQUESTED: WorkflowKey.SITE_UPDATE,
+    CanonicalEventType.ACTIVITY_CORRECTION_REQUESTED: WorkflowKey.ACTIVITY_CORRECTION,
     CanonicalEventType.SITE_ISSUE_REPORTED: WorkflowKey.SITE_ISSUE_REPORT,
     CanonicalEventType.SITE_ISSUE_ACKNOWLEDGE_REQUESTED: WorkflowKey.SITE_ISSUE_CLOSE,
     CanonicalEventType.SITE_ISSUE_RESOLVE_REQUESTED: WorkflowKey.SITE_ISSUE_CLOSE,

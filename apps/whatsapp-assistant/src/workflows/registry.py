@@ -17,6 +17,7 @@ from mesiri_contracts.assistant.planner_decision import WorkflowKey
 
 from .account_admin.graph import build_account_admin_graph
 from .account_balance_query.graph import build_account_balance_query_graph
+from .activity_correction.graph import build_activity_correction_graph
 from .activity_query.graph import build_activity_query_graph
 from .dpr_request.graph import build_dpr_request_graph
 from .expense_capture.graph import build_expense_capture_graph
@@ -176,6 +177,15 @@ _DEFINITIONS: dict[WorkflowKey, WorkflowDefinition] = dict(
             WorkflowKey.SITE_UPDATE,
             build_activity_creation_graph,
             WorkflowCategory.PROGRESS,
+        ),
+        _define(
+            WorkflowKey.ACTIVITY_CORRECTION,
+            build_activity_correction_graph,
+            WorkflowCategory.PROGRESS,
+            # "Nothing to correct" (no same-session activity to target,
+            # ADR-D14/D15's shared same-session scoping) is a legitimate
+            # no-draft completion, same reasoning as REVERSE.
+            allows_completion_without_draft=True,
         ),
         _define(
             WorkflowKey.WORKER_PROMOTION,

@@ -610,6 +610,12 @@ def test_informational_and_no_draft_keys_are_pinned() -> None:
         WorkflowKey.REVERSE,
         WorkflowKey.EXPENSE_SUBMIT,
         WorkflowKey.ACCOUNT_ADMIN,
+        # Same reasoning as REVERSE: the target Progress Update is resolved
+        # by seeding (runtime/inbound_journey.py's _seed_correction_target),
+        # scoped to the same conversation only (ADR-D14/D15) -- "nothing you
+        # just logged that I can correct" is a legitimate no-draft
+        # completion, not a failure.
+        WorkflowKey.ACTIVITY_CORRECTION,
         # Same reasoning as REVERSE: the target issue is resolved by seeding
         # (runtime/inbound_journey.py's _seed_site_issue_close_target), never
         # stated by the user -- "nothing to acknowledge/resolve/wont_fix" is

@@ -58,6 +58,7 @@ class WorkflowKey(str, Enum):
     WORKER_PROMOTION = "labour.worker_promotion"
     SITE_UPDATE = "site.update"
     ACTIVITY_CONTINUATION = "site.activity_continuation"
+    ACTIVITY_CORRECTION = "site.activity_correction"
     SITE_ISSUE_REPORT = "site.issue_report"
     SITE_ISSUE_CLOSE = "site.issue_close"
     WHO_AM_I = "who.am.i"

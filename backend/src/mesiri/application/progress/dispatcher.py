@@ -18,6 +18,7 @@ from mesiri_contracts.assistant.v2.confirmed_action import ConfirmedActionV2
 from .handlers import (
     ExecuteConfirmedAddProgressUpdateHandler,
     ExecuteConfirmedCloseSiteIssueHandler,
+    ExecuteConfirmedCorrectActivityQuantityHandler,
     ExecuteConfirmedCreateActivityHandler,
     ExecuteConfirmedReportSiteIssueHandler,
 )
@@ -44,6 +45,19 @@ class AddProgressUpdateExecutionDispatcher(OperationalExecutionDispatcher):
     def __init__(self, handler: ExecuteConfirmedAddProgressUpdateHandler) -> None:
         super().__init__(handler)
         self._handler: ExecuteConfirmedAddProgressUpdateHandler = handler
+
+    async def _execute(self, confirmed: ConfirmedActionV2) -> ExecutionResult:
+        return await self._handler.handle(confirmed)
+
+
+class CorrectActivityQuantityExecutionDispatcher(OperationalExecutionDispatcher):
+    """Satisfies interactions.ports.ExecutionDispatcher by wrapping the Handler."""
+
+    _LOG_LABEL = "correct_activity_quantity_execution"
+
+    def __init__(self, handler: ExecuteConfirmedCorrectActivityQuantityHandler) -> None:
+        super().__init__(handler)
+        self._handler: ExecuteConfirmedCorrectActivityQuantityHandler = handler
 
     async def _execute(self, confirmed: ConfirmedActionV2) -> ExecutionResult:
         return await self._handler.handle(confirmed)

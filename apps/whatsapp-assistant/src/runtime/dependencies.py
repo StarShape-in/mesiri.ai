@@ -339,12 +339,14 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from mesiri.application.progress.dispatcher import (
         AddProgressUpdateExecutionDispatcher,
         CloseSiteIssueExecutionDispatcher,
+        CorrectActivityQuantityExecutionDispatcher,
         CreateActivityExecutionDispatcher,
         ReportSiteIssueExecutionDispatcher,
     )
     from mesiri.application.progress.handlers import (
         ExecuteConfirmedAddProgressUpdateHandler,
         ExecuteConfirmedCloseSiteIssueHandler,
+        ExecuteConfirmedCorrectActivityQuantityHandler,
         ExecuteConfirmedCreateActivityHandler,
         ExecuteConfirmedReportSiteIssueHandler,
     )
@@ -373,6 +375,21 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     )
     add_progress_update_dispatcher = AddProgressUpdateExecutionDispatcher(
         add_progress_update_handler
+    )
+    # Activity Quantity Correction (ADR-D14): same repo/resolver as Activity
+    # creation/continuation above -- correct_activity_quantity_success
+    # composes PostgresProgressReadRepository.correct_progress_update (a
+    # different repository, the dashboard-facing one) for the actual write,
+    # same cross-repository reasoning reverse_execution.py's activity
+    # branch already uses; this repo/resolver only own the idempotency
+    # claim, outbox event, and workflow transition around that call.
+    correct_activity_quantity_handler = ExecuteConfirmedCorrectActivityQuantityHandler(
+        db=material_db,
+        repo=progress_execution_repo,
+        resolver=progress_unit_resolver,
+    )
+    correct_activity_quantity_dispatcher = CorrectActivityQuantityExecutionDispatcher(
+        correct_activity_quantity_handler
     )
     # Site Issue Report: same repo as Activity creation/continuation above --
     # all three commands persist to tables PostgresProgressExecutionRepository
@@ -439,6 +456,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             DraftActionType.RECORD_LABOUR_ATTENDANCE: labour_dispatcher,
             DraftActionType.CREATE_ACTIVITY: create_activity_dispatcher,
             DraftActionType.ADD_PROGRESS_UPDATE: add_progress_update_dispatcher,
+            DraftActionType.CORRECT_ACTIVITY_QUANTITY: correct_activity_quantity_dispatcher,
             DraftActionType.RECORD_SITE_ISSUE: report_site_issue_dispatcher,
             DraftActionType.CLOSE_SITE_ISSUE: close_site_issue_dispatcher,
             DraftActionType.CREATE_PROJECT: create_project_dispatcher,

@@ -23,6 +23,7 @@ from mesiri_contracts.application.commands.progress import (
     ActivityQuantityInput,
     AddProgressUpdateCommand,
     CloseSiteIssueCommand,
+    CorrectActivityQuantityCommand,
     CreateActivityCommand,
     ReportSiteIssueCommand,
 )
@@ -141,6 +142,32 @@ def build_add_progress_update_command(confirmed: ConfirmedActionV2) -> AddProgre
         unit=fields.get("unit"),
         unit_id=fields.get("unit_id"),
         occurred_at=occurred_at,
+        source=str(fields.get("source") or "whatsapp_text"),
+        created_by=confirmed.confirmed_by_user_id,
+    )
+
+
+def build_correct_activity_quantity_command(
+    confirmed: ConfirmedActionV2,
+) -> CorrectActivityQuantityCommand:
+    """ADR-D14: "make that 180" -- draft.fields carries `progress_update_id`
+    (resolved by seeding, see workflows/activity_correction/nodes.py) and
+    `new_quantity`/`unit`/`unit_id` (the corrected value, `unit` already
+    falling back to the original unit if the message didn't restate one --
+    see that same node's build_draft)."""
+    draft = confirmed.draft_action
+    fields = draft.fields
+
+    return CorrectActivityQuantityCommand(
+        command_id=new_id("cmd"),
+        idempotency_key=confirmed.workflow_instance_id,
+        correlation_id=confirmed.correlation_id,
+        organization_id=draft.organization_id,
+        progress_update_id=fields.get("progress_update_id"),
+        new_quantity=_decimal(fields.get("new_quantity")),
+        new_unit=fields.get("unit"),
+        new_unit_id=fields.get("unit_id"),
+        reason=fields.get("reason"),
         source=str(fields.get("source") or "whatsapp_text"),
         created_by=confirmed.confirmed_by_user_id,
     )

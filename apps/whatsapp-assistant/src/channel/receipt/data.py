@@ -355,6 +355,31 @@ def build_receipt_data(
             ],
         ]
         id_prefix = "PU"
+    elif draft.action_type is DraftActionType.CORRECT_ACTIVITY_QUANTITY:
+        # ADR-D14: old_quantity/old_unit are seeded straight from a real DB
+        # read (runtime/inbound_journey.py's _seed_correction_target), never
+        # an unresolved AI hint -- same reasoning reverse/nodes.py's
+        # reversal_* fields document for keeping them in draft.fields.
+        old_quantity = fields.get("old_quantity")
+        old_unit = str(fields.get("old_unit") or "")
+        new_quantity = fields.get("new_quantity")
+        new_unit = str(fields.get("unit") or old_unit)
+        category = "Correction"
+        value = f"{new_quantity} {new_unit}".strip()
+        subtitle = "Quantity corrected"
+        sections = [
+            [
+                ReceiptField("layers", "Activity", str(fields.get("correction_activity_summary") or "—")),
+                ReceiptField(
+                    "hammer", "Quantity", f"{old_quantity} {old_unit} → {new_quantity} {new_unit}".strip()
+                ),
+            ],
+            [
+                ReceiptField("user", "Reported by", reporter),
+                ReceiptField("whatsapp", "Source", "WhatsApp"),
+            ],
+        ]
+        id_prefix = "QC"
     elif draft.action_type is DraftActionType.RECORD_SITE_ISSUE:
         issue_type = str(fields.get("issue_type") or "Issue").replace("_", " ")
         category = "Site Issue"

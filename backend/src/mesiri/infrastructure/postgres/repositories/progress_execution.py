@@ -35,6 +35,7 @@ from mesiri_contracts.application.commands.progress import (
     AddProgressUpdateCommand,
     AttachEvidenceCommand,
     CloseSiteIssueCommand,
+    CorrectActivityQuantityCommand,
     CreateActivityCommand,
     ReportSiteIssueCommand,
 )
@@ -337,6 +338,110 @@ class PostgresProgressExecutionRepository(ProgressExecutionRepository):
             {"result": result.model_dump_json(), "key": cmd.idempotency_key},
         )
 
+        await self._transition(conn, cmd.idempotency_key, WorkflowPhase.COMPLETED)
+        return result
+
+    async def persist_correct_activity_quantity_success(
+        self, conn: AsyncConnection, cmd: CorrectActivityQuantityCommand
+    ) -> ExecutionResult:
+        """ADR-D14: "make that 180". Composes
+        `PostgresProgressReadRepository.correct_progress_update` (same
+        connection, same transaction) for the actual append-a-superseding-
+        row write + activity_corrections audit + DPR revision-if-frozen --
+        same reasoning as reverse_execution.py's use of
+        PostgresProgressReadRepository.void_activity: duplicating that SQL
+        here would be worse than the minor capability-boundary bend of
+        calling out to another repository. This method only owns the
+        idempotency claim, the outbox event, and the workflow transition."""
+        from sqlalchemy import text
+
+        from mesiri.infrastructure.postgres.repositories.progress import (
+            PostgresProgressReadRepository,
+        )
+
+        if not await self._try_claim(conn, cmd.idempotency_key, "correct_activity_quantity"):
+            existing = await self.check_idempotency(conn, cmd.idempotency_key)
+            assert existing is not None
+            return as_replay(existing)
+
+        organization_id = uuid.UUID(cmd.organization_id)
+        created_by = uuid.UUID(cmd.created_by)
+        progress_update_id = uuid.UUID(cmd.progress_update_id)
+
+        changes: dict[str, object] = {"quantity": cmd.new_quantity}
+        new_unit_id = _optional_uuid(cmd.new_unit_id)
+        if new_unit_id is not None:
+            changes["unit_id"] = new_unit_id
+
+        repo = PostgresProgressReadRepository(conn)
+        corrected = await repo.correct_progress_update(
+            organization_id=organization_id,
+            update_id=progress_update_id,
+            changes=changes,
+            reason=cmd.reason,
+            corrected_by_user_id=created_by,
+            correlation_id=cmd.correlation_id,
+            source=cmd.source,
+        )
+
+        if corrected is None:
+            # The target no longer exists (deleted/undone) by confirm time
+            # -- time can pass between the draft being built and the user
+            # replying YES, same "recheck, then reject via the same
+            # idempotency-keys bookkeeping" shape as
+            # persist_close_site_issue_success above.
+            result = ExecutionResult(
+                status=ExecutionStatus.REJECTED,
+                idempotency_key=cmd.idempotency_key,
+                rejection_reasons=["that progress update no longer exists"],
+            )
+            await conn.execute(
+                text(
+                    "UPDATE idempotency_keys "
+                    "SET status = 'completed', result = CAST(:result AS jsonb), completed_at = now() "
+                    "WHERE key = :key"
+                ),
+                {"result": result.model_dump_json(), "key": cmd.idempotency_key},
+            )
+            await self._transition(conn, cmd.idempotency_key, WorkflowPhase.EXECUTION_REJECTED)
+            return result
+
+        await conn.execute(
+            text(
+                "INSERT INTO outbox_events "
+                "(id, aggregate_type, aggregate_id, event_type, payload, correlation_id) "
+                "VALUES (:id, 'activity', :aggregate_id, 'ActivityProgressUpdateCorrected', "
+                "CAST(:payload AS jsonb), :correlation_id)"
+            ),
+            {
+                "id": uuid.uuid4(),
+                "aggregate_id": corrected["activity_id"],
+                "payload": json.dumps(
+                    {
+                        "progress_update_id": str(corrected["id"]),
+                        "supersedes_id": str(corrected["supersedes_id"]),
+                        "quantity": str(corrected["quantity"]),
+                        "reason": cmd.reason,
+                    },
+                    default=str,
+                ),
+                "correlation_id": cmd.correlation_id,
+            },
+        )
+
+        result = ExecutionResult(
+            status=ExecutionStatus.SUCCEEDED,
+            idempotency_key=cmd.idempotency_key,
+            material_row_id=str(corrected["id"]),
+        )
+        await conn.execute(
+            text(
+                "UPDATE idempotency_keys "
+                "SET status = 'completed', result = CAST(:result AS jsonb), completed_at = now() "
+                "WHERE key = :key"
+            ),
+            {"result": result.model_dump_json(), "key": cmd.idempotency_key},
+        )
         await self._transition(conn, cmd.idempotency_key, WorkflowPhase.COMPLETED)
         return result
 

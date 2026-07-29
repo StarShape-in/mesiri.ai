@@ -52,6 +52,7 @@ from runtime.inbound_journey.seeding import (
     _seed_account_admin_role,
     _seed_account_candidates,
     _seed_activity_search,
+    _seed_correction_target,
     _seed_dpr_request,
     _seed_duplicate_check,
     _seed_finance_query_context,
@@ -677,6 +678,15 @@ async def process_inbound_message(
                             actor,
                         ),
                         _seed_open_activity(
+                            canonical_event,
+                            planner_decision,
+                            activity_query,
+                            actor,
+                            remembered_activity_id=(
+                                memory_pack.current_activity_id if memory_pack else None
+                            ),
+                        ),
+                        _seed_correction_target(
                             canonical_event,
                             planner_decision,
                             activity_query,

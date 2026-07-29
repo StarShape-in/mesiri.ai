@@ -42,6 +42,13 @@ class CanonicalEventType(str, Enum):
     # segment` (a material usage naming a work_item); both event types route
     # to the same merged WorkflowKey.SITE_UPDATE (planner/routing.py).
     ACTIVITY_CONTINUATION_REQUESTED = "ActivityContinuationRequested"
+    # ADR-D14: SemanticType.ACTIVITY_CORRECTION -> "make that 180", correcting
+    # a quantity already reported this conversation. Routes to its own
+    # WorkflowKey.ACTIVITY_CORRECTION (planner/routing.py) -- not the merged
+    # SITE_UPDATE key above, since correcting is a materially different
+    # confirmation shape (old value -> new value) than creating or
+    # continuing.
+    ACTIVITY_CORRECTION_REQUESTED = "ActivityCorrectionRequested"
     # SemanticType.SITE_ISSUE -> a reported blocker/delay, always a new
     # site_issues row (no continuation split like GENERAL_SITE_UPDATE has --
     # each report is its own record, never appended to a prior one).

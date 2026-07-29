@@ -16,6 +16,7 @@ from __future__ import annotations
 from mesiri_contracts.application.commands.progress import (
     AddProgressUpdateCommand,
     CloseSiteIssueCommand,
+    CorrectActivityQuantityCommand,
     CreateActivityCommand,
     ReportSiteIssueCommand,
 )
@@ -85,6 +86,21 @@ def validate_add_progress_update(cmd: AddProgressUpdateCommand) -> list[str]:
     if not cmd.narrative and cmd.quantity is None and cmd.update_kind == "NOTE":
         reasons.append("a NOTE update needs a narrative or a quantity")
 
+    return reasons
+
+
+def validate_correct_activity_quantity(cmd: CorrectActivityQuantityCommand) -> list[str]:
+    """Return violation reasons; empty list means valid. `progress_update_id`
+    is a required CanonicalUuid (never an empty/missing value can reach
+    here) -- existence of the *row* it names (and re-verifying it hasn't
+    since been superseded by a newer correction) is DB-backed and belongs
+    to the Handler/repository, same structural-vs-DB-backed split every
+    other command here follows."""
+    reasons: list[str] = []
+    if cmd.new_quantity <= 0:
+        reasons.append("quantity must be positive")
+    if not cmd.new_unit or not cmd.new_unit.strip():
+        reasons.append("unit is required")
     return reasons
 
 

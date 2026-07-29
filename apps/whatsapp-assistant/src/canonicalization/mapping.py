@@ -36,6 +36,11 @@ _SIMPLE_EVENT_TYPE: dict[SemanticType, CanonicalEventType] = {
     # travels as a plain field, read as a hint by the workflow's own
     # resolver, not used to pick a different CanonicalEventType.
     SemanticType.GENERAL_SITE_UPDATE: CanonicalEventType.GENERAL_SITE_UPDATE_REQUESTED,
+    # ADR-D14: "make that 180" -- always its own WorkflowKey.ACTIVITY_
+    # CORRECTION (planner/routing.py), never the merged SITE_UPDATE key
+    # above, since a correction's confirmation shape (old value -> new
+    # value) is materially different from creating or continuing.
+    SemanticType.ACTIVITY_CORRECTION: CanonicalEventType.ACTIVITY_CORRECTION_REQUESTED,
 }
 
 # MATERIAL_UPDATE is the one semantic type that splits by the candidate's
@@ -114,6 +119,10 @@ REQUIRED_FIELDS: dict[CanonicalEventType, tuple[str, ...]] = {
     # genuinely unactionable and asks for clarification.
     CanonicalEventType.LABOUR_ATTENDANCE_REQUESTED: ("lines",),
     CanonicalEventType.GENERAL_SITE_UPDATE_REQUESTED: (),
+    # A correction with no corrected number is nothing to act on -- the
+    # target (which activity/update) is resolved by seeding, but the new
+    # value itself must come from the user.
+    CanonicalEventType.ACTIVITY_CORRECTION_REQUESTED: ("new_quantity",),
     # No required fields -- the target activity is resolved by seeding
     # (runtime/inbound_journey.py's _seed_open_activity), never stated by the
     # user, same reasoning as EXPENSE_REVERSAL_REQUESTED above. A narrative

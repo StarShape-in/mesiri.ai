@@ -31,6 +31,7 @@ class DraftActionType(str, Enum):
     RECORD_LABOUR_ATTENDANCE = "record_labour_attendance"
     CREATE_ACTIVITY = "create_activity"
     ADD_PROGRESS_UPDATE = "add_progress_update"
+    CORRECT_ACTIVITY_QUANTITY = "correct_activity_quantity"
     RECORD_SITE_ISSUE = "record_site_issue"
     CLOSE_SITE_ISSUE = "close_site_issue"
     CREATE_PROJECT = "create_project"

@@ -32,6 +32,16 @@ class SemanticType(str, Enum):
     MATERIAL_UPDATE = "material_update"
     LABOUR_UPDATE = "labour_update"
     GENERAL_SITE_UPDATE = "general_site_update"
+    # ADR-D14 (docs/execution/DAILY_REPORTING_PLAN.md): the user is correcting
+    # a quantity/value already reported ("make that 180", "actually it was
+    # 40 sqm, not 30") -- distinct from GENERAL_SITE_UPDATE's "progress"
+    # update_kind, which reports a genuinely NEW measurement at this moment.
+    # Explicit correction language only; a plain restated number with no
+    # "actually"/"make that"/"correct that to" framing stays GENERAL_SITE_
+    # UPDATE. Never creates a new record -- always targets the most recent
+    # quantity-bearing Progress Update this conversation produced (resolved
+    # by seeding, same as ACTIVITY_CONTINUATION_REQUESTED's target).
+    ACTIVITY_CORRECTION = "activity_correction"
     # A problem, delay, or blocker that stops or slows down work (e.g. "ran
     # out of cement", "JCB broke down", "raining since morning") -- a
     # business-affecting write, unlike ACTIVITY_QUERY's "any open issues?"
