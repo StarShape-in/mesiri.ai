@@ -983,12 +983,29 @@ async def _seed_existing_attendance(
     if not occurred_date:
         return
 
-    existing = await workforce_query.find_existing_report_for_day(
-        organization_id=actor.organization_id,
-        project_id=event.project_id,
-        site_id=event.site_id,
-        occurred_date=occurred_date,
-    )
+    # Never let this cost the message. `_plan_and_run`'s seeding gather has no
+    # return_exceptions, so anything raised here propagates all the way to the
+    # journey's catch-all and the supervisor is told "nothing was recorded" --
+    # which is exactly what happened when this shipped passing an ISO string
+    # where asyncpg wanted a date. Not asking the duplicate question is a
+    # small loss; losing the attendance is not, and this check is an
+    # enhancement to recording, never a precondition for it.
+    try:
+        existing = await workforce_query.find_existing_report_for_day(
+            organization_id=actor.organization_id,
+            project_id=event.project_id,
+            site_id=event.site_id,
+            occurred_date=occurred_date,
+        )
+    except Exception:  # noqa: BLE001 -- see above; degrade to not asking
+        _log.exception(
+            "labour.duplicate_day_check_failed org=%s project=%s date=%s",
+            actor.organization_id,
+            event.project_id,
+            occurred_date,
+        )
+        return
+
     if existing and existing.get("report_id"):
         event.fields["existing_report"] = existing
 

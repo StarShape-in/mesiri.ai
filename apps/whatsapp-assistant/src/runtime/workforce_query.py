@@ -357,6 +357,8 @@ class PostgresWorkforceQueryService:
         A NULL site_id is matched with IS NULL, not `= NULL` (always false),
         or a project with no named site could never detect its own duplicate.
         """
+        import datetime as _datetime
+
         import sqlalchemy as sa
 
         try:
@@ -365,14 +367,21 @@ class PostgresWorkforceQueryService:
             site_uuid = uuid.UUID(site_id) if site_id else None
         except (TypeError, ValueError):
             return None
-        if not str(occurred_date or "").strip():
+        # asyncpg is strictly typed: it will not coerce the ISO string that
+        # travels through the canonical event into a DATE, and raises DataError
+        # rather than casting. Shipping this untyped meant every attendance
+        # message failed with "something went wrong -- nothing was recorded",
+        # because the seeding gather does not isolate one seed's failure.
+        try:
+            occurred = _datetime.date.fromisoformat(str(occurred_date or "").strip())
+        except (TypeError, ValueError):
             return None
 
         site_clause = "site_id IS NULL" if site_uuid is None else "site_id = :site_id"
         params: dict[str, Any] = {
             "org_id": org_id,
             "project_id": project_uuid,
-            "occurred_date": occurred_date,
+            "occurred_date": occurred,
         }
         if site_uuid is not None:
             params["site_id"] = site_uuid
