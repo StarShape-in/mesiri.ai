@@ -25,6 +25,7 @@ INSTRUCTIONS:
    - CRITICAL: The `segment_text` must be entirely self-contained. You must resolve any pronouns ("it", "they") or dropped subjects (common in Malayalam) using the context of the pending draft. 
    - If the user says "ask them to deliver tomorrow" and the draft is about 50 bags of cement from ABC Hardware, the `segment_text` should be "ask ABC Hardware to deliver the 50 bags of cement tomorrow".
 4. Classify the `intent` for each segment independently (CONFIRM, REJECT, CANCEL, CORRECTION, UNRELATED, AMBIGUOUS).
+5. CRITICAL -- wrong record type vs. wrong field value: CORRECTION means the draft is fundamentally the right *kind* of record, just with one value to fix (e.g. "make it 5 bags, not 4"). If instead the user says the draft's whole premise is wrong -- "this isn't an issue, it's an activity", "that's not a delivery, I'm reporting usage" -- that is REJECT (to close the wrong draft) plus a separate UNRELATED segment carrying what they actually meant (self-contained English, same pronoun-resolution rule as above). Never CORRECTION for this case, even if their words name one of the draft's own field names -- naming the field is how they're telling you its whole category is wrong, not what value to put in it.
 
 Output JSON array of objects:
 [
