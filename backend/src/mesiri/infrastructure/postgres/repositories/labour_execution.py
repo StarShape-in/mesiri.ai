@@ -77,6 +77,101 @@ class PostgresLabourExecutionRepository(LabourExecutionRepository):
         ).first()
         return claimed is not None
 
+    async def _ensure_worker_identities(
+        self,
+        conn: AsyncConnection,
+        cmd: RecordLabourAttendanceCommand,
+        organization_id: uuid.UUID,
+        created_by: uuid.UUID,
+    ) -> dict[int, uuid.UUID]:
+        """Give every named worker a durable id, creating one if they are new.
+
+        Returns {line index -> worker_id} for the lines that arrived without
+        one. Headcount groups are skipped: "7 masons" names nobody, so there is
+        no identity to assign and worker_id stays NULL for them.
+
+        **This deliberately departs from the Labour plan's principle P1**
+        ("attendance never writes the register"). P1 existed to stop the
+        register filling with one-off names, but the cost turned out to be
+        worse: a temporary worker had no id at all, so their history was keyed
+        on the *name string*, and promoting them later started a second,
+        separate history under a real id. Production shows the result -- 26
+        people in attendance, only 8 of them linked to a register row, and the
+        rest with histories that cannot survive being promoted.
+
+        The register still distinguishes them: a worker created here is
+        ``worker_type='temporary'``, and promotion flips that to
+        ``'permanent'`` on the *same row*, so the id -- and every day of
+        attendance already attached to it -- carries straight through.
+
+        Find-or-create is keyed on normalized name + normalized trade, the same
+        rule matching itself uses, so this can only ever create someone
+        matching had already decided was nobody it knew. Doing it inside the
+        report's own transaction is what makes it safe: two reports naming the
+        same new person cannot race into two rows.
+        """
+        from sqlalchemy import text
+
+        from mesiri.domains.workforce.workers import normalize_name, normalize_trade
+
+        wanted: dict[int, tuple[str, str | None]] = {}
+        for index, line in enumerate(cmd.lines):
+            if _optional_uuid(line.worker_id) is not None:
+                continue
+            normalized = normalize_name(line.worker_name)
+            if not normalized:
+                continue
+            wanted[index] = (normalized, normalize_trade(line.trade))
+        if not wanted:
+            return {}
+
+        existing = (
+            await conn.execute(
+                text(
+                    "SELECT id, name, trade FROM workforce_workers "
+                    "WHERE organization_id = :org_id"
+                ),
+                {"org_id": organization_id},
+            )
+        ).mappings().all()
+        by_key: dict[tuple[str, str | None], uuid.UUID] = {}
+        for row in existing:
+            by_key.setdefault(
+                (normalize_name(row["name"]), normalize_trade(row["trade"])), row["id"]
+            )
+
+        resolved: dict[int, uuid.UUID] = {}
+        for index, key in wanted.items():
+            found = by_key.get(key)
+            if found is None:
+                found = uuid.uuid4()
+                await conn.execute(
+                    text(
+                        "INSERT INTO workforce_workers "
+                        "(id, organization_id, name, trade, worker_type, default_daily_wage, "
+                        " contractor, status, created_at, created_by, updated_at) "
+                        "VALUES (:id, :org_id, :name, :trade, 'temporary', :daily_wage, "
+                        "        :contractor, 'active', now(), :created_by, now())"
+                    ),
+                    {
+                        "id": found,
+                        "org_id": organization_id,
+                        # Stored as reported, not normalized -- normalization is
+                        # a matching aid and was never meant for display.
+                        "name": cmd.lines[index].worker_name,
+                        "trade": cmd.lines[index].trade,
+                        "daily_wage": cmd.lines[index].daily_wage,
+                        "contractor": cmd.lines[index].contractor,
+                        "created_by": created_by,
+                    },
+                )
+                # Registered immediately so a second line naming the same
+                # person in this very report reuses the row instead of
+                # creating a twin.
+                by_key[key] = found
+            resolved[index] = found
+        return resolved
+
     async def persist_success(
         self, conn: AsyncConnection, cmd: RecordLabourAttendanceCommand
     ) -> ExecutionResult:
@@ -129,7 +224,9 @@ class PostgresLabourExecutionRepository(LabourExecutionRepository):
             },
         )
 
-        for line in cmd.lines:
+        identities = await self._ensure_worker_identities(conn, cmd, organization_id, created_by)
+
+        for index, line in enumerate(cmd.lines):
             await conn.execute(
                 text(
                     "INSERT INTO labour_attendance_lines "
@@ -141,7 +238,7 @@ class PostgresLabourExecutionRepository(LabourExecutionRepository):
                 {
                     "id": uuid.uuid4(),
                     "report_id": report_id,
-                    "worker_id": _optional_uuid(line.worker_id),
+                    "worker_id": _optional_uuid(line.worker_id) or identities.get(index),
                     "worker_name": line.worker_name,
                     "worker_name_original": line.worker_name_original,
                     "trade": line.trade,

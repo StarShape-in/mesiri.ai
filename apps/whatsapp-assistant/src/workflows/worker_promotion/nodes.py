@@ -312,12 +312,16 @@ def _queue_for_creation(
 
 
 def _closing_message(queued: list[str]) -> str:
+    # "stay as temporary" and "made permanent" are both literally true now:
+    # recording the attendance already gave everyone named a register row
+    # marked temporary, and promotion flips that same row to permanent rather
+    # than creating a second one (see labour_execution._ensure_worker_identities).
     if not queued:
         return (
-            "No problem — they stay as temporary workers. You can add them any "
-            "time from the Worker Register on the dashboard."
+            "No problem — they stay as temporary workers. You can make them "
+            "permanent any time from the Worker Register on the dashboard."
         )
-    return f"✅ Added to your Worker Register: {', '.join(queued)}"
+    return f"✅ Made permanent in your Worker Register: {', '.join(queued)}"
 
 
 def _ask(prompt: str, slot: str, fields: dict[str, Any]) -> dict:

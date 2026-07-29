@@ -295,7 +295,10 @@ def test_confirming_a_look_alike_is_a_different_person_creates_them():
     )
 
     assert _names(resumed) == ["Ajith"]
-    assert "Added to your Worker Register: Ajith" in resumed["pending_prompt"]
+    # "Made permanent", not "Added": recording the attendance already gave
+    # Ajith a register row marked temporary, and promotion flips that same row
+    # rather than inserting a second one.
+    assert "Made permanent in your Worker Register: Ajith" in resumed["pending_prompt"]
     assert resumed["awaiting_slot"] is None
 
 

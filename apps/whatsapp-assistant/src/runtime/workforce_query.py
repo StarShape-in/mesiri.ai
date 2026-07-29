@@ -233,26 +233,41 @@ class PostgresWorkforceQueryService:
     ) -> str:
         """Promote a named temporary worker into the Worker Register.
 
-        Defaults: PERMANENT type, ACTIVE status — the supervisor can change
-        these from the dashboard later. The daily wage from the attendance
-        line is carried as the default, the strongest signal available at
-        promotion time (better than leaving it null and requiring a manual edit).
+        Promotion is now an **update, not an insert**. Recording the
+        attendance already gave this person a durable id and marked them
+        ``temporary`` (see labour_execution.py's `_ensure_worker_identities`),
+        so inserting a second row here would fork them in two: the days they
+        already worked would stay attached to the old id while everything
+        afterwards accrued to the new one. That fork is exactly what this
+        phase exists to remove.
 
-        Returns the new worker's UUID string.
+        So: find the existing row by normalized name + trade, flip it to
+        ``permanent``, and return the id it already had. Every day of
+        attendance recorded before the promotion stays attached, because the
+        row never moved. Only when no such row exists -- a worker added from a
+        path that never went through attendance -- does this still insert.
+
+        Defaults on insert: PERMANENT type, ACTIVE status. The daily wage from
+        the attendance line is carried as the default, the strongest signal
+        available at promotion time. On update the wage is only filled in when
+        the row does not already have one, so promoting somebody never
+        overwrites a rate an admin set deliberately.
+
+        Returns the worker's UUID string, existing or new.
         """
         import decimal
 
         import sqlalchemy as sa
 
-        from mesiri.domains.workforce.workers import normalize_trade
+        from mesiri.domains.workforce.workers import normalize_name, normalize_trade
 
         try:
             org_id = uuid.UUID(organization_id)
         except (TypeError, ValueError):
             raise ValueError(f"invalid organization_id: {organization_id!r}") from None
 
-        worker_id = uuid.uuid4()
         normalized_trade = normalize_trade(trade)
+        normalized_name = normalize_name(name)
 
         wage_decimal: decimal.Decimal | None = None
         if daily_wage is not None:
@@ -261,29 +276,62 @@ class PostgresWorkforceQueryService:
             except (decimal.InvalidOperation, TypeError, ValueError):
                 wage_decimal = None
 
-        workers = sa.table(
-            "workforce_workers",
-            sa.column("id"),
-            sa.column("organization_id"),
-            sa.column("name"),
-            sa.column("trade"),
-            sa.column("worker_type"),
-            sa.column("status"),
-            sa.column("default_daily_wage"),
-            sa.column("created_by"),
-        )
-        stmt = workers.insert().values(
-            id=worker_id,
-            organization_id=org_id,
-            name=name.strip(),
-            trade=normalized_trade,
-            worker_type="permanent",
-            status="active",
-            default_daily_wage=wage_decimal,
-            created_by=uuid.UUID(created_by) if created_by else None,
-        )
         async with self._db.transaction() as conn:
-            await conn.execute(stmt)
+            candidates = (
+                await conn.execute(
+                    sa.text(
+                        "SELECT id, name, trade, default_daily_wage FROM workforce_workers "
+                        "WHERE organization_id = :org_id"
+                    ),
+                    {"org_id": org_id},
+                )
+            ).mappings().all()
+
+            existing_id = None
+            existing_wage = None
+            for row in candidates:
+                if (
+                    normalize_name(row["name"]) == normalized_name
+                    and normalize_trade(row["trade"]) == normalized_trade
+                ):
+                    existing_id = row["id"]
+                    existing_wage = row["default_daily_wage"]
+                    break
+
+            if existing_id is not None:
+                await conn.execute(
+                    sa.text(
+                        "UPDATE workforce_workers "
+                        "SET worker_type = 'permanent', status = 'active', "
+                        "    default_daily_wage = COALESCE(default_daily_wage, :wage), "
+                        "    updated_at = now() "
+                        "WHERE id = :id"
+                    ),
+                    {
+                        "id": existing_id,
+                        "wage": wage_decimal if existing_wage is None else None,
+                    },
+                )
+                return str(existing_id)
+
+            worker_id = uuid.uuid4()
+            await conn.execute(
+                sa.text(
+                    "INSERT INTO workforce_workers "
+                    "(id, organization_id, name, trade, worker_type, status, "
+                    " default_daily_wage, created_at, created_by, updated_at) "
+                    "VALUES (:id, :org_id, :name, :trade, 'permanent', 'active', "
+                    "        :wage, now(), :created_by, now())"
+                ),
+                {
+                    "id": worker_id,
+                    "org_id": org_id,
+                    "name": name.strip(),
+                    "trade": normalized_trade,
+                    "wage": wage_decimal,
+                    "created_by": uuid.UUID(created_by) if created_by else None,
+                },
+            )
 
         return str(worker_id)
 

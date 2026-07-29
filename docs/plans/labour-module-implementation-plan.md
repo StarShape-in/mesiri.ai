@@ -148,6 +148,36 @@ or, for someone not yet in the register:
 Attendance ──> Temporary Worker ──optionally promoted──> Workforce
 ```
 
+> ### ⚠️ SUPERSEDED 2026-07-29 — read this before the paragraph below
+>
+> **Attendance now creates a worker row for every named person, immediately.**
+> Decided by Alan and implemented in roadmap phase 4
+> (`labour_execution.py::_ensure_worker_identities`). The paragraph below is
+> kept because the reasoning behind it is still worth knowing, not because it
+> is still in force.
+>
+> **What broke.** P1 left a temporary worker with `worker_id = NULL`, so their
+> history was keyed on the *name string*. Promotion then inserted a brand-new
+> register row, and the days they had already worked stayed attached to the
+> old key while everything afterwards accrued to the new id — one person, two
+> partial histories, and no way to merge them after the fact. Production on
+> 2026-07-29: **26 people in attendance, 8 linked to a register row.**
+>
+> **What replaces it.** Every named line resolves to a durable id at the
+> moment of recording — reusing an existing worker when normalized name and
+> trade match, creating one marked `worker_type='temporary'` otherwise.
+> Promotion flips that same row to `'permanent'`; the id never changes and no
+> history moves.
+>
+> **P1's concern is answered, not ignored.** The register is still not
+> polluted *indistinguishably*: auto-created workers are `temporary` and the
+> Workers page filters on type. The trade was deliberate — a register that
+> needs filtering is recoverable, a fragmented history is not.
+>
+> **What still holds from P1:** attendance remains immutable, promotion
+> remains an explicit user-confirmed act (it just updates instead of
+> inserting), and headcount groups still create nobody.
+
 **There must never be code that assumes "attendance creates workers."**
 Recording attendance never silently mutates the workforce register. Promotion
 into the register is always an explicit, separately-confirmed act.
