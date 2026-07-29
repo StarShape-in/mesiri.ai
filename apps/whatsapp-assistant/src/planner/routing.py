@@ -18,7 +18,16 @@ WORKFLOW_KEY_BY_EVENT: dict[CanonicalEventType, WorkflowKey] = {
     CanonicalEventType.EQUIPMENT_USAGE_REQUESTED: WorkflowKey.EQUIPMENT_USAGE,
     CanonicalEventType.LABOUR_ATTENDANCE_REQUESTED: WorkflowKey.LABOUR_ATTENDANCE,
     CanonicalEventType.GENERAL_SITE_UPDATE_REQUESTED: WorkflowKey.SITE_UPDATE,
-    CanonicalEventType.ACTIVITY_CONTINUATION_REQUESTED: WorkflowKey.ACTIVITY_CONTINUATION,
+    # Routed to the same merged workflow as GENERAL_SITE_UPDATE_REQUESTED
+    # (docs/execution/ACTIVITY_RESOLUTION_AND_CORRECTION_PLAN.md) -- the
+    # separate WorkflowKey.ACTIVITY_CONTINUATION this used to route to is
+    # retired (no registry entry any more; routing a message there would
+    # silently no-op, see workflows/runtime.py's "no_graph" outcome). This
+    # event type's one remaining producer is canonicalization/builder.py's
+    # `_build_linked_activity_segment` (material usage naming a work_item);
+    # it goes through workflows/site_update/nodes.py's resolve_target
+    # exactly like any other site update.
+    CanonicalEventType.ACTIVITY_CONTINUATION_REQUESTED: WorkflowKey.SITE_UPDATE,
     CanonicalEventType.SITE_ISSUE_REPORTED: WorkflowKey.SITE_ISSUE_REPORT,
     CanonicalEventType.SITE_ISSUE_ACKNOWLEDGE_REQUESTED: WorkflowKey.SITE_ISSUE_CLOSE,
     CanonicalEventType.SITE_ISSUE_RESOLVE_REQUESTED: WorkflowKey.SITE_ISSUE_CLOSE,
