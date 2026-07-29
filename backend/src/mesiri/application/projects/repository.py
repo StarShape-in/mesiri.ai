@@ -13,6 +13,7 @@ from uuid import UUID
 from mesiri_contracts.application.results.execution_result import ExecutionResult
 
 from .create_commands import CreateProjectCommand
+from .create_site_commands import CreateSiteCommand
 from .dtos import ProjectDTO
 
 if TYPE_CHECKING:
@@ -78,4 +79,34 @@ class CreateProjectExecutionRepository(ABC):
     ) -> ExecutionResult:
         """Claim the idempotency key and record a REJECTED result -- no
         project row is written."""
+        ...
+
+
+class CreateSiteExecutionRepository(ABC):
+    """Persists CreateSiteCommand execution outcomes -- the confirmed-message
+    (WhatsApp) write path. Mirrors CreateProjectExecutionRepository above."""
+
+    @abstractmethod
+    async def check_idempotency(self, conn: AsyncConnection, key: str) -> ExecutionResult | None:
+        """Return the cached ExecutionResult if `key` was already claimed, else None."""
+        ...
+
+    @abstractmethod
+    async def persist_success(
+        self, conn: AsyncConnection, cmd: CreateSiteCommand
+    ) -> ExecutionResult:
+        """Claim the idempotency key and insert the new site under
+        cmd.project_id -- against `conn`. Assumes cmd is already valid (the
+        Handler is responsible for that before calling this). Rejects (does
+        not raise) if cmd.project_id doesn't resolve to a real project in
+        cmd.organization_id -- the target may have been deleted between
+        draft-build and confirmation."""
+        ...
+
+    @abstractmethod
+    async def persist_rejection(
+        self, conn: AsyncConnection, idempotency_key: str, reasons: list[str]
+    ) -> ExecutionResult:
+        """Claim the idempotency key and record a REJECTED result -- no
+        site row is written."""
         ...

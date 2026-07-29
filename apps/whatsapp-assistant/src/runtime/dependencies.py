@@ -435,18 +435,37 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     # Project creation: same in-process capability-boundary wiring as the
     # Progress handlers above, reusing the same material_db transaction
     # pool. No resolver -- there is nothing to look up (create is the only
-    # action, unlike account admin's rename/deactivate).
+    # action, unlike account admin's rename/deactivate). Wrapped in
+    # ProjectingExecutionDispatcher so a WhatsApp-created project is
+    # immediately visible to context resolution, same as the REST endpoint's
+    # project_entity() call (see interactions/projecting_dispatcher.py).
+    from interactions.projecting_dispatcher import ProjectingExecutionDispatcher
     from mesiri.application.projects.create_dispatcher import CreateProjectExecutionDispatcher
-    from mesiri.application.projects.handlers import CreateProjectHandler
+    from mesiri.application.projects.create_site_dispatcher import CreateSiteExecutionDispatcher
+    from mesiri.application.projects.handlers import CreateProjectHandler, CreateSiteHandler
     from mesiri.infrastructure.postgres.repositories.project_execution import (
         PostgresCreateProjectExecutionRepository,
+    )
+    from mesiri.infrastructure.postgres.repositories.site_execution import (
+        PostgresCreateSiteExecutionRepository,
     )
 
     create_project_handler = CreateProjectHandler(
         PostgresCreateProjectExecutionRepository(),
         db=material_db,
     )
-    create_project_dispatcher = CreateProjectExecutionDispatcher(create_project_handler)
+    create_project_dispatcher = ProjectingExecutionDispatcher(
+        CreateProjectExecutionDispatcher(create_project_handler), "project"
+    )
+    # Site creation (under an existing project resolved by context): same
+    # in-process capability-boundary wiring as Project creation above.
+    create_site_handler = CreateSiteHandler(
+        PostgresCreateSiteExecutionRepository(),
+        db=material_db,
+    )
+    create_site_dispatcher = ProjectingExecutionDispatcher(
+        CreateSiteExecutionDispatcher(create_site_handler), "site"
+    )
 
     execution_dispatcher = ActionTypeRoutingDispatcher(
         {
@@ -462,6 +481,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             DraftActionType.RECORD_SITE_ISSUE: report_site_issue_dispatcher,
             DraftActionType.CLOSE_SITE_ISSUE: close_site_issue_dispatcher,
             DraftActionType.CREATE_PROJECT: create_project_dispatcher,
+            DraftActionType.CREATE_SITE: create_site_dispatcher,
         }
     )
     # Read-only inventory lookups for the material.inventory_query workflow --

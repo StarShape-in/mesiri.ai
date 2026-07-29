@@ -29,6 +29,7 @@ from .material_inventory_query.graph import build_material_inventory_query_graph
 from .petty_cash.graph import build_petty_cash_graph
 from .project_create.graph import build_project_create_graph
 from .reverse.graph import build_reverse_graph
+from .site_create.graph import build_site_create_graph
 from .site_issue_close.graph import build_site_issue_close_graph
 from .site_issue_report.graph import build_site_issue_report_graph
 from .site_update.graph import build_activity_creation_graph
@@ -208,6 +209,12 @@ _DEFINITIONS: dict[WorkflowKey, WorkflowDefinition] = dict(
         _define(
             WorkflowKey.PROJECT_CREATE,
             build_project_create_graph,
+            WorkflowCategory.PROJECT,
+            allows_completion_without_draft=True,
+        ),
+        _define(
+            WorkflowKey.SITE_CREATE,
+            build_site_create_graph,
             WorkflowCategory.PROJECT,
             allows_completion_without_draft=True,
         ),

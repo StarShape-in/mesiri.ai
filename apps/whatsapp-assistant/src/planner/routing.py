@@ -30,6 +30,7 @@ WORKFLOW_KEY_BY_EVENT: dict[CanonicalEventType, WorkflowKey] = {
     CanonicalEventType.DPR_REQUESTED: WorkflowKey.DPR_REQUEST,
     CanonicalEventType.ACCOUNT_ADMIN_REQUESTED: WorkflowKey.ACCOUNT_ADMIN,
     CanonicalEventType.PROJECT_CREATE_REQUESTED: WorkflowKey.PROJECT_CREATE,
+    CanonicalEventType.SITE_CREATE_REQUESTED: WorkflowKey.SITE_CREATE,
     CanonicalEventType.ACCOUNT_BALANCE_QUERY_ASKED: WorkflowKey.ACCOUNT_BALANCE_QUERY,
     CanonicalEventType.EXPENSE_QUERY_ASKED: WorkflowKey.EXPENSE_QUERY,
     CanonicalEventType.TRANSFER_REQUESTED: WorkflowKey.TRANSFER,

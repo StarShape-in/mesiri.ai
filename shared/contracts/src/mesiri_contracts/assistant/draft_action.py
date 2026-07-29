@@ -34,6 +34,7 @@ class DraftActionType(str, Enum):
     RECORD_SITE_ISSUE = "record_site_issue"
     CLOSE_SITE_ISSUE = "close_site_issue"
     CREATE_PROJECT = "create_project"
+    CREATE_SITE = "create_site"
     # Future v1 domains: record_equipment_usage
 
 

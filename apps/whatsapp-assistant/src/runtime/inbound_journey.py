@@ -115,9 +115,14 @@ _ACCOUNT_ADMIN_DENIED_REPLY = "⛔ Only an admin or finance user can manage acco
 # Matches apps/whatsapp-assistant/src/projects/router.py's _CREATE_ROLES and
 # application/projects/create_validation.py's _PROJECT_CREATE_ROLES exactly --
 # same "should not even be an option" reasoning as _ACCOUNT_ADMIN_ROLES above,
-# gating WorkflowKey.PROJECT_CREATE before a draft is ever built.
+# gating WorkflowKey.PROJECT_CREATE before a draft is ever built. Also gates
+# WorkflowKey.SITE_CREATE -- create_site_validation.py's _SITE_CREATE_ROLES
+# is the identical set, since the REST endpoint that creates a site under a
+# project shares the same _CREATE_ROLES check as the one that creates the
+# project itself.
 _PROJECT_CREATE_ROLES = frozenset({"ADMIN", "PROJECT_MANAGER"})
 _PROJECT_CREATE_DENIED_REPLY = "⛔ Only an admin or project manager can create a project."
+_SITE_CREATE_DENIED_REPLY = "⛔ Only an admin or project manager can create a site."
 
 
 @dataclass(slots=True)
@@ -829,11 +834,15 @@ def _seed_project_create_role(
 ) -> None:
     """Feed the sender's role into the draft, same reasoning as
     _seed_account_admin_role -- defense-in-depth for
-    application/projects/create_validation.py's role check. Not the primary
-    gate: the _PROJECT_CREATE_ROLES check below (before workflow_runtime.
-    start()) already refuses a disallowed role before a draft is ever
-    built."""
-    if actor is None or decision.workflow_key is not WorkflowKey.PROJECT_CREATE:
+    application/projects/create_validation.py's and create_site_validation.
+    py's role checks (both PROJECT_CREATE and SITE_CREATE share it, same as
+    the gate below). Not the primary gate: the _PROJECT_CREATE_ROLES check
+    below (before workflow_runtime.start()) already refuses a disallowed
+    role before a draft is ever built."""
+    if actor is None or decision.workflow_key not in (
+        WorkflowKey.PROJECT_CREATE,
+        WorkflowKey.SITE_CREATE,
+    ):
         return
     event.fields["created_by_role"] = actor.role
 
@@ -2258,21 +2267,27 @@ async def process_inbound_message(
                             workflow_run=None,
                         )
 
-                    # Project-create role gate: same "should not even be an
-                    # option" reasoning as the account-admin gate immediately
-                    # above. application/projects/create_validation.py's role
-                    # check (fed by _seed_project_create_role above) is the
-                    # defense-in-depth backstop if this is ever bypassed.
-                    if (
-                        planner_decision.workflow_key is WorkflowKey.PROJECT_CREATE
-                        and str(getattr(actor, "role", None) or "").strip().upper()
-                        not in _PROJECT_CREATE_ROLES
+                    # Project/Site-create role gate: same "should not even be
+                    # an option" reasoning as the account-admin gate
+                    # immediately above. application/projects/
+                    # create_validation.py's and create_site_validation.py's
+                    # role checks (fed by _seed_project_create_role above)
+                    # are the defense-in-depth backstop if this is ever
+                    # bypassed.
+                    if planner_decision.workflow_key in (
+                        WorkflowKey.PROJECT_CREATE,
+                        WorkflowKey.SITE_CREATE,
+                    ) and str(getattr(actor, "role", None) or "").strip().upper() not in (
+                        _PROJECT_CREATE_ROLES
                     ):
-                        await send_text(message.sender.wa_id, _PROJECT_CREATE_DENIED_REPLY)
+                        denied_reply = (
+                            _PROJECT_CREATE_DENIED_REPLY
+                            if planner_decision.workflow_key is WorkflowKey.PROJECT_CREATE
+                            else _SITE_CREATE_DENIED_REPLY
+                        )
+                        await send_text(message.sender.wa_id, denied_reply)
                         await _safe(
-                            mlog.log_reply(
-                                correlation_id=correlation_id, reply=_PROJECT_CREATE_DENIED_REPLY
-                            )
+                            mlog.log_reply(correlation_id=correlation_id, reply=denied_reply)
                         )
                         await _safe(mlog.mark_completed(correlation_id=correlation_id))
                         return JourneyResult(

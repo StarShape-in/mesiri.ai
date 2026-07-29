@@ -622,6 +622,11 @@ def test_informational_and_no_draft_keys_are_pinned() -> None:
         # clarifying "what should the project be called?" and no draft when
         # AI extraction never filled in a name.
         WorkflowKey.PROJECT_CREATE,
+        # Same reasoning as PROJECT_CREATE: build_draft's own completeness
+        # check (workflows/site_create/nodes.py) may finish with a
+        # clarifying "which project?"/"what should the site be called?"
+        # and no draft.
+        WorkflowKey.SITE_CREATE,
     }
 
 

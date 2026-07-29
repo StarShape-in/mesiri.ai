@@ -17,7 +17,8 @@ from mesiri_contracts.application.results.execution_result import (
 )
 
 from .create_commands import CreateProjectCommand
-from .repository import CreateProjectExecutionRepository
+from .create_site_commands import CreateSiteCommand
+from .repository import CreateProjectExecutionRepository, CreateSiteExecutionRepository
 
 
 class FakeDatabase:
@@ -44,6 +45,45 @@ class FakeCreateProjectExecutionRepository(CreateProjectExecutionRepository):
 
         row_id = str(uuid.uuid4())
         self.project_writes.append({"id": row_id, "command": cmd})
+        result = ExecutionResult(
+            status=ExecutionStatus.SUCCEEDED,
+            idempotency_key=cmd.idempotency_key,
+            material_row_id=row_id,
+        )
+        self._claims[cmd.idempotency_key] = result
+        return result
+
+    async def persist_rejection(
+        self, conn: Any, idempotency_key: str, reasons: list[str]
+    ) -> ExecutionResult:
+        if idempotency_key in self._claims:
+            return as_replay(self._claims[idempotency_key])
+
+        result = ExecutionResult(
+            status=ExecutionStatus.REJECTED,
+            idempotency_key=idempotency_key,
+            rejection_reasons=reasons,
+        )
+        self._claims[idempotency_key] = result
+        return result
+
+
+class FakeCreateSiteExecutionRepository(CreateSiteExecutionRepository):
+    def __init__(self) -> None:
+        # idempotency_key -> ExecutionResult, mirrors idempotency_keys.result
+        self._claims: dict[str, ExecutionResult] = {}
+        # sites actually "written", for test assertions
+        self.site_writes: list[dict[str, Any]] = []
+
+    async def check_idempotency(self, conn: Any, key: str) -> ExecutionResult | None:
+        return self._claims.get(key)
+
+    async def persist_success(self, conn: Any, cmd: CreateSiteCommand) -> ExecutionResult:
+        if cmd.idempotency_key in self._claims:
+            return as_replay(self._claims[cmd.idempotency_key])
+
+        row_id = str(uuid.uuid4())
+        self.site_writes.append({"id": row_id, "command": cmd})
         result = ExecutionResult(
             status=ExecutionStatus.SUCCEEDED,
             idempotency_key=cmd.idempotency_key,

@@ -76,6 +76,9 @@ class CanonicalEventType(str, Enum):
     # split (unlike MATERIAL_UPDATE/PETTY_CASH/REVERSAL/SITE_ISSUE_UPDATE
     # above) since there is only one action (create).
     PROJECT_CREATE_REQUESTED = "ProjectCreateRequested"
+    # SemanticType.SITE_CREATE -> a new site record under the project
+    # resolved by context (see enums.py's docstring on that type).
+    SITE_CREATE_REQUESTED = "SiteCreateRequested"
     CLARIFICATION_REQUIRED = "ClarificationRequired"
     UNRECOGNIZED = "Unrecognized"
 

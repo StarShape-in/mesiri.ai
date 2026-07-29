@@ -14,15 +14,22 @@ from mesiri_contracts.application.results.execution_result import ExecutionResul
 from mesiri_contracts.assistant.v2.confirmed_action import ConfirmedActionV2
 
 from .create_mapper import build_command
+from .create_site_mapper import build_command as build_site_command
+from .create_site_validation import validate as validate_site
 from .create_validation import validate
 from .dtos import ProjectDTO
 from .queries import ListProjects
-from .repository import CreateProjectExecutionRepository, ProjectRepository
+from .repository import (
+    CreateProjectExecutionRepository,
+    CreateSiteExecutionRepository,
+    ProjectRepository,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncConnection
 
     from .create_commands import CreateProjectCommand
+    from .create_site_commands import CreateSiteCommand
 
 
 class ListProjectsHandler:
@@ -93,5 +100,36 @@ class CreateProjectHandler:
         """CQRS entry point (WhatsApp M8 path) — owns the one transaction."""
         assert self._db is not None, "handle_confirmed requires db to be wired"
         cmd = build_command(confirmed)
+        async with self._db.transaction() as conn:
+            return await self.handle(conn, cmd)
+
+
+class CreateSiteHandler:
+    """Confirmed-message (WhatsApp) Site creation. Mirrors CreateProjectHandler
+    above exactly."""
+
+    def __init__(
+        self,
+        repo: CreateSiteExecutionRepository,
+        db: PostgresDatabase | None = None,
+    ) -> None:
+        self._repo = repo
+        self._db = db
+
+    async def handle(self, conn: AsyncConnection, cmd: CreateSiteCommand) -> ExecutionResult:
+        reasons = validate_site(cmd)
+
+        existing = await self._repo.check_idempotency(conn, cmd.idempotency_key)
+        if existing is not None:
+            return as_replay(existing)
+
+        if reasons:
+            return await self._repo.persist_rejection(conn, cmd.idempotency_key, reasons)
+        return await self._repo.persist_success(conn, cmd)
+
+    async def handle_confirmed(self, confirmed: ConfirmedActionV2) -> ExecutionResult:
+        """CQRS entry point (WhatsApp M8 path) — owns the one transaction."""
+        assert self._db is not None, "handle_confirmed requires db to be wired"
+        cmd = build_site_command(confirmed)
         async with self._db.transaction() as conn:
             return await self.handle(conn, cmd)

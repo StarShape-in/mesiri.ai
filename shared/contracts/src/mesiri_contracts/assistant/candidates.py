@@ -149,6 +149,14 @@ class ProjectCreateCandidate(Candidate):
     # target_name/new_name), since this always creates a brand new row.
 
 
+class SiteCreateCandidate(Candidate):
+    semantic_type: SemanticType = SemanticType.SITE_CREATE
+    # Conventional keys: name (required to route -- see canonicalization/
+    # mapping.py), location. Which project this site belongs to is
+    # deliberately not a candidate field here -- see SemanticType.SITE_CREATE's
+    # docstring on why that's resolved by context, not stated by the user.
+
+
 class AccountAdminCandidate(Candidate):
     semantic_type: SemanticType = SemanticType.ACCOUNT_ADMIN
     # Conventional keys: action (create/rename/deactivate, required to
@@ -179,4 +187,5 @@ CANDIDATE_TYPES: dict[SemanticType, type[Candidate]] = {
     SemanticType.REVERSAL: ReversalCandidate,
     SemanticType.ACCOUNT_ADMIN: AccountAdminCandidate,
     SemanticType.PROJECT_CREATE: ProjectCreateCandidate,
+    SemanticType.SITE_CREATE: SiteCreateCandidate,
 }

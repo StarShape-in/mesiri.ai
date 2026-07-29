@@ -136,4 +136,15 @@ class SemanticType(str, Enum):
     # archive companion actions the way account_admin has) -- those aren't
     # built, and this type does not imply they exist.
     PROJECT_CREATE = "project_create"
+    # Creating a new Site record under an EXISTING project (e.g. "create a
+    # new site called Block A"). Which project is never stated as a
+    # candidate field -- it comes from the same context resolution every
+    # other project/site-scoped semantic type already relies on (explicit
+    # "at project X" mention, active/workflow context, or the single-
+    # authorized-project default; see context/resolver.py), same as
+    # SITE_ISSUE/GENERAL_SITE_UPDATE. Same role restriction as
+    # PROJECT_CREATE (ADMIN/PROJECT_MANAGER), enforced independently of
+    # Understanding (see runtime/inbound_journey.py and
+    # application/projects/create_site_validation.py).
+    SITE_CREATE = "site_create"
     UNKNOWN = "unknown"

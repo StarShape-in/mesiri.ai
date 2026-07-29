@@ -57,7 +57,7 @@ _EXTRACTION_PROMPT = (
     "labour_update, general_site_update, site_issue, site_issue_update, general_question, whoami_question, "
     "inventory_query, labour_query, activity_query, dpr_request, finance_query, transfer, "
     "petty_cash, "
-    "reversal, account_admin, project_create, unknown), "
+    "reversal, account_admin, project_create, site_create, unknown), "
     '"fields" (object of extracted values, in English except proper nouns/names), '
     '"missing_fields" (array of expected-but-absent keys), '
     '"field_confidences" (object mapping each field to 0..1). '
@@ -259,7 +259,16 @@ _EXTRACTION_PROMPT = (
     "logged at an existing project (those use their own semantic types "
     "above). name is the new project's name -- always extract it even if "
     "you're not sure how it will be used afterwards. location and client "
-    "are optional hints, stated as-is."
+    "are optional hints, stated as-is.\n"
+    "- site_create: name, location. Use this type when the user wants to "
+    "create a brand new Site record under an EXISTING project (e.g. "
+    "\"create a new site called Block A\", \"add a site for the Kochi "
+    "yard\") -- never a project itself (that's project_create) and never "
+    "an activity/issue/expense logged at an existing site. Which project "
+    "the site belongs to is NOT extracted here -- omit it entirely even if "
+    "a project name is mentioned elsewhere in the message; that is "
+    "resolved separately. name is the new site's name -- always extract "
+    "it. location is an optional hint, stated as-is."
 )
 
 
