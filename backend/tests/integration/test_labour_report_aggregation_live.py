@@ -218,12 +218,12 @@ async def test_superseded_report_is_not_counted(engine, scenario):
 
 async def test_cost_is_decimal_exact_not_binary_float(engine, scenario):
     """1166.67 x 2 + 820.10 x 8 -- the combination that previously landed on
-    12740.720000000001 and rendered as a 17-digit number."""
+    8894.140000000001 and rendered as a 17-digit number."""
     rows = await _rows(
         engine, scenario, "date", date_from=DAY_ONE, date_to=DAY_TWO
     )
     total = sum(Decimal(str(r["total_cost"])) for r in rows)
-    assert total == Decimal("12740.72")
+    assert total == Decimal("8894.14")
 
 
 async def test_a_line_with_no_wage_adds_man_days_but_no_cost(engine, scenario):
