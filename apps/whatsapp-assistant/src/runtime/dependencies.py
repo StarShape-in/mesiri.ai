@@ -444,6 +444,27 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     create_site_dispatcher = ProjectingExecutionDispatcher(
         CreateSiteExecutionDispatcher(create_site_handler), "site"
     )
+    # Automation setup: same in-process capability-boundary wiring as
+    # Project/Site creation above. No ProjectingExecutionDispatcher wrapper
+    # -- an automation row carries no context-layer entity of its own for
+    # resolver.py to need immediate visibility of, unlike a new Project/
+    # Site. name_resolver turns audience_names into audience_user_ids right
+    # before persist (see application/automations/handlers.py).
+    from mesiri.application.automations.create_dispatcher import (
+        CreateAutomationExecutionDispatcher,
+    )
+    from mesiri.application.automations.handlers import CreateAutomationHandler
+    from mesiri.application.automations.name_resolution import PostgresAudienceNameResolver
+    from mesiri.infrastructure.postgres.repositories.automation_execution import (
+        PostgresCreateAutomationExecutionRepository,
+    )
+
+    create_automation_handler = CreateAutomationHandler(
+        PostgresCreateAutomationExecutionRepository(),
+        PostgresAudienceNameResolver(),
+        db=material_db,
+    )
+    create_automation_dispatcher = CreateAutomationExecutionDispatcher(create_automation_handler)
 
     execution_dispatcher = ActionTypeRoutingDispatcher(
         {
@@ -461,6 +482,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             DraftActionType.CLOSE_SITE_ISSUE: close_site_issue_dispatcher,
             DraftActionType.CREATE_PROJECT: create_project_dispatcher,
             DraftActionType.CREATE_SITE: create_site_dispatcher,
+            DraftActionType.CREATE_AUTOMATION: create_automation_dispatcher,
         }
     )
     # Read-only inventory lookups for the material.inventory_query workflow --

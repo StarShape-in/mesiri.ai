@@ -631,6 +631,11 @@ def test_informational_and_no_draft_keys_are_pinned() -> None:
         # clarifying "which project?"/"what should the site be called?"
         # and no draft.
         WorkflowKey.SITE_CREATE,
+        # Same reasoning as PROJECT_CREATE/SITE_CREATE: build_draft's own
+        # completeness check (workflows/automation_setup/nodes.py) may
+        # finish with a clarifying "what time should this run?" and no
+        # draft when AI extraction never filled in time_of_day.
+        WorkflowKey.AUTOMATION_SETUP,
     }
 
 

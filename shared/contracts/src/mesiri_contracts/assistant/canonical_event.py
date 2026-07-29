@@ -95,6 +95,12 @@ class CanonicalEventType(str, Enum):
     SITE_CREATE_REQUESTED = "SiteCreateRequested"
     # SemanticType.PROJECT_DETAIL_QUERY -> a read-only project/site summary.
     PROJECT_DETAIL_QUERY_ASKED = "ProjectDetailQueryAsked"
+    # SemanticType.AUTOMATION_SETUP -> a new recurring schedule rule. No
+    # candidate-field split -- action/audience/frequency all travel as
+    # plain fields on this one event type, read by
+    # workflows/automation_setup/nodes.py's build_draft, the same way
+    # ACCOUNT_ADMIN_REQUESTED carries its `action` field without a split.
+    AUTOMATION_SETUP_REQUESTED = "AutomationSetupRequested"
     CLARIFICATION_REQUIRED = "ClarificationRequired"
     UNRECOGNIZED = "Unrecognized"
 

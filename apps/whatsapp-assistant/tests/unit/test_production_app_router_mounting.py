@@ -77,6 +77,33 @@ def test_progress_routes_are_mounted():
         assert expected in paths, f"{expected} not mounted on the production app"
 
 
+def test_dpr_routes_are_mounted():
+    """The fifth occurrence, actually found: mesiri.domains.dpr.router was
+    built entirely against backend/src/mesiri/http/app.py (which
+    infra/mesiri.service does not run) and never added here -- every DPR
+    dashboard call, including the DPR revision and project-level roll-up
+    endpoints, 404'd in production. Found and fixed while wiring the
+    automations router below."""
+    paths = _production_app_paths()
+    for expected in (
+        "/dpr/daily-reports",
+        "/dpr/daily-reports/{report_id}",
+        "/dpr/daily-reports/{report_id}/approve",
+        "/dpr/daily-reports/{report_id}/publish",
+        "/dpr/daily-reports/{report_id}/revise",
+        "/dpr/daily-reports/{report_id}/pdf",
+    ):
+        assert expected in paths, f"{expected} not mounted on the production app"
+
+
+def test_automations_routes_are_mounted():
+    """New this feature -- mounted in both create_app() locations from the
+    start, precisely to avoid becoming the sixth occurrence."""
+    paths = _production_app_paths()
+    for expected in ("/automations", "/automations/{automation_id}", "/automations/{automation_id}/runs"):
+        assert expected in paths, f"{expected} not mounted on the production app"
+
+
 def test_a_domain_router_failing_to_import_does_not_crash_the_whole_app():
     """Each router is mounted inside its own try/except (see
     runtime/lifecycle.py) precisely so one broken domain can't take the

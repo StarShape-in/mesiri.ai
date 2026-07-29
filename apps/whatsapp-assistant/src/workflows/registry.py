@@ -19,6 +19,7 @@ from .account_admin.graph import build_account_admin_graph
 from .account_balance_query.graph import build_account_balance_query_graph
 from .activity_correction.graph import build_activity_correction_graph
 from .activity_query.graph import build_activity_query_graph
+from .automation_setup.graph import build_automation_setup_graph
 from .dpr_request.graph import build_dpr_request_graph
 from .expense_capture.graph import build_expense_capture_graph
 from .expense_query.graph import build_expense_query_graph
@@ -53,6 +54,7 @@ class WorkflowCategory(str, Enum):
     IDENTITY = "identity"
     PROGRESS = "progress"
     PROJECT = "project"
+    AUTOMATION = "automation"
 
 
 @dataclass(frozen=True)
@@ -236,6 +238,15 @@ _DEFINITIONS: dict[WorkflowKey, WorkflowDefinition] = dict(
             build_project_detail_query_graph,
             WorkflowCategory.PROJECT,
             is_informational=True,
+        ),
+        _define(
+            WorkflowKey.AUTOMATION_SETUP,
+            build_automation_setup_graph,
+            WorkflowCategory.AUTOMATION,
+            # "time_of_day wasn't extracted" (build_draft's own clarifying
+            # reply) is a legitimate no-draft completion, same reasoning as
+            # SITE_CREATE's missing-name case.
+            allows_completion_without_draft=True,
         ),
     )
 )

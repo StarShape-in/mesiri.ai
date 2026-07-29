@@ -52,6 +52,7 @@ from runtime.inbound_journey.seeding import (
     _seed_account_admin_role,
     _seed_account_candidates,
     _seed_activity_search,
+    _seed_automation_setup_role,
     _seed_correction_target,
     _seed_dpr_request,
     _seed_duplicate_check,
@@ -114,6 +115,17 @@ _ACCOUNT_ADMIN_DENIED_REPLY = "⛔ Only an admin or finance user can manage acco
 _PROJECT_CREATE_ROLES = frozenset({"ADMIN", "PROJECT_MANAGER"})
 _PROJECT_CREATE_DENIED_REPLY = "⛔ Only an admin or project manager can create a project."
 _SITE_CREATE_DENIED_REPLY = "⛔ Only an admin or project manager can create a site."
+
+# Matches domains/automations/router.py's _TARGET_OTHERS_ROLES and
+# application/automations/create_validation.py's _TARGET_OTHERS_ROLES
+# exactly. Unlike PROJECT_CREATE/SITE_CREATE above, this gate is
+# conditional: a SELF digest ("send me the DPR") is open to anyone, so the
+# check below only fires when the AI-extracted `audience` is anything other
+# than SELF (a named person, a role, or "whoever hasn't reported").
+_AUTOMATION_TARGET_OTHERS_ROLES = frozenset({"ADMIN", "PROJECT_MANAGER"})
+_AUTOMATION_SETUP_DENIED_REPLY = (
+    "⛔ Only an admin or project manager can set up an automation that messages someone else."
+)
 
 
 async def _plan_and_run(
@@ -744,6 +756,7 @@ async def process_inbound_message(
                     # Synchronous — not a coroutine, runs after the gather.
                     _seed_account_admin_role(canonical_event, planner_decision, actor)
                     _seed_project_create_role(canonical_event, planner_decision, actor)
+                    _seed_automation_setup_role(canonical_event, planner_decision, actor)
 
                     # Account-admin role gate: refused before the workflow
                     # even starts (no draft, no confirmation prompt) --
@@ -796,6 +809,35 @@ async def process_inbound_message(
                         await send_text(message.sender.wa_id, denied_reply)
                         await _safe(
                             mlog.log_reply(correlation_id=correlation_id, reply=denied_reply)
+                        )
+                        await _safe(mlog.mark_completed(correlation_id=correlation_id))
+                        return JourneyResult(
+                            understanding=understanding,
+                            resolved_context=resolved,
+                            canonical_event=canonical_event,
+                            planner_decision=planner_decision,
+                            workflow_run=None,
+                        )
+
+                    # Automation-setup role gate: same "should not even be an
+                    # option" reasoning as the two gates above, but
+                    # conditional on audience -- a SELF digest never targets
+                    # anyone else, so it needs no role check at all.
+                    # application/automations/create_validation.py's role
+                    # check (fed by _seed_automation_setup_role above) is the
+                    # defense-in-depth backstop if this is ever bypassed.
+                    if (
+                        planner_decision.workflow_key is WorkflowKey.AUTOMATION_SETUP
+                        and str(canonical_event.fields.get("audience") or "SELF").strip().upper()
+                        != "SELF"
+                        and str(getattr(actor, "role", None) or "").strip().upper()
+                        not in _AUTOMATION_TARGET_OTHERS_ROLES
+                    ):
+                        await send_text(message.sender.wa_id, _AUTOMATION_SETUP_DENIED_REPLY)
+                        await _safe(
+                            mlog.log_reply(
+                                correlation_id=correlation_id, reply=_AUTOMATION_SETUP_DENIED_REPLY
+                            )
                         )
                         await _safe(mlog.mark_completed(correlation_id=correlation_id))
                         return JourneyResult(

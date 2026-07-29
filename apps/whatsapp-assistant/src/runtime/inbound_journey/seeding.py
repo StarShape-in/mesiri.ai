@@ -655,6 +655,21 @@ def _seed_project_create_role(
     event.fields["created_by_role"] = actor.role
 
 
+def _seed_automation_setup_role(
+    event: CanonicalEventV2, decision: PlannerDecisionV2, actor: ActorIdentity | None
+) -> None:
+    """Feed the sender's role into the draft, same reasoning as
+    _seed_project_create_role -- defense-in-depth for
+    application/automations/create_validation.py's role check (an
+    automation targeting anyone other than SELF requires ADMIN/
+    PROJECT_MANAGER). Not the primary gate: the audience-aware role check
+    in process.py (before workflow_runtime.start()) already refuses a
+    disallowed role before a draft is ever built for a non-SELF audience."""
+    if actor is None or decision.workflow_key is not WorkflowKey.AUTOMATION_SETUP:
+        return
+    event.fields["created_by_role"] = actor.role
+
+
 async def _seed_labour_query(
     event: CanonicalEventV2,
     decision: PlannerDecisionV2,

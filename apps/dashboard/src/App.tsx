@@ -34,6 +34,7 @@ import OperationsIssuesPage from '@/pages/OperationsIssuesPage'
 import OperationsGalleryPage from '@/pages/OperationsGalleryPage'
 import OperationsAnalyticsPage from '@/pages/OperationsAnalyticsPage'
 import OperationsSettingsPage from '@/pages/OperationsSettingsPage'
+import AutomationsPage from '@/pages/AutomationsPage'
 
 
 
@@ -79,6 +80,8 @@ export default function App() {
         <Route path="operations/gallery" element={<OperationsGalleryPage />} />
 
         <Route path="operations/analytics" element={<OperationsAnalyticsPage />} />
+
+        <Route path="operations/automations" element={<AutomationsPage />} />
 
         <Route path="operations/settings" element={<OperationsSettingsPage />} />
 

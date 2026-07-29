@@ -34,6 +34,7 @@ import {
   ClipboardCheck,
   MessageSquare,
   AlertCircle,
+  Clock,
 } from 'lucide-react'
 import { NavLink, Link, useLocation } from 'react-router-dom'
 import {
@@ -81,6 +82,7 @@ const OPERATIONS_CATEGORY: NavCategory = {
     { title: 'Issues', url: '/operations/issues', icon: AlertCircle },
     { title: 'Gallery', url: '/operations/gallery', icon: ImageIcon },
     { title: 'Analytics', url: '/operations/analytics', icon: BarChart3 },
+    { title: 'Automations', url: '/operations/automations', icon: Clock },
     { title: 'Settings', url: '/operations/settings', icon: SlidersHorizontal },
   ],
 }

@@ -11,6 +11,7 @@ from fastapi import FastAPI
 
 from context.reconcile_watchdog import watchdog_enabled, watchdog_loop
 from ingress.webhook import router as webhook_router
+from runtime.automation_runner import runner_enabled, runner_loop
 from runtime.dependencies import Settings, build_container
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             else:
                 logger.info("Context reconcile watchdog disabled by configuration")
 
+            # User-defined automations ("every day at 5pm send me the DPR"):
+            # same advisory-lock-elected, one-tick-at-a-time shape as the
+            # reconcile watchdog immediately above, with its own lock key
+            # (runtime/automation_runner.py's _ADVISORY_LOCK_KEY) so the two
+            # schedulers never contend with each other. Reuses material_db
+            # rather than opening a second connection pool.
+            automation_task = None
+            if runner_enabled():
+                automation_task = asyncio.create_task(
+                    runner_loop(db=app.state.container.material_db)
+                )
+            else:
+                logger.info("Automation runner disabled by configuration")
+
             logger.info("WhatsApp assistant runtime initialized")
             try:
                 yield
@@ -65,6 +80,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     # it's the expected way the loop stops, not an error.
                     with suppress(asyncio.CancelledError):
                         await reconcile_task
+                if automation_task is not None:
+                    automation_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await automation_task
                 await app.state.container.material_db.disconnect()
                 await app.state.container.redis_client.disconnect()
                 # Only closes anything if a render actually happened (the
@@ -311,5 +330,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         import logging
 
         logging.getLogger(__name__).warning("Progress router not loaded: %s", exc)
+
+    # DPR (Daily Progress Report) routes -- GET/POST /dpr/daily-reports,
+    # .../approve, .../publish, .../revise, .../pdf. Same gap as every
+    # router above this line: built against backend/src/mesiri/http/app.py
+    # only, never wired into the app that actually runs, so the entire DPR
+    # dashboard surface (including revision and the project-level roll-up)
+    # has been 404ing in production. Found while wiring the automations
+    # router below -- fixed here rather than left for the next feature to
+    # rediscover the same trap.
+    try:
+        from mesiri.domains.dpr.router import router as dpr_router
+
+        app.include_router(dpr_router)
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("DPR router not loaded: %s", exc)
+
+    # Automations -- user-defined recurring schedules (GET/POST
+    # /automations, PATCH/DELETE /automations/{id}, GET
+    # /automations/{id}/runs). Mounted here for the same reason as DPR
+    # immediately above.
+    try:
+        from mesiri.domains.automations.router import router as automations_router
+
+        app.include_router(automations_router)
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("Automations router not loaded: %s", exc)
 
     return app

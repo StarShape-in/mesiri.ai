@@ -26,6 +26,7 @@ _SIMPLE_EVENT_TYPE: dict[SemanticType, CanonicalEventType] = {
     SemanticType.PROJECT_CREATE: CanonicalEventType.PROJECT_CREATE_REQUESTED,
     SemanticType.SITE_CREATE: CanonicalEventType.SITE_CREATE_REQUESTED,
     SemanticType.PROJECT_DETAIL_QUERY: CanonicalEventType.PROJECT_DETAIL_QUERY_ASKED,
+    SemanticType.AUTOMATION_SETUP: CanonicalEventType.AUTOMATION_SETUP_REQUESTED,
     # Always a new site_issues row -- no candidate-field split (issue_type/
     # severity are closed enums the AI picks directly, unlike direction/
     # query_kind/target_kind/update_kind), so this belongs here rather than
@@ -165,6 +166,10 @@ REQUIRED_FIELDS: dict[CanonicalEventType, tuple[str, ...]] = {
     # Read-only summary -- no required fields, matches every other *_ASKED
     # query type (ACTIVITY_QUERY_ASKED, DPR_REQUESTED, etc.).
     CanonicalEventType.PROJECT_DETAIL_QUERY_ASKED: (),
+    # Only time_of_day -- everything else (action/audience/frequency) has a
+    # sensible default the workflow's own build_draft applies, same
+    # reasoning as ACCOUNT_ADMIN_REQUESTED's single required field above.
+    CanonicalEventType.AUTOMATION_SETUP_REQUESTED: ("time_of_day",),
     # Mirrors EXPENSE_REQUESTED: ("amount",) -- one required field (the
     # closed-enum issue_type), everything else (severity, narrative, delay)
     # optional.

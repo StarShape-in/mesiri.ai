@@ -166,6 +166,19 @@ class SiteCreateCandidate(Candidate):
     # docstring on why that's resolved by context, not stated by the user.
 
 
+class AutomationSetupCandidate(Candidate):
+    semantic_type: SemanticType = SemanticType.AUTOMATION_SETUP
+    # Conventional keys: time_of_day (required to route -- "HH:MM" 24-hour,
+    # see canonicalization/mapping.py), frequency (DAILY/WEEKDAYS/WEEKLY,
+    # absent means DAILY), day_of_week (WEEKLY only, the English weekday
+    # name), automation_action (SEND_DPR/COMPLIANCE_SUMMARY/REMINDER),
+    # audience (SELF/USERS/ROLE/NON_REPORTERS), audience_names (array of
+    # person names, USERS only -- best-effort hints resolved against the
+    # org's real users the same way petty_cash's recipient_name is, see
+    # runtime/petty_cash_query.py), audience_role (ROLE only), message
+    # (REMINDER only, the sender's own words).
+
+
 class AccountAdminCandidate(Candidate):
     semantic_type: SemanticType = SemanticType.ACCOUNT_ADMIN
     # Conventional keys: action (create/rename/deactivate, required to
@@ -198,4 +211,5 @@ CANDIDATE_TYPES: dict[SemanticType, type[Candidate]] = {
     SemanticType.PROJECT_CREATE: ProjectCreateCandidate,
     SemanticType.SITE_CREATE: SiteCreateCandidate,
     SemanticType.PROJECT_DETAIL_QUERY: ProjectDetailQueryCandidate,
+    SemanticType.AUTOMATION_SETUP: AutomationSetupCandidate,
 }

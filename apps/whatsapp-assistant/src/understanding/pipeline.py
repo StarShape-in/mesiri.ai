@@ -62,6 +62,7 @@ _REQUIRED_FIELDS: dict[SemanticType, tuple[str, ...]] = {
     SemanticType.REVERSAL: (),
     SemanticType.ACCOUNT_ADMIN: ("action",),
     SemanticType.PROJECT_DETAIL_QUERY: (),
+    SemanticType.AUTOMATION_SETUP: ("time_of_day",),
     SemanticType.UNKNOWN: (),
 }
 

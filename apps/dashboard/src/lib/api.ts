@@ -1672,5 +1672,88 @@ export async function createDailyReportApi(payload: CreateDailyReportPayload): P
   return res.data
 }
 
+// ---------------------------------------------------------------------------
+// Automations -- user-defined recurring schedules (backend/src/mesiri/
+// domains/automations/router.py). "Every day at 5pm send me the DPR", "at
+// 3pm tell me who hasn't reported", "remind Ilan and Hysam" all become one
+// of these rows; the scheduler (apps/whatsapp-assistant/src/runtime/
+// automation_runner.py) fires them over WhatsApp. Run history (including
+// *why* a recipient was skipped, e.g. outside the WhatsApp 24h session
+// window) reads straight from the notifications queue -- see
+// fetchAutomationRunsApi.
+// ---------------------------------------------------------------------------
+
+export type AutomationAction = 'SEND_DPR' | 'COMPLIANCE_SUMMARY' | 'REMINDER'
+export type AutomationAudience = 'SELF' | 'USERS' | 'ROLE' | 'NON_REPORTERS'
+export type AutomationFrequency = 'DAILY' | 'WEEKDAYS' | 'WEEKLY'
+
+export interface AutomationItem {
+  id: string
+  project_id: string | null
+  site_id: string | null
+  action: AutomationAction
+  audience: AutomationAudience
+  audience_user_ids: string[]
+  audience_role: string | null
+  message: string | null
+  frequency: AutomationFrequency
+  day_of_week: number | null
+  time_of_day: string
+  timezone: string
+  enabled: boolean
+  last_run_on: string | null
+  created_at: string | null
+}
+
+export interface AutomationPayload {
+  project_id?: string | null
+  site_id?: string | null
+  action: AutomationAction
+  audience: AutomationAudience
+  audience_user_ids?: string[] | null
+  audience_role?: string | null
+  message?: string | null
+  frequency?: AutomationFrequency
+  day_of_week?: number | null
+  time_of_day: string
+  timezone?: string
+}
+
+export interface AutomationRun {
+  id: string
+  recipient_name: string | null
+  occurred_on: string
+  status: string
+  skip_reason: string | null
+  sent_at: string | null
+  created_at: string
+}
+
+export async function fetchAutomationsApi(): Promise<AutomationItem[]> {
+  const res = await api.get<{ items: AutomationItem[] }>('/automations')
+  return res.data.items
+}
+
+export async function createAutomationApi(payload: AutomationPayload): Promise<AutomationItem> {
+  const res = await api.post<AutomationItem>('/automations', payload)
+  return res.data
+}
+
+export async function updateAutomationApi(
+  automationId: string,
+  payload: Partial<AutomationPayload> & { enabled?: boolean }
+): Promise<AutomationItem> {
+  const res = await api.patch<AutomationItem>(`/automations/${automationId}`, payload)
+  return res.data
+}
+
+export async function deleteAutomationApi(automationId: string): Promise<void> {
+  await api.delete(`/automations/${automationId}`)
+}
+
+export async function fetchAutomationRunsApi(automationId: string): Promise<AutomationRun[]> {
+  const res = await api.get<{ items: AutomationRun[] }>(`/automations/${automationId}/runs`)
+  return res.data.items
+}
 
 

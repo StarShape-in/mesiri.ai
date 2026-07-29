@@ -172,4 +172,19 @@ class SemanticType(str, Enum):
     # write). Which project/site is never a candidate field -- resolved by
     # context the same way PROJECT_CREATE/SITE_CREATE's project scope is.
     PROJECT_DETAIL_QUERY = "project_detail_query"
+    # A recurring scheduled instruction (e.g. "every day at 5pm send me the
+    # DPR", "at 3pm tell me who hasn't reported", "every Monday remind
+    # Ilan and Hysam to submit their report") -- never a one-time question
+    # or report request (those use dpr_request/activity_query/project_
+    # detail_query etc, which answer once, right now). Distinct from every
+    # other semantic type here the same way ACCOUNT_ADMIN is distinct from
+    # a transaction: this manages a standing RULE, not a single business
+    # record. Targeting anyone other than the sender (a named person, a
+    # role, or "whoever hasn't reported") is ADMIN/PROJECT_MANAGER only,
+    # enforced independently of Understanding (see
+    # runtime/inbound_journey.py and
+    # application/automations/create_validation.py) -- this type alone
+    # existing here does not grant a lower-privileged role the ability to
+    # target anyone but themselves.
+    AUTOMATION_SETUP = "automation_setup"
     UNKNOWN = "unknown"

@@ -6,7 +6,9 @@ queues the rows this script sends) and project_timeline_events.py. This is
 deliberately a SEPARATE process/script from the backend check, not the same
 one: the backend must never talk to Meta's Cloud API directly (architecture
 boundary -- only this app holds WhatsApp credentials and the WhatsAppSender
-adapter).
+adapter). `drain_and_send()` below is also called directly (same process,
+no subprocess) by runtime/automation_runner.py's in-app scheduler, so
+automations reuse this exact send/skip logic rather than a second copy.
 
 For each pending row: resolve the recipient's wa_id, check quiet hours and
 the WhatsApp 24h session window (application/notifications/checks.py, in
@@ -15,7 +17,16 @@ either send or skip with a recorded reason. Never sends silently outside
 the session window: Meta rejects a free-form send there, and pretending
 otherwise would be worse than skipping honestly.
 
-Recommended VPS crontab entry (ops-managed, not tracked in this repo):
+`rule_key`s starting with "automation:" (runtime/automation_runner.py's own
+convention) render from the row's own `payload` -- `document_object_key`
+when present sends a document (SEND_DPR with a rendered PDF ready),
+otherwise `payload["message"]` as plain text. Every other rule_key keeps
+using the static `_RULE_KEY_MESSAGES` table.
+
+Recommended VPS crontab entry (ops-managed, not tracked in this repo) --
+kept as a manual/backup path now that automation_runner.py drains
+automation-sourced rows itself; #9's own stuck-confirmation nudges still
+rely on this cron, since nothing else queues or sends those:
     */15 * * * * cd /opt/mesiri/apps/whatsapp-assistant/src && \
         PYTHONPATH=/opt/mesiri/shared/contracts/src:/opt/mesiri/platform/ai/src:/opt/mesiri/backend/src:/opt/mesiri/apps/whatsapp-assistant/src \
         /opt/mesiri/.venv/bin/python -m runtime.send_pending_notifications \
@@ -29,6 +40,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from datetime import UTC, datetime
+from typing import Any
 
 _RULE_KEY_MESSAGES: dict[str, str] = {
     "stuck_confirmation": (
@@ -37,11 +49,114 @@ _RULE_KEY_MESSAGES: dict[str, str] = {
     ),
 }
 
+_DOCUMENT_MIME_TYPE = "application/pdf"
 
-def _render(rule_key: str) -> str:
+
+def _render(row: dict[str, Any]) -> str:
+    rule_key = row["rule_key"]
+    if rule_key.startswith("automation:"):
+        payload = row.get("payload") or {}
+        return payload.get("message") or "You have a pending item that needs your attention."
     return _RULE_KEY_MESSAGES.get(
         rule_key, "You have a pending item that needs your attention."
     )
+
+
+async def _send_one(
+    row: dict[str, Any],
+    *,
+    wa_id: str,
+    sender: Any,
+    object_storage: Any | None,
+) -> bool:
+    """Sends the document too when the payload names one and object storage
+    is wired -- text is still sent either way (the caption/status line),
+    matching how the DPR chat trigger's own document side-channel works
+    (runtime/inbound_journey.py): the reply is never JUST a bare document
+    with no words around it."""
+    text_sent = await sender.send_text(wa_id, _render(row))
+    if not text_sent:
+        return False
+
+    payload = row.get("payload") or {}
+    object_key = payload.get("document_object_key")
+    if object_key and object_storage is not None:
+        try:
+            stored = await object_storage.get_object(object_key)
+            await sender.send_document(
+                wa_id, stored.data, filename="DPR.pdf", mime_type=_DOCUMENT_MIME_TYPE
+            )
+        except Exception:  # noqa: BLE001
+            # The status text already went out -- a failed document fetch/
+            # send degrades to "you got told, but not the file", not a
+            # failure of the whole notification.
+            import logging
+
+            logging.getLogger("mesiri.notifications").warning(
+                "notification.document_send_failed object_key=%s", object_key, exc_info=True
+            )
+    return True
+
+
+async def drain_and_send(
+    *,
+    db: Any,
+    actor_reader: Any,
+    sender: Any,
+    object_storage: Any | None = None,
+) -> dict[str, int]:
+    """The reusable core: drain every 'pending' notification and send or
+    skip each with a recorded reason. Shared by this script's own `run()`
+    and runtime/automation_runner.py's scheduler tick -- one send/skip
+    policy, never two copies drifting apart."""
+    from mesiri.application.notifications.checks import (
+        is_quiet_hours,
+        is_within_whatsapp_session_window,
+    )
+    from runtime.notification_query import NotificationSendQueueService
+
+    queue = NotificationSendQueueService(db, actor_reader)
+    counts = {"sent": 0, "skipped": 0}
+
+    pending = await queue.list_pending()
+    for row in pending:
+        notification_id = str(row["id"])
+        wa_id = await queue.resolve_recipient_wa_id(
+            str(row["recipient_user_id"]) if row.get("recipient_user_id") else None
+        )
+        if wa_id is None:
+            await queue.mark_skipped(notification_id=notification_id, reason="no_resolvable_recipient")
+            counts["skipped"] += 1
+            continue
+
+        last_inbound = await queue.last_inbound_at(wa_id)
+        now = datetime.now(tz=UTC)
+        if not is_within_whatsapp_session_window(last_inbound_at=last_inbound, now=now):
+            # Outside Meta's free-form window -- sending would be silently
+            # rejected. An approved message template would be required
+            # instead; registering one with Meta is an ops action this
+            # script cannot do on its own.
+            await queue.mark_skipped(
+                notification_id=notification_id,
+                reason="outside_whatsapp_session_window_needs_template",
+            )
+            counts["skipped"] += 1
+            continue
+
+        if is_quiet_hours(local_now=now):
+            # Left 'pending' on purpose -- not skipped -- so the next drain
+            # picks it back up once quiet hours end, rather than losing it.
+            continue
+
+        sent = await _send_one(row, wa_id=wa_id, sender=sender, object_storage=object_storage)
+        if sent:
+            await queue.mark_sent(notification_id=notification_id)
+            counts["sent"] += 1
+        else:
+            await queue.mark_skipped(notification_id=notification_id, reason="send_failed")
+            counts["skipped"] += 1
+
+    return counts
 
 
 async def run() -> dict[str, int]:
@@ -49,21 +164,16 @@ async def run() -> dict[str, int]:
 
     from backend.postgres.actor import PostgresActorReader
     from channel.whatsapp.outbound import WhatsAppSender
-    from mesiri.application.notifications.checks import (
-        is_quiet_hours,
-        is_within_whatsapp_session_window,
-    )
     from mesiri.bootstrap.settings import Settings as BackendSettings
+    from mesiri.infrastructure.objectstorage import build_object_storage
     from mesiri.infrastructure.postgres.database import PostgresDatabase
     from runtime.dependencies import Settings as WhatsAppSettings
-    from runtime.notification_query import NotificationSendQueueService
 
     whatsapp_settings = WhatsAppSettings()  # type: ignore[call-arg]
     backend_settings = BackendSettings()
     db = PostgresDatabase(backend_settings.postgres)
     await db.connect()
 
-    counts = {"sent": 0, "skipped": 0}
     try:
         async with httpx.AsyncClient(timeout=15.0) as http_client:
             sender = WhatsAppSender(
@@ -74,49 +184,10 @@ async def run() -> dict[str, int]:
                 graph_base_url=whatsapp_settings.graph_base_url,
             )
             actor_reader = PostgresActorReader()
-            queue = NotificationSendQueueService(db, actor_reader)
-
-            pending = await queue.list_pending()
-            for row in pending:
-                notification_id = str(row["id"])
-                wa_id = await queue.resolve_recipient_wa_id(
-                    str(row["recipient_user_id"]) if row.get("recipient_user_id") else None
-                )
-                if wa_id is None:
-                    await queue.mark_skipped(
-                        notification_id=notification_id, reason="no_resolvable_recipient"
-                    )
-                    counts["skipped"] += 1
-                    continue
-
-                last_inbound = await queue.last_inbound_at(wa_id)
-                now = datetime.now(tz=UTC)
-                if not is_within_whatsapp_session_window(last_inbound_at=last_inbound, now=now):
-                    # Outside Meta's free-form window -- sending would be
-                    # silently rejected. An approved message template would
-                    # be required instead; registering one with Meta is an
-                    # ops action this script cannot do on its own.
-                    await queue.mark_skipped(
-                        notification_id=notification_id,
-                        reason="outside_whatsapp_session_window_needs_template",
-                    )
-                    counts["skipped"] += 1
-                    continue
-
-                if is_quiet_hours(local_now=now):
-                    # Left 'pending' on purpose -- not skipped -- so the
-                    # next drain (within 15 min, per the recommended cron
-                    # cadence) picks it back up once quiet hours end,
-                    # rather than losing it.
-                    continue
-
-                sent = await sender.send_text(wa_id, _render(row["rule_key"]))
-                if sent:
-                    await queue.mark_sent(notification_id=notification_id)
-                    counts["sent"] += 1
-                else:
-                    await queue.mark_skipped(notification_id=notification_id, reason="send_failed")
-                    counts["skipped"] += 1
+            object_storage = build_object_storage(backend_settings)
+            counts = await drain_and_send(
+                db=db, actor_reader=actor_reader, sender=sender, object_storage=object_storage
+            )
     finally:
         await db.disconnect()
 
