@@ -107,9 +107,9 @@ class PostgresLabourExecutionRepository(LabourExecutionRepository):
             text(
                 "INSERT INTO labour_attendance_reports "
                 "(id, organization_id, project_id, site_id, occurred_date, recorded_via, "
-                "notes, correlation_id, created_by) "
+                "notes, correlation_id, corrects_report_id, created_by) "
                 "VALUES (:id, :organization_id, :project_id, :site_id, :occurred_date, "
-                ":recorded_via, :notes, :correlation_id, :created_by)"
+                ":recorded_via, :notes, :correlation_id, :corrects_report_id, :created_by)"
             ),
             {
                 "id": report_id,
@@ -120,6 +120,11 @@ class PostgresLabourExecutionRepository(LabourExecutionRepository):
                 "recorded_via": cmd.recorded_via,
                 "notes": cmd.notes,
                 "correlation_id": cmd.correlation_id,
+                # Reserved by migration 0371 and, until now, written by
+                # nothing -- so the read side's supersede rule (which every
+                # total already applies) could never actually fire. This is
+                # the writer it was waiting for.
+                "corrects_report_id": _optional_uuid(cmd.corrects_report_id),
                 "created_by": created_by,
             },
         )

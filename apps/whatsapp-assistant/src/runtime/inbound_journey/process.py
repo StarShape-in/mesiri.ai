@@ -55,6 +55,7 @@ from runtime.inbound_journey.seeding import (
     _seed_correction_target,
     _seed_dpr_request,
     _seed_duplicate_check,
+    _seed_existing_attendance,
     _seed_finance_query_context,
     _seed_labour_query,
     _seed_open_activity,
@@ -662,6 +663,9 @@ async def process_inbound_message(
                             canonical_event, planner_decision, site_issue_query, actor
                         ),
                         _seed_worker_candidates(
+                            canonical_event, planner_decision, workforce_query, actor
+                        ),
+                        _seed_existing_attendance(
                             canonical_event, planner_decision, workforce_query, actor
                         ),
                         _seed_duplicate_check(

@@ -78,6 +78,17 @@ def _attachment_object_keys(fields: dict[str, Any]) -> list[str]:
     return [str(single)] if single else []
 
 
+def _optional_str(raw: Any) -> str | None:
+    """A blank string is not an id. Fields survive a JSON round-trip through
+    workflow_instances, where an unanswered slot can come back as "" rather
+    than absent, and "" would fail the command's UUID validation for no
+    reason a user could act on."""
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    return text or None
+
+
 def _occurred_date(fields: dict[str, Any]) -> date:
     """The day the work happened, as decided upstream.
 
@@ -137,5 +148,10 @@ def build_command(confirmed: ConfirmedActionV2) -> RecordLabourAttendanceCommand
         occurred_date=_occurred_date(fields),
         occurred_date_source=str(fields.get("occurred_date_source") or "inferred_at_confirmation"),
         recorded_via=str(fields.get("recorded_via") or "whatsapp_text"),
+        # Only ever set by the supervisor answering "replace what I sent
+        # earlier" -- never inferred here. An absent or blank value means this
+        # report stands alongside any other for the same day, which is a real
+        # case (a second shift), not a failure to detect a duplicate.
+        corrects_report_id=_optional_str(fields.get("corrects_report_id")),
         created_by=confirmed.confirmed_by_user_id,
     )

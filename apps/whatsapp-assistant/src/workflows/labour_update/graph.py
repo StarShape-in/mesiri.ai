@@ -20,7 +20,14 @@ from __future__ import annotations
 from typing import Any
 
 from ..state import WorkflowGraphState
-from .nodes import WORKER_MATCH_SLOT_PREFIX, build_draft, match_workers, request_confirmation
+from .nodes import (
+    DUPLICATE_DAY_SLOT_NAME,
+    WORKER_MATCH_SLOT_PREFIX,
+    build_draft,
+    check_duplicate_day,
+    match_workers,
+    request_confirmation,
+)
 
 
 def _route_after_worker_matching(state: WorkflowGraphState) -> str:
@@ -33,10 +40,17 @@ def _route_after_worker_matching(state: WorkflowGraphState) -> str:
     return "ask_slot" if (state.get("awaiting_slot") or "").startswith(WORKER_MATCH_SLOT_PREFIX) else "continue"
 
 
+def _route_after_duplicate_day(state: WorkflowGraphState) -> str:
+    """Slot-specific for the same reason as above: only this node's own
+    question may end the pass here."""
+    return "ask_slot" if state.get("awaiting_slot") == DUPLICATE_DAY_SLOT_NAME else "continue"
+
+
 def build_labour_attendance_graph() -> Any:
     """Compile the Labour Attendance graph:
 
-    START -> match_workers -> (ask_slot -> END | continue)
+    START -> match_workers      -> (ask_slot -> END | continue)
+          -> check_duplicate_day -> (ask_slot -> END | continue)
           -> build_draft -> request_confirmation -> END
 
     `match_workers` resolves every named line it can — auto-matching the
@@ -52,12 +66,22 @@ def build_labour_attendance_graph() -> Any:
 
     graph = StateGraph(WorkflowGraphState)
     graph.add_node("match_workers", match_workers)
+    graph.add_node("check_duplicate_day", check_duplicate_day)
     graph.add_node("build_draft", build_draft)
     graph.add_node("request_confirmation", request_confirmation)
     graph.add_edge(START, "match_workers")
     graph.add_conditional_edges(
         "match_workers",
         _route_after_worker_matching,
+        {"ask_slot": END, "continue": "check_duplicate_day"},
+    )
+    # After matching, not before: "who is this?" is about the report being
+    # read, while "does this replace yesterday's?" is about what to do with it
+    # once read. Asking the second first would interrupt with a question about
+    # a report the supervisor has not yet seen echoed back.
+    graph.add_conditional_edges(
+        "check_duplicate_day",
+        _route_after_duplicate_day,
         {"ask_slot": END, "continue": "build_draft"},
     )
     graph.add_edge("build_draft", "request_confirmation")

@@ -937,6 +937,47 @@ async def _seed_worker_candidates(
         event.fields["worker_candidates"] = candidates
 
 
+async def _seed_existing_attendance(
+    event: CanonicalEventV2,
+    decision: PlannerDecisionV2,
+    workforce_query: WorkforceQueryService | None,
+    actor: ActorIdentity | None,
+) -> None:
+    """Flag that this site and day already has a report, before the graph runs
+    (a node must never query a repository itself -- same principle as
+    _seed_worker_candidates above). Only ever runs for LABOUR_ATTENDANCE.
+
+    Attendance cannot be edited (P5), so a supervisor who forgets someone
+    re-sends the whole list. Until now nothing noticed: the second report was
+    stored as an independent row and both counted, which is how a day of 18
+    workers reads as 16 + 18 = 34 man-days with cost inflated to match. This
+    is the read that lets the workflow ask which one the supervisor meant.
+
+    Needs a project and a date to ask a meaningful question; without either,
+    silence is correct -- "is this a duplicate of something?" cannot be
+    answered against an unresolved day.
+    """
+    if workforce_query is None or actor is None or not actor.organization_id:
+        return
+    if decision.workflow_key is not WorkflowKey.LABOUR_ATTENDANCE:
+        return
+    if not event.project_id:
+        return
+
+    occurred_date = str(event.fields.get("occurred_date") or "").strip()
+    if not occurred_date:
+        return
+
+    existing = await workforce_query.find_existing_report_for_day(
+        organization_id=actor.organization_id,
+        project_id=event.project_id,
+        site_id=event.site_id,
+        occurred_date=occurred_date,
+    )
+    if existing and existing.get("report_id"):
+        event.fields["existing_report"] = existing
+
+
 async def _maybe_trigger_worker_promotion(
     handled: InteractionHandled,
     workflow_runtime: WorkflowRuntime,

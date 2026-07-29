@@ -100,6 +100,23 @@ class WorkforceQueryService(Protocol):
         """Attach a team photo to a recorded attendance report."""
         ...
 
+    async def find_existing_report_for_day(
+        self,
+        *,
+        organization_id: str,
+        project_id: str,
+        site_id: str | None,
+        occurred_date: str,
+    ) -> dict[str, Any] | None:
+        """The live report already recorded for this site and day, if any.
+
+        Returns report_id, total_headcount, total_cost and line_count so the
+        supervisor can be told what is already on record before deciding
+        whether this new report replaces it. None -- the ordinary case -- means
+        the day is clear.
+        """
+        ...
+
 
 class PostgresWorkforceQueryService:
     """Reads the real register, annotated with where each worker has worked."""
@@ -270,6 +287,90 @@ class PostgresWorkforceQueryService:
 
         return str(worker_id)
 
+    async def find_existing_report_for_day(
+        self,
+        *,
+        organization_id: str,
+        project_id: str,
+        site_id: str | None,
+        occurred_date: str,
+    ) -> dict[str, Any] | None:
+        """What is already on record for this site and day.
+
+        Mirrors the backend repository method of the same name (which the
+        dashboard read path uses) rather than sharing it: the assistant talks
+        to Postgres through its own PostgresDatabase port and never imports
+        backend repositories.
+
+        Superseded reports are excluded, so re-sending a day twice compares
+        against the *live* report both times rather than against a correction
+        that no longer counts.
+
+        A NULL site_id is matched with IS NULL, not `= NULL` (always false),
+        or a project with no named site could never detect its own duplicate.
+        """
+        import sqlalchemy as sa
+
+        try:
+            org_id = uuid.UUID(organization_id)
+            project_uuid = uuid.UUID(project_id)
+            site_uuid = uuid.UUID(site_id) if site_id else None
+        except (TypeError, ValueError):
+            return None
+        if not str(occurred_date or "").strip():
+            return None
+
+        site_clause = "site_id IS NULL" if site_uuid is None else "site_id = :site_id"
+        params: dict[str, Any] = {
+            "org_id": org_id,
+            "project_id": project_uuid,
+            "occurred_date": occurred_date,
+        }
+        if site_uuid is not None:
+            params["site_id"] = site_uuid
+
+        async with self._db.transaction() as conn:
+            report = (
+                await conn.execute(
+                    sa.text(
+                        "SELECT id FROM labour_attendance_reports "
+                        "WHERE organization_id = :org_id "
+                        "  AND project_id = :project_id "
+                        f"  AND {site_clause} "
+                        "  AND occurred_date = :occurred_date "
+                        "  AND id NOT IN ("
+                        "        SELECT corrects_report_id FROM labour_attendance_reports "
+                        "        WHERE corrects_report_id IS NOT NULL) "
+                        "ORDER BY created_at DESC LIMIT 1"
+                    ),
+                    params,
+                )
+            ).first()
+            if report is None:
+                return None
+
+            report_uuid = report[0]
+            totals = (
+                await conn.execute(
+                    sa.text(
+                        "SELECT COUNT(*) AS line_count, "
+                        "       COALESCE(SUM(COALESCE(headcount, 1)), 0) AS total_headcount, "
+                        "       COALESCE(SUM(CASE WHEN daily_wage IS NOT NULL "
+                        "                    THEN COALESCE(headcount, 1) * daily_wage "
+                        "                    ELSE 0 END), 0) AS total_cost "
+                        "FROM labour_attendance_lines WHERE report_id = :report_id"
+                    ),
+                    {"report_id": report_uuid},
+                )
+            ).first()
+
+        return {
+            "report_id": str(report_uuid),
+            "line_count": int(totals[0] or 0) if totals else 0,
+            "total_headcount": int(totals[1] or 0) if totals else 0,
+            "total_cost": str(totals[2] or "0") if totals else "0",
+        }
+
     async def attach_team_photo(
         self,
         *,
@@ -354,10 +455,19 @@ class StubWorkforceQueryService:
         ]'
     """
 
-    def __init__(self, roster: list[dict[str, Any]] | None = None) -> None:
+    def __init__(
+        self,
+        roster: list[dict[str, Any]] | None = None,
+        existing_reports: dict[str, dict[str, Any]] | None = None,
+    ) -> None:
         self._roster = roster if roster is not None else _roster_from_env()
         self.created_workers: list[dict[str, Any]] = []
         self.team_photos: list[dict[str, Any]] = []
+        #: Keyed "project_id|site_id|occurred_date" so a test can stage a day
+        #: that already has attendance. Empty by default -- a clear day is the
+        #: ordinary case, and inventing a prior report would make every test
+        #: answer a duplicate question it never asked for.
+        self._existing_reports = dict(existing_reports or {})
 
     async def list_worker_candidates(
         self,
@@ -396,6 +506,17 @@ class StubWorkforceQueryService:
         )
         return worker_id
 
+
+    async def find_existing_report_for_day(
+        self,
+        *,
+        organization_id: str,
+        project_id: str,
+        site_id: str | None,
+        occurred_date: str,
+    ) -> dict[str, Any] | None:
+        """Stub: returns a report only if one was staged for this site-day."""
+        return self._existing_reports.get(f"{project_id}|{site_id or ''}|{occurred_date}")
 
     async def attach_team_photo(
         self,

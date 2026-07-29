@@ -152,6 +152,19 @@ class RecordLabourAttendanceCommand(BaseModel):
     #: in the same conversation never overwrite it.
     recorded_via: str = "whatsapp_text"
 
+    #: Set when this report replaces an earlier one for the same site and day,
+    #: because the supervisor re-sent the list rather than editing it (which
+    #: attendance does not allow -- principle P5). Both rows survive: the
+    #: superseded one stays fully readable for audit, but stops feeding any
+    #: total, which is what keeps a re-sent day of 18 workers from reading as
+    #: 16 + 18 = 34 man-days.
+    #:
+    #: None means "this is a genuinely separate report" -- a second shift, or a
+    #: different crew on the same site and day -- and both then count. The
+    #: choice is the supervisor's, asked before anything is written; nothing
+    #: here infers it.
+    corrects_report_id: CanonicalUuid | None = None
+
     created_by: CanonicalUuid
 
     model_config = {"extra": "forbid"}

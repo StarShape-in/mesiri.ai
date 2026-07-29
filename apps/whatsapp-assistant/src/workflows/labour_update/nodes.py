@@ -64,7 +64,12 @@ from mesiri_contracts.assistant.draft_action import DraftActionType
 from mesiri_contracts.assistant.v2.draft_action import DraftActionV2
 from mesiri_contracts.common.ids import new_id
 
-from ..slots import SlotCandidate, match_slot_answer, slot_options
+from ..slots import (
+    SlotCandidate,
+    match_slot_answer,
+    resolve_single_choice_slot,
+    slot_options,
+)
 from ..state import WorkflowGraphState
 
 #: Slot names are ``worker_match:<line index>``. The index is part of the name
@@ -91,6 +96,96 @@ _RESOLVED_FLAG = "worker_match_resolved"
 #: pending draft by the correction path (interactions/handler.py), consumed
 #: at the top of match_workers, and never persisted beyond that pass.
 NAME_CORRECTIONS_FIELD = "_name_corrections"
+
+#: The "you already reported this day" question. Attendance cannot be edited
+#: (P5), so a supervisor who forgets someone re-sends the whole list. Until
+#: this existed, the second report was stored as an independent row and both
+#: counted -- a day of 18 workers reading as 16 + 18 = 34 man-days.
+#:
+#: Deliberately *not* auto-resolved. Both answers are legitimate and only the
+#: supervisor knows which is true: a re-send corrects, while a second shift or
+#: a different crew on the same site is a genuinely separate report. Guessing
+#: either way silently loses real attendance or silently doubles it.
+DUPLICATE_DAY_SLOT_NAME = "attendance_duplicate_day"
+REPLACE_SENTINEL = "replace"
+ADD_SEPARATELY_SENTINEL = "add_separately"
+_DUPLICATE_DAY_CANDIDATES = [
+    SlotCandidate(value=REPLACE_SENTINEL, label="Replace it"),
+    SlotCandidate(value=ADD_SEPARATELY_SENTINEL, label="Add as separate"),
+]
+
+
+def _existing_report_summary(existing: dict[str, Any]) -> str:
+    """Describe what is already recorded, so the choice is informed rather
+    than a bare yes/no about something the supervisor cannot see."""
+    headcount = existing.get("total_headcount")
+    lines = existing.get("line_count")
+    parts: list[str] = []
+    if isinstance(headcount, int) and headcount > 0:
+        parts.append(f"{headcount} {'worker' if headcount == 1 else 'workers'}")
+    elif isinstance(lines, int) and lines > 0:
+        parts.append(f"{lines} {'line' if lines == 1 else 'lines'}")
+    cost = _fmt_amount(existing.get("total_cost"))
+    if cost:
+        parts.append(f"₹{cost}")
+    return ", ".join(parts) if parts else "an earlier report"
+
+
+def check_duplicate_day(state: WorkflowGraphState) -> dict:
+    """Ask whether this replaces the report already recorded for the same day.
+
+    No-op unless the caller seeded `existing_report` (runtime/inbound_journey/
+    seeding.py's `_seed_existing_attendance` -- a node never queries a
+    repository itself), and unless the question is still unanswered.
+
+    "Replace it" carries the earlier report's id through to the command as
+    `corrects_report_id`, which persistence writes and every total already
+    honours: both rows survive for audit, only the newer one counts. "Add as
+    separate" leaves it unset and both count, which is correct for a second
+    shift.
+    """
+    fields = dict(state.get("collected_fields") or {})
+    existing = fields.get("existing_report")
+    if not isinstance(existing, dict) or not existing.get("report_id"):
+        return {}
+    if fields.get("duplicate_day_answered"):
+        return {}
+
+    prompt_title = (
+        f"You already reported {_existing_report_summary(existing)} for this day. "
+        "Does this replace that, or is it a separate report?"
+    )
+
+    def _ask(title: str) -> dict:
+        resolution = resolve_single_choice_slot(
+            slot_name=DUPLICATE_DAY_SLOT_NAME,
+            prompt_title=title,
+            candidates=_DUPLICATE_DAY_CANDIDATES,
+        )
+        return {
+            "collected_fields": fields,
+            "awaiting_slot": resolution.awaiting_slot,
+            "awaiting_slot_options": slot_options(_DUPLICATE_DAY_CANDIDATES),
+            "pending_prompt": resolution.slot_prompt,
+        }
+
+    if state.get("awaiting_slot") == DUPLICATE_DAY_SLOT_NAME:
+        answer_text = fields.pop("_slot_answer_text", None)
+        if answer_text is not None:
+            matched = match_slot_answer(answer_text, _DUPLICATE_DAY_CANDIDATES)
+            if matched is None:
+                return _ask(f"Sorry, I didn't catch that. {prompt_title}")
+            resolved = {**fields, "duplicate_day_answered": True}
+            if matched == REPLACE_SENTINEL:
+                resolved["corrects_report_id"] = str(existing["report_id"])
+            return {
+                "collected_fields": resolved,
+                "awaiting_slot": None,
+                "awaiting_slot_options": None,
+                "pending_prompt": None,
+            }
+
+    return _ask(prompt_title)
 
 
 def _apply_name_corrections(
@@ -388,7 +483,12 @@ def match_workers(state: WorkflowGraphState) -> dict:
 #: Seeded plumbing and workflow bookkeeping, never business fields. Excluded
 #: from the draft so they neither appear in the confirmation nor reach
 #: RecordLabourAttendanceCommand (whose models are `extra: forbid`).
-_INTERNAL_FIELD_KEYS = frozenset({"worker_candidates"})
+#: `existing_report` and `duplicate_day_answered` are how check_duplicate_day
+#: kept its place across passes -- the command needs only the answer itself
+#: (`corrects_report_id`), not the bookkeeping that produced it.
+_INTERNAL_FIELD_KEYS = frozenset(
+    {"worker_candidates", "existing_report", "duplicate_day_answered"}
+)
 
 
 def build_draft(state: WorkflowGraphState) -> dict:
@@ -437,6 +537,10 @@ _DISPLAY_HIDDEN_FIELD_KEYS = frozenset(
         "project_name",
         "site_name",
         "recorded_via",
+        # An opaque uuid tells the supervisor nothing; the confirmation says
+        # in words that this replaces the earlier report (see
+        # request_confirmation), which is the part that matters.
+        "corrects_report_id",
         # Both rendered by the date line in request_confirmation, which reads
         # them together to say whether the date was stated or assumed. Shown
         # as raw key:value lines they would be noise ("occurred_date_source:
@@ -585,6 +689,13 @@ def request_confirmation(state: WorkflowGraphState) -> dict:
 
     if fields.get("attachment_object_keys") or fields.get("media_object_key"):
         out.append("   • 📎 Attendance sheet attached")
+
+    # Stated in words rather than left implicit. Replacing is the one answer
+    # that changes what an existing record counts for, and this is the last
+    # moment before it happens -- attendance cannot be edited afterwards (P5).
+    if fields.get("corrects_report_id"):
+        out.append("")
+        out.append("   ♻️ This replaces your earlier report for this day.")
 
     out.append("")
     out.append("Reply YES to confirm or NO to cancel.")

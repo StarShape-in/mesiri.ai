@@ -212,3 +212,30 @@ def test_a_real_attachment_list_wins_over_the_singular_key():
 def test_no_photo_means_no_attachments():
     cmd = build_command(_confirmed({"lines": [_line()]}))
     assert cmd.attachment_object_keys == []
+
+
+# --- Supersede: the writer migration 0371 was waiting for -------------------
+
+def test_corrects_report_id_reaches_the_command_when_the_user_chose_replace():
+    """The read side has always excluded a corrected report from every total;
+    until this was threaded through, nothing ever set it, so the guard could
+    not fire. Production shows 14 reports for one site-day, all counting."""
+    report_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    cmd = build_command(_confirmed({"lines": [_line()], "corrects_report_id": report_id}))
+    assert cmd.corrects_report_id == report_id
+
+
+def test_an_ordinary_report_corrects_nothing():
+    """Absent is the common case and must stay None -- a second shift on the
+    same day is a separate report, not a correction of the first."""
+    cmd = build_command(_confirmed({"lines": [_line()]}))
+    assert cmd.corrects_report_id is None
+
+
+def test_a_blank_correction_id_is_treated_as_absent_not_as_an_id():
+    """Fields survive a JSON round-trip through workflow_instances, where an
+    unanswered slot can come back as "" rather than missing. "" would fail the
+    command's UUID validation for a reason no user could act on."""
+    for blank in ("", "   ", None):
+        cmd = build_command(_confirmed({"lines": [_line()], "corrects_report_id": blank}))
+        assert cmd.corrects_report_id is None
