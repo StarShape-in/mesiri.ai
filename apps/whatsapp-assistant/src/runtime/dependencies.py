@@ -633,10 +633,18 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     # per CORRECTION segment), not DB/API latency as first suspected.
     trace_logger: TraceLogger = PostgresTraceLogger()
 
-    interaction_classifier = AdapterInteractionClassifier(
-        DynamicAIProviderResolver(material_db, redis_client, _backend_settings),
-        trace_logger=trace_logger,
-    )
+    ai_resolver = DynamicAIProviderResolver(material_db, redis_client, _backend_settings)
+    interaction_classifier = AdapterInteractionClassifier(ai_resolver, trace_logger=trace_logger)
+    # Resolves a picker reply the deterministic matcher (workflows/slots.py's
+    # match_slot_answer) couldn't -- e.g. "New cause it's 3rd floor" instead
+    # of a bare number or "This is new work". Same resolver as above:
+    # generate_json already always routes to Gemini (see resolver.py), so
+    # this needs no new provider config. Only consulted after
+    # provide_input()'s first, free deterministic pass re-asks -- see
+    # interactions/handler.py's handle_slot_answer.
+    from interactions.llm_slot_classifier import AdapterSlotAnswerClassifier
+
+    slot_answer_classifier = AdapterSlotAnswerClassifier(ai_resolver, trace_logger=trace_logger)
     # Post-confirmation receipt image (see AGENTS.md's Module Placement Log
     # and channel/receipt/). One long-lived headless-Chromium instance for
     # the whole process -- ReceiptRenderer launches it lazily on first
@@ -659,6 +667,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         planner=planner,
         batch_store=batch_store,
         completion_photo_hint_store=completion_photo_hint_store,
+        slot_answer_classifier=slot_answer_classifier,
     )
     sender = WhatsAppSender(
         client=http_client,

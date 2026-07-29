@@ -47,7 +47,13 @@ from mesiri_contracts.assistant.normalized_message import NormalizedMessage
 from mesiri_contracts.assistant.planner_decision import WorkflowKey
 from mesiri_contracts.assistant.v2.interaction_spec import FieldCorrection, InteractionIntent
 from planner import Planner
-from workflows import WorkflowResumeResult, WorkflowResumeStatus, WorkflowRunResult, WorkflowRuntime
+from workflows import (
+    WorkflowResumeResult,
+    WorkflowResumeStatus,
+    WorkflowRunResult,
+    WorkflowRunStatus,
+    WorkflowRuntime,
+)
 from workflows.batch import (
     format_batch_summary,
     format_started_segment_reply,
@@ -65,6 +71,7 @@ from .name_corrections import keep_reported_names, parse_name_corrections
 from .policy import InteractionRoute, decide
 from .ports import ExecutionDispatcher, ReceiptBuilder
 from .response_handler import render_execution_reply, render_resume_reply, render_workflow_run_reply
+from .slot_answer_classifier_port import SlotAnswerClassifierPort
 
 logger = logging.getLogger(__name__)
 
@@ -113,9 +120,11 @@ class InteractionHandler:
         planner: Planner | None = None,
         batch_store: PendingBatchStore | None = None,
         completion_photo_hint_store: CompletionPhotoHintStore | None = None,
+        slot_answer_classifier: SlotAnswerClassifierPort | None = None,
     ) -> None:
         self._runtime = workflow_runtime
         self._classifier = classifier
+        self._slot_answer_classifier = slot_answer_classifier
         self._dispatcher = dispatcher
         self._receipt_builder = receipt_builder
         self._memory_coordinator = memory_coordinator
@@ -372,8 +381,14 @@ class InteractionHandler:
 
         Deterministic list/number matching happens inside the workflow graph
         (see expense_capture/nodes.py's resolve_account) via
-        WorkflowRuntime.provide_input() -- no AI call here, same "a plain
-        reply costs no tokens" principle as handle_fast_path.
+        WorkflowRuntime.provide_input() -- a bare number or exact/substring
+        label match resolves here for free, same "a plain reply costs no
+        tokens" principle as handle_fast_path. Only when that deterministic
+        pass re-asks (a reply like "New cause it's 3rd floor" isn't a
+        substring of any candidate label) does `_slot_answer_classifier`, if
+        wired, get a chance to resolve it from the same candidate list
+        `provide_input` already returned -- within this same turn, so the
+        user is never shown the re-ask for something the LLM could resolve.
         """
         if message.modality not in (InputModality.TEXT, InputModality.INTERACTIVE):
             return None
@@ -398,6 +413,29 @@ class InteractionHandler:
             return None
 
         result = await self._runtime.provide_input(loaded, message.text)
+
+        if (
+            result.status is WorkflowRunStatus.AWAITING_INPUT
+            and result.slot_options
+            and self._slot_answer_classifier is not None
+        ):
+            matched_value = await self._slot_answer_classifier.classify(
+                message.text, result.slot_options, message.correlation_id
+            )
+            if matched_value is not None:
+                matched = next((c for c in result.slot_options if c.value == matched_value), None)
+                if matched is not None:
+                    # provide_input() already persisted the re-ask via
+                    # optimistic-concurrency transition(), bumping the
+                    # version -- `loaded` is stale, so this retry needs a
+                    # fresh read rather than reusing it.
+                    retry_loaded = await self._runtime.get_awaiting_input(user_id)
+                    if retry_loaded is not None:
+                        # Feeding back the exact label lets the unchanged,
+                        # pure match_slot_answer resolve it deterministically
+                        # -- the graph node never knows an LLM was involved.
+                        result = await self._runtime.provide_input(retry_loaded, matched.label)
+
         logger.info(
             "interaction.slot_answered user=%s status=%s instance=%s",
             user_id,

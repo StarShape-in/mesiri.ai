@@ -16,6 +16,7 @@ from .classifier_port import InteractionClassifierPort
 from .completion_photo_hint import CompletionPhotoHintStore
 from .handler import InteractionHandler
 from .ports import ExecutionDispatcher, ReceiptBuilder
+from .slot_answer_classifier_port import SlotAnswerClassifierPort
 
 
 def build_interaction_handler(
@@ -27,6 +28,7 @@ def build_interaction_handler(
     planner: Planner | None = None,
     batch_store: PendingBatchStore | None = None,
     completion_photo_hint_store: CompletionPhotoHintStore | None = None,
+    slot_answer_classifier: SlotAnswerClassifierPort | None = None,
 ) -> InteractionHandler:
     """Construct an ``InteractionHandler`` wired to ``workflow_runtime`` and,
     once M8 is wired, an ``ExecutionDispatcher`` that executes confirmed
@@ -38,7 +40,8 @@ def build_interaction_handler(
     queued segment once a batch member's confirmation resolves, and
     ``completion_photo_hint_store`` (#25 AI Follow-up) needed to remember
     which Activity a proactive "want to attach a completion photo?" offer
-    was about."""
+    was about, and an optional ``slot_answer_classifier`` that resolves a
+    picker reply the deterministic matcher (workflows/slots.py) couldn't."""
     return InteractionHandler(
         workflow_runtime,
         classifier=classifier,
@@ -48,4 +51,5 @@ def build_interaction_handler(
         planner=planner,
         batch_store=batch_store,
         completion_photo_hint_store=completion_photo_hint_store,
+        slot_answer_classifier=slot_answer_classifier,
     )
