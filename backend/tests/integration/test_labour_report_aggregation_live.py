@@ -67,8 +67,9 @@ async def scenario(engine: AsyncEngine):
     async with engine.begin() as conn:
         await conn.execute(
             sa.text(
-                "INSERT INTO organizations (id, name, status, created_at) "
-                "VALUES (:id, :name, 'active', now()) ON CONFLICT DO NOTHING"
+                "INSERT INTO organizations (id, name, deployment_type, db_route, status, "
+                "created_at) VALUES (:id, :name, 'local', 'default', 'active', now()) "
+                "ON CONFLICT DO NOTHING"
             ),
             {"id": org, "name": f"labour-reports-{org}"},
         )
