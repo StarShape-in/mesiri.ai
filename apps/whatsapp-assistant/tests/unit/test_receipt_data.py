@@ -324,3 +324,75 @@ def test_account_deactivate_receipt():
     )
     assert data.value == "Deactivated"
     assert data.subtitle == "Petrol Card"
+
+
+def test_create_activity_receipt_is_not_labelled_material_usage():
+    """Same bug class as labour/transfer/reversal/account-admin above: before
+    this branch existed, a confirmed activity fell through to the `else`
+    branch and came back as a bogus "Material usage" receipt."""
+    data = _finance_receipt(
+        DraftActionType.CREATE_ACTIVITY,
+        {"work_type": "plastering", "narrative": "Third floor plastering done", "contractor": "ABC Co"},
+    )
+    assert data.category == "Site Activity"
+    assert data.category != "Material usage"
+    assert data.subtitle == "Third floor plastering done"
+    assert data.record_id.startswith("AL-")
+
+
+def test_add_progress_update_receipt_is_not_labelled_material_usage():
+    data = _finance_receipt(
+        DraftActionType.ADD_PROGRESS_UPDATE,
+        {"update_kind": "COMPLETED", "narrative": "Finished the pour", "activity_summary": "Slab casting"},
+    )
+    assert data.category == "Progress Update"
+    assert data.category != "Material usage"
+    assert data.subtitle == "Finished the pour"
+    assert data.record_id.startswith("PU-")
+
+
+def test_record_site_issue_receipt_is_not_labelled_material_usage():
+    data = _finance_receipt(
+        DraftActionType.RECORD_SITE_ISSUE,
+        {"issue_type": "MATERIAL_SHORTAGE", "severity": "HIGH", "narrative": "Out of cement"},
+    )
+    assert data.category == "Site Issue"
+    assert data.category != "Material usage"
+    assert data.value == "High"
+    assert data.subtitle == "Out of cement"
+    assert data.record_id.startswith("SI-")
+
+
+def test_close_site_issue_receipt_is_not_labelled_material_usage():
+    data = _finance_receipt(
+        DraftActionType.CLOSE_SITE_ISSUE,
+        {"action": "resolve", "site_issue_type": "MATERIAL_SHORTAGE", "resolution_notes": "Cement delivered"},
+    )
+    assert data.category == "Site Issue"
+    assert data.category != "Material usage"
+    assert data.value == "Resolve"
+    assert data.record_id.startswith("SC-")
+
+
+def test_create_project_receipt_is_not_labelled_material_usage():
+    data = _finance_receipt(
+        DraftActionType.CREATE_PROJECT,
+        {"name": "Skyline Towers", "location": "Kochi"},
+    )
+    assert data.category == "Project"
+    assert data.category != "Material usage"
+    assert data.value == "Created"
+    assert data.subtitle == "New project: Skyline Towers"
+    assert data.record_id.startswith("PJ-")
+
+
+def test_create_site_receipt_is_not_labelled_material_usage():
+    data = _finance_receipt(
+        DraftActionType.CREATE_SITE,
+        {"name": "Block A", "location": "North Yard"},
+    )
+    assert data.category == "Site"
+    assert data.category != "Material usage"
+    assert data.value == "Created"
+    assert data.subtitle == "New site: Block A"
+    assert data.record_id.startswith("ST-")

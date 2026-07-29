@@ -333,10 +333,14 @@ _EXTRACTION_PROMPT = (
     "Block A\", \"tell me everything about this site\") -- distinct from "
     "activity_query (a day's activity/issue log) and finance_query (just "
     "balance/expenses): this is the project/site RECORD itself plus its "
-    "current operational snapshot. Which project/site is NOT extracted "
-    "here -- resolved separately, same as site_create. output_format is "
-    "\"pdf\" only when the user explicitly asks for a file/document -- omit "
-    "entirely for a plain question expecting a normal chat reply."
+    "current operational snapshot. Unlike project_create/site_create, DO "
+    "extract the named project/site here -- per the blanket rule above, put "
+    "it in 'project_name'/'site_name' so it can be matched against the "
+    "org's real projects/sites; a bare \"tell me about this project\" with "
+    "no name mentioned is also valid and falls back to context. "
+    "output_format is \"pdf\" only when the user explicitly asks for a "
+    "file/document -- omit entirely for a plain question expecting a "
+    "normal chat reply."
 )
 
 

@@ -294,7 +294,7 @@ def build_receipt_data(
             ]
         )
         id_prefix = "AC"
-    else:
+    elif draft.action_type is DraftActionType.RECORD_MATERIAL_USAGE:
         category = "Material usage"
         value = _fmt_quantity(fields)
         subtitle = f"{material_name.title()} used"
@@ -309,6 +309,118 @@ def build_receipt_data(
             ],
         ]
         id_prefix = "MU"
+    elif draft.action_type is DraftActionType.CREATE_ACTIVITY:
+        work_type = str(fields.get("work_type") or "Activity")
+        category = "Site Activity"
+        value = work_type.title()
+        subtitle = str(fields.get("narrative") or f"{work_type.title()} logged")
+        sections = [
+            [
+                ReceiptField("hammer", "Work", work_type.title()),
+                ReceiptField("store", "Contractor", str(fields.get("contractor") or "—")),
+            ],
+            [
+                ReceiptField("user", "Reported by", reporter),
+                ReceiptField("whatsapp", "Source", "WhatsApp"),
+            ],
+        ]
+        id_prefix = "AL"
+    elif draft.action_type is DraftActionType.ADD_PROGRESS_UPDATE:
+        update_kind = str(fields.get("update_kind") or "PROGRESS").replace("_", " ")
+        category = "Progress Update"
+        value = update_kind.title()
+        subtitle = str(fields.get("narrative") or f"{update_kind.title()} update")
+        sections = [
+            [
+                ReceiptField("layers", "Activity", str(fields.get("activity_summary") or "—")),
+                ReceiptField("hammer", "Update", update_kind.title()),
+            ],
+            [
+                ReceiptField("user", "Reported by", reporter),
+                ReceiptField("whatsapp", "Source", "WhatsApp"),
+            ],
+        ]
+        id_prefix = "PU"
+    elif draft.action_type is DraftActionType.RECORD_SITE_ISSUE:
+        issue_type = str(fields.get("issue_type") or "Issue").replace("_", " ")
+        category = "Site Issue"
+        value = str(fields.get("severity") or "—").title()
+        subtitle = str(fields.get("narrative") or f"{issue_type.title()} reported")
+        sections = [
+            [
+                ReceiptField("layers", "Type", issue_type.title()),
+                ReceiptField("hammer", "Severity", str(fields.get("severity") or "—").title()),
+            ],
+            [
+                ReceiptField("user", "Reported by", reporter),
+                ReceiptField("whatsapp", "Source", "WhatsApp"),
+            ],
+        ]
+        id_prefix = "SI"
+    elif draft.action_type is DraftActionType.CLOSE_SITE_ISSUE:
+        action = str(fields.get("action") or "").replace("_", " ")
+        issue_type = str(fields.get("site_issue_type") or "Issue").replace("_", " ")
+        category = "Site Issue"
+        value = action.title() or "Updated"
+        subtitle = str(fields.get("site_issue_narrative") or issue_type.title())
+        sections = [
+            [
+                ReceiptField("layers", "Type", issue_type.title()),
+                ReceiptField("store", "Notes", str(fields.get("resolution_notes") or "—")),
+            ],
+            [
+                ReceiptField("user", "Reported by", reporter),
+                ReceiptField("whatsapp", "Source", "WhatsApp"),
+            ],
+        ]
+        id_prefix = "SC"
+    elif draft.action_type is DraftActionType.CREATE_PROJECT:
+        category = "Project"
+        value = "Created"
+        subtitle = f"New project: {fields.get('name', '—')}"
+        sections = [
+            [
+                ReceiptField("building", "Project", str(fields.get("name") or "—")),
+                ReceiptField("pin", "Location", str(fields.get("location") or "—")),
+            ],
+            [
+                ReceiptField("user", "Reported by", reporter),
+                ReceiptField("whatsapp", "Source", "WhatsApp"),
+            ],
+        ]
+        id_prefix = "PJ"
+    elif draft.action_type is DraftActionType.CREATE_SITE:
+        category = "Site"
+        value = "Created"
+        subtitle = f"New site: {fields.get('name', '—')}"
+        sections = [
+            [
+                ReceiptField("building", "Site", str(fields.get("name") or "—")),
+                ReceiptField("pin", "Location", str(fields.get("location") or "—")),
+            ],
+            [
+                ReceiptField("user", "Reported by", reporter),
+                ReceiptField("whatsapp", "Source", "WhatsApp"),
+            ],
+        ]
+        id_prefix = "ST"
+    else:
+        # Defensive only -- every DraftActionType above is expected to have
+        # an explicit case. A genuinely new, uncased type renders a generic
+        # "Record" card rather than silently mislabeling itself as whatever
+        # branch happened to be last (the bug this replaced: every new
+        # DraftActionType added without a case here rendered as "Material
+        # usage" with a bogus quantity line).
+        category = "Record"
+        value = "Confirmed"
+        subtitle = "Record confirmed"
+        sections = [
+            [
+                ReceiptField("user", "Reported by", reporter),
+                ReceiptField("whatsapp", "Source", "WhatsApp"),
+            ]
+        ]
+        id_prefix = "RC"
 
     record_id = f"{id_prefix}-{confirmed_at:%d%m%y}-{record_row_id.replace('-', '')[:4].upper()}"
 
