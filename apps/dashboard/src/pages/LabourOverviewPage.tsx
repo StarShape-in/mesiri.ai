@@ -14,6 +14,7 @@ import {
   PieChart as PieChartIcon,
   BarChart3,
   ChevronRight,
+  AlertTriangle,
 } from 'lucide-react'
 import {
   PieChart,
@@ -74,6 +75,10 @@ export default function LabourOverviewPage() {
   const [contractorStatement, setContractorStatement] = React.useState<LabourStatement | null>(null)
   const [dailyStatement, setDailyStatement] = React.useState<LabourStatement | null>(null)
   const [loading, setLoading] = React.useState(true)
+  // Surfaced, not swallowed: an empty dashboard and a failed request read
+  // identically otherwise, which is how a backend outage gets reported as
+  // "the numbers are all zero".
+  const [error, setError] = React.useState<string | null>(null)
 
   // Dialog & Detail Sheet states
   const [addWorkerOpen, setAddWorkerOpen] = React.useState(false)
@@ -82,6 +87,7 @@ export default function LabourOverviewPage() {
 
   const loadData = React.useCallback(async () => {
     setLoading(true)
+    setError(null)
     const projectId = scope.mode === 'project' || scope.mode === 'site' ? scope.projectId : undefined
     const siteId = scope.mode === 'site' ? scope.siteId : undefined
     try {
@@ -114,6 +120,7 @@ export default function LabourOverviewPage() {
       setDailyStatement(daily)
     } catch (err) {
       console.warn('Failed to load Labour Overview data:', err)
+      setError('Could not load labour data. The figures below may be incomplete.')
     } finally {
       setLoading(false)
     }
@@ -218,6 +225,13 @@ export default function LabourOverviewPage() {
           </Button>
         </div>
       </div>
+
+      {error && (
+        <div className="flex items-center gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">
+          <AlertTriangle className="size-3.5 shrink-0" />
+          {error}
+        </div>
+      )}
 
       {/* Top 4 KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -388,82 +402,84 @@ export default function LabourOverviewPage() {
             </Link>
           </div>
 
-          <Table>
-            <TableHeader className="bg-muted/40">
-              <TableRow className="hover:bg-transparent border-b">
-                <TableHead className="text-xs font-semibold h-9">Date</TableHead>
-                <TableHead className="text-xs font-semibold h-9">Recorded Via</TableHead>
-                <TableHead className="text-xs font-semibold h-9 text-center">Headcount</TableHead>
-                <TableHead className="text-xs font-semibold h-9 text-right">Daily Cost</TableHead>
-                <TableHead className="text-xs font-semibold h-9 w-10 text-right">View</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
-                <TableRow>
-                  <TableCell colSpan={5} className="h-28 text-center text-xs text-muted-foreground">
-                    Loading recent attendance logs...
-                  </TableCell>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader className="bg-muted/40">
+                <TableRow className="hover:bg-transparent border-b">
+                  <TableHead className="text-xs font-semibold h-9">Date</TableHead>
+                  <TableHead className="text-xs font-semibold h-9">Recorded Via</TableHead>
+                  <TableHead className="text-xs font-semibold h-9 text-center">Headcount</TableHead>
+                  <TableHead className="text-xs font-semibold h-9 text-right">Daily Cost</TableHead>
+                  <TableHead className="text-xs font-semibold h-9 w-10 text-right">View</TableHead>
                 </TableRow>
-              ) : reports.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={5} className="h-28 text-center text-xs text-muted-foreground">
-                    No recent attendance logs recorded.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                reports.slice(0, 5).map((item) => (
-                  <TableRow
-                    key={item.id}
-                    onClick={() => {
-                      setSelectedReportId(item.id)
-                      setDetailOpen(true)
-                    }}
-                    className="hover:bg-muted/30 transition-colors cursor-pointer"
-                  >
-                    <TableCell className="font-semibold text-xs py-2.5 text-foreground">
-                      {item.occurred_date}
-                    </TableCell>
-
-                    <TableCell className="text-xs py-2.5">
-                      <Badge
-                        variant="outline"
-                        className={
-                          item.recorded_via?.includes('whatsapp')
-                            ? 'border-emerald-500/30 text-emerald-600 bg-emerald-500/10 text-[10px]'
-                            : 'border-blue-500/30 text-blue-600 bg-blue-500/10 text-[10px]'
-                        }
-                      >
-                        {item.recorded_via?.includes('whatsapp') ? (
-                          <span className="flex items-center gap-1">
-                            <Bot className="size-3" /> WhatsApp Bot
-                          </span>
-                        ) : (
-                          <span className="flex items-center gap-1">
-                            <Globe className="size-3" /> Web
-                          </span>
-                        )}
-                      </Badge>
-                    </TableCell>
-
-                    <TableCell className="text-xs py-2.5 text-center font-bold text-foreground">
-                      {item.total_headcount} Workers
-                    </TableCell>
-
-                    <TableCell className="text-xs py-2.5 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                      ₹{item.total_cost ? item.total_cost.toLocaleString('en-IN') : '0'}
-                    </TableCell>
-
-                    <TableCell className="text-xs py-2.5 text-right">
-                      <Button variant="ghost" size="icon" className="size-6">
-                        <Eye className="size-3.5 text-muted-foreground" />
-                      </Button>
+              </TableHeader>
+              <TableBody>
+                {loading ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="h-28 text-center text-xs text-muted-foreground">
+                      Loading recent attendance logs...
                     </TableCell>
                   </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
+                ) : reports.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="h-28 text-center text-xs text-muted-foreground">
+                      No recent attendance logs recorded.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  reports.slice(0, 5).map((item) => (
+                    <TableRow
+                      key={item.id}
+                      onClick={() => {
+                        setSelectedReportId(item.id)
+                        setDetailOpen(true)
+                      }}
+                      className="hover:bg-muted/30 transition-colors cursor-pointer"
+                    >
+                      <TableCell className="font-semibold text-xs py-2.5 text-foreground">
+                        {item.occurred_date}
+                      </TableCell>
+
+                      <TableCell className="text-xs py-2.5">
+                        <Badge
+                          variant="outline"
+                          className={
+                            item.recorded_via?.includes('whatsapp')
+                              ? 'border-emerald-500/30 text-emerald-600 bg-emerald-500/10 text-[10px]'
+                              : 'border-blue-500/30 text-blue-600 bg-blue-500/10 text-[10px]'
+                          }
+                        >
+                          {item.recorded_via?.includes('whatsapp') ? (
+                            <span className="flex items-center gap-1">
+                              <Bot className="size-3" /> WhatsApp Bot
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1">
+                              <Globe className="size-3" /> Web
+                            </span>
+                          )}
+                        </Badge>
+                      </TableCell>
+
+                      <TableCell className="text-xs py-2.5 text-center font-bold text-foreground">
+                        {item.total_headcount} Workers
+                      </TableCell>
+
+                      <TableCell className="text-xs py-2.5 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                        ₹{item.total_cost ? item.total_cost.toLocaleString('en-IN') : '0'}
+                      </TableCell>
+
+                      <TableCell className="text-xs py-2.5 text-right">
+                        <Button variant="ghost" size="icon" className="size-6">
+                          <Eye className="size-3.5 text-muted-foreground" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
         </Card>
 
         {/* Right Card (5 cols): Subcontractor Agency Summary */}

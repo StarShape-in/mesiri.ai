@@ -14,6 +14,7 @@ import {
   ArrowDown,
   ChevronLeft,
   ChevronRight,
+  AlertTriangle,
 } from 'lucide-react'
 import { useScope } from '@/lib/ScopeContext'
 import { toLocalISODate } from '@/lib/utils'
@@ -53,6 +54,8 @@ export default function AttendancePage() {
   const [reports, setReports] = React.useState<LabourAttendanceSummaryItem[]>([])
   const [statement, setStatement] = React.useState<LabourStatement | null>(null)
   const [loading, setLoading] = React.useState(true)
+  // A failed fetch must not render as "no attendance recorded".
+  const [error, setError] = React.useState<string | null>(null)
 
   // Filters state
   const [dateFilter, setDateFilter] = React.useState<string>('ALL')
@@ -75,6 +78,7 @@ export default function AttendancePage() {
 
   const loadReports = React.useCallback(async () => {
     setLoading(true)
+    setError(null)
     try {
       let date_from: string | undefined
       const now = new Date()
@@ -98,6 +102,11 @@ export default function AttendancePage() {
           project_id: projectId,
           site_id: siteId,
           date_from,
+          // Explicit, because the backend default is 50 and this table
+          // presents what it receives as the complete list. 100 is the
+          // endpoint's documented maximum; beyond that the totals above
+          // still come from the statement, which is not paginated.
+          limit: 100,
         }),
         // Same scope and range as the list, so the totals above the table
         // describe exactly what the filters select -- not the page of rows
@@ -113,6 +122,7 @@ export default function AttendancePage() {
       setStatement(stmt)
     } catch (err) {
       console.warn('Failed to load attendance reports:', err)
+      setError('Could not load attendance reports. This list may be incomplete.')
     } finally {
       setLoading(false)
     }
@@ -253,6 +263,13 @@ export default function AttendancePage() {
         </Button>
       </div>
 
+      {error && (
+        <div className="flex items-center gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">
+          <AlertTriangle className="size-3.5 shrink-0" />
+          {error}
+        </div>
+      )}
+
       {/* KPI Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <KpiCard
@@ -341,152 +358,154 @@ export default function AttendancePage() {
 
       {/* Main Attendance Table Container (Matching ExpensesPage table styling) */}
       <div className="border rounded-lg overflow-hidden bg-card shadow-2xs">
-        <Table>
-          <TableHeader className="bg-muted/40">
-            <TableRow className="hover:bg-transparent border-b">
-              <TableHead className="w-[40px] px-3">
-                <input
-                  type="checkbox"
-                  checked={isAllSelected}
-                  onChange={toggleSelectAll}
-                  className="size-4 rounded border-border text-amber-600 focus:ring-amber-500 cursor-pointer accent-amber-600"
-                  title="Select All"
-                />
-              </TableHead>
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader className="bg-muted/40">
+              <TableRow className="hover:bg-transparent border-b">
+                <TableHead className="w-[40px] px-3">
+                  <input
+                    type="checkbox"
+                    checked={isAllSelected}
+                    onChange={toggleSelectAll}
+                    className="size-4 rounded border-border text-amber-600 focus:ring-amber-500 cursor-pointer accent-amber-600"
+                    title="Select All"
+                  />
+                </TableHead>
 
-              <TableHead
-                className="text-xs font-semibold h-10 cursor-pointer select-none"
-                onClick={() => toggleSort('date')}
-              >
-                Report Date {renderSortIcon('date')}
-              </TableHead>
+                <TableHead
+                  className="text-xs font-semibold h-10 cursor-pointer select-none"
+                  onClick={() => toggleSort('date')}
+                >
+                  Report Date {renderSortIcon('date')}
+                </TableHead>
 
-              <TableHead
-                className="text-xs font-semibold h-10 cursor-pointer select-none"
-                onClick={() => toggleSort('via')}
-              >
-                Recorded Via {renderSortIcon('via')}
-              </TableHead>
+                <TableHead
+                  className="text-xs font-semibold h-10 cursor-pointer select-none"
+                  onClick={() => toggleSort('via')}
+                >
+                  Recorded Via {renderSortIcon('via')}
+                </TableHead>
 
-              <TableHead
-                className="text-xs font-semibold h-10 text-center cursor-pointer select-none"
-                onClick={() => toggleSort('lines')}
-              >
-                Trade Lines {renderSortIcon('lines')}
-              </TableHead>
+                <TableHead
+                  className="text-xs font-semibold h-10 text-center cursor-pointer select-none"
+                  onClick={() => toggleSort('lines')}
+                >
+                  Trade Lines {renderSortIcon('lines')}
+                </TableHead>
 
-              <TableHead
-                className="text-xs font-semibold h-10 text-center cursor-pointer select-none"
-                onClick={() => toggleSort('headcount')}
-              >
-                Total Headcount {renderSortIcon('headcount')}
-              </TableHead>
+                <TableHead
+                  className="text-xs font-semibold h-10 text-center cursor-pointer select-none"
+                  onClick={() => toggleSort('headcount')}
+                >
+                  Total Headcount {renderSortIcon('headcount')}
+                </TableHead>
 
-              <TableHead
-                className="text-xs font-semibold h-10 text-right cursor-pointer select-none"
-                onClick={() => toggleSort('cost')}
-              >
-                Total Daily Cost {renderSortIcon('cost')}
-              </TableHead>
+                <TableHead
+                  className="text-xs font-semibold h-10 text-right cursor-pointer select-none"
+                  onClick={() => toggleSort('cost')}
+                >
+                  Total Daily Cost {renderSortIcon('cost')}
+                </TableHead>
 
-              <TableHead className="text-xs font-semibold h-10">Notes / Summary</TableHead>
+                <TableHead className="text-xs font-semibold h-10">Notes / Summary</TableHead>
 
-              <TableHead className="text-xs font-semibold h-10 w-12 text-right">Detail</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={8} className="h-32 text-center text-xs text-muted-foreground">
-                  Loading attendance reports...
-                </TableCell>
+                <TableHead className="text-xs font-semibold h-10 w-12 text-right">Detail</TableHead>
               </TableRow>
-            ) : paginatedReports.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={8} className="h-32 text-center text-xs text-muted-foreground">
-                  No attendance reports logged for the selected scope & date filter.
-                </TableCell>
-              </TableRow>
-            ) : (
-              paginatedReports.map((item) => {
-                const isSelected = selectedIds.includes(item.id)
-                return (
-                  <TableRow
-                    key={item.id}
-                    onClick={() => {
-                      setSelectedReportId(item.id)
-                      setDetailOpen(true)
-                    }}
-                    className={`hover:bg-muted/30 transition-colors cursor-pointer ${
-                      isSelected ? 'bg-amber-500/5 dark:bg-amber-500/10' : ''
-                    }`}
-                  >
-                    <TableCell className="text-center px-3" onClick={(e) => toggleSelectRow(item.id, e)}>
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => {}}
-                        className="size-4 rounded border-border text-amber-600 focus:ring-amber-500 cursor-pointer accent-amber-600"
-                      />
-                    </TableCell>
+            </TableHeader>
+            <TableBody>
+              {loading ? (
+                <TableRow>
+                  <TableCell colSpan={8} className="h-32 text-center text-xs text-muted-foreground">
+                    Loading attendance reports...
+                  </TableCell>
+                </TableRow>
+              ) : paginatedReports.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={8} className="h-32 text-center text-xs text-muted-foreground">
+                    No attendance reports logged for the selected scope & date filter.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                paginatedReports.map((item) => {
+                  const isSelected = selectedIds.includes(item.id)
+                  return (
+                    <TableRow
+                      key={item.id}
+                      onClick={() => {
+                        setSelectedReportId(item.id)
+                        setDetailOpen(true)
+                      }}
+                      className={`hover:bg-muted/30 transition-colors cursor-pointer ${
+                        isSelected ? 'bg-amber-500/5 dark:bg-amber-500/10' : ''
+                      }`}
+                    >
+                      <TableCell className="text-center px-3" onClick={(e) => toggleSelectRow(item.id, e)}>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => {}}
+                          className="size-4 rounded border-border text-amber-600 focus:ring-amber-500 cursor-pointer accent-amber-600"
+                        />
+                      </TableCell>
 
-                    <TableCell className="font-semibold text-xs py-3 text-foreground">
-                      <div className="flex items-center gap-2">
-                        <Calendar className="size-3.5 text-amber-500 shrink-0" />
-                        <span>{item.occurred_date}</span>
-                      </div>
-                    </TableCell>
+                      <TableCell className="font-semibold text-xs py-3 text-foreground">
+                        <div className="flex items-center gap-2">
+                          <Calendar className="size-3.5 text-amber-500 shrink-0" />
+                          <span>{item.occurred_date}</span>
+                        </div>
+                      </TableCell>
 
-                    <TableCell className="text-xs py-3">
-                      <Badge
-                        variant="outline"
-                        className={
-                          item.recorded_via?.includes('whatsapp')
-                            ? 'border-emerald-500/30 text-emerald-600 bg-emerald-500/10 text-[10px]'
-                            : 'border-blue-500/30 text-blue-600 bg-blue-500/10 text-[10px]'
-                        }
-                      >
-                        {item.recorded_via?.includes('whatsapp') ? (
-                          <span className="flex items-center gap-1">
-                            <Bot className="size-3" /> WhatsApp Bot
-                          </span>
-                        ) : (
-                          <span className="flex items-center gap-1">
-                            <Globe className="size-3" /> Web Dashboard
-                          </span>
-                        )}
-                      </Badge>
-                    </TableCell>
+                      <TableCell className="text-xs py-3">
+                        <Badge
+                          variant="outline"
+                          className={
+                            item.recorded_via?.includes('whatsapp')
+                              ? 'border-emerald-500/30 text-emerald-600 bg-emerald-500/10 text-[10px]'
+                              : 'border-blue-500/30 text-blue-600 bg-blue-500/10 text-[10px]'
+                          }
+                        >
+                          {item.recorded_via?.includes('whatsapp') ? (
+                            <span className="flex items-center gap-1">
+                              <Bot className="size-3" /> WhatsApp Bot
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1">
+                              <Globe className="size-3" /> Web Dashboard
+                            </span>
+                          )}
+                        </Badge>
+                      </TableCell>
 
-                    <TableCell className="text-xs py-3 text-center font-semibold">
-                      <Badge variant="outline" className="text-[10px]">
-                        {item.line_count || 0} Lines
-                      </Badge>
-                    </TableCell>
+                      <TableCell className="text-xs py-3 text-center font-semibold">
+                        <Badge variant="outline" className="text-[10px]">
+                          {item.line_count || 0} Lines
+                        </Badge>
+                      </TableCell>
 
-                    <TableCell className="text-xs py-3 text-center font-bold text-foreground">
-                      {item.total_headcount} Workers
-                    </TableCell>
+                      <TableCell className="text-xs py-3 text-center font-bold text-foreground">
+                        {item.total_headcount} Workers
+                      </TableCell>
 
-                    <TableCell className="text-xs py-3 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                      ₹{item.total_cost ? item.total_cost.toLocaleString('en-IN') : '0'}
-                    </TableCell>
+                      <TableCell className="text-xs py-3 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                        ₹{item.total_cost ? item.total_cost.toLocaleString('en-IN') : '0'}
+                      </TableCell>
 
-                    <TableCell className="text-xs py-3 text-muted-foreground truncate max-w-xs">
-                      {item.notes || 'Daily site attendance log'}
-                    </TableCell>
+                      <TableCell className="text-xs py-3 text-muted-foreground truncate max-w-xs">
+                        {item.notes || 'Daily site attendance log'}
+                      </TableCell>
 
-                    <TableCell className="text-xs py-3 text-right">
-                      <Button variant="ghost" size="icon" className="size-7">
-                        <Eye className="size-3.5 text-muted-foreground hover:text-foreground" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                )
-              })
-            )}
-          </TableBody>
-        </Table>
+                      <TableCell className="text-xs py-3 text-right">
+                        <Button variant="ghost" size="icon" className="size-7">
+                          <Eye className="size-3.5 text-muted-foreground hover:text-foreground" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })
+              )}
+            </TableBody>
+          </Table>
+        </div>
 
         {/* Pagination Footer (Matching ExpensesPage pagination footer styling) */}
         <div className="border-t bg-card/40 px-3 py-2 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">

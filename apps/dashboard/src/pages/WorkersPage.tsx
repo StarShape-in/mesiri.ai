@@ -16,6 +16,7 @@ import {
   ArrowDown,
   ChevronLeft,
   ChevronRight,
+  AlertTriangle,
 } from 'lucide-react'
 import { useScope } from '@/lib/ScopeContext'
 import { KpiCard } from '@/components/ui/kpi-card'
@@ -64,6 +65,9 @@ export default function WorkersPage() {
   const { scope } = useScope()
   const [workers, setWorkers] = React.useState<WorkforceWorkerItem[]>([])
   const [loading, setLoading] = React.useState(true)
+  // The roster failing to load must not read as an empty register --
+  // "no workers found" is a very different claim from "could not ask".
+  const [error, setError] = React.useState<string | null>(null)
   const [search, setSearch] = React.useState('')
   const [statusFilter, setStatusFilter] = React.useState<string>('ALL')
   const [typeFilter, setTypeFilter] = React.useState<string>('ALL')
@@ -93,14 +97,20 @@ export default function WorkersPage() {
 
   const loadWorkers = React.useCallback(async () => {
     setLoading(true)
+    setError(null)
     try {
       const data = await fetchWorkersApi({
         status: statusFilter === 'ALL' ? undefined : statusFilter,
         search: search.trim() || undefined,
+        // The type filter, sort and pagination below all operate on what
+        // this returns, so a default of 50 would silently hide workers
+        // from every one of them. 200 is the endpoint's maximum.
+        limit: 200,
       })
       setWorkers(data.items || [])
     } catch (err) {
       console.warn('Failed to load worker roster:', err)
+      setError('Could not load the worker register. This list may be incomplete.')
     } finally {
       setLoading(false)
     }
@@ -301,6 +311,13 @@ export default function WorkersPage() {
       </div>
 
       {/* KPI Summary Cards */}
+      {error && (
+        <div className="flex items-center gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">
+          <AlertTriangle className="size-3.5 shrink-0" />
+          {error}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <KpiCard
           title="Active Workers"
@@ -378,217 +395,219 @@ export default function WorkersPage() {
 
       {/* Main Worker Table Container (Matching ExpensesPage table styling) */}
       <div className="border rounded-lg overflow-hidden bg-card shadow-2xs">
-        <Table>
-          <TableHeader className="bg-muted/40">
-            <TableRow className="hover:bg-transparent border-b">
-              <TableHead className="w-[40px] px-3">
-                <input
-                  type="checkbox"
-                  checked={isAllSelected}
-                  onChange={toggleSelectAll}
-                  className="size-4 rounded border-border text-amber-600 focus:ring-amber-500 cursor-pointer accent-amber-600"
-                  title="Select All"
-                />
-              </TableHead>
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader className="bg-muted/40">
+              <TableRow className="hover:bg-transparent border-b">
+                <TableHead className="w-[40px] px-3">
+                  <input
+                    type="checkbox"
+                    checked={isAllSelected}
+                    onChange={toggleSelectAll}
+                    className="size-4 rounded border-border text-amber-600 focus:ring-amber-500 cursor-pointer accent-amber-600"
+                    title="Select All"
+                  />
+                </TableHead>
 
-              <TableHead
-                className="text-xs font-semibold h-10 cursor-pointer select-none"
-                onClick={() => toggleSort('name')}
-              >
-                Worker Name {renderSortIcon('name')}
-              </TableHead>
+                <TableHead
+                  className="text-xs font-semibold h-10 cursor-pointer select-none"
+                  onClick={() => toggleSort('name')}
+                >
+                  Worker Name {renderSortIcon('name')}
+                </TableHead>
 
-              <TableHead
-                className="text-xs font-semibold h-10 cursor-pointer select-none"
-                onClick={() => toggleSort('trade')}
-              >
-                Trade / Skill {renderSortIcon('trade')}
-              </TableHead>
+                <TableHead
+                  className="text-xs font-semibold h-10 cursor-pointer select-none"
+                  onClick={() => toggleSort('trade')}
+                >
+                  Trade / Skill {renderSortIcon('trade')}
+                </TableHead>
 
-              <TableHead
-                className="text-xs font-semibold h-10 cursor-pointer select-none"
-                onClick={() => toggleSort('type')}
-              >
-                Worker Type {renderSortIcon('type')}
-              </TableHead>
+                <TableHead
+                  className="text-xs font-semibold h-10 cursor-pointer select-none"
+                  onClick={() => toggleSort('type')}
+                >
+                  Worker Type {renderSortIcon('type')}
+                </TableHead>
 
-              <TableHead
-                className="text-xs font-semibold h-10 text-right cursor-pointer select-none"
-                onClick={() => toggleSort('wage')}
-              >
-                Default Daily Wage {renderSortIcon('wage')}
-              </TableHead>
+                <TableHead
+                  className="text-xs font-semibold h-10 text-right cursor-pointer select-none"
+                  onClick={() => toggleSort('wage')}
+                >
+                  Default Daily Wage {renderSortIcon('wage')}
+                </TableHead>
 
-              <TableHead className="text-xs font-semibold h-10">Contractor / Agency</TableHead>
+                <TableHead className="text-xs font-semibold h-10">Contractor / Agency</TableHead>
 
-              {/* Derived from attendance, not stored on the worker. Headed
-                  so nobody mistakes them for editable register fields. */}
-              <TableHead className="text-xs font-semibold h-10 text-center">Days Worked</TableHead>
+                {/* Derived from attendance, not stored on the worker. Headed
+                    so nobody mistakes them for editable register fields. */}
+                <TableHead className="text-xs font-semibold h-10 text-center">Days Worked</TableHead>
 
-              <TableHead className="text-xs font-semibold h-10">Last Seen</TableHead>
+                <TableHead className="text-xs font-semibold h-10">Last Seen</TableHead>
 
-              <TableHead
-                className="text-xs font-semibold h-10 text-center cursor-pointer select-none"
-                onClick={() => toggleSort('status')}
-              >
-                Status {renderSortIcon('status')}
-              </TableHead>
+                <TableHead
+                  className="text-xs font-semibold h-10 text-center cursor-pointer select-none"
+                  onClick={() => toggleSort('status')}
+                >
+                  Status {renderSortIcon('status')}
+                </TableHead>
 
-              <TableHead className="text-xs font-semibold h-10 w-12 text-right">Action</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={10} className="h-32 text-center text-xs text-muted-foreground">
-                  Loading worker roster...
-                </TableCell>
+                <TableHead className="text-xs font-semibold h-10 w-12 text-right">Action</TableHead>
               </TableRow>
-            ) : paginatedWorkers.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={10} className="h-32 text-center text-xs text-muted-foreground">
-                  No workers found matching the current search & status filters.
-                </TableCell>
-              </TableRow>
-            ) : (
-              paginatedWorkers.map((item) => {
-                const isSelected = selectedIds.includes(item.id)
-                return (
-                  <TableRow
-                    key={item.id}
-                    className={`hover:bg-muted/30 transition-colors ${
-                      isSelected ? 'bg-amber-500/5 dark:bg-amber-500/10' : ''
-                    }`}
-                  >
-                    <TableCell className="text-center px-3" onClick={(e) => toggleSelectRow(item.id, e)}>
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => {}}
-                        className="size-4 rounded border-border text-amber-600 focus:ring-amber-500 cursor-pointer accent-amber-600"
-                      />
-                    </TableCell>
+            </TableHeader>
+            <TableBody>
+              {loading ? (
+                <TableRow>
+                  <TableCell colSpan={10} className="h-32 text-center text-xs text-muted-foreground">
+                    Loading worker roster...
+                  </TableCell>
+                </TableRow>
+              ) : paginatedWorkers.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={10} className="h-32 text-center text-xs text-muted-foreground">
+                    No workers found matching the current search & status filters.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                paginatedWorkers.map((item) => {
+                  const isSelected = selectedIds.includes(item.id)
+                  return (
+                    <TableRow
+                      key={item.id}
+                      className={`hover:bg-muted/30 transition-colors ${
+                        isSelected ? 'bg-amber-500/5 dark:bg-amber-500/10' : ''
+                      }`}
+                    >
+                      <TableCell className="text-center px-3" onClick={(e) => toggleSelectRow(item.id, e)}>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => {}}
+                          className="size-4 rounded border-border text-amber-600 focus:ring-amber-500 cursor-pointer accent-amber-600"
+                        />
+                      </TableCell>
 
-                    <TableCell className="font-semibold text-xs py-3 text-foreground">
-                      <div className="flex items-center gap-2.5">
-                        <div className="size-7 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center font-bold text-xs shrink-0">
-                          {item.name.charAt(0)}
+                      <TableCell className="font-semibold text-xs py-3 text-foreground">
+                        <div className="flex items-center gap-2.5">
+                          <div className="size-7 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center font-bold text-xs shrink-0">
+                            {item.name.charAt(0)}
+                          </div>
+                          <span className="truncate">{item.name}</span>
                         </div>
-                        <span className="truncate">{item.name}</span>
-                      </div>
-                    </TableCell>
+                      </TableCell>
 
-                    <TableCell className="text-xs py-3">
-                      <Badge variant="outline" className="font-sans text-[11px] bg-card">
-                        {item.trade || 'General Labor'}
-                      </Badge>
-                    </TableCell>
+                      <TableCell className="text-xs py-3">
+                        <Badge variant="outline" className="font-sans text-[11px] bg-card">
+                          {item.trade || 'General Labor'}
+                        </Badge>
+                      </TableCell>
 
-                    <TableCell className="text-xs py-3">
-                      <Badge
-                        variant="outline"
-                        className={
-                          item.worker_type === 'permanent'
-                            ? 'border-blue-500/30 text-blue-600 bg-blue-500/10 text-[10px]'
-                            : item.worker_type === 'contractor'
-                            ? 'border-purple-500/30 text-purple-600 bg-purple-500/10 text-[10px]'
-                            : 'border-amber-500/30 text-amber-600 bg-amber-500/10 text-[10px]'
-                        }
-                      >
-                        {item.worker_type.toUpperCase()}
-                      </Badge>
-                    </TableCell>
-
-                    <TableCell className="text-xs py-3 text-right font-mono font-bold text-foreground">
-                      {item.default_daily_wage ? `₹${item.default_daily_wage.toLocaleString('en-IN')}` : '—'}
-                    </TableCell>
-
-                    <TableCell className="text-xs py-3 text-muted-foreground">
-                      {item.contractor || 'Direct Payroll'}
-                    </TableCell>
-
-                    <TableCell className="text-xs py-3 text-center">
-                      {statsByWorkerId[item.id] ? (
-                        <button
-                          onClick={() => {
-                            setStatsWorker(item)
-                            setStatsOpen(true)
-                          }}
-                          className="font-mono font-bold text-amber-600 dark:text-amber-400 hover:underline"
-                          title="View attendance history"
+                      <TableCell className="text-xs py-3">
+                        <Badge
+                          variant="outline"
+                          className={
+                            item.worker_type === 'permanent'
+                              ? 'border-blue-500/30 text-blue-600 bg-blue-500/10 text-[10px]'
+                              : item.worker_type === 'contractor'
+                              ? 'border-purple-500/30 text-purple-600 bg-purple-500/10 text-[10px]'
+                              : 'border-amber-500/30 text-amber-600 bg-amber-500/10 text-[10px]'
+                          }
                         >
-                          {statsByWorkerId[item.id].days_worked}
-                        </button>
-                      ) : (
-                        <span
-                          className="text-muted-foreground/60"
-                          title="Never recorded in an attendance report"
+                          {item.worker_type.toUpperCase()}
+                        </Badge>
+                      </TableCell>
+
+                      <TableCell className="text-xs py-3 text-right font-mono font-bold text-foreground">
+                        {item.default_daily_wage ? `₹${item.default_daily_wage.toLocaleString('en-IN')}` : '—'}
+                      </TableCell>
+
+                      <TableCell className="text-xs py-3 text-muted-foreground">
+                        {item.contractor || 'Direct Payroll'}
+                      </TableCell>
+
+                      <TableCell className="text-xs py-3 text-center">
+                        {statsByWorkerId[item.id] ? (
+                          <button
+                            onClick={() => {
+                              setStatsWorker(item)
+                              setStatsOpen(true)
+                            }}
+                            className="font-mono font-bold text-amber-600 dark:text-amber-400 hover:underline"
+                            title="View attendance history"
+                          >
+                            {statsByWorkerId[item.id].days_worked}
+                          </button>
+                        ) : (
+                          <span
+                            className="text-muted-foreground/60"
+                            title="Never recorded in an attendance report"
+                          >
+                            —
+                          </span>
+                        )}
+                      </TableCell>
+
+                      <TableCell className="text-xs py-3 font-mono text-muted-foreground">
+                        {statsByWorkerId[item.id]?.last_seen || '—'}
+                      </TableCell>
+
+                      <TableCell className="text-xs py-3 text-center">
+                        <Badge
+                          variant="outline"
+                          className={
+                            item.status === 'active'
+                              ? 'border-emerald-500/30 text-emerald-600 bg-emerald-500/10 text-[10px]'
+                              : 'border-slate-500/30 text-slate-500 bg-slate-500/10 text-[10px]'
+                          }
                         >
-                          —
-                        </span>
-                      )}
-                    </TableCell>
+                          {item.status.toUpperCase()}
+                        </Badge>
+                      </TableCell>
 
-                    <TableCell className="text-xs py-3 font-mono text-muted-foreground">
-                      {statsByWorkerId[item.id]?.last_seen || '—'}
-                    </TableCell>
-
-                    <TableCell className="text-xs py-3 text-center">
-                      <Badge
-                        variant="outline"
-                        className={
-                          item.status === 'active'
-                            ? 'border-emerald-500/30 text-emerald-600 bg-emerald-500/10 text-[10px]'
-                            : 'border-slate-500/30 text-slate-500 bg-slate-500/10 text-[10px]'
-                        }
-                      >
-                        {item.status.toUpperCase()}
-                      </Badge>
-                    </TableCell>
-
-                    <TableCell className="text-xs py-3 text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="size-7">
-                            <MoreVertical className="size-3.5" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="text-xs">
-                          <DropdownMenuItem
-                            onClick={() => {
-                              setSelectedWorker(item)
-                              setEditOpen(true)
-                            }}
-                          >
-                            <Edit className="size-3.5 mr-2 text-amber-500" />
-                            Edit Profile
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => {
-                              setSelectedWorker(item)
-                              setEditOpen(true)
-                            }}
-                            className={item.status === 'active' ? 'text-red-600' : 'text-emerald-600'}
-                          >
-                            {item.status === 'active' ? (
-                              <>
-                                <UserX className="size-3.5 mr-2" /> Retire Worker
-                              </>
-                            ) : (
-                              <>
-                                <UserCheck className="size-3.5 mr-2" /> Reactivate Worker
-                              </>
-                            )}
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                )
-              })
-            )}
-          </TableBody>
-        </Table>
+                      <TableCell className="text-xs py-3 text-right">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="size-7">
+                              <MoreVertical className="size-3.5" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="text-xs">
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setSelectedWorker(item)
+                                setEditOpen(true)
+                              }}
+                            >
+                              <Edit className="size-3.5 mr-2 text-amber-500" />
+                              Edit Profile
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setSelectedWorker(item)
+                                setEditOpen(true)
+                              }}
+                              className={item.status === 'active' ? 'text-red-600' : 'text-emerald-600'}
+                            >
+                              {item.status === 'active' ? (
+                                <>
+                                  <UserX className="size-3.5 mr-2" /> Retire Worker
+                                </>
+                              ) : (
+                                <>
+                                  <UserCheck className="size-3.5 mr-2" /> Reactivate Worker
+                                </>
+                              )}
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })
+              )}
+            </TableBody>
+          </Table>
+        </div>
 
         {/* Pagination Footer (Matching ExpensesPage pagination footer styling) */}
         <div className="border-t bg-card/40 px-3 py-2 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
