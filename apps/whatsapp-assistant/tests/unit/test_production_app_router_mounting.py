@@ -48,6 +48,7 @@ def test_labour_workforce_routes_are_mounted():
         "/labour/attendance/{report_id}",
         "/labour/attendance/attachments",
         "/labour/settings",
+        "/labour/reports/statement",
     ):
         assert expected in paths, f"{expected} not mounted on the production app"
 

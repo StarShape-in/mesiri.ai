@@ -36,6 +36,12 @@ from mesiri.domains.projects.router import get_auth_context
 from mesiri.domains.shared.media import assert_downloadable_url
 from mesiri.domains.shared.money import Money
 from mesiri.domains.workforce.matching import MatchOutcome, ReportedWorker, match_worker
+from mesiri.domains.workforce.reports import (
+    DEFAULT_REPORT_TYPE,
+    AggregateRow,
+    build_statement,
+    resolve_group_by,
+)
 from mesiri.domains.workforce.workers import (
     VALID_WORKER_STATUSES,
     VALID_WORKER_TYPES,
@@ -194,6 +200,52 @@ class LabourAttendanceReportsListResponse(BaseModel):
 class LabourAttendanceReportResponse(LabourAttendanceReportSummaryResponse):
     lines: list[LabourAttendanceLineResponse]
     attachments: list[LabourAttendanceAttachmentResponse]
+
+
+class LabourReportRow(BaseModel):
+    """One grouped line of a statement. Every figure here is derived from
+    recorded attendance -- there is no default wage and no assumed month."""
+
+    id: str
+    code: str | None = None
+    title: str
+    category: str | None = None
+    contractor: str | None = None
+    #: Person-days recorded for this group, summed from the attendance lines.
+    man_days: int
+    #: Of those, the ones whose line carried a wage. Below man_days whenever
+    #: attendance was recorded without pay rates.
+    priced_man_days: int
+    #: Distinct dates this group appears on -- never an assumed 10 or 30.
+    days_worked: int
+    first_date: datetime.date | None = None
+    last_date: datetime.date | None = None
+    report_count: int = 0
+    avg_daily_wage: Money
+    total_cost: Money
+    #: Money, despite not being money: the annotation's job is "exact Decimal
+    #: server-side, real JSON number on the wire". A bare Decimal serializes as
+    #: a *string*, and the page feeds this straight into Math.min() to size a
+    #: progress bar -- the same class of bug that once rendered a cumulative
+    #: spend KPI as "Rs 04800.003600.00".
+    percentage: Money
+
+
+class LabourReportStatementResponse(BaseModel):
+    report_type: str
+    title: str
+    subtitle: str
+    generated_at: datetime.datetime
+    #: Echoed back so the dashboard can caption the statement with the range
+    #: actually applied, rather than the one it believes it asked for.
+    date_from: datetime.date | None = None
+    date_to: datetime.date | None = None
+    total_man_days: int
+    priced_man_days: int
+    unpriced_man_days: int
+    total_cost: Money
+    avg_daily_wage: Money
+    rows: list[LabourReportRow]
 
 
 class LabourSettingsResponse(BaseModel):
@@ -523,6 +575,90 @@ async def get_attendance_report(
         )
     item["attachments"] = attachments
     return item
+
+
+# ---------------------------------------------------------------------------
+# Report statements
+# ---------------------------------------------------------------------------
+
+@router.get("/reports/statement", response_model=LabourReportStatementResponse)
+async def generate_labour_report_statement(
+    report_type: str = DEFAULT_REPORT_TYPE,
+    project_id: uuid.UUID | None = None,
+    site_id: uuid.UUID | None = None,
+    date_from: datetime.date | None = None,
+    date_to: datetime.date | None = None,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Labour cost and man-days, aggregated from recorded attendance.
+
+    Mirrors finance/router.py's /reports/statement: one endpoint, a report_type
+    switch, aggregation in the repository, and a page that only renders. The
+    dashboard previously computed these in the browser from the *worker
+    register* -- pricing it at an assumed 800/day and asserting a 10- or 30-day
+    month for everyone on it, including workers who had never appeared on site
+    (docs/plans/labour-reports-audit.md).
+
+    One deliberate divergence from Finance: that endpoint scopes by
+    organization_id alone, while this one applies _resolve_project_ids and
+    _site_filter_denied like every other Labour read. Copying Finance here
+    would have widened what a project-scoped user can see.
+
+    Dates are taken as an explicit range rather than a named period ("today",
+    "this month"). Which day is "today" depends on the reader's timezone, which
+    the server does not know; the dashboard already resolves presets against
+    the browser's local date for the Attendance page, and this keeps that one
+    correct behaviour rather than adding a second, server-side answer that
+    disagrees with it near midnight.
+    """
+    project_ids, denied = _resolve_project_ids(auth_context, project_id)
+    if denied or _site_filter_denied(auth_context, project_id, site_id):
+        return build_statement(
+            report_type=report_type,
+            rows=[],
+            generated_at=datetime.datetime.now(datetime.UTC),
+            date_from=date_from,
+            date_to=date_to,
+        )
+
+    repo = PostgresWorkforceReadRepository(conn)
+    aggregate_rows = await repo.aggregate_attendance(
+        organization_id=auth_context.organization_id,
+        group_by=resolve_group_by(report_type),
+        project_ids=project_ids,
+        site_id=site_id,
+        date_from=date_from,
+        date_to=date_to,
+    )
+
+    group_by = resolve_group_by(report_type)
+    rows = [
+        AggregateRow(
+            key=str(row["key"]),
+            label=row["label"],
+            man_days=int(row["man_days"] or 0),
+            priced_man_days=int(row["priced_man_days"] or 0),
+            total_cost=Decimal(str(row["total_cost"] or "0")),
+            days_worked=int(row["days_worked"] or 0),
+            first_date=row["first_date"],
+            last_date=row["last_date"],
+            report_count=int(row["report_count"] or 0),
+            # Only meaningful on the per-worker statement; on the others these
+            # would just repeat the row's own title back as its category.
+            trade=row["trade"] if group_by == "worker" else None,
+            contractor=row["contractor"] if group_by == "worker" else None,
+        )
+        for row in aggregate_rows
+    ]
+
+    return build_statement(
+        report_type=report_type,
+        rows=rows,
+        generated_at=datetime.datetime.now(datetime.UTC),
+        date_from=date_from,
+        date_to=date_to,
+    )
 
 
 # ---------------------------------------------------------------------------

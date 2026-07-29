@@ -110,6 +110,54 @@ def _line_totals(lines: list[dict[str, Any]]) -> tuple[int, Decimal]:
     return headcount, cost.quantize(Decimal("0.01"))
 
 
+def _superseded_report_ids():
+    """Reports that a later report explicitly corrects.
+
+    A supervisor who forgets someone re-sends the whole list, which by design
+    creates a second immutable row rather than editing the first (P5). Both
+    rows stay readable for audit, but only the live one may feed a total --
+    counting both is what made a day of 18 workers read as 16 + 18 = 34
+    man-days with cost inflated to match.
+
+    Extracted so the list, the duplicate-warning lookup and the report
+    aggregation cannot drift apart on the one rule they must all apply. Any
+    new read that produces a total belongs here too.
+    """
+    return (
+        sa.select(_labour_attendance_reports.c.corrects_report_id)
+        .where(_labour_attendance_reports.c.corrects_report_id.isnot(None))
+        .scalar_subquery()
+    )
+
+
+#: Grouping key -> the SQL expression attendance is bucketed by, and the
+#: expression that names the bucket for display. Trades and contractors are
+#: grouped case-insensitively on a trimmed value so "Mason" and "mason " are
+#: one row, while the label keeps an original spelling.
+def _group_expressions(group_by: str):
+    if group_by == "trade":
+        key = sa.func.coalesce(sa.func.lower(sa.func.trim(_labour_attendance_lines.c.trade)), "")
+        return key, sa.func.max(_labour_attendance_lines.c.trade)
+    if group_by == "contractor":
+        key = sa.func.coalesce(
+            sa.func.lower(sa.func.trim(_labour_attendance_lines.c.contractor)), ""
+        )
+        return key, sa.func.max(_labour_attendance_lines.c.contractor)
+    if group_by == "worker":
+        # A temporary worker has no register row, so worker_id is NULL and the
+        # name is the only identity there is -- keying on worker_id alone would
+        # silently drop 30-60% of construction attendance (principle P3).
+        key = sa.func.coalesce(
+            sa.cast(_labour_attendance_lines.c.worker_id, sa.String),
+            sa.func.lower(sa.func.trim(_labour_attendance_lines.c.worker_name)),
+        )
+        return key, sa.func.max(_labour_attendance_lines.c.worker_name)
+    return (
+        sa.cast(_labour_attendance_reports.c.occurred_date, sa.String),
+        sa.cast(sa.func.max(_labour_attendance_reports.c.occurred_date), sa.String),
+    )
+
+
 class PostgresWorkforceReadRepository:
     """Register CRUD (workforce_workers) and attendance report reads."""
 
@@ -243,12 +291,7 @@ class PostgresWorkforceReadRepository:
         """
         conditions = [_labour_attendance_reports.c.organization_id == organization_id]
         if not include_superseded:
-            superseded = (
-                sa.select(_labour_attendance_reports.c.corrects_report_id)
-                .where(_labour_attendance_reports.c.corrects_report_id.isnot(None))
-                .scalar_subquery()
-            )
-            conditions.append(_labour_attendance_reports.c.id.notin_(superseded))
+            conditions.append(_labour_attendance_reports.c.id.notin_(_superseded_report_ids()))
         if project_ids is not None:
             conditions.append(_labour_attendance_reports.c.project_id.in_(project_ids))
         if site_id is not None:
@@ -297,6 +340,106 @@ class PostgresWorkforceReadRepository:
             )
         return items, int(total)
 
+    async def aggregate_attendance(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        group_by: str,
+        project_ids: set[uuid.UUID] | None = None,
+        site_id: uuid.UUID | None = None,
+        date_from: datetime.date | None = None,
+        date_to: datetime.date | None = None,
+        include_superseded: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Attendance totalled per trade / contractor / day / worker.
+
+        Aggregated in SQL rather than by loading rows and summing in Python,
+        for two reasons. The dashboard's previous version capped itself at 100
+        reports and 200 workers and then reported the truncated total as if it
+        were complete; and a year of one 80-worker site is ~29,000 lines, which
+        there is no reason to move across the wire to add up.
+
+        Cost is `headcount x daily_wage` **from the attendance line**, never
+        from workforce_workers -- editing a worker's wage next month must not
+        change what last month cost. `days_worked` counts *distinct* dates, so
+        a worker recorded twice on one day (two sites, or a corrected report)
+        is one day, never two.
+
+        Money stays exact: daily_wage is Numeric(14, 2) and Postgres sums
+        NUMERIC exactly, so no float ever touches the total. A line with no
+        wage contributes its man-days but no cost, and is left out of
+        priced_man_days -- the same rule `_line_totals` applies, so this
+        aggregate and the per-report totals agree.
+        """
+        key_expr, label_expr = _group_expressions(group_by)
+
+        headcount = sa.func.coalesce(_labour_attendance_lines.c.headcount, 1)
+        priced = _labour_attendance_lines.c.daily_wage.isnot(None)
+
+        conditions = [_labour_attendance_reports.c.organization_id == organization_id]
+        if not include_superseded:
+            conditions.append(_labour_attendance_reports.c.id.notin_(_superseded_report_ids()))
+        if project_ids is not None:
+            conditions.append(_labour_attendance_reports.c.project_id.in_(project_ids))
+        if site_id is not None:
+            conditions.append(_labour_attendance_reports.c.site_id == site_id)
+        if date_from is not None:
+            conditions.append(_labour_attendance_reports.c.occurred_date >= date_from)
+        if date_to is not None:
+            conditions.append(_labour_attendance_reports.c.occurred_date <= date_to)
+        if group_by == "worker":
+            # Headcount groups ("10 masons") have no identity to attribute a
+            # day to. They still count toward every cost and man-day total in
+            # the other reports; they simply cannot appear as a named row here.
+            conditions.append(
+                sa.or_(
+                    _labour_attendance_lines.c.worker_id.isnot(None),
+                    _labour_attendance_lines.c.worker_name.isnot(None),
+                )
+            )
+
+        rows = (
+            await self._conn.execute(
+                sa.select(
+                    key_expr.label("key"),
+                    label_expr.label("label"),
+                    sa.func.sum(headcount).label("man_days"),
+                    sa.func.coalesce(
+                        sa.func.sum(sa.case((priced, headcount), else_=0)), 0
+                    ).label("priced_man_days"),
+                    sa.func.coalesce(
+                        sa.func.sum(
+                            sa.case(
+                                (priced, headcount * _labour_attendance_lines.c.daily_wage),
+                                else_=0,
+                            )
+                        ),
+                        0,
+                    ).label("total_cost"),
+                    sa.func.count(sa.distinct(_labour_attendance_reports.c.occurred_date)).label(
+                        "days_worked"
+                    ),
+                    sa.func.min(_labour_attendance_reports.c.occurred_date).label("first_date"),
+                    sa.func.max(_labour_attendance_reports.c.occurred_date).label("last_date"),
+                    sa.func.count(sa.distinct(_labour_attendance_lines.c.report_id)).label(
+                        "report_count"
+                    ),
+                    sa.func.max(_labour_attendance_lines.c.trade).label("trade"),
+                    sa.func.max(_labour_attendance_lines.c.contractor).label("contractor"),
+                )
+                .select_from(
+                    _labour_attendance_lines.join(
+                        _labour_attendance_reports,
+                        _labour_attendance_reports.c.id == _labour_attendance_lines.c.report_id,
+                    )
+                )
+                .where(*conditions)
+                .group_by(key_expr)
+            )
+        ).mappings().all()
+
+        return [dict(row) for row in rows]
+
     async def find_existing_report_for_day(
         self,
         organization_id: uuid.UUID,
@@ -316,11 +459,7 @@ class PostgresWorkforceReadRepository:
             _labour_attendance_reports.c.organization_id == organization_id,
             _labour_attendance_reports.c.project_id == project_id,
             _labour_attendance_reports.c.occurred_date == occurred_date,
-            _labour_attendance_reports.c.id.notin_(
-                sa.select(_labour_attendance_reports.c.corrects_report_id)
-                .where(_labour_attendance_reports.c.corrects_report_id.isnot(None))
-                .scalar_subquery()
-            ),
+            _labour_attendance_reports.c.id.notin_(_superseded_report_ids()),
         ]
         # A NULL site_id means "the project's only/unspecified site"; match it
         # as its own bucket rather than colliding with every named site.
