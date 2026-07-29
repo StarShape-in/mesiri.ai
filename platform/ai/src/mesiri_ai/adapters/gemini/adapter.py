@@ -281,12 +281,17 @@ _EXTRACTION_PROMPT = (
     "a person) or expense (paying an outside vendor/bill, not handing cash "
     "to a colleague).\n"
     "- reversal: target_kind. Use this type when the user wants to undo, "
-    "reverse, cancel, or void their most recently recorded expense or "
-    'transfer (e.g. "reverse my last expense", "cancel that transfer", '
-    '"undo the diesel expense I just added", "void my last transaction"). '
-    'target_kind MUST be exactly "expense" or "transfer" -- never any other '
-    'word; infer it from what the user refers to, defaulting to "expense" '
-    "if genuinely ambiguous, since that is the more common case. This "
+    "reverse, cancel, or void their most recently recorded expense, "
+    "transfer, or site activity/progress report "
+    '(e.g. "reverse my last expense", "cancel that transfer", '
+    '"undo the diesel expense I just added", "void my last transaction", '
+    '"delete that site update", "undo my last activity report", '
+    '"remove the update I just sent"). '
+    'target_kind MUST be exactly "expense", "transfer", or "activity" -- '
+    "never any other word; infer it from what the user refers to -- "
+    '"site update"/"activity"/"progress report"/"the work I just logged" '
+    'means "activity"; defaulting to "expense" if genuinely ambiguous '
+    "between expense and transfer, since that is the more common case. This "
     "always targets the single most recent record of that kind -- never "
     "extract an amount, date, or description for it.\n"
     "- account_admin: action, name, target_name, new_name, account_type. "

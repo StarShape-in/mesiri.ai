@@ -10,6 +10,7 @@ ORG = "11111111-1111-4111-8111-111111111111"
 USR = "22222222-2222-4222-8222-222222222222"
 EXPENSE_ID = "55555555-5555-4555-8555-555555555555"
 TRANSACTION_ID = "66666666-6666-4666-8666-666666666666"
+ACTIVITY_ID = "77777777-7777-4777-8777-777777777777"
 
 
 def _base_state(fields: dict) -> dict:
@@ -119,3 +120,46 @@ def test_request_confirmation_transfer_phrasing():
     assert "Company Bank" in prompt
     assert "Site Cash" in prompt
     assert "5000.00" in prompt
+
+
+def test_activity_target_builds_a_draft():
+    """ADR-D15: undoing an Activity the reporter just created."""
+    state = _base_state(
+        {
+            "target_kind": "activity",
+            "activity_id": ACTIVITY_ID,
+            "reversal_activity_summary": "plastering — 2nd floor",
+            "reversal_occurred_date": "2026-07-28",
+        }
+    )
+    update = build_draft(state)
+    draft = update["draft_action"]
+    assert draft.action_type is DraftActionType.REVERSE_TRANSACTION
+    assert draft.fields["activity_id"] == ACTIVITY_ID
+    assert draft.fields["target_kind"] == "activity"
+
+
+def test_no_activity_found_completes_without_a_draft():
+    """No same-session activity to undo (see runtime/reversal_query.py's
+    find_latest_activity docstring) -- a friendly reply, not a dead end."""
+    state = _base_state({"target_kind": "activity", "created_by_role": "SITE_ENGINEER"})
+    update = build_draft(state)
+    assert "draft_action" not in update
+    assert "don't see anything you just logged" in update["pending_prompt"]
+
+
+def test_request_confirmation_activity_phrasing():
+    state = _base_state(
+        {
+            "target_kind": "activity",
+            "activity_id": ACTIVITY_ID,
+            "reversal_activity_summary": "plastering — 2nd floor",
+            "reversal_occurred_date": "2026-07-28",
+        }
+    )
+    state.update(build_draft(state))
+    prompt = request_confirmation(state)["pending_prompt"]
+    assert "Remove activity" in prompt
+    assert "plastering — 2nd floor" in prompt
+    assert "2026-07-28" in prompt
+    assert "YES" in prompt

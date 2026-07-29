@@ -14,6 +14,10 @@ composes `PostgresMoneyTransactionRepository.reverse` directly on the given
 transaction id -- same reasoning as expense_execution.py's use of
 PostgresExpensePaymentRepository, duplicating this SQL here would be worse
 than the minor capability-boundary bend of calling out to another repository.
+`target_kind='activity'` composes
+`PostgresProgressReadRepository.void_activity` (ADR-D15) the same way --
+Daily Reporting owns its own soft-delete + activity_corrections audit
+write, this file only calls it.
 """
 
 from __future__ import annotations
@@ -115,6 +119,34 @@ class PostgresReverseExecutionRepository(ReverseExecutionRepository):
                 ),
                 {"id": uuid.uuid4(), "aggregate_id": expense_id, "correlation_id": cmd.correlation_id},
             )
+        elif cmd.target_kind == "activity":
+            assert cmd.activity_id is not None
+            from mesiri.infrastructure.postgres.repositories.progress import (
+                PostgresProgressReadRepository,
+            )
+
+            activity_id = uuid.UUID(cmd.activity_id)
+            progress = PostgresProgressReadRepository(conn)
+            rejection = await progress.void_activity(
+                organization_id=organization_id,
+                activity_id=activity_id,
+                reason="Undone via WhatsApp",
+                corrected_by_user_id=created_by,
+                correlation_id=cmd.correlation_id,
+            )
+            if rejection is not None:
+                # reverse_resolution.py already re-checked existence/
+                # reporter/frozen-status in this same transaction --
+                # reaching a rejection here means something raced within
+                # it, which shouldn't happen. Fail loudly rather than
+                # silently report success for a write that didn't happen.
+                raise RuntimeError(f"activity undo unexpectedly rejected: {rejection}")
+            row_id = activity_id
+            # void_activity already writes its own activity_corrections
+            # audit row -- no separate outbox_events insert here (an undo
+            # retracts a fact, it doesn't create a new one to project into
+            # the timeline the way progress_execution.py's create/append
+            # paths do).
         else:  # transfer
             assert cmd.money_transaction_id is not None
             transactions = PostgresMoneyTransactionRepository(conn)

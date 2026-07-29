@@ -39,6 +39,11 @@ _INTERNAL_FIELD_KEYS: frozenset[str] = frozenset()
 _NOTHING_TO_REVERSE = {
     "expense": "You have no confirmed expenses to reverse.",
     "transfer": "You have no transfers to reverse.",
+    # ADR-D15: same-session only -- this is the honest reply both when
+    # nothing was ever logged this conversation AND when it was logged too
+    # long ago to still be "the thing I just sent" (see runtime/
+    # reversal_query.py's find_latest_activity docstring).
+    "activity": "I don't see anything you just logged that I can undo right now.",
 }
 
 
@@ -47,7 +52,9 @@ def build_draft(state: WorkflowGraphState) -> dict:
     found to reverse -- complete with a friendly reply and no draft at all."""
     fields = dict(state.get("collected_fields") or {})
     target_kind = str(fields.get("target_kind", "")).strip().lower()
-    has_target = bool(fields.get("expense_id") or fields.get("money_transaction_id"))
+    has_target = bool(
+        fields.get("expense_id") or fields.get("money_transaction_id") or fields.get("activity_id")
+    )
 
     if not has_target:
         return {
@@ -77,7 +84,18 @@ def request_confirmation(state: WorkflowGraphState) -> dict:
     target_kind = str(all_fields.get("target_kind", "")).strip().lower()
     amount = all_fields.get("reversal_amount")
 
-    if target_kind == "transfer":
+    if target_kind == "activity":
+        summary = all_fields.get("reversal_activity_summary") or "your last site update"
+        occurred_date = all_fields.get("reversal_occurred_date")
+        lines = [
+            "*Confirm this undo?*",
+            "",
+            "↩️ Remove activity",
+            f"   • {summary} ({occurred_date})",
+            "",
+            "Reply YES to confirm or NO to cancel.",
+        ]
+    elif target_kind == "transfer":
         from_name = all_fields.get("reversal_from_account_name")
         to_name = all_fields.get("reversal_to_account_name")
         lines = [

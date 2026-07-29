@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime
 import uuid
 from decimal import Decimal
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -26,6 +27,10 @@ class ProgressUpdateResponse(BaseModel):
     quantity: Decimal | None = None
     unit_id: uuid.UUID | None = None
     unit: str | None = None
+    # Set when this row was created by correct_progress_update (ADR-D14) to
+    # fix a wrong quantity/unit/narrative on the row it points at -- that
+    # old row is never edited or deleted, so both remain visible here.
+    supersedes_id: uuid.UUID | None = None
     reported_by_user_id: uuid.UUID | None = None
     source: str
     created_at: datetime.datetime
@@ -136,3 +141,51 @@ class UpdateOperationsSettingsRequest(BaseModel):
     whatsapp_nudge_hours: int | None = None
     auto_flag_weather_delays: bool | None = None
     supervisor_phone_numbers: list[str] | None = None
+
+
+class CorrectActivityRequest(BaseModel):
+    """ADR-D14: only the fields listed here (matching
+    PostgresProgressReadRepository._CORRECTABLE_ACTIVITY_FIELDS) may be
+    corrected; anything left unset is untouched. `reason` is optional --
+    written to the audit trail when given, but never required the way a
+    void's reason is (a correction is inherently self-explaining via its
+    old/new values; a void of an entire record benefits from a stated
+    reason)."""
+
+    work_type: str | None = None
+    location_id: uuid.UUID | None = None
+    contractor: str | None = None
+    narrative: str | None = None
+    activity_date: datetime.date | None = None
+    reason: str | None = None
+
+
+class VoidActivityRequest(BaseModel):
+    reason: str
+
+
+class CorrectProgressUpdateRequest(BaseModel):
+    quantity: Decimal | None = None
+    unit_id: uuid.UUID | None = None
+    narrative: str | None = None
+    reason: str | None = None
+
+
+class VoidProgressUpdateRequest(BaseModel):
+    reason: str
+
+
+class ActivityCorrectionResponse(BaseModel):
+    id: uuid.UUID
+    activity_id: uuid.UUID
+    field_name: str
+    old_value: Any = None
+    new_value: Any = None
+    reason: str | None = None
+    corrected_by_user_id: uuid.UUID | None = None
+    correlation_id: str | None = None
+    created_at: datetime.datetime
+
+
+class ActivityCorrectionsListResponse(BaseModel):
+    items: list[ActivityCorrectionResponse]

@@ -240,7 +240,21 @@ def build_receipt_data(
         target_kind = str(fields.get("target_kind", "")).strip().lower()
         category = "Reversal"
         value = str(fields.get("reversal_amount", "")).strip() or "0"
-        if target_kind == "transfer":
+        if target_kind == "activity":
+            # ADR-D15: no monetary value to headline -- "Undone" in place of
+            # an amount, matching this being a retraction, not a transaction.
+            category = "Undo"
+            value = "Undone"
+            summary = str(fields.get("reversal_activity_summary") or "Site activity")
+            occurred_date = str(fields.get("reversal_occurred_date") or "—")
+            subtitle = "Activity removed"
+            sections = [
+                [
+                    ReceiptField("store", "Activity", summary),
+                    ReceiptField("calendar", "Date", occurred_date),
+                ]
+            ]
+        elif target_kind == "transfer":
             from_name = str(fields.get("reversal_from_account_name") or "—")
             to_name = str(fields.get("reversal_to_account_name") or "—")
             subtitle = "Transfer reversed"

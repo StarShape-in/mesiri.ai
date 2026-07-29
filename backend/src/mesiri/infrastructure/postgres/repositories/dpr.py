@@ -446,6 +446,38 @@ class PostgresDprRepository:
             material_movement_rows=[dict(row) for row in material_rows],
         )
 
+    async def find_site_report(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        project_id: uuid.UUID,
+        site_id: uuid.UUID,
+        report_date: datetime.date,
+    ) -> dict[str, Any] | None:
+        """The `daily_reports` row for this SITE+date, or None -- never
+        creates one (unlike `get_or_create_daily_report`). Used by
+        Activity/Progress Update correction and undo (ADR-D14/D15) to check
+        whether a value has already been frozen into an APPROVED/PUBLISHED
+        version (P7) before deciding whether to proceed, revise, or refuse."""
+        row = (
+            await self._conn.execute(
+                text(
+                    """
+                    SELECT id, status::text AS status FROM daily_reports
+                    WHERE organization_id = :org_id AND project_id = :project_id
+                      AND site_id = :site_id AND report_date = :report_date AND level = 'SITE'
+                    """
+                ),
+                {
+                    "org_id": organization_id,
+                    "project_id": project_id,
+                    "site_id": site_id,
+                    "report_date": report_date,
+                },
+            )
+        ).mappings().first()
+        return dict(row) if row is not None else None
+
     async def get_or_create_daily_report(
         self,
         *,

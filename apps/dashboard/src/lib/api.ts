@@ -1387,6 +1387,9 @@ export interface ProgressUpdate {
   quantity?: number | string | null
   unit_id?: string | null
   unit?: string | null
+  // Set when this row corrected a previous one (ADR-D14) -- the old row
+  // is never edited or deleted, so both remain in the list below.
+  supersedes_id?: string | null
   reported_by_user_id?: string | null
   source: string
   created_at: string
@@ -1450,6 +1453,90 @@ export async function fetchActivitiesApi(params?: {
 
 export async function fetchActivityDetailApi(activityId: string): Promise<ActivityDetailResponse> {
   const res = await api.get<ActivityDetailResponse>(`/progress/activities/${activityId}`)
+  return res.data
+}
+
+// ─── Activity corrections & undo (ADR-D14/D15) ─────────────────────────────
+
+export interface CorrectActivityPayload {
+  work_type?: string | null
+  location_id?: string | null
+  contractor?: string | null
+  narrative?: string | null
+  activity_date?: string | null
+  reason?: string | null
+}
+
+export interface CorrectProgressUpdatePayload {
+  quantity?: number | string | null
+  unit_id?: string | null
+  narrative?: string | null
+  reason?: string | null
+}
+
+export interface ActivityCorrection {
+  id: string
+  activity_id: string
+  field_name: string
+  old_value: unknown
+  new_value: unknown
+  reason?: string | null
+  corrected_by_user_id?: string | null
+  correlation_id?: string | null
+  created_at: string
+}
+
+export interface ActivityCorrectionsListResponse {
+  items: ActivityCorrection[]
+}
+
+/** Correct one or more Activity header fields (work_type, location_id,
+ * contractor, narrative, activity_date). Allowed even once the day is part
+ * of an approved daily report -- that report is revised, not left wrong. */
+export async function correctActivityApi(
+  activityId: string,
+  payload: CorrectActivityPayload,
+): Promise<ActivityDetailResponse> {
+  const res = await api.patch<ActivityDetailResponse>(`/progress/activities/${activityId}`, payload)
+  return res.data
+}
+
+/** Undo an Activity entirely (soft delete). Refused once the day is part
+ * of an approved daily report. */
+export async function voidActivityApi(activityId: string, reason: string): Promise<void> {
+  await api.delete(`/progress/activities/${activityId}`, { data: { reason } })
+}
+
+/** Correct a Progress Update's quantity/unit/narrative by appending a new
+ * row that supersedes it -- the old row is never edited or deleted. */
+export async function correctProgressUpdateApi(
+  activityId: string,
+  updateId: string,
+  payload: CorrectProgressUpdatePayload,
+): Promise<ActivityDetailResponse> {
+  const res = await api.patch<ActivityDetailResponse>(
+    `/progress/activities/${activityId}/updates/${updateId}`,
+    payload,
+  )
+  return res.data
+}
+
+/** Undo a single Progress Update (soft delete). Refused once the day is
+ * part of an approved daily report. */
+export async function voidProgressUpdateApi(
+  activityId: string,
+  updateId: string,
+  reason: string,
+): Promise<void> {
+  await api.delete(`/progress/activities/${activityId}/updates/${updateId}`, { data: { reason } })
+}
+
+export async function fetchActivityCorrectionsApi(
+  activityId: string,
+): Promise<ActivityCorrectionsListResponse> {
+  const res = await api.get<ActivityCorrectionsListResponse>(
+    `/progress/activities/${activityId}/corrections`,
+  )
   return res.data
 }
 

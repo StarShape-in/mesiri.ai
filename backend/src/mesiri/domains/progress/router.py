@@ -1,16 +1,22 @@
-"""REST API for the Progress (Daily Reporting) module — read-only in V1.
+"""REST API for the Progress (Daily Reporting) module.
 
 Mounted at /progress so:
-  GET   /progress/activities                list activities
-  GET   /progress/activities/{activity_id}    one activity with quantities/
-                                              progress updates/attachments
+  GET    /progress/activities                        list activities
+  GET    /progress/activities/{activity_id}           one activity with
+                                                       quantities/progress
+                                                       updates/attachments
+  PATCH  /progress/activities/{activity_id}           correct header fields
+  DELETE /progress/activities/{activity_id}           undo (soft delete)
+  PATCH  /progress/activities/{id}/updates/{update_id} correct a quantity
+  DELETE /progress/activities/{id}/updates/{update_id} undo a progress update
+  GET    /progress/activities/{id}/corrections        the audit trail
 
-Activities and Progress Updates are never written here. Per plan principle
-P2 (the universal operational pattern — nothing persisted before an explicit
-confirmation) they are always WhatsApp-confirmed, owned by
-application/progress/* + progress_execution.py, the same split Labour draws
-between PostgresWorkforceReadRepository and labour_execution.py. This router
-only reads.
+A brand-new Activity/Progress Update is always WhatsApp-confirmed (plan
+principle P2), owned by application/progress/* + progress_execution.py --
+never created here. Correcting or undoing one already recorded IS written
+here, dashboard-direct with no confirm step (ADR-D14/D15,
+docs/execution/DAILY_REPORTING_PLAN.md), the same pattern Site Issues
+below already use for their own dashboard-direct writes.
 """
 
 from __future__ import annotations
@@ -28,13 +34,18 @@ from mesiri.infrastructure.postgres.repositories.progress import PostgresProgres
 
 from .responses import (
     ActivitiesListResponse,
+    ActivityCorrectionsListResponse,
     ActivityDetailResponse,
+    CorrectActivityRequest,
+    CorrectProgressUpdateRequest,
     CreateSiteIssueRequest,
     OperationsSettingsResponse,
     ResolveSiteIssueRequest,
     SiteIssueResponse,
     SiteIssuesListResponse,
     UpdateOperationsSettingsRequest,
+    VoidActivityRequest,
+    VoidProgressUpdateRequest,
     WontFixSiteIssueRequest,
 )
 
@@ -123,6 +134,148 @@ async def get_activity(
         raise HTTPException(status_code=403, detail="Not authorized for this activity")
 
     return item
+
+
+async def _authorized_activity_or_404(
+    repo: PostgresProgressReadRepository, auth_context: AuthorizationContext, activity_id: uuid.UUID
+) -> dict:
+    """Shared existence + scope check every correction/undo endpoint below
+    needs before touching anything -- mirrors get_activity's own checks."""
+    item = await repo.get_activity(auth_context.organization_id, activity_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Activity not found")
+    if _site_filter_denied(auth_context, item["project_id"], item["site_id"]):
+        raise HTTPException(status_code=403, detail="Not authorized for this activity")
+    _project_ids, denied = _resolve_project_ids(auth_context, item["project_id"])
+    if denied:
+        raise HTTPException(status_code=403, detail="Not authorized for this activity")
+    return item
+
+
+@router.patch("/activities/{activity_id}", response_model=ActivityDetailResponse)
+async def correct_activity(
+    activity_id: uuid.UUID,
+    payload: CorrectActivityRequest,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Correct one or more Activity header fields (ADR-D14) -- work_type,
+    location_id, contractor, narrative, activity_date. Allowed even once
+    the day is part of an approved daily report; that report is revised
+    instead of left silently wrong."""
+    repo = PostgresProgressReadRepository(conn)
+    await _authorized_activity_or_404(repo, auth_context, activity_id)
+
+    changes = payload.model_dump(exclude_unset=True, exclude={"reason"})
+    try:
+        updated = await repo.correct_activity_fields(
+            organization_id=auth_context.organization_id,
+            activity_id=activity_id,
+            changes=changes,
+            reason=payload.reason,
+            corrected_by_user_id=auth_context.user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Activity not found")
+    return updated
+
+
+@router.delete("/activities/{activity_id}")
+async def void_activity(
+    activity_id: uuid.UUID,
+    payload: VoidActivityRequest,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Undo an Activity entirely (ADR-D15) -- soft delete, refused once the
+    day is part of an approved daily report (unlike correction)."""
+    repo = PostgresProgressReadRepository(conn)
+    await _authorized_activity_or_404(repo, auth_context, activity_id)
+
+    rejection = await repo.void_activity(
+        organization_id=auth_context.organization_id,
+        activity_id=activity_id,
+        reason=payload.reason,
+        corrected_by_user_id=auth_context.user_id,
+    )
+    if rejection is not None:
+        raise HTTPException(status_code=400, detail=rejection)
+    return {"status": "success", "message": "Activity removed"}
+
+
+@router.patch("/activities/{activity_id}/updates/{update_id}", response_model=ActivityDetailResponse)
+async def correct_progress_update(
+    activity_id: uuid.UUID,
+    update_id: uuid.UUID,
+    payload: CorrectProgressUpdateRequest,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Correct a Progress Update's quantity/unit/narrative (ADR-D14) by
+    appending a new row that supersedes this one -- the old row is never
+    edited or deleted, so both remain visible in the activity's detail
+    view. Returns the whole activity (the new update is now in its list)."""
+    repo = PostgresProgressReadRepository(conn)
+    await _authorized_activity_or_404(repo, auth_context, activity_id)
+
+    changes = payload.model_dump(exclude_unset=True, exclude={"reason"})
+    try:
+        corrected = await repo.correct_progress_update(
+            organization_id=auth_context.organization_id,
+            update_id=update_id,
+            changes=changes,
+            reason=payload.reason,
+            corrected_by_user_id=auth_context.user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if corrected is None or corrected["activity_id"] != activity_id:
+        raise HTTPException(status_code=404, detail="Progress update not found")
+
+    updated_activity = await repo.get_activity(auth_context.organization_id, activity_id)
+    return updated_activity
+
+
+@router.delete("/activities/{activity_id}/updates/{update_id}")
+async def void_progress_update(
+    activity_id: uuid.UUID,
+    update_id: uuid.UUID,
+    payload: VoidProgressUpdateRequest,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Undo a single Progress Update (ADR-D15) -- soft delete, refused once
+    the day is part of an approved daily report."""
+    repo = PostgresProgressReadRepository(conn)
+    await _authorized_activity_or_404(repo, auth_context, activity_id)
+
+    rejection = await repo.void_progress_update(
+        organization_id=auth_context.organization_id,
+        update_id=update_id,
+        reason=payload.reason,
+        corrected_by_user_id=auth_context.user_id,
+    )
+    if rejection is not None:
+        status_code = 404 if rejection == "progress update not found" else 400
+        raise HTTPException(status_code=status_code, detail=rejection)
+    return {"status": "success", "message": "Progress update removed"}
+
+
+@router.get("/activities/{activity_id}/corrections", response_model=ActivityCorrectionsListResponse)
+async def list_activity_corrections(
+    activity_id: uuid.UUID,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """The audit trail for one Activity (ADR-D14) -- every header
+    correction, progress-update correction, and void, newest first."""
+    repo = PostgresProgressReadRepository(conn)
+    await _authorized_activity_or_404(repo, auth_context, activity_id)
+
+    items = await repo.list_corrections(auth_context.organization_id, activity_id)
+    return {"items": items}
 
 
 @router.get("/issues", response_model=SiteIssuesListResponse)

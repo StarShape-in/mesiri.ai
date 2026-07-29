@@ -1,11 +1,29 @@
-"""Read access for activities, progress updates, and site issues.
+"""Read access for activities, progress updates, and site issues -- plus the
+dashboard-direct corrections/undo ADR-D14/D15 define.
 
 Companion to progress_execution.py, which owns the *write* path a WhatsApp
-confirmation takes. This file is the dashboard-facing read side only —
-Activities and Progress Updates are operational records like Labour
-attendance, never written directly by the dashboard (plan P2: nothing is
-persisted before an explicit confirmation), so there is no create/update
-method here, only reads. Mirrors workforce.py's read/write split.
+confirmation takes for a brand-new Activity/Progress Update. This file is
+everything else: reads, Site Issues (dashboard-direct, no confirm step --
+see create_issue/acknowledge_issue etc. above), and now corrections/undo of
+an already-recorded Activity or Progress Update, per
+docs/execution/DAILY_REPORTING_PLAN.md's ADR-D14/D15:
+
+  ADR-D14 (correction) -- a wrong Activity-header field (work_type,
+  location_id, contractor, narrative, activity_date) is corrected by a
+  direct UPDATE + an activity_corrections audit row
+  (`correct_activity_fields`). A wrong Progress Update quantity is
+  corrected by *appending* a new row that supersedes the old one -- the old
+  row is never edited or deleted (`correct_progress_update`); Progress
+  Updates stay append-only (P1) even under correction.
+
+  ADR-D15 (undo) -- removing an Activity/Progress Update entirely
+  (`void_activity`/`void_progress_update`) is a soft delete
+  (`deleted_at`), and -- unlike correction -- is refused outright once the
+  value has been frozen into an APPROVED/PUBLISHED daily_report_versions
+  row (P7). Correction is allowed past that point and produces a DPR
+  revision instead (see `_revise_dpr_if_frozen`); undo is not, because
+  there is no way to "revise a report to remove something" without also
+  deciding what replaces it -- that's a correction, not an undo.
 """
 
 from __future__ import annotations
@@ -144,7 +162,8 @@ class PostgresProgressReadRepository:
                 await self._conn.execute(
                     text(
                         "SELECT pu.id, pu.occurred_at, pu.update_kind, pu.narrative, pu.quantity, "
-                        "pu.unit_id, u.code AS unit, pu.reported_by_user_id, pu.source, pu.created_at "
+                        "pu.unit_id, u.code AS unit, pu.supersedes_id, pu.reported_by_user_id, "
+                        "pu.source, pu.created_at "
                         "FROM progress_updates pu "
                         "LEFT JOIN units_of_measure u ON u.id = pu.unit_id "
                         "WHERE pu.activity_id = :activity_id AND pu.deleted_at IS NULL "
@@ -491,4 +510,440 @@ class PostgresProgressReadRepository:
         rows = (await self._conn.execute(text(query), params)).mappings().all()
         return [dict(r) for r in rows], total
 
+    # ------------------------------------------------------------------
+    # Corrections & undo (ADR-D14/D15) -- see module docstring.
+    # ------------------------------------------------------------------
+
+    #: ADR-D14's explicit list (work_type, location_id, contractor) plus two
+    #: reasonable additions the ADR doesn't exclude: narrative (a typo is as
+    #: correctable as any other header field) and activity_date (the day
+    #: the work happened, distinct from occurred_at on a Progress Update).
+    #: work_package_id/quantities are deliberately not here -- correcting
+    #: those needs a picker UI that doesn't exist yet (module audit finding
+    #: A: work packages/locations are unused schema in V1).
+    _CORRECTABLE_ACTIVITY_FIELDS = frozenset(
+        {"work_type", "location_id", "contractor", "narrative", "activity_date"}
+    )
+
+    #: A Progress Update is never edited (ADR-D14) -- these are the fields a
+    #: *superseding* row may carry a different value for.
+    _CORRECTABLE_UPDATE_FIELDS = frozenset({"quantity", "unit_id", "narrative"})
+
+    async def _record_correction(
+        self,
+        *,
+        activity_id: uuid.UUID,
+        field_name: str,
+        old_value: Any,
+        new_value: Any,
+        reason: str | None,
+        corrected_by_user_id: uuid.UUID | None,
+        correlation_id: str | None,
+    ) -> None:
+        await self._conn.execute(
+            text(
+                "INSERT INTO activity_corrections "
+                "(id, activity_id, field_name, old_value, new_value, reason, "
+                "corrected_by_user_id, correlation_id) "
+                "VALUES (:id, :activity_id, :field_name, CAST(:old_value AS jsonb), "
+                "CAST(:new_value AS jsonb), :reason, :corrected_by_user_id, :correlation_id)"
+            ),
+            {
+                "id": uuid.uuid4(),
+                "activity_id": activity_id,
+                "field_name": field_name,
+                "old_value": json.dumps(old_value, default=str),
+                "new_value": json.dumps(new_value, default=str),
+                "reason": reason,
+                "corrected_by_user_id": corrected_by_user_id,
+                "correlation_id": correlation_id,
+            },
+        )
+
+    async def _revise_dpr_if_frozen(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        project_id: uuid.UUID,
+        site_id: uuid.UUID,
+        report_date: datetime.date,
+        reason: str,
+    ) -> None:
+        """The ADR-D14 consequence: a correction to a value already frozen
+        into an APPROVED/PUBLISHED DPR version (P7) does not silently leave
+        the report wrong -- it produces a new, visibly different revision
+        (the exact mechanism `daily_report_versions`' own docstring
+        describes). A DRAFT/IN_REVIEW/NOT_REPORTED report, or no report at
+        all yet, needs no action: the next normal generation run picks up
+        the correction on its own."""
+        from mesiri.infrastructure.postgres.repositories.dpr import PostgresDprRepository
+
+        dpr_repo = PostgresDprRepository(self._conn)
+        report = await dpr_repo.find_site_report(
+            organization_id=organization_id,
+            project_id=project_id,
+            site_id=site_id,
+            report_date=report_date,
+        )
+        if report is None or report["status"] not in ("APPROVED", "PUBLISHED"):
+            return
+
+        payload = await dpr_repo.assemble_site_report_payload(
+            organization_id=organization_id,
+            project_id=project_id,
+            site_id=site_id,
+            report_date=report_date,
+        )
+        await dpr_repo.revise_version(
+            daily_report_id=report["id"],
+            payload=payload,
+            narrative_summary=None,
+            revision_reason=reason,
+        )
+
+    async def _is_frozen(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        project_id: uuid.UUID,
+        site_id: uuid.UUID,
+        report_date: datetime.date,
+    ) -> bool:
+        """ADR-D15: undo is refused once a DPR version has frozen this
+        day's report (unlike correction, which is allowed and revises the
+        report instead -- see `_revise_dpr_if_frozen`)."""
+        from mesiri.infrastructure.postgres.repositories.dpr import PostgresDprRepository
+
+        dpr_repo = PostgresDprRepository(self._conn)
+        report = await dpr_repo.find_site_report(
+            organization_id=organization_id,
+            project_id=project_id,
+            site_id=site_id,
+            report_date=report_date,
+        )
+        return report is not None and report["status"] in ("APPROVED", "PUBLISHED")
+
+    async def correct_activity_fields(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        activity_id: uuid.UUID,
+        changes: dict[str, Any],
+        reason: str | None,
+        corrected_by_user_id: uuid.UUID | None,
+        correlation_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Correct one or more Activity header fields (ADR-D14). Returns the
+        updated activity (get_activity shape) or None if not found/deleted.
+        Writes one activity_corrections row per field whose value actually
+        changed -- a no-op "correction" to the same value writes nothing.
+        Allowed even once the day is frozen into an approved DPR (unlike
+        undo) -- see `_revise_dpr_if_frozen`."""
+        unknown = set(changes) - self._CORRECTABLE_ACTIVITY_FIELDS
+        if unknown:
+            raise ValueError(f"cannot correct fields: {sorted(unknown)}")
+        if not changes:
+            return await self.get_activity(organization_id, activity_id)
+
+        current = (
+            await self._conn.execute(
+                text(
+                    "SELECT project_id, site_id, activity_date, work_type, location_id, "
+                    "contractor, narrative "
+                    "FROM activities WHERE organization_id = :org_id AND id = :id "
+                    "AND deleted_at IS NULL"
+                ),
+                {"org_id": organization_id, "id": activity_id},
+            )
+        ).mappings().first()
+        if current is None:
+            return None
+
+        set_clauses: list[str] = []
+        params: dict[str, Any] = {"id": activity_id, "now": datetime.datetime.now(datetime.UTC)}
+        corrections: list[tuple[str, Any, Any]] = []
+        for field, new_value in changes.items():
+            old_value = current[field]
+            if old_value == new_value:
+                continue
+            set_clauses.append(f"{field} = :{field}")
+            params[field] = new_value
+            corrections.append((field, old_value, new_value))
+
+        if not corrections:
+            return await self.get_activity(organization_id, activity_id)
+
+        set_clauses.append("updated_at = :now")
+        await self._conn.execute(
+            text(f"UPDATE activities SET {', '.join(set_clauses)} WHERE id = :id"), params
+        )
+
+        for field, old_value, new_value in corrections:
+            await self._record_correction(
+                activity_id=activity_id,
+                field_name=field,
+                old_value=old_value,
+                new_value=new_value,
+                reason=reason,
+                corrected_by_user_id=corrected_by_user_id,
+                correlation_id=correlation_id,
+            )
+
+        await self._revise_dpr_if_frozen(
+            organization_id=organization_id,
+            project_id=current["project_id"],
+            site_id=current["site_id"],
+            report_date=current["activity_date"],
+            reason=reason or f"Activity corrected: {', '.join(f for f, _, _ in corrections)}",
+        )
+
+        return await self.get_activity(organization_id, activity_id)
+
+    async def void_activity(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        activity_id: uuid.UUID,
+        reason: str,
+        corrected_by_user_id: uuid.UUID | None,
+        correlation_id: str | None = None,
+    ) -> str | None:
+        """Soft-delete an Activity (ADR-D15) -- never a hard delete, and
+        refused once the day is frozen into an approved DPR (P7). Returns
+        None on success, or a short rejection reason string. Voiding the
+        parent is enough on its own: every read path (get_activity,
+        list_activities, WhatsApp's find_open_activity(ies)) already
+        filters `activities.deleted_at IS NULL` / joins through the parent
+        lookup, so activity_quantities/progress_updates/
+        progress_attachments underneath become invisible without a second
+        write."""
+        if not reason or not reason.strip():
+            return "reason is required to void an activity"
+
+        current = (
+            await self._conn.execute(
+                text(
+                    "SELECT project_id, site_id, activity_date FROM activities "
+                    "WHERE organization_id = :org_id AND id = :id AND deleted_at IS NULL"
+                ),
+                {"org_id": organization_id, "id": activity_id},
+            )
+        ).mappings().first()
+        if current is None:
+            return "activity not found"
+
+        if await self._is_frozen(
+            organization_id=organization_id,
+            project_id=current["project_id"],
+            site_id=current["site_id"],
+            report_date=current["activity_date"],
+        ):
+            return "this activity is already part of an approved daily report and cannot be undone"
+
+        now = datetime.datetime.now(datetime.UTC)
+        res = await self._conn.execute(
+            text(
+                "UPDATE activities SET deleted_at = :now, updated_at = :now "
+                "WHERE organization_id = :org_id AND id = :id AND deleted_at IS NULL"
+            ),
+            {"org_id": organization_id, "id": activity_id, "now": now},
+        )
+        if res.rowcount == 0:
+            return "activity not found"
+
+        await self._record_correction(
+            activity_id=activity_id,
+            field_name="_voided",
+            old_value=None,
+            new_value=True,
+            reason=reason,
+            corrected_by_user_id=corrected_by_user_id,
+            correlation_id=correlation_id,
+        )
+        return None
+
+    async def correct_progress_update(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        update_id: uuid.UUID,
+        changes: dict[str, Any],
+        reason: str | None,
+        corrected_by_user_id: uuid.UUID | None,
+        correlation_id: str | None = None,
+        source: str = "dashboard",
+    ) -> dict[str, Any] | None:
+        """Correct a Progress Update (ADR-D14) by appending a new row that
+        supersedes the old one -- Progress Updates stay append-only (P1)
+        even under correction; the old row is never edited or deleted.
+        Returns the new row's shape, or None if `update_id` doesn't exist /
+        belong to this organization / is already deleted. Allowed even
+        once the day is frozen (unlike void_progress_update) -- see
+        `_revise_dpr_if_frozen`.
+
+        Shared by the dashboard PATCH endpoint and the WhatsApp
+        ACTIVITY_CORRECTION workflow's execution handler (`source`
+        distinguishes which one wrote it, same convention every other
+        operational record uses)."""
+        unknown = set(changes) - self._CORRECTABLE_UPDATE_FIELDS
+        if unknown:
+            raise ValueError(f"cannot correct fields: {sorted(unknown)}")
+
+        old = (
+            await self._conn.execute(
+                text(
+                    "SELECT pu.id, pu.activity_id, pu.occurred_at, pu.update_kind, pu.narrative, "
+                    "pu.quantity, pu.unit_id, a.organization_id, a.project_id, a.site_id, "
+                    "a.activity_date "
+                    "FROM progress_updates pu JOIN activities a ON a.id = pu.activity_id "
+                    "WHERE pu.id = :id AND a.organization_id = :org_id AND pu.deleted_at IS NULL "
+                    "AND a.deleted_at IS NULL"
+                ),
+                {"id": update_id, "org_id": organization_id},
+            )
+        ).mappings().first()
+        if old is None:
+            return None
+        if not changes:
+            return dict(old)
+
+        new_quantity = changes.get("quantity", old["quantity"])
+        new_unit_id = changes.get("unit_id", old["unit_id"])
+        new_narrative = changes.get("narrative", old["narrative"])
+
+        new_id = uuid.uuid4()
+        await self._conn.execute(
+            text(
+                "INSERT INTO progress_updates "
+                "(id, activity_id, occurred_at, update_kind, narrative, quantity, unit_id, "
+                "supersedes_id, reported_by_user_id, source, correlation_id) "
+                "VALUES (:id, :activity_id, :occurred_at, :update_kind, :narrative, :quantity, "
+                ":unit_id, :supersedes_id, :reported_by_user_id, :source, :correlation_id)"
+            ),
+            {
+                "id": new_id,
+                "activity_id": old["activity_id"],
+                "occurred_at": old["occurred_at"],
+                "update_kind": old["update_kind"],
+                "narrative": new_narrative,
+                "quantity": new_quantity,
+                "unit_id": new_unit_id,
+                "supersedes_id": update_id,
+                "reported_by_user_id": corrected_by_user_id,
+                "source": source,
+                "correlation_id": correlation_id,
+            },
+        )
+
+        for field, old_value, new_value in (
+            ("quantity", old["quantity"], new_quantity),
+            ("unit_id", old["unit_id"], new_unit_id),
+            ("narrative", old["narrative"], new_narrative),
+        ):
+            if old_value != new_value:
+                await self._record_correction(
+                    activity_id=old["activity_id"],
+                    field_name=f"progress_update.{field}",
+                    old_value=old_value,
+                    new_value=new_value,
+                    reason=reason,
+                    corrected_by_user_id=corrected_by_user_id,
+                    correlation_id=correlation_id,
+                )
+
+        await self._revise_dpr_if_frozen(
+            organization_id=old["organization_id"],
+            project_id=old["project_id"],
+            site_id=old["site_id"],
+            report_date=old["activity_date"],
+            reason=reason or "Progress update corrected",
+        )
+
+        return {
+            "id": new_id,
+            "activity_id": old["activity_id"],
+            "occurred_at": old["occurred_at"],
+            "update_kind": old["update_kind"],
+            "narrative": new_narrative,
+            "quantity": new_quantity,
+            "unit_id": new_unit_id,
+            "supersedes_id": update_id,
+        }
+
+    async def void_progress_update(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        update_id: uuid.UUID,
+        reason: str,
+        corrected_by_user_id: uuid.UUID | None,
+        correlation_id: str | None = None,
+    ) -> str | None:
+        """Soft-delete a Progress Update (ADR-D15) -- never a hard delete,
+        and refused once the day is frozen into an approved DPR (P7).
+        Returns None on success, or a short rejection reason string."""
+        if not reason or not reason.strip():
+            return "reason is required to void a progress update"
+
+        old = (
+            await self._conn.execute(
+                text(
+                    "SELECT pu.activity_id, a.organization_id, a.project_id, a.site_id, "
+                    "a.activity_date "
+                    "FROM progress_updates pu JOIN activities a ON a.id = pu.activity_id "
+                    "WHERE pu.id = :id AND a.organization_id = :org_id AND pu.deleted_at IS NULL"
+                ),
+                {"id": update_id, "org_id": organization_id},
+            )
+        ).mappings().first()
+        if old is None:
+            return "progress update not found"
+
+        if await self._is_frozen(
+            organization_id=organization_id,
+            project_id=old["project_id"],
+            site_id=old["site_id"],
+            report_date=old["activity_date"],
+        ):
+            return "this update is already part of an approved daily report and cannot be undone"
+
+        now = datetime.datetime.now(datetime.UTC)
+        res = await self._conn.execute(
+            text("UPDATE progress_updates SET deleted_at = :now WHERE id = :id"),
+            {"id": update_id, "now": now},
+        )
+        if res.rowcount == 0:
+            return "progress update not found"
+
+        await self._record_correction(
+            activity_id=old["activity_id"],
+            field_name="progress_update._voided",
+            old_value=None,
+            new_value=True,
+            reason=reason,
+            corrected_by_user_id=corrected_by_user_id,
+            correlation_id=correlation_id,
+        )
+        return None
+
+    async def list_corrections(
+        self, organization_id: uuid.UUID, activity_id: uuid.UUID
+    ) -> list[dict[str, Any]]:
+        """The audit trail for one Activity (ADR-D14), newest first --
+        every header field correction, progress-update correction, and
+        void, in one place so a disputed number can be traced."""
+        rows = (
+            await self._conn.execute(
+                text(
+                    "SELECT ac.id, ac.activity_id, ac.field_name, ac.old_value, ac.new_value, "
+                    "ac.reason, ac.corrected_by_user_id, ac.correlation_id, ac.created_at "
+                    "FROM activity_corrections ac "
+                    "JOIN activities a ON a.id = ac.activity_id "
+                    "WHERE ac.activity_id = :activity_id AND a.organization_id = :org_id "
+                    "ORDER BY ac.created_at DESC"
+                ),
+                {"activity_id": activity_id, "org_id": organization_id},
+            )
+        ).mappings().all()
+        return [dict(r) for r in rows]
 

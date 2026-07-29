@@ -21,22 +21,40 @@ import {
   Download,
   Layers,
   X,
+  Pencil,
+  Trash2,
+  ShieldAlert,
 } from 'lucide-react'
 import { useScope } from '@/lib/ScopeContext'
 import {
   fetchActivitiesApi,
   fetchActivityDetailApi,
+  correctActivityApi,
+  voidActivityApi,
+  correctProgressUpdateApi,
+  voidProgressUpdateApi,
+  fetchActivityCorrectionsApi,
   type ActivitySummary,
   type ActivityDetailResponse,
+  type ActivityCorrection,
 } from '@/lib/api'
 import { KpiCard } from '@/components/ui/kpi-card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn, toLocalISODate } from '@/lib/utils'
 
@@ -138,6 +156,139 @@ export default function ActivitiesPage() {
   const [detailLoading, setDetailLoading] = React.useState<boolean>(false)
   const [detailError, setDetailError] = React.useState<string | null>(null)
 
+  // Corrections & undo (ADR-D14/D15)
+  const [corrections, setCorrections] = React.useState<ActivityCorrection[]>([])
+  const [correctionsLoading, setCorrectionsLoading] = React.useState<boolean>(false)
+  const [editOpen, setEditOpen] = React.useState<boolean>(false)
+  const [editForm, setEditForm] = React.useState({
+    work_type: '', contractor: '', narrative: '', activity_date: '', reason: '',
+  })
+  const [editSaving, setEditSaving] = React.useState<boolean>(false)
+  const [editError, setEditError] = React.useState<string | null>(null)
+  const [voidActivityOpen, setVoidActivityOpen] = React.useState<boolean>(false)
+  const [voidReason, setVoidReason] = React.useState<string>('')
+  const [voidBusy, setVoidBusy] = React.useState<boolean>(false)
+  const [voidError, setVoidError] = React.useState<string | null>(null)
+  const [correctUpdateId, setCorrectUpdateId] = React.useState<string | null>(null)
+  const [correctUpdateForm, setCorrectUpdateForm] = React.useState({ quantity: '', reason: '' })
+  const [correctUpdateBusy, setCorrectUpdateBusy] = React.useState<boolean>(false)
+  const [correctUpdateError, setCorrectUpdateError] = React.useState<string | null>(null)
+  const [voidUpdateId, setVoidUpdateId] = React.useState<string | null>(null)
+  const [voidUpdateReason, setVoidUpdateReason] = React.useState<string>('')
+  const [voidUpdateBusy, setVoidUpdateBusy] = React.useState<boolean>(false)
+  const [voidUpdateError, setVoidUpdateError] = React.useState<string | null>(null)
+
+  const refreshDetail = React.useCallback(async (activityId: string) => {
+    const detail = await fetchActivityDetailApi(activityId)
+    setDetailData(detail)
+  }, [])
+
+  const loadCorrections = React.useCallback(async (activityId: string) => {
+    setCorrectionsLoading(true)
+    try {
+      const res = await fetchActivityCorrectionsApi(activityId)
+      setCorrections(res.items || [])
+    } catch {
+      setCorrections([])
+    } finally {
+      setCorrectionsLoading(false)
+    }
+  }, [])
+
+  const openEdit = () => {
+    if (!detailData) return
+    setEditForm({
+      work_type: detailData.work_type || '',
+      contractor: detailData.contractor || '',
+      narrative: detailData.narrative || '',
+      activity_date: detailData.activity_date || '',
+      reason: '',
+    })
+    setEditError(null)
+    setEditOpen(true)
+  }
+
+  const saveEdit = async () => {
+    if (!selectedActivityId) return
+    setEditSaving(true)
+    setEditError(null)
+    try {
+      await correctActivityApi(selectedActivityId, {
+        work_type: editForm.work_type || null,
+        contractor: editForm.contractor || null,
+        narrative: editForm.narrative || null,
+        activity_date: editForm.activity_date || null,
+        reason: editForm.reason || null,
+      })
+      await refreshDetail(selectedActivityId)
+      await loadCorrections(selectedActivityId)
+      await fetchList()
+      setEditOpen(false)
+    } catch (err: any) {
+      setEditError(err?.response?.data?.detail || err?.message || 'Failed to save correction')
+    } finally {
+      setEditSaving(false)
+    }
+  }
+
+  const confirmVoidActivity = async () => {
+    if (!selectedActivityId || !voidReason.trim()) return
+    setVoidBusy(true)
+    setVoidError(null)
+    try {
+      await voidActivityApi(selectedActivityId, voidReason.trim())
+      setVoidActivityOpen(false)
+      setSelectedActivityId(null)
+      await fetchList()
+    } catch (err: any) {
+      setVoidError(err?.response?.data?.detail || err?.message || 'Failed to remove activity')
+    } finally {
+      setVoidBusy(false)
+    }
+  }
+
+  const openCorrectUpdate = (updateId: string, currentQuantity: number | string | null | undefined) => {
+    setCorrectUpdateId(updateId)
+    setCorrectUpdateForm({ quantity: currentQuantity != null ? String(currentQuantity) : '', reason: '' })
+    setCorrectUpdateError(null)
+  }
+
+  const saveCorrectUpdate = async () => {
+    if (!selectedActivityId || !correctUpdateId) return
+    setCorrectUpdateBusy(true)
+    setCorrectUpdateError(null)
+    try {
+      await correctProgressUpdateApi(selectedActivityId, correctUpdateId, {
+        quantity: correctUpdateForm.quantity === '' ? null : Number(correctUpdateForm.quantity),
+        reason: correctUpdateForm.reason || null,
+      })
+      await refreshDetail(selectedActivityId)
+      await loadCorrections(selectedActivityId)
+      setCorrectUpdateId(null)
+    } catch (err: any) {
+      setCorrectUpdateError(err?.response?.data?.detail || err?.message || 'Failed to save correction')
+    } finally {
+      setCorrectUpdateBusy(false)
+    }
+  }
+
+  const confirmVoidUpdate = async () => {
+    if (!selectedActivityId || !voidUpdateId || !voidUpdateReason.trim()) return
+    setVoidUpdateBusy(true)
+    setVoidUpdateError(null)
+    try {
+      await voidProgressUpdateApi(selectedActivityId, voidUpdateId, voidUpdateReason.trim())
+      setVoidUpdateId(null)
+      setVoidUpdateReason('')
+      await refreshDetail(selectedActivityId)
+      await loadCorrections(selectedActivityId)
+    } catch (err: any) {
+      setVoidUpdateError(err?.response?.data?.detail || err?.message || 'Failed to remove update')
+    } finally {
+      setVoidUpdateBusy(false)
+    }
+  }
+
   const handleDatePresetChange = (val: string) => {
     setDatePreset(val)
     const now = new Date()
@@ -186,7 +337,13 @@ export default function ActivitiesPage() {
   React.useEffect(() => { fetchList() }, [fetchList])
 
   React.useEffect(() => {
-    if (!selectedActivityId) { setDetailData(null); return }
+    if (!selectedActivityId) {
+      setDetailData(null)
+      setCorrections([])
+      setVoidReason('')
+      setVoidError(null)
+      return
+    }
     let active = true
     setDetailLoading(true)
     setDetailError(null)
@@ -194,8 +351,9 @@ export default function ActivitiesPage() {
       .then((res) => { if (active) setDetailData(res) })
       .catch((err) => { if (active) setDetailError(err?.response?.data?.detail || err?.message || 'Failed to load detail') })
       .finally(() => { if (active) setDetailLoading(false) })
+    loadCorrections(selectedActivityId)
     return () => { active = false }
-  }, [selectedActivityId])
+  }, [selectedActivityId, loadCorrections])
 
   const filteredActivities = React.useMemo(() => {
     if (!searchQuery.trim()) return activities
@@ -500,6 +658,21 @@ export default function ActivitiesPage() {
               </div>
               {detailData && <StatusBadge status={detailData.status} />}
             </div>
+            {detailData && (
+              <div className="flex items-center gap-2 mt-3">
+                <Button size="sm" variant="outline" className="h-7 gap-1.5 text-[11px]" onClick={openEdit}>
+                  <Pencil className="size-3" />Correct Details
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 gap-1.5 text-[11px] text-rose-600 dark:text-rose-400 border-rose-500/30 hover:bg-rose-500/10"
+                  onClick={() => { setVoidReason(''); setVoidError(null); setVoidActivityOpen(true) }}
+                >
+                  <Trash2 className="size-3" />Remove Activity
+                </Button>
+              </div>
+            )}
           </SheetHeader>
 
           <div className="p-6">
@@ -558,7 +731,7 @@ export default function ActivitiesPage() {
 
                 {/* Tabs */}
                 <Tabs defaultValue="quantities" className="w-full">
-                  <TabsList className="grid grid-cols-3 w-full h-9">
+                  <TabsList className="grid grid-cols-4 w-full h-9">
                     <TabsTrigger value="quantities" className="text-xs gap-1.5">
                       <Scale className="size-3.5" />Quantities ({detailData.quantities?.length || 0})
                     </TabsTrigger>
@@ -567,6 +740,9 @@ export default function ActivitiesPage() {
                     </TabsTrigger>
                     <TabsTrigger value="attachments" className="text-xs gap-1.5">
                       <Paperclip className="size-3.5" />Evidence ({detailData.attachments?.length || 0})
+                    </TabsTrigger>
+                    <TabsTrigger value="corrections" className="text-xs gap-1.5">
+                      <ShieldAlert className="size-3.5" />Trail ({corrections.length})
                     </TabsTrigger>
                   </TabsList>
 
@@ -608,17 +784,79 @@ export default function ActivitiesPage() {
                       </div>
                     ) : (
                       <div className="space-y-3 border-l-2 border-violet-500/30 pl-4 py-1 ml-2">
-                        {detailData.progress_updates.map((upd) => (
-                          <div key={upd.id} className="relative space-y-1">
-                            <div className="absolute -left-[21px] top-1 size-2.5 rounded-full bg-violet-500" />
-                            <div className="flex items-center justify-between text-[11px]">
-                              <span className="font-bold text-foreground capitalize">{upd.update_kind}</span>
-                              <span className="text-muted-foreground font-mono">{new Date(upd.occurred_at).toLocaleString()}</span>
+                        {detailData.progress_updates.map((upd) => {
+                          const superseded = detailData.progress_updates.some((other) => other.supersedes_id === upd.id)
+                          return (
+                            <div key={upd.id} className={cn('relative space-y-1', superseded && 'opacity-50')}>
+                              <div className="absolute -left-[21px] top-1 size-2.5 rounded-full bg-violet-500" />
+                              <div className="flex items-center justify-between text-[11px] gap-2">
+                                <span className="font-bold text-foreground capitalize">{upd.update_kind}</span>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <span className="text-muted-foreground font-mono">{new Date(upd.occurred_at).toLocaleString()}</span>
+                                  {!superseded && (
+                                    <>
+                                      <button
+                                        type="button"
+                                        className="text-muted-foreground hover:text-foreground"
+                                        title="Correct this quantity"
+                                        onClick={() => openCorrectUpdate(upd.id, upd.quantity)}
+                                      >
+                                        <Pencil className="size-3" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="text-muted-foreground hover:text-rose-500"
+                                        title="Remove this update"
+                                        onClick={() => { setVoidUpdateId(upd.id); setVoidUpdateReason(''); setVoidUpdateError(null) }}
+                                      >
+                                        <Trash2 className="size-3" />
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                              {upd.narrative && <p className="text-muted-foreground">{upd.narrative}</p>}
+                              {upd.quantity != null && (
+                                <Badge variant="outline" className="font-mono font-semibold text-[10px]">+{upd.quantity} {upd.unit || ''}</Badge>
+                              )}
+                              {upd.supersedes_id && (
+                                <p className="text-[10px] text-amber-600 dark:text-amber-400">Corrects a previous entry</p>
+                              )}
+                              {superseded && (
+                                <p className="text-[10px] text-muted-foreground italic">Superseded by a correction below</p>
+                              )}
                             </div>
-                            {upd.narrative && <p className="text-muted-foreground">{upd.narrative}</p>}
-                            {upd.quantity != null && (
-                              <Badge variant="outline" className="font-mono font-semibold text-[10px]">+{upd.quantity} {upd.unit || ''}</Badge>
-                            )}
+                          )
+                        })}
+                      </div>
+                    )}
+                  </TabsContent>
+
+                  <TabsContent value="corrections" className="pt-3">
+                    {correctionsLoading ? (
+                      <div className="space-y-2">
+                        <Skeleton className="h-10 w-full" />
+                        <Skeleton className="h-10 w-full" />
+                      </div>
+                    ) : corrections.length === 0 ? (
+                      <div className="text-center py-8 text-muted-foreground">
+                        <ShieldAlert className="size-7 mx-auto mb-2 opacity-30" />
+                        <p className="text-[11px]">No corrections or removals recorded for this activity.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {corrections.map((c) => (
+                          <div key={c.id} className="rounded-lg border border-border/70 p-3 space-y-1 text-[11px]">
+                            <div className="flex items-center justify-between">
+                              <span className="font-bold text-foreground">{c.field_name}</span>
+                              <span className="text-muted-foreground font-mono">{new Date(c.created_at).toLocaleString()}</span>
+                            </div>
+                            <p className="text-muted-foreground">
+                              <span className="line-through">{JSON.stringify(c.old_value)}</span>
+                              {' → '}
+                              <span className="font-semibold text-foreground">{JSON.stringify(c.new_value)}</span>
+                            </p>
+                            {c.reason && <p className="text-muted-foreground italic">"{c.reason}"</p>}
                           </div>
                         ))}
                       </div>
@@ -657,6 +895,183 @@ export default function ActivitiesPage() {
           </div>
         </SheetContent>
       </Sheet>
+
+      {/* Correct Activity Details */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="sm:max-w-[480px] gap-4">
+          <DialogHeader>
+            <DialogTitle className="text-sm font-bold">Correct Activity Details</DialogTitle>
+            <DialogDescription className="text-xs">
+              Header fields only -- allowed even if this day is part of an approved daily report.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Work Type</Label>
+              <Input
+                value={editForm.work_type}
+                onChange={(e) => setEditForm((f) => ({ ...f, work_type: e.target.value }))}
+                className="h-8 text-xs"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Contractor</Label>
+              <Input
+                value={editForm.contractor}
+                onChange={(e) => setEditForm((f) => ({ ...f, contractor: e.target.value }))}
+                className="h-8 text-xs"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Narrative</Label>
+              <Input
+                value={editForm.narrative}
+                onChange={(e) => setEditForm((f) => ({ ...f, narrative: e.target.value }))}
+                className="h-8 text-xs"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Activity Date</Label>
+              <Input
+                type="date"
+                value={editForm.activity_date}
+                onChange={(e) => setEditForm((f) => ({ ...f, activity_date: e.target.value }))}
+                className="h-8 text-xs"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Reason (optional)</Label>
+              <Input
+                placeholder="Why is this being corrected?"
+                value={editForm.reason}
+                onChange={(e) => setEditForm((f) => ({ ...f, reason: e.target.value }))}
+                className="h-8 text-xs"
+              />
+            </div>
+            {editError && <p className="text-[11px] text-rose-500">{editError}</p>}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setEditOpen(false)} disabled={editSaving}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={saveEdit} disabled={editSaving}>
+              {editSaving ? 'Saving…' : 'Save Correction'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Void Activity */}
+      <Dialog open={voidActivityOpen} onOpenChange={setVoidActivityOpen}>
+        <DialogContent className="sm:max-w-[440px] gap-4">
+          <DialogHeader>
+            <DialogTitle className="text-sm font-bold text-rose-600 dark:text-rose-400">Remove This Activity?</DialogTitle>
+            <DialogDescription className="text-xs">
+              Soft-deleted, never a hard delete. Refused if this day is already part of an approved daily report --
+              a correction is used instead in that case.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1">
+            <Label className="text-xs">Reason (required)</Label>
+            <Input
+              placeholder="Why is this being removed?"
+              value={voidReason}
+              onChange={(e) => setVoidReason(e.target.value)}
+              className="h-8 text-xs"
+            />
+            {voidError && <p className="text-[11px] text-rose-500 mt-1">{voidError}</p>}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setVoidActivityOpen(false)} disabled={voidBusy}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={confirmVoidActivity}
+              disabled={voidBusy || !voidReason.trim()}
+            >
+              {voidBusy ? 'Removing…' : 'Remove Activity'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Correct Progress Update */}
+      <Dialog open={!!correctUpdateId} onOpenChange={(open) => !open && setCorrectUpdateId(null)}>
+        <DialogContent className="sm:max-w-[420px] gap-4">
+          <DialogHeader>
+            <DialogTitle className="text-sm font-bold">Correct This Update</DialogTitle>
+            <DialogDescription className="text-xs">
+              Appends a corrected entry -- the original is kept for the audit trail, never edited or deleted.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Quantity</Label>
+              <Input
+                type="number"
+                value={correctUpdateForm.quantity}
+                onChange={(e) => setCorrectUpdateForm((f) => ({ ...f, quantity: e.target.value }))}
+                className="h-8 text-xs"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Reason (optional)</Label>
+              <Input
+                placeholder="Why is this being corrected?"
+                value={correctUpdateForm.reason}
+                onChange={(e) => setCorrectUpdateForm((f) => ({ ...f, reason: e.target.value }))}
+                className="h-8 text-xs"
+              />
+            </div>
+            {correctUpdateError && <p className="text-[11px] text-rose-500">{correctUpdateError}</p>}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setCorrectUpdateId(null)} disabled={correctUpdateBusy}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={saveCorrectUpdate} disabled={correctUpdateBusy}>
+              {correctUpdateBusy ? 'Saving…' : 'Save Correction'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Void Progress Update */}
+      <Dialog open={!!voidUpdateId} onOpenChange={(open) => !open && setVoidUpdateId(null)}>
+        <DialogContent className="sm:max-w-[420px] gap-4">
+          <DialogHeader>
+            <DialogTitle className="text-sm font-bold text-rose-600 dark:text-rose-400">Remove This Update?</DialogTitle>
+            <DialogDescription className="text-xs">
+              Soft-deleted, never a hard delete. Refused if this day is already part of an approved daily report.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1">
+            <Label className="text-xs">Reason (required)</Label>
+            <Input
+              placeholder="Why is this being removed?"
+              value={voidUpdateReason}
+              onChange={(e) => setVoidUpdateReason(e.target.value)}
+              className="h-8 text-xs"
+            />
+            {voidUpdateError && <p className="text-[11px] text-rose-500 mt-1">{voidUpdateError}</p>}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setVoidUpdateId(null)} disabled={voidUpdateBusy}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={confirmVoidUpdate}
+              disabled={voidUpdateBusy || !voidUpdateReason.trim()}
+            >
+              {voidUpdateBusy ? 'Removing…' : 'Remove Update'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

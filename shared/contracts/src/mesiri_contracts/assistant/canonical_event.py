@@ -35,10 +35,12 @@ class CanonicalEventType(str, Enum):
     EQUIPMENT_USAGE_REQUESTED = "EquipmentUsageRequested"
     LABOUR_ATTENDANCE_REQUESTED = "LabourAttendanceRequested"
     GENERAL_SITE_UPDATE_REQUESTED = "GeneralSiteUpdateRequested"
-    # GENERAL_SITE_UPDATE splits into this or the above by the extracted
-    # `update_kind` field (PROGRESS/PAUSED/RESUMED/COMPLETED -> continuation;
-    # absent/STARTED -> a new activity) -- same pattern as MATERIAL_UPDATE's
-    # `direction` split (see canonicalization/mapping.py's resolve_event_type).
+    # No longer split from GENERAL_SITE_UPDATE_REQUESTED by `update_kind`
+    # (docs/execution/ACTIVITY_RESOLUTION_AND_CORRECTION_PLAN.md retired that
+    # split -- see canonicalization/mapping.py's note on why). Still
+    # produced by canonicalization/builder.py's `_build_linked_activity_
+    # segment` (a material usage naming a work_item); both event types route
+    # to the same merged WorkflowKey.SITE_UPDATE (planner/routing.py).
     ACTIVITY_CONTINUATION_REQUESTED = "ActivityContinuationRequested"
     # SemanticType.SITE_ISSUE -> a reported blocker/delay, always a new
     # site_issues row (no continuation split like GENERAL_SITE_UPDATE has --
@@ -64,6 +66,11 @@ class CanonicalEventType(str, Enum):
     PETTY_CASH_RETURN_REQUESTED = "PettyCashReturnRequested"
     EXPENSE_REVERSAL_REQUESTED = "ExpenseReversalRequested"
     TRANSFER_REVERSAL_REQUESTED = "TransferReversalRequested"
+    # ADR-D15 (docs/execution/DAILY_REPORTING_PLAN.md): undoing an Activity
+    # the reporter just created, same-session only -- see
+    # runtime/reversal_query.py's find_latest_activity and
+    # workflows/reverse/nodes.py's activity branch.
+    ACTIVITY_REVERSAL_REQUESTED = "ActivityReversalRequested"
     # "create/rename/deactivate account". Two producers as of 2026-07-26:
     # runtime/account_admin_journey.py constructs this directly (zero-token
     # fast path) when its regex parser recognizes the exact phrasing;

@@ -34,6 +34,13 @@ class ReversalTransferTarget(TypedDict):
     to_account_name: str
 
 
+class ReversalActivityTarget(TypedDict):
+    activity_id: str
+    work_type: str | None
+    narrative: str | None
+    activity_date: str
+
+
 class ReversalTargetQueryService:
     def __init__(self, db: PostgresDatabase) -> None:
         self._db = db
@@ -87,6 +94,51 @@ class ReversalTargetQueryService:
             amount=str(Decimal(transaction.amount)),
             from_account_name=from_account.name if from_account else "unknown account",
             to_account_name=to_account.name if to_account else "unknown account",
+        )
+
+    async def find_latest_activity(
+        self,
+        *,
+        organization_id: str,
+        reported_by_user_id: str,
+        remembered_activity_id: str | None,
+    ) -> ReversalActivityTarget | None:
+        """ADR-D15: undo is scoped to the Activity THIS conversation just
+        touched (memory/conversation_scope.py's CurrentActivityStore),
+        never a broader "most recent in the org" lookup the way expense/
+        transfer resolve above -- same-session scoping is what makes
+        resolving "undo my last update" safe with no name at all; it is
+        never "the most recent activity anyone logged". None when nothing
+        is remembered, the remembered id no longer resolves to a real
+        (non-deleted) activity, or it belongs to a different reporter --
+        ADR-D15's "the reporter just created" is enforced here, not just
+        incidentally by session scoping.
+        """
+        if not remembered_activity_id:
+            return None
+        from mesiri.infrastructure.postgres.repositories.progress import (
+            PostgresProgressReadRepository,
+        )
+
+        org_id = uuid.UUID(organization_id)
+        try:
+            activity_id = uuid.UUID(remembered_activity_id)
+        except (TypeError, ValueError):
+            return None
+
+        async with self._db.transaction() as conn:
+            repo = PostgresProgressReadRepository(conn)
+            activity = await repo.get_activity(org_id, activity_id)
+        if activity is None:
+            return None
+        if str(activity.get("reported_by_user_id") or "") != reported_by_user_id:
+            return None
+
+        return ReversalActivityTarget(
+            activity_id=str(activity["id"]),
+            work_type=activity.get("work_type"),
+            narrative=activity.get("narrative"),
+            activity_date=activity["activity_date"].isoformat(),
         )
 
     async def find_latest_of_either_kind(
