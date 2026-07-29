@@ -243,7 +243,7 @@ def _example_messages_by_workflow() -> dict[str, list[str]]:
 
 def _fast_paths() -> list[FastPathInfo]:
     """The deterministic checks that run before the AI pipeline is ever
-    touched, in the exact order runtime/dependencies.py's _on_normalized
+    touched, in the exact order runtime/message_journey.py's _on_normalized
     runs them. Phrase examples are imported from the same JSON-backed
     vocabulary the real classifiers use — never hand-duplicated."""
     from channel.replies import CATEGORY_ROWS
@@ -1054,7 +1054,7 @@ async def simulate_message(
 ):
     """Run one message exactly as a real inbound WhatsApp message would,
     capturing replies instead of sending them. Replicates
-    runtime/dependencies.py's _on_normalized order — the identity gate, then
+    runtime/message_journey.py's _on_normalized order — the identity gate, then
     each deterministic fast path (confirmation resume, category tap, greeting,
     whoami, material/unit/stock/project/site gate resumptions), and only then
     the AI pipeline — so testing interactive buttons or text shows full

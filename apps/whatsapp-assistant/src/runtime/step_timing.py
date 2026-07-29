@@ -3,7 +3,7 @@
 Exists to answer one question: traced image messages showed 6-11s between the
 ``ingress`` stage and the ``understanding`` stage -- larger than every AI call
 combined -- and that window is ~600 lines of sequential fast-path checks in
-runtime/dependencies.py's ``_run_journey``, each doing its own database or
+runtime/message_journey.py's ``_run_journey``, each doing its own database or
 Redis work to discover "not applicable". This records how long each one
 actually takes, so the fix targets the real cost rather than the
 likeliest-looking one.

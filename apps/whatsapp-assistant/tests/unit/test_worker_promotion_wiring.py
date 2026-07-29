@@ -5,10 +5,11 @@ test in the suite: the promotion functions were correct, fully unit-tested,
 and called from the wrong place. Nothing ever triggered.
 
 A confirmation reply ("yes", or a Confirm tap) is resolved by
-``handle_fast_path`` in runtime/dependencies.py, which sends its reply and
-**returns** -- ``process_inbound_message`` (runtime/inbound_journey.py) never
-runs for that message. The answer to the promotion offer arrives on the same
-file's ``handle_slot_answer`` branch, which also returns. Hooks placed in
+``handle_fast_path`` in runtime/message_journey.py (split out of
+runtime/dependencies.py, 2026-07-29), which sends its reply and **returns**
+-- ``process_inbound_message`` (runtime/inbound_journey.py) never runs for
+that message. The answer to the promotion offer arrives on the same file's
+``handle_slot_answer`` branch, which also returns. Hooks placed in
 inbound_journey therefore fire for nobody, which is exactly what happened.
 
 These are source-level assertions rather than behavioural ones on purpose.
@@ -24,9 +25,9 @@ import re
 
 
 def _dependencies_source() -> str:
-    import runtime.dependencies as deps
+    import runtime.message_journey as journey
 
-    return inspect.getsource(deps)
+    return inspect.getsource(journey)
 
 
 def _block_after(source: str, marker: str, stop: str) -> str:
