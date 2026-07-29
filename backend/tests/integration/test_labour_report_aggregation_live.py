@@ -75,8 +75,10 @@ async def scenario(engine: AsyncEngine):
         )
         await conn.execute(
             sa.text(
-                "INSERT INTO users (id, organization_id, email, status, created_at) "
-                "VALUES (:id, :org, :email, 'active', now()) ON CONFLICT DO NOTHING"
+                "INSERT INTO users (id, organization_id, email, hashed_password, full_name, "
+                "role, status, created_at) "
+                "VALUES (:id, :org, :email, 'x', 'Test', 'admin', 'active', now()) "
+                "ON CONFLICT DO NOTHING"
             ),
             {"id": user, "org": org, "email": f"{user}@example.test"},
         )
@@ -89,10 +91,11 @@ async def scenario(engine: AsyncEngine):
         )
         await conn.execute(
             sa.text(
-                "INSERT INTO sites (id, project_id, name, status, created_at) "
-                "VALUES (:id, :project, 'Reports Site', 'active', now()) ON CONFLICT DO NOTHING"
+                "INSERT INTO sites (id, project_id, organization_id, name, status, created_at) "
+                "VALUES (:id, :project, :org, 'Reports Site', 'active', now()) "
+                "ON CONFLICT DO NOTHING"
             ),
-            {"id": site, "project": project},
+            {"id": site, "project": project, "org": org},
         )
         await conn.execute(
             sa.text(
