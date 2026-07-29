@@ -1,10 +1,11 @@
-"""Maps a confirmed record into the shared receipt-card data shape.
+"""Maps a confirmed record into the receipt-card data shape.
 
 Pure, no I/O -- one function per DraftActionType, all producing the same
 generic shape (brand/category/value/subtitle/location/dateTime/sections/
-footer) so template.py renders every record type through one layout, never
-a different image per kind (the whole point of this feature -- see the
-Module Placement Log entry in AGENTS.md).
+footer), plus a per-category `accent`/`badge_icon` and a `template_variant`
+that template.py uses to pick between the record-card layout (money/material/
+labour/etc.) and the activity-card layout (site activity create/progress/
+correction/undo) -- see the Module Placement Log entry in AGENTS.md.
 
 Field labels/icons here are display concerns, not business logic -- adding a
 new DraftActionType means adding a case here, never touching the domain
@@ -35,6 +36,15 @@ class ReceiptLocationRow:
 
 
 @dataclass(frozen=True, slots=True)
+class ReceiptCorrection:
+    """Old -> new value for a quantity edit -- rendered as a diff chip by the
+    activity template, not squeezed into a single pre-joined section field."""
+
+    old_value: str
+    new_value: str
+
+
+@dataclass(frozen=True, slots=True)
 class ReceiptData:
     brand: str
     category: str
@@ -48,6 +58,10 @@ class ReceiptData:
     record_id: str
     saved_at: str
     logo_text: str
+    accent: str = "#0A8F4C"
+    badge_icon: str = "layers"
+    template_variant: str = "record"
+    correction: ReceiptCorrection | None = None
 
 
 def _project_name(project_id: str | None, projects: list[Any]) -> str | None:
@@ -138,6 +152,12 @@ def build_receipt_data(
         ReceiptLocationRow("pin", site_name),
     ]
 
+    # Defaults for the record-card fields every branch below overrides with
+    # its own category color/icon; only the activity family (create/progress/
+    # correction/undo) switches template_variant and sets `correction`.
+    template_variant = "record"
+    correction: ReceiptCorrection | None = None
+
     if draft.action_type is DraftActionType.RECORD_EXPENSE:
         expense_category = str(fields.get("category", "")).strip() or "Uncategorized"
         category = "Expense"
@@ -154,6 +174,7 @@ def build_receipt_data(
             ],
         ]
         id_prefix = "EX"
+        accent, badge_icon = "#B45309", "store"
     elif draft.action_type is DraftActionType.RECORD_MATERIAL_RECEIPT:
         category = "Material receipt"
         value = _fmt_quantity(fields)
@@ -169,6 +190,7 @@ def build_receipt_data(
             ],
         ]
         id_prefix = "MR"
+        accent, badge_icon = "#0A8F4C", "layers"
     elif draft.action_type is DraftActionType.RECORD_LABOUR_ATTENDANCE:
         headcount, trades, named = _labour_summary(fields)
         category = "Labour attendance"
@@ -185,6 +207,7 @@ def build_receipt_data(
             ],
         ]
         id_prefix = "LA"
+        accent, badge_icon = "#7C3AED", "users"
     elif draft.action_type is DraftActionType.TRANSFER_MONEY:
         # Petty cash issue/return (Finance Slice 5) emits this same
         # DraftActionType as a plain transfer -- `direction` (only ever set
@@ -227,6 +250,7 @@ def build_receipt_data(
                 ]
             ]
             id_prefix = "TR"
+        accent, badge_icon = "#0891B2", "building"
         sections.append(
             [
                 ReceiptField("user", "Reported by", reporter),
@@ -243,6 +267,8 @@ def build_receipt_data(
         if target_kind == "activity":
             # ADR-D15: no monetary value to headline -- "Undone" in place of
             # an amount, matching this being a retraction, not a transaction.
+            # Renders through the activity template's muted "undone" ribbon
+            # treatment (template.py), not the record card's green "Saved" pill.
             category = "Undo"
             value = "Undone"
             summary = str(fields.get("reversal_activity_summary") or "Site activity")
@@ -254,6 +280,7 @@ def build_receipt_data(
                     ReceiptField("calendar", "Date", occurred_date),
                 ]
             ]
+            template_variant = "activity"
         elif target_kind == "transfer":
             from_name = str(fields.get("reversal_from_account_name") or "—")
             to_name = str(fields.get("reversal_to_account_name") or "—")
@@ -281,6 +308,7 @@ def build_receipt_data(
             ]
         )
         id_prefix = "RV"
+        accent, badge_icon = "#DC2626", "undo"
     elif draft.action_type is DraftActionType.MANAGE_MONEY_ACCOUNT:
         action = str(fields.get("action", "")).strip().lower()
         category = "Account"
@@ -308,6 +336,7 @@ def build_receipt_data(
             ]
         )
         id_prefix = "AC"
+        accent, badge_icon = "#475569", "building"
     elif draft.action_type is DraftActionType.RECORD_MATERIAL_USAGE:
         category = "Material usage"
         value = _fmt_quantity(fields)
@@ -323,6 +352,7 @@ def build_receipt_data(
             ],
         ]
         id_prefix = "MU"
+        accent, badge_icon = "#2563EB", "layers"
     elif draft.action_type is DraftActionType.CREATE_ACTIVITY:
         work_type = str(fields.get("work_type") or "Activity")
         category = "Site Activity"
@@ -339,6 +369,8 @@ def build_receipt_data(
             ],
         ]
         id_prefix = "AL"
+        accent, badge_icon = "#4F46E5", "hammer"
+        template_variant = "activity"
     elif draft.action_type is DraftActionType.ADD_PROGRESS_UPDATE:
         update_kind = str(fields.get("update_kind") or "PROGRESS").replace("_", " ")
         category = "Progress Update"
@@ -355,6 +387,8 @@ def build_receipt_data(
             ],
         ]
         id_prefix = "PU"
+        accent, badge_icon = "#4F46E5", "hammer"
+        template_variant = "activity"
     elif draft.action_type is DraftActionType.CORRECT_ACTIVITY_QUANTITY:
         # ADR-D14: old_quantity/old_unit are seeded straight from a real DB
         # read (runtime/inbound_journey.py's _seed_correction_target), never
@@ -367,12 +401,12 @@ def build_receipt_data(
         category = "Correction"
         value = f"{new_quantity} {new_unit}".strip()
         subtitle = "Quantity corrected"
+        # No "Quantity" field here -- the activity template renders the
+        # old->new change as a struck-through diff chip (data.correction
+        # below), so repeating it as a plain field would show it twice.
         sections = [
             [
                 ReceiptField("layers", "Activity", str(fields.get("correction_activity_summary") or "—")),
-                ReceiptField(
-                    "hammer", "Quantity", f"{old_quantity} {old_unit} → {new_quantity} {new_unit}".strip()
-                ),
             ],
             [
                 ReceiptField("user", "Reported by", reporter),
@@ -380,6 +414,12 @@ def build_receipt_data(
             ],
         ]
         id_prefix = "QC"
+        accent, badge_icon = "#B45309", "hammer"
+        template_variant = "activity"
+        correction = ReceiptCorrection(
+            old_value=f"{old_quantity} {old_unit}".strip(),
+            new_value=f"{new_quantity} {new_unit}".strip(),
+        )
     elif draft.action_type is DraftActionType.RECORD_SITE_ISSUE:
         issue_type = str(fields.get("issue_type") or "Issue").replace("_", " ")
         category = "Site Issue"
@@ -396,6 +436,7 @@ def build_receipt_data(
             ],
         ]
         id_prefix = "SI"
+        accent, badge_icon = "#EA580C", "hammer"
     elif draft.action_type is DraftActionType.CLOSE_SITE_ISSUE:
         action = str(fields.get("action") or "").replace("_", " ")
         issue_type = str(fields.get("site_issue_type") or "Issue").replace("_", " ")
@@ -413,6 +454,7 @@ def build_receipt_data(
             ],
         ]
         id_prefix = "SC"
+        accent, badge_icon = "#EA580C", "hammer"
     elif draft.action_type is DraftActionType.CREATE_PROJECT:
         category = "Project"
         value = "Created"
@@ -428,6 +470,7 @@ def build_receipt_data(
             ],
         ]
         id_prefix = "PJ"
+        accent, badge_icon = "#4F46E5", "building"
     elif draft.action_type is DraftActionType.CREATE_SITE:
         category = "Site"
         value = "Created"
@@ -443,6 +486,7 @@ def build_receipt_data(
             ],
         ]
         id_prefix = "ST"
+        accent, badge_icon = "#4F46E5", "building"
     else:
         # Defensive only -- every DraftActionType above is expected to have
         # an explicit case. A genuinely new, uncased type renders a generic
@@ -460,6 +504,7 @@ def build_receipt_data(
             ]
         ]
         id_prefix = "RC"
+        accent, badge_icon = "#0A8F4C", "layers"
 
     record_id = f"{id_prefix}-{confirmed_at:%d%m%y}-{record_row_id.replace('-', '')[:4].upper()}"
 
@@ -476,4 +521,8 @@ def build_receipt_data(
         record_id=record_id,
         saved_at=f"{confirmed_at:%d %b %Y · %I:%M %p}",
         logo_text="MESIRI AI",
+        accent=accent,
+        badge_icon=badge_icon,
+        template_variant=template_variant,
+        correction=correction,
     )

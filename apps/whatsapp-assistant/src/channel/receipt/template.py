@@ -1,10 +1,24 @@
 """HTML/CSS re-implementation of the user-supplied RecordCard React design.
 
-One template for every DraftActionType -- data.py decides what goes in each
-field, this file only decides how the card looks. Icons are simplified
-stroke-based SVGs (not a lucide-react port) since fidelity of the receipt's
-*data* matters far more than pixel-identical icon glyphs for a WhatsApp
-image; swap in real lucide SVG paths later if that gap ever matters.
+Two visual treatments driven by ``data.template_variant`` -- data.py decides
+what goes in each field and which variant applies, this file only decides how
+the card looks:
+
+- ``"record"`` (default): the original card -- brand top-left, green "Saved"
+  pill top-right. Every money/material/labour/site-issue/account/project/site
+  type uses this, each with its own ``accent``/``badge_icon`` (data.py) so
+  categories are distinguishable by color+icon without a different layout.
+- ``"activity"``: site activity create/progress/correction/undo. Same base
+  card, but the header leads with the category's badge icon in a colored
+  circle (a "site log entry", not a transaction receipt) instead of the brand
+  wordmark, a correction renders its old->new change as a struck-through diff
+  chip (``data.correction``) instead of a plain field, and an undo renders a
+  muted card with a red "UNDONE" ribbon in place of the green "Saved" pill.
+
+Icons are simplified stroke-based SVGs (not a lucide-react port) since
+fidelity of the receipt's *data* matters far more than pixel-identical icon
+glyphs for a WhatsApp image; swap in real lucide SVG paths later if that gap
+ever matters.
 """
 
 from __future__ import annotations
@@ -19,7 +33,6 @@ if TYPE_CHECKING:
 _INK = "#1D1D1F"
 _SUB = "#86868B"
 _LINE = "#E8E8ED"
-_ACCENT = "#0A8F4C"
 _WHATSAPP = "#25D366"
 
 # Simplified stroke-based icon glyphs, 24x24 viewBox, stroke=currentColor.
@@ -40,6 +53,9 @@ _ICONS: dict[str, str] = {
     "clock": '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
     "hash": '<line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="9" y1="4" x2="7" y2="20"/><line x1="17" y1="4" x2="15" y2="20"/>',
     "barchart": '<line x1="6" y1="20" x2="6" y2="13"/><line x1="12" y1="20" x2="12" y2="8"/><line x1="18" y1="20" x2="18" y2="4"/>',
+    # Reversal/undo badge -- a counter-clockwise arrow, distinct from "check"
+    # so an undone record never looks like a freshly-saved one at a glance.
+    "undo": '<path d="M3 11a8 8 0 1 1 2.6 6.2"/><path d="M3 4v7h7"/>',
 }
 
 
@@ -61,6 +77,8 @@ _CARD_TEMPLATE_SRC = (
   .card { max-width: 620px; margin: 0 auto; background: #FFFFFF; border-radius: 18px;
     padding: 16px 22px; box-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.05);
     border: 1px solid {{ line }}; }
+  .card.activity { border-left: 4px solid {{ accent }}; }
+  .card.undone { background: #F4F4F5; }
   .header { display: flex; align-items: center; justify-content: space-between; }
   .brand { display: flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 700;
     letter-spacing: 0.12em; color: {{ ink }}; }
@@ -69,8 +87,14 @@ _CARD_TEMPLATE_SRC = (
     padding: 5px 12px 5px 8px; }
   .saved-dot { width: 14px; height: 14px; border-radius: 50%; background: {{ accent }};
     display: flex; align-items: center; justify-content: center; }
+  .ribbon-undone { display: flex; align-items: center; gap: 6px; border-radius: 999px;
+    background: {{ accent }}; color: #fff; font-size: 11.5px; font-weight: 700;
+    letter-spacing: 0.04em; padding: 5px 12px; }
   .headline { display: flex; margin-top: 12px; gap: 16px; }
   .headline-main { flex: 1; }
+  .headline-category-row { display: flex; align-items: center; gap: 6px; }
+  .badge-circle { display: flex; align-items: center; justify-content: center; width: 20px; height: 20px;
+    border-radius: 50%; background: {{ accent }}22; flex-shrink: 0; }
   .headline-category { font-size: 12px; font-weight: 600; letter-spacing: 0.05em; color: {{ accent }}; }
   .headline-value { margin-top: 3px; font-size: 36px; font-weight: 700; line-height: 1;
     letter-spacing: -0.03em; color: {{ ink }}; }
@@ -89,20 +113,31 @@ _CARD_TEMPLATE_SRC = (
   .field-label { font-size: 11px; font-weight: 600; text-transform: uppercase;
     letter-spacing: 0.04em; color: {{ sub }}; }
   .field-value { margin-top: 2px; font-size: 14.5px; color: {{ ink }}; }
+  .diff-chip { display: flex; align-items: center; gap: 8px; }
+  .diff-old { text-decoration: line-through; color: {{ sub }}; }
+  .diff-arrow { color: {{ sub }}; }
+  .diff-new { font-weight: 700; color: {{ ink }}; }
   .footer { display: flex; align-items: center; justify-content: space-between; padding-top: 10px; }
   .footer-logo { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 700;
     letter-spacing: 0.03em; color: {{ sub }}; }
 </style></head>
 <body>
-  <div class="card">
+  <div class="card{{ ' activity' if data.template_variant == 'activity' else '' }}{{ ' undone' if data.category == 'Undo' else '' }}">
     <div class="header">
       <div class="brand">{{ icon_barchart }}{{ data.brand }}</div>
+      {% if data.category == 'Undo' %}
+      <div class="ribbon-undone">{{ icon_undo }}UNDONE</div>
+      {% else %}
       <div class="saved-pill"><span class="saved-dot">{{ icon_check }}</span>Saved</div>
+      {% endif %}
     </div>
 
     <div class="headline">
       <div class="headline-main">
-        <div class="headline-category">{{ data.category.upper() }}</div>
+        <div class="headline-category-row">
+          <span class="badge-circle">{{ icon_badge }}</span>
+          <div class="headline-category">{{ data.category.upper() }}</div>
+        </div>
         <div class="headline-value">{{ data.value }}</div>
         <div class="headline-subtitle">{{ data.subtitle }}</div>
       </div>
@@ -118,6 +153,23 @@ _CARD_TEMPLATE_SRC = (
     </div>
 
     <div class="hr"></div>
+
+    {% if data.correction %}
+    <div class="section" style="grid-template-columns: 1fr;">
+      <div class="section-col">
+        {{ icon('hammer') }}
+        <div>
+          <div class="field-label">Quantity</div>
+          <div class="field-value diff-chip">
+            <span class="diff-old">{{ data.correction.old_value }}</span>
+            <span class="diff-arrow">&rarr;</span>
+            <span class="diff-new">{{ data.correction.new_value }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="hr"></div>
+    {% endif %}
 
     {% for section in data.sections %}
     <div class="section" style="grid-template-columns: repeat({{ section|length }}, 1fr);">
@@ -173,11 +225,13 @@ def render_html(data: ReceiptData) -> str:
         ink=_INK,
         sub=_SUB,
         line=_LINE,
-        accent=_ACCENT,
+        accent=data.accent,
         icon=icon,
         icon_barchart=_icon_svg("barchart", size=16),
-        icon_barchart_accent=_icon_svg("barchart", size=13, color=_ACCENT),
+        icon_barchart_accent=_icon_svg("barchart", size=13, color=data.accent),
         icon_check=f'<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">{_ICONS["check"]}</svg>',
+        icon_undo=f'<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">{_ICONS["undo"]}</svg>',
+        icon_badge=_icon_svg(data.badge_icon, size=12, color=data.accent),
         icon_calendar=_icon_svg("calendar"),
         icon_clock=_icon_svg("clock"),
         icon_hash=_icon_svg("hash"),
