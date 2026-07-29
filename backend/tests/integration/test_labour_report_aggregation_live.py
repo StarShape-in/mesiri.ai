@@ -274,6 +274,63 @@ async def test_contractor_grouping_separates_named_from_unrecorded(engine, scena
     assert int(by_label["Kumar Agency"]["man_days"]) == 2
 
 
+async def test_worker_statistics_derive_days_and_earnings_from_attendance(engine, scenario):
+    """Ravi worked day one and day two at 1166.67 each. Two days, 2333.34 --
+    and nothing here came from his register wage of 2000."""
+    async with engine.connect() as conn:
+        repo = PostgresWorkforceReadRepository(conn)
+        stats = await repo.worker_statistics(organization_id=scenario["org"])
+
+    ravi = next(s for s in stats if str(s["worker_id"]) == str(scenario["permanent_worker"]))
+    assert int(ravi["days_worked"]) == 2
+    assert int(ravi["attendance_count"]) == 2
+    assert Decimal(str(ravi["total_earnings"])) == Decimal("2333.34")
+    assert ravi["first_seen"] == DAY_ONE
+    assert ravi["last_seen"] == DAY_TWO
+
+
+async def test_worker_statistics_include_an_unpromoted_temporary_worker(engine, scenario):
+    async with engine.connect() as conn:
+        repo = PostgresWorkforceReadRepository(conn)
+        stats = await repo.worker_statistics(organization_id=scenario["org"])
+
+    akhilesh = next(s for s in stats if (s["name"] or "").lower() == "akhilesh")
+    assert akhilesh["worker_id"] is None
+    assert int(akhilesh["days_worked"]) == 1
+    assert Decimal(str(akhilesh["total_earnings"])) == Decimal("820.10")
+
+
+async def test_worker_statistics_collect_every_trade_a_person_worked_under(engine, scenario):
+    async with engine.connect() as conn:
+        repo = PostgresWorkforceReadRepository(conn)
+        stats = await repo.worker_statistics(organization_id=scenario["org"])
+
+    ravi = next(s for s in stats if str(s["worker_id"]) == str(scenario["permanent_worker"]))
+    assert "mason" in [t for t in (ravi["trades"] or []) if t]
+
+
+async def test_worker_statistics_exclude_headcount_groups(engine, scenario):
+    """The 7-mason group has no name, so it cannot be credited to anyone."""
+    async with engine.connect() as conn:
+        repo = PostgresWorkforceReadRepository(conn)
+        stats = await repo.worker_statistics(organization_id=scenario["org"])
+
+    assert all(s["name"] or s["worker_id"] for s in stats)
+    assert sum(int(s["man_days"]) for s in stats) < 27
+
+
+async def test_worker_statistics_ignore_a_superseded_report(engine, scenario):
+    """Ghost appears on both the superseded report and its replacement. The
+    replacement is the only one that counts, so one day, not two."""
+    async with engine.connect() as conn:
+        repo = PostgresWorkforceReadRepository(conn)
+        stats = await repo.worker_statistics(organization_id=scenario["org"])
+
+    ghost = next(s for s in stats if (s["name"] or "").lower() == "ghost")
+    assert int(ghost["days_worked"]) == 1
+    assert int(ghost["man_days"]) == 18
+
+
 async def test_the_aggregate_agrees_with_the_per_report_totals(engine, scenario):
     """The guarantee that keeps the Reports page and the Attendance page from
     disagreeing about the same attendance: whatever list_reports totals for a

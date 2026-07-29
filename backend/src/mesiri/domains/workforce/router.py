@@ -39,7 +39,9 @@ from mesiri.domains.workforce.matching import MatchOutcome, ReportedWorker, matc
 from mesiri.domains.workforce.reports import (
     DEFAULT_REPORT_TYPE,
     AggregateRow,
+    WorkerStatisticsInput,
     build_statement,
+    build_worker_statistics,
     resolve_group_by,
 )
 from mesiri.domains.workforce.workers import (
@@ -248,6 +250,43 @@ class LabourReportStatementResponse(BaseModel):
     rows: list[LabourReportRow]
 
 
+class WorkerStatisticsResponse(BaseModel):
+    """One worker's attendance history, derived on read.
+
+    None of these are editable or stored. They are facts about what the
+    attendance record says happened, recomputed on every request so a
+    superseded or corrected report is reflected immediately.
+    """
+
+    key: str
+    #: None for a temporary worker who has never been promoted into the
+    #: register -- their identity is the name on the attendance line.
+    worker_id: uuid.UUID | None = None
+    name: str
+    is_registered: bool
+    #: Distinct dates present. Never an assumed 10 or 30.
+    days_worked: int
+    #: Reports they appear in. Higher than days_worked when someone is
+    #: recorded on two sites on the same day.
+    attendance_count: int
+    man_days: int
+    priced_man_days: int
+    unpriced_man_days: int
+    total_earnings: Money
+    avg_daily_wage: Money
+    first_seen: datetime.date | None = None
+    last_seen: datetime.date | None = None
+    #: Every trade/contractor they have actually worked under, not just the
+    #: current one on their register row.
+    trades: list[str] = []
+    contractors: list[str] = []
+
+
+class WorkerStatisticsListResponse(BaseModel):
+    items: list[WorkerStatisticsResponse]
+    total: int
+
+
 class LabourSettingsResponse(BaseModel):
     missing_report_reminder_enabled: bool = True
     missing_report_reminder_time: str = "18:00"
@@ -332,6 +371,99 @@ async def update_labour_settings(
         updated_by=user_id,
     )
     return LabourSettingsResponse(**current_dict)
+
+
+# ---------------------------------------------------------------------------
+# Worker statistics (derived from attendance, never stored)
+# ---------------------------------------------------------------------------
+
+@router.get("/workers/statistics", response_model=WorkerStatisticsListResponse)
+async def list_worker_statistics(
+    project_id: uuid.UUID | None = None,
+    site_id: uuid.UUID | None = None,
+    date_from: datetime.date | None = None,
+    date_to: datetime.date | None = None,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Attendance history for everyone who has actually worked.
+
+    Declared before /workers/{worker_id} so "statistics" is never parsed as a
+    worker id.
+
+    This lists people found in *attendance*, not people in the register, and
+    the two are deliberately different sets. A registered worker who has never
+    turned up has no history and does not appear; a temporary worker who has
+    never been promoted does appear, with worker_id null. Reporting only
+    registered workers would hide 30-60% of site attendance (principle P3).
+    """
+    project_ids, denied = _resolve_project_ids(auth_context, project_id)
+    if denied or _site_filter_denied(auth_context, project_id, site_id):
+        return {"items": [], "total": 0}
+
+    repo = PostgresWorkforceReadRepository(conn)
+    rows = await repo.worker_statistics(
+        organization_id=auth_context.organization_id,
+        project_ids=project_ids,
+        site_id=site_id,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    items = build_worker_statistics([_statistics_input(row) for row in rows])
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/workers/{worker_id}/statistics", response_model=WorkerStatisticsResponse)
+async def get_worker_statistics(
+    worker_id: uuid.UUID,
+    project_id: uuid.UUID | None = None,
+    site_id: uuid.UUID | None = None,
+    date_from: datetime.date | None = None,
+    date_to: datetime.date | None = None,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """One registered worker's attendance history.
+
+    404s when the worker has no attendance in scope, rather than returning a
+    zeroed record -- "no history" and "worked zero days" are different claims,
+    and the second one is the sort of confident nothing this refactor exists
+    to stop.
+    """
+    project_ids, denied = _resolve_project_ids(auth_context, project_id)
+    if denied or _site_filter_denied(auth_context, project_id, site_id):
+        raise HTTPException(status_code=404, detail="no attendance history for this worker")
+
+    repo = PostgresWorkforceReadRepository(conn)
+    rows = await repo.worker_statistics(
+        organization_id=auth_context.organization_id,
+        project_ids=project_ids,
+        site_id=site_id,
+        date_from=date_from,
+        date_to=date_to,
+        worker_id=worker_id,
+    )
+    items = build_worker_statistics([_statistics_input(row) for row in rows])
+    if not items:
+        raise HTTPException(status_code=404, detail="no attendance history for this worker")
+    return items[0]
+
+
+def _statistics_input(row: dict[str, Any]) -> WorkerStatisticsInput:
+    return WorkerStatisticsInput(
+        key=str(row["key"]),
+        worker_id=row["worker_id"],
+        name=row["name"],
+        days_worked=int(row["days_worked"] or 0),
+        attendance_count=int(row["attendance_count"] or 0),
+        man_days=int(row["man_days"] or 0),
+        priced_man_days=int(row["priced_man_days"] or 0),
+        total_earnings=Decimal(str(row["total_earnings"] or "0")),
+        first_seen=row["first_seen"],
+        last_seen=row["last_seen"],
+        trades=list(row["trades"] or []),
+        contractors=list(row["contractors"] or []),
+    )
 
 
 # ---------------------------------------------------------------------------

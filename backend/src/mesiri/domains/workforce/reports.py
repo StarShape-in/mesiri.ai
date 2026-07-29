@@ -196,6 +196,91 @@ def build_statement(
     }
 
 
+# ---------------------------------------------------------------------------
+# Worker statistics
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class WorkerStatisticsInput:
+    """One worker's attendance history straight from SQL.
+
+    `trades` and `contractors` arrive as Postgres arrays that may contain
+    NULLs, because the aggregate collects them without a FILTER clause.
+    """
+
+    key: str
+    worker_id: str | None
+    name: str | None
+    days_worked: int
+    attendance_count: int
+    man_days: int
+    priced_man_days: int
+    total_earnings: Decimal
+    first_seen: datetime.date | None
+    last_seen: datetime.date | None
+    trades: list[str | None] | None = None
+    contractors: list[str | None] | None = None
+
+
+def clean_history(values: list[str | None] | None) -> list[str]:
+    """Trades or contractors someone has actually worked under.
+
+    Deduplicated case-insensitively but presented in their original spelling,
+    with blanks and NULLs dropped -- a line that recorded no trade is not a
+    trade called "". Sorted so the same history renders identically on every
+    request.
+    """
+    if not values:
+        return []
+    seen: dict[str, str] = {}
+    for value in values:
+        if value is None:
+            continue
+        cleaned = value.strip()
+        if not cleaned:
+            continue
+        seen.setdefault(cleaned.lower(), cleaned)
+    return sorted(seen.values(), key=str.lower)
+
+
+def build_worker_statistics(rows: list[WorkerStatisticsInput]) -> list[dict]:
+    """Shape per-worker attendance history for the API.
+
+    Every field here is derived from recorded attendance. There is no stored
+    "days worked" to fall out of date, and nothing is editable -- which is the
+    point: these are facts about what happened, not settings on a person.
+    """
+    statistics = []
+    for row in rows:
+        earnings = row.total_earnings.quantize(_CENTS)
+        statistics.append(
+            {
+                "key": row.key,
+                "worker_id": row.worker_id,
+                "name": (row.name or "").strip() or "Unnamed worker",
+                # A worker with no register row was never promoted. Saying so
+                # is more useful than showing a blank id, and it is the cue to
+                # promote them if they keep appearing.
+                "is_registered": row.worker_id is not None,
+                "days_worked": row.days_worked,
+                "attendance_count": row.attendance_count,
+                "man_days": row.man_days,
+                "priced_man_days": row.priced_man_days,
+                "unpriced_man_days": row.man_days - row.priced_man_days,
+                "total_earnings": earnings,
+                "avg_daily_wage": average_daily_wage(earnings, row.priced_man_days),
+                "first_seen": row.first_seen,
+                "last_seen": row.last_seen,
+                "trades": clean_history(row.trades),
+                "contractors": clean_history(row.contractors),
+            }
+        )
+    # Most days worked first -- the register's most-used people are the ones a
+    # supervisor scans for. Name breaks ties so the order never wobbles
+    # between identical rows.
+    return sorted(statistics, key=lambda s: (-s["days_worked"], s["name"].lower()))
+
+
 def _ordered(group_by: str, rows: list[AggregateRow]) -> list[AggregateRow]:
     """Cost-descending for the groupings a reader scans to answer "where did
     the money go".

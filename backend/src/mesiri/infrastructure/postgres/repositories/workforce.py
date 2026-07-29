@@ -440,6 +440,113 @@ class PostgresWorkforceReadRepository:
 
         return [dict(row) for row in rows]
 
+    async def worker_statistics(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        project_ids: set[uuid.UUID] | None = None,
+        site_id: uuid.UUID | None = None,
+        date_from: datetime.date | None = None,
+        date_to: datetime.date | None = None,
+        worker_id: uuid.UUID | None = None,
+    ) -> list[dict[str, Any]]:
+        """Per-person attendance history, derived on read and never stored.
+
+        Days worked, first and last seen, earnings and the trades/contractors
+        someone has actually worked under are all facts *about the attendance
+        record*, not fields on the worker. Storing them would mean maintaining
+        a second copy that drifts the moment a report is superseded, and would
+        invite exactly the editable "days worked" field the whole refactor
+        exists to remove.
+
+        Covers everyone who worked, not everyone on the register: a temporary
+        worker has no workforce_workers row, so their identity is the name on
+        the line. Headcount groups are excluded -- "7 masons" has nobody to
+        attribute a day to.
+
+        `days_worked` is distinct dates; `attendance_count` is the number of
+        reports they appear in. The two differ when someone is recorded on two
+        sites on one day, and the difference is real information, not an error.
+        """
+        conditions = [
+            _labour_attendance_reports.c.organization_id == organization_id,
+            _labour_attendance_reports.c.id.notin_(_superseded_report_ids()),
+            sa.or_(
+                _labour_attendance_lines.c.worker_id.isnot(None),
+                _labour_attendance_lines.c.worker_name.isnot(None),
+            ),
+        ]
+        if project_ids is not None:
+            conditions.append(_labour_attendance_reports.c.project_id.in_(project_ids))
+        if site_id is not None:
+            conditions.append(_labour_attendance_reports.c.site_id == site_id)
+        if date_from is not None:
+            conditions.append(_labour_attendance_reports.c.occurred_date >= date_from)
+        if date_to is not None:
+            conditions.append(_labour_attendance_reports.c.occurred_date <= date_to)
+        if worker_id is not None:
+            conditions.append(_labour_attendance_lines.c.worker_id == worker_id)
+
+        key_expr = sa.func.coalesce(
+            sa.cast(_labour_attendance_lines.c.worker_id, sa.String),
+            sa.func.lower(sa.func.trim(_labour_attendance_lines.c.worker_name)),
+        )
+        headcount = sa.func.coalesce(_labour_attendance_lines.c.headcount, 1)
+        priced = _labour_attendance_lines.c.daily_wage.isnot(None)
+
+        rows = (
+            await self._conn.execute(
+                sa.select(
+                    key_expr.label("key"),
+                    sa.func.max(sa.cast(_labour_attendance_lines.c.worker_id, sa.String)).label(
+                        "worker_id"
+                    ),
+                    sa.func.max(_labour_attendance_lines.c.worker_name).label("name"),
+                    sa.func.count(sa.distinct(_labour_attendance_reports.c.occurred_date)).label(
+                        "days_worked"
+                    ),
+                    sa.func.count(sa.distinct(_labour_attendance_lines.c.report_id)).label(
+                        "attendance_count"
+                    ),
+                    sa.func.sum(headcount).label("man_days"),
+                    sa.func.coalesce(
+                        sa.func.sum(sa.case((priced, headcount), else_=0)), 0
+                    ).label("priced_man_days"),
+                    sa.func.coalesce(
+                        sa.func.sum(
+                            sa.case(
+                                (priced, headcount * _labour_attendance_lines.c.daily_wage),
+                                else_=0,
+                            )
+                        ),
+                        0,
+                    ).label("total_earnings"),
+                    sa.func.min(_labour_attendance_reports.c.occurred_date).label("first_seen"),
+                    sa.func.max(_labour_attendance_reports.c.occurred_date).label("last_seen"),
+                    # NULLs come back inside these arrays and are stripped in
+                    # Python rather than with a FILTER clause, which keeps the
+                    # statement compiling on the default dialect the unit tests
+                    # use.
+                    sa.func.array_agg(sa.distinct(_labour_attendance_lines.c.trade)).label(
+                        "trades"
+                    ),
+                    sa.func.array_agg(sa.distinct(_labour_attendance_lines.c.contractor)).label(
+                        "contractors"
+                    ),
+                )
+                .select_from(
+                    _labour_attendance_lines.join(
+                        _labour_attendance_reports,
+                        _labour_attendance_reports.c.id == _labour_attendance_lines.c.report_id,
+                    )
+                )
+                .where(*conditions)
+                .group_by(key_expr)
+            )
+        ).mappings().all()
+
+        return [dict(row) for row in rows]
+
     async def find_existing_report_for_day(
         self,
         organization_id: uuid.UUID,
