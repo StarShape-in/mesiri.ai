@@ -490,11 +490,11 @@ def _build_linked_activity_segment(primary: CanonicalEventV2, *, work_item: str)
 
     No required fields (ACTIVITY_CONTINUATION_REQUESTED needs none -- see
     canonicalization/mapping.py's REQUIRED_FIELDS): a bare narrative is a
-    complete, actionable continuation on its own (P10). If no open activity
-    exists to attach it to, workflows/activity_continuation/nodes.py's
-    build_draft already degrades to a clarifying "nothing to continue"
-    message with no draft -- the same safe, existing behavior a real
-    stand-alone continuation message gets.
+    complete, actionable continuation on its own (P10). Routed to the same
+    merged WorkflowKey.SITE_UPDATE as any other site update
+    (planner/routing.py); workflows/site_update/nodes.py's resolve_target
+    decides whether this appends to an open Activity or creates a new one
+    from this narrative, exactly as it would for a real stand-alone message.
     """
     return CanonicalEventV2(
         event_id=new_id("evt"),

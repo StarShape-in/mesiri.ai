@@ -13,11 +13,18 @@ answer.
 
 Scoped by reporter AND site, not just project: two engineers on the same
 site must never have their activities conflated, and neither should two
-sites on the same project. If more than one open activity matches (rare --
-one person with several simultaneous activities on the same site), the most
-recently updated one wins rather than asking -- a deliberate P10
-simplification for V1; a real disambiguation prompt is future work if this
-proves to happen often enough to matter.
+sites on the same project.
+
+`find_open_activity` (singular, most-recent-wins) still backs #2 Batch
+Media's photo-evidence attach (runtime/dependencies.py) -- there is no
+message text to compare a photo against, so recency really is the best
+available signal there, and a photo landing on the wrong-but-recent
+activity is a low-stakes mistake. `find_open_activities` (plural) backs the
+create-vs-continue resolver instead (workflows/site_update/matching.py):
+when there IS message text, recency alone is not enough (see
+docs/execution/ACTIVITY_RESOLUTION_AND_CORRECTION_PLAN.md's F1) -- the
+resolver needs every open candidate, not just the newest, to compare
+against what the message actually describes.
 
 Deliberately NOT filtered by "today's date": an IN_PROGRESS activity that
 spans past midnight (a late finish, or simply never marked complete) must
@@ -127,6 +134,77 @@ class ActivityQueryService:
             "narrative": row["narrative"],
             "status": row["status"],
         }
+
+    async def find_open_activities(
+        self,
+        *,
+        organization_id: str,
+        site_id: str | None,
+        reported_by_user_id: str | None,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Every open activity for this reporter on this site, most recently
+        updated first. Empty list when there is nothing open -- a normal,
+        common outcome (e.g. the first report of the day), not a failure.
+
+        `limit` is a sanity cap, not a real-world expectation -- one person
+        genuinely running ten simultaneous open activities on one site would
+        be unusual, but nothing here assumes it can't happen."""
+        if not site_id or not reported_by_user_id:
+            return []
+
+        import sqlalchemy as sa
+
+        try:
+            org_id = uuid.UUID(organization_id)
+            site_uuid = uuid.UUID(site_id)
+            reporter_uuid = uuid.UUID(reported_by_user_id)
+        except (TypeError, ValueError):
+            return []
+
+        activities = sa.table(
+            "activities",
+            sa.column("id"),
+            sa.column("organization_id"),
+            sa.column("site_id"),
+            sa.column("reported_by_user_id"),
+            sa.column("status", _ACTIVITY_STATUS_TYPE),
+            sa.column("work_type"),
+            sa.column("narrative"),
+            sa.column("deleted_at"),
+            sa.column("updated_at"),
+        )
+
+        query = (
+            sa.select(
+                activities.c.id,
+                activities.c.work_type,
+                activities.c.narrative,
+                activities.c.status,
+            )
+            .where(
+                activities.c.organization_id == org_id,
+                activities.c.site_id == site_uuid,
+                activities.c.reported_by_user_id == reporter_uuid,
+                activities.c.status.in_(_OPEN_STATUSES),
+                activities.c.deleted_at.is_(None),
+            )
+            .order_by(activities.c.updated_at.desc())
+            .limit(limit)
+        )
+
+        async with self._db.transaction() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+
+        return [
+            {
+                "activity_id": str(row["id"]),
+                "work_type": row["work_type"],
+                "narrative": row["narrative"],
+                "status": row["status"],
+            }
+            for row in rows
+        ]
 
     async def get_activity_if_open(
         self, *, organization_id: str, activity_id: str

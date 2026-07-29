@@ -31,6 +31,11 @@ _SIMPLE_EVENT_TYPE: dict[SemanticType, CanonicalEventType] = {
     # query_kind/target_kind/update_kind), so this belongs here rather than
     # in one of the _XXX_EVENT_TYPE split tables below.
     SemanticType.SITE_ISSUE: CanonicalEventType.SITE_ISSUE_REPORTED,
+    # No candidate-field split any more -- see the retired
+    # _SITE_UPDATE_KIND_EVENT_TYPE note below resolve_event_type. update_kind
+    # travels as a plain field, read as a hint by the workflow's own
+    # resolver, not used to pick a different CanonicalEventType.
+    SemanticType.GENERAL_SITE_UPDATE: CanonicalEventType.GENERAL_SITE_UPDATE_REQUESTED,
 }
 
 # MATERIAL_UPDATE is the one semantic type that splits by the candidate's
@@ -58,11 +63,13 @@ _PETTY_CASH_DIRECTION_EVENT_TYPE: dict[str, CanonicalEventType] = {
 
 # REVERSAL is the fourth semantic type that splits by a candidate field --
 # `target_kind` ("expense" -> void an expense + reverse its payment,
-# "transfer" -> reverse a transfer's ledger row directly), same pattern as
+# "transfer" -> reverse a transfer's ledger row directly, "activity" ->
+# undo a just-created Activity/Progress Update, ADR-D15), same pattern as
 # MATERIAL_UPDATE/direction above.
 _REVERSAL_TARGET_EVENT_TYPE: dict[str, CanonicalEventType] = {
     "expense": CanonicalEventType.EXPENSE_REVERSAL_REQUESTED,
     "transfer": CanonicalEventType.TRANSFER_REVERSAL_REQUESTED,
+    "activity": CanonicalEventType.ACTIVITY_REVERSAL_REQUESTED,
 }
 
 # SITE_ISSUE_UPDATE splits by the candidate's `action` field -- same pattern
@@ -74,21 +81,24 @@ _SITE_ISSUE_ACTION_EVENT_TYPE: dict[str, CanonicalEventType] = {
     "wont_fix": CanonicalEventType.SITE_ISSUE_WONT_FIX_REQUESTED,
 }
 
-# GENERAL_SITE_UPDATE is the fifth semantic type that splits by a candidate
-# field -- `update_kind` (PROGRESS/PAUSED/RESUMED/COMPLETED -> the message is
-# about work already in progress, so it continues an existing Activity;
-# absent or STARTED -> a new Activity), same pattern as MATERIAL_UPDATE/
-# direction above. Unlike the other splits, an unrecognized/missing
-# `update_kind` does NOT fall back to UNRECOGNIZED -- it means "new activity",
-# which is the correct default for a plain site update with no continuation
-# language (docs/execution/DAILY_REPORTING_PLAN.md P10: never block capture
-# on a classification the AI didn't confidently make).
-_SITE_UPDATE_KIND_EVENT_TYPE: dict[str, CanonicalEventType] = {
-    "progress": CanonicalEventType.ACTIVITY_CONTINUATION_REQUESTED,
-    "paused": CanonicalEventType.ACTIVITY_CONTINUATION_REQUESTED,
-    "resumed": CanonicalEventType.ACTIVITY_CONTINUATION_REQUESTED,
-    "completed": CanonicalEventType.ACTIVITY_CONTINUATION_REQUESTED,
-}
+# GENERAL_SITE_UPDATE used to split by `update_kind` here (PROGRESS/PAUSED/
+# RESUMED/COMPLETED -> a dedicated ACTIVITY_CONTINUATION_REQUESTED event
+# type, same pattern as MATERIAL_UPDATE/direction above). That split was
+# retired (docs/execution/ACTIVITY_RESOLUTION_AND_CORRECTION_PLAN.md): it
+# decided create-vs-continue from the extracted word alone, before any
+# open-activity lookup, which could silently append to the wrong Activity
+# (F1) or dead-end when nothing was open (F2). GENERAL_SITE_UPDATE now
+# always resolves to GENERAL_SITE_UPDATE_REQUESTED (see _SIMPLE_EVENT_TYPE
+# below); `update_kind` still travels as a plain field -- it's read as a
+# *hint*, not a router, by workflows/site_update/matching.py's scorer,
+# which runs after the open-activity list is known.
+#
+# CanonicalEventType.ACTIVITY_CONTINUATION_REQUESTED is not dead: it still
+# has one live producer, canonicalization/builder.py's
+# `_build_linked_activity_segment` (the second segment synthesized when a
+# material usage names a work_item). planner/routing.py routes it to the
+# same merged WorkflowKey.SITE_UPDATE as GENERAL_SITE_UPDATE_REQUESTED, so
+# it goes through the identical resolver.
 
 # Business fields required for an event of this type to be ACTIONABLE.
 # Question/Unrecognized events require nothing — they carry no business record.
@@ -125,6 +135,7 @@ REQUIRED_FIELDS: dict[CanonicalEventType, tuple[str, ...]] = {
     # stated by the user.
     CanonicalEventType.EXPENSE_REVERSAL_REQUESTED: (),
     CanonicalEventType.TRANSFER_REVERSAL_REQUESTED: (),
+    CanonicalEventType.ACTIVITY_REVERSAL_REQUESTED: (),
     # Only `action` -- the action-specific fields (name / target_name+
     # new_name / target_name) can't be expressed here since one
     # CanonicalEventType covers all three actions (see resolve_event_type's
@@ -195,9 +206,4 @@ def resolve_event_type(semantic_type: SemanticType, fields: dict) -> CanonicalEv
     if semantic_type is SemanticType.SITE_ISSUE_UPDATE:
         action = str(fields.get("action", "")).strip().lower()
         return _SITE_ISSUE_ACTION_EVENT_TYPE.get(action, CanonicalEventType.UNRECOGNIZED)
-    if semantic_type is SemanticType.GENERAL_SITE_UPDATE:
-        update_kind = str(fields.get("update_kind", "")).strip().lower()
-        return _SITE_UPDATE_KIND_EVENT_TYPE.get(
-            update_kind, CanonicalEventType.GENERAL_SITE_UPDATE_REQUESTED
-        )
     return _SIMPLE_EVENT_TYPE.get(semantic_type, CanonicalEventType.UNRECOGNIZED)

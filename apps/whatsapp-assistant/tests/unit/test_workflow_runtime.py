@@ -610,11 +610,6 @@ def test_informational_and_no_draft_keys_are_pinned() -> None:
         WorkflowKey.REVERSE,
         WorkflowKey.EXPENSE_SUBMIT,
         WorkflowKey.ACCOUNT_ADMIN,
-        # Same reasoning as REVERSE: the target activity is resolved by
-        # seeding (runtime/inbound_journey.py's _seed_open_activity), never
-        # stated by the user, so a bare narrative ("finished") is a complete,
-        # actionable continuation with no draft fields to fill.
-        WorkflowKey.ACTIVITY_CONTINUATION,
         # Same reasoning as REVERSE: the target issue is resolved by seeding
         # (runtime/inbound_journey.py's _seed_site_issue_close_target), never
         # stated by the user -- "nothing to acknowledge/resolve/wont_fix" is

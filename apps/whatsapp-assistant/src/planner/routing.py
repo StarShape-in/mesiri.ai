@@ -39,4 +39,5 @@ WORKFLOW_KEY_BY_EVENT: dict[CanonicalEventType, WorkflowKey] = {
     CanonicalEventType.PETTY_CASH_RETURN_REQUESTED: WorkflowKey.PETTY_CASH,
     CanonicalEventType.EXPENSE_REVERSAL_REQUESTED: WorkflowKey.REVERSE,
     CanonicalEventType.TRANSFER_REVERSAL_REQUESTED: WorkflowKey.REVERSE,
+    CanonicalEventType.ACTIVITY_REVERSAL_REQUESTED: WorkflowKey.REVERSE,
 }

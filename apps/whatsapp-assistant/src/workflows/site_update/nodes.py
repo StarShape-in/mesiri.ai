@@ -1,20 +1,34 @@
-"""Activity creation workflow nodes — pure functions, no LangGraph, no I/O, no SQL.
+"""Activity Creation & Continuation workflow nodes — pure functions, no LangGraph, no I/O, no SQL.
 
-Mirrors workflows/material/nodes.py's shape: single-pass build_draft ->
-request_confirmation, no slot-filling loop. Unlike Labour's worker matching,
-nothing here needs to ask a mid-workflow disambiguation question in V1 --
-location and work package resolution are resolution-gate concerns (plan
-§1B.2, `workflows/shared/resolve_location.py`, not yet built) that run
-*before* this graph via the same pattern Material's inbound_journey gate
-uses, not inside it. This graph's only job is: build the draft from whatever
-fields already made it through resolution, then show the confirmation.
+Merges what used to be two separate workflows (site_update's "always create
+a new Activity" and activity_continuation's "always append to whichever
+activity_id the caller was handed") into one, per docs/execution/
+ACTIVITY_RESOLUTION_AND_CORRECTION_PLAN.md. The reason: deciding
+create-vs-continue purely from the extracted `update_kind` word, before any
+open-activity lookup, produced two real bugs --
 
-P10 (optimize for speed of recording) governs every field here: a missing
-quantity, location, or work package is never blocking. `application/progress/
-mapper.py`'s `build_create_activity_command` and `domains/progress/
-validation.py`'s `validate_create_activity` are what actually decide whether
-a report is usable — this graph never repeats those rules, it only shapes
-what the user is shown before confirming.
+  F1 (wrong target): "finished plastering" appended to whichever open
+  activity was most recently touched, even if it was blockwork.
+
+  F2 (dead end): a continuation message with nothing open told the user to
+  redescribe their report from scratch instead of just creating one.
+
+`resolve_target` is the fix: it scores every open activity
+(runtime/inbound_journey.py's `_seed_open_activity` seeds the candidate
+list, same "a node must never query a repository itself" rule every other
+resolution gate in this repo follows) against this message's own
+`work_type`, via workflows/site_update/matching.py, and only asks when
+there is genuine ambiguity. `build_draft` then branches on whether that
+resolution left `activity_id` set.
+
+Field names read here (`work_type`, `quantities`, `narrative`,
+`location_id`, `work_package_id`, `contractor`, `activity_date`,
+`activity_id`, `update_kind`, `quantity`, `unit`) are exactly what
+application/progress/mapper.py's `build_create_activity_command` /
+`build_add_progress_update_command` read out of
+`confirmed.draft_action.fields` -- this is the one place upstream of that
+mapper that decides the field names, so a rename on either side must change
+both.
 """
 
 from __future__ import annotations
@@ -25,20 +39,169 @@ from mesiri_contracts.assistant.draft_action import DraftActionType
 from mesiri_contracts.assistant.v2.draft_action import DraftActionV2
 from mesiri_contracts.common.ids import new_id
 
+from ..slots import SlotCandidate, match_slot_answer, slot_options
 from ..state import WorkflowGraphState
+from .matching import ActivityCandidate, MatchOutcome
+from .matching import resolve_target as score_open_activities
+
+_TARGET_SLOT_NAME = "activity_target"
+#: Chosen when the user says none of the offered candidates are right --
+#: always offered alongside them (see `_to_slot_candidates`), since a picker
+#: that could only ever pick an existing activity would have no way to
+#: correct a wrong guess about there being an ambiguity at all.
+NEW_ACTIVITY_SENTINEL = "new_activity"
+_NEW_WORK_LABEL = "This is new work"
+
+#: Plumbing carried through collected_fields between passes -- never a real
+#: business field, must never reach draft.fields or the confirmation prompt.
+_RESOLUTION_PLUMBING_KEYS = frozenset(
+    {"_open_activity_candidates", "_target_resolved", "_slot_answer_text"}
+)
+
+
+def _candidate_label(work_type: str | None, narrative: str | None) -> str:
+    bits = [b for b in (work_type, narrative) if b]
+    return " — ".join(bits) if bits else "Untitled activity"
+
+
+def _to_slot_candidates(items) -> list[SlotCandidate]:
+    """Build the picker's choices from anything shaped like an activity
+    (ActivityCandidate or matching.ScoredActivity both qualify -- same three
+    attributes). Always ends with the "this is new work" escape hatch."""
+    options = [
+        SlotCandidate(value=item.activity_id, label=_candidate_label(item.work_type, item.narrative))
+        for item in items
+    ]
+    options.append(SlotCandidate(value=NEW_ACTIVITY_SENTINEL, label=_NEW_WORK_LABEL))
+    return options
+
+
+def _build_target_prompt(items) -> str:
+    lines = ["Which work is this about?", ""]
+    lines.extend(
+        f"{i}. {_candidate_label(item.work_type, item.narrative)}" for i, item in enumerate(items, start=1)
+    )
+    lines.append(f"{len(items) + 1}. {_NEW_WORK_LABEL}")
+    lines.append("")
+    lines.append("Reply with a number, or just tell me which one.")
+    return "\n".join(lines)
+
+
+def _raw_candidates(fields: dict) -> list[ActivityCandidate]:
+    """The open-activity list seeded by runtime/inbound_journey.py's
+    `_seed_open_activity`, as plain JSON-safe dicts (this state is persisted
+    with model_dump_json() between messages, so nothing richer survives)."""
+    raw = fields.get("_open_activity_candidates") or []
+    return [
+        ActivityCandidate(
+            activity_id=str(c["activity_id"]), work_type=c.get("work_type"), narrative=c.get("narrative")
+        )
+        for c in raw
+        if isinstance(c, dict) and c.get("activity_id")
+    ]
+
+
+def _apply_match(fields: dict, *, activity_id: str, work_type: str | None, narrative: str | None) -> dict:
+    resolved = dict(fields)
+    resolved["activity_id"] = activity_id
+    summary_bits = [b for b in (work_type, narrative) if b]
+    if summary_bits:
+        resolved["activity_summary"] = " — ".join(summary_bits)
+    resolved["_target_resolved"] = True
+    resolved.pop("_open_activity_candidates", None)
+    return resolved
+
+
+def resolve_target(state: WorkflowGraphState) -> dict:
+    """Decide whether this message continues an open Activity or starts a
+    new one. See module docstring for what this replaces and why.
+
+    Already resolved (a remembered activity_id already won outright during
+    seeding -- see runtime/inbound_journey.py's `_seed_open_activity`
+    docstring on precedence -- or a prior pass in this same run already
+    decided) -> no-op.
+
+    Otherwise scores every seeded candidate against this message's own
+    work_type/update_kind (workflows/site_update/matching.py).
+    AUTO_MATCHED sets activity_id silently; NO_MATCH leaves it unset
+    (build_draft then creates a new Activity -- the fix for F2); ASK_USER
+    sets awaiting_slot and ends this pass with a picker that always
+    includes "this is new work" (the fix for F1: a clash or real ambiguity
+    must never resolve to a silent guess).
+    """
+    fields = dict(state.get("collected_fields") or {})
+    if fields.get("activity_id") or fields.get("_target_resolved"):
+        return {"collected_fields": fields}
+
+    candidates = _raw_candidates(fields)
+    answer_text = fields.pop("_slot_answer_text", None)
+
+    if answer_text is not None:
+        options = _to_slot_candidates(candidates)
+        matched = match_slot_answer(answer_text, options)
+        if matched is None:
+            return {
+                "collected_fields": fields,
+                "awaiting_slot": _TARGET_SLOT_NAME,
+                "awaiting_slot_options": slot_options(options),
+                "pending_prompt": f"Sorry, I didn't catch that.\n\n{_build_target_prompt(candidates)}",
+            }
+        if matched == NEW_ACTIVITY_SENTINEL:
+            fields["_target_resolved"] = True
+            fields.pop("_open_activity_candidates", None)
+            return {"collected_fields": fields, "awaiting_slot": None}
+        chosen = next(c for c in candidates if c.activity_id == matched)
+        return {
+            "collected_fields": _apply_match(
+                fields, activity_id=chosen.activity_id, work_type=chosen.work_type, narrative=chosen.narrative
+            ),
+            "awaiting_slot": None,
+        }
+
+    result = score_open_activities(
+        message_work_type=fields.get("work_type"),
+        update_kind=fields.get("update_kind"),
+        candidates=candidates,
+    )
+
+    if result.outcome is MatchOutcome.AUTO_MATCHED:
+        best = result.candidates[0]
+        return {
+            "collected_fields": _apply_match(
+                fields, activity_id=best.activity_id, work_type=best.work_type, narrative=best.narrative
+            )
+        }
+    if result.outcome is MatchOutcome.NO_MATCH:
+        fields["_target_resolved"] = True
+        fields.pop("_open_activity_candidates", None)
+        return {"collected_fields": fields}
+
+    # ASK_USER
+    options = _to_slot_candidates(result.candidates)
+    return {
+        "collected_fields": fields,
+        "awaiting_slot": _TARGET_SLOT_NAME,
+        "awaiting_slot_options": slot_options(options),
+        "pending_prompt": _build_target_prompt(result.candidates),
+    }
 
 
 def build_draft(state: WorkflowGraphState) -> dict:
-    """Map collected fields into a DraftAction. Shape-mapping only — no validation.
+    """Map collected fields into a DraftAction. Shape-mapping only — no
+    validation. Branches on whether `resolve_target` left `activity_id`
+    set: present -> append a Progress Update to that Activity; absent ->
+    create a new one."""
+    fields = {
+        key: value
+        for key, value in (state.get("collected_fields") or {}).items()
+        if key not in _RESOLUTION_PLUMBING_KEYS
+    }
+    if fields.get("activity_id"):
+        return _build_continuation_draft(state, fields)
+    return _build_creation_draft(state, fields)
 
-    Field names here (`work_type`, `quantities`, `narrative`, `location_id`,
-    `work_package_id`, `contractor`, `activity_date`) are exactly what
-    `application/progress/mapper.py`'s `build_create_activity_command` reads
-    out of `confirmed.draft_action.fields` — this is the one place upstream
-    of that mapper that decides the field names, so a rename on either side
-    must change both.
-    """
-    fields = dict(state.get("collected_fields") or {})
+
+def _build_creation_draft(state: WorkflowGraphState, fields: dict) -> dict:
     draft = DraftActionV2(
         draft_id=new_id("draft"),
         correlation_id=state["correlation_id"],
@@ -53,11 +216,58 @@ def build_draft(state: WorkflowGraphState) -> dict:
     return {"draft_action": draft}
 
 
+def _build_continuation_draft(state: WorkflowGraphState, fields: dict) -> dict:
+    """`AddProgressUpdateCommand.quantity`/`.unit` are singular
+    (application/progress/mapper.py's `build_add_progress_update_command`),
+    but general_site_update extraction always fills the plural `quantities`
+    array (platform/ai's extraction prompt has no singular-quantity shape at
+    all) -- so a continuation message stating an amount via that array
+    silently lost it before this fold existed. V1 takes the first quantity
+    line only: AddProgressUpdateCommand has no way to carry more than one
+    (a real gap if a continuation message ever states two unrelated
+    quantities in one message, which P10 narrative-only capture makes rare
+    enough to accept for now)."""
+    folded = dict(fields)
+    if folded.get("quantity") is None:
+        raw_quantities = folded.get("quantities")
+        if isinstance(raw_quantities, list) and raw_quantities:
+            first = raw_quantities[0]
+            if isinstance(first, dict):
+                folded.setdefault("quantity", first.get("quantity"))
+                folded.setdefault("unit", first.get("unit"))
+    folded.pop("quantities", None)
+
+    draft = DraftActionV2(
+        draft_id=new_id("draft"),
+        correlation_id=state["correlation_id"],
+        workflow_instance_id=state["workflow_instance_id"],
+        action_type=DraftActionType.ADD_PROGRESS_UPDATE,
+        organization_id=state["organization_id"],
+        user_id=state["user_id"],
+        project_id=state.get("project_id"),
+        site_id=state.get("site_id"),
+        fields=folded,
+    )
+    return {"draft_action": draft}
+
+
+def request_confirmation(state: WorkflowGraphState) -> dict:
+    """Compose the confirmation prompt — the gate nothing is persisted
+    before (principle P2). Branches on the draft's action_type, since
+    creation and continuation show different shapes."""
+    draft: DraftActionV2 = state["draft_action"]
+    if draft.action_type is DraftActionType.ADD_PROGRESS_UPDATE:
+        return _request_continuation_confirmation(draft)
+    return _request_creation_confirmation(draft)
+
+
+# --- Creation confirmation ---------------------------------------------------
+
 # Rendered by dedicated lines below (quantities as a bulleted list, the date
 # with its "(assumed today)" qualifier), not as raw key:value lines -- shown
 # unformatted they would be unreadable exactly when the user most needs to
 # check them. Internal plumbing fields are hidden outright.
-_DISPLAY_HIDDEN_FIELD_KEYS = frozenset(
+_CREATION_DISPLAY_HIDDEN_FIELD_KEYS = frozenset(
     {
         "quantities",
         "occurred_date",
@@ -110,18 +320,12 @@ def _quantity_line(entry: dict) -> str | None:
     return f"   • {label}"
 
 
-def request_confirmation(state: WorkflowGraphState) -> dict:
-    """Compose the confirmation prompt — the gate nothing is persisted before
-    (principle P2). Deterministic formatting only, matching every other v1
-    workflow's confirmation node -- no localization/templates/AI generation.
-
-    Project, site, location and work package are shown by name when the
+def _request_creation_confirmation(draft: DraftActionV2) -> dict:
+    """Project, site, location and work package are shown by name when the
     caller seeded them (`*_name` fields, mirroring Labour's project_name/
     site_name convention) and omitted otherwise: a bare UUID is worse than
     saying nothing, and a nullable location/work package (P4) is a normal,
-    expected state for this confirmation to render correctly regardless.
-    """
-    draft: DraftActionV2 = state["draft_action"]
+    expected state for this confirmation to render correctly regardless."""
     fields = draft.fields
 
     out = ["*Confirm this record?*", "", "🏗️ Site Activity"]
@@ -164,7 +368,67 @@ def request_confirmation(state: WorkflowGraphState) -> dict:
                     out.append(line)
 
     for key, value in fields.items():
-        if key in _DISPLAY_HIDDEN_FIELD_KEYS:
+        if key in _CREATION_DISPLAY_HIDDEN_FIELD_KEYS:
+            continue
+        out.append(f"   • {key}: {value}")
+
+    out.append("")
+    out.append("Reply YES to confirm or NO to cancel.")
+    return {"pending_prompt": "\n".join(out)}
+
+
+# --- Continuation confirmation -----------------------------------------------
+
+_UPDATE_KIND_LABEL: dict[str, str] = {
+    "STARTED": "Started",
+    "PROGRESS": "Progress update",
+    "PAUSED": "Paused",
+    "RESUMED": "Resumed",
+    "COMPLETED": "Completed",
+    "NOTE": "Note",
+}
+
+_CONTINUATION_DISPLAY_HIDDEN_FIELD_KEYS = frozenset(
+    {
+        "activity_id",
+        "update_kind",
+        "quantity",
+        "unit",
+        "unit_id",
+        "narrative",
+        "activity_summary",
+        "occurred_at",
+        "occurred_date_source",
+        "source",
+    }
+)
+
+
+def _request_continuation_confirmation(draft: DraftActionV2) -> dict:
+    fields = draft.fields
+
+    kind = str(fields.get("update_kind") or "PROGRESS").upper()
+    label = _UPDATE_KIND_LABEL.get(kind, "Progress update")
+
+    out = ["*Confirm this update?*", "", f"🏗️ {label}"]
+
+    activity_summary = fields.get("activity_summary")
+    if activity_summary:
+        out.append(f"   • Activity: {activity_summary}")
+
+    narrative = fields.get("narrative")
+    if narrative:
+        out.append("")
+        out.append(f'   "{narrative}"')
+
+    quantity = fields.get("quantity")
+    unit = fields.get("unit")
+    if quantity is not None and unit:
+        out.append("")
+        out.append(f"   • {quantity} {unit}")
+
+    for key, value in fields.items():
+        if key in _CONTINUATION_DISPLAY_HIDDEN_FIELD_KEYS:
             continue
         out.append(f"   • {key}: {value}")
 

@@ -219,9 +219,7 @@ def render_evidence_attached_reply(*, count: int, activity_summary: str | None) 
 def render_no_open_activity_for_evidence_reply() -> str:
     """Honest reply when a "Site Update" photo batch has nothing open to
     attach to -- never silently dropped (P1: there is nothing here to
-    attach evidence onto, same reasoning as
-    workflows/activity_continuation/nodes.py's own "nothing to continue"
-    message)."""
+    attach evidence onto)."""
     return (
         "📷 Got your photo(s), but there's no activity in progress right now to attach "
         "them to. Describe the work first (e.g. \"started plastering Block A\"), then "

@@ -57,11 +57,11 @@ class ConversationMemoryCoordinator:
 
     async def record_activity(self, *, user_id: str, activity_id: str) -> None:
         """Call when a CREATE_ACTIVITY or ADD_PROGRESS_UPDATE draft is
-        confirmed -- see workflows/site_update/nodes.py and
-        workflows/activity_continuation/nodes.py for where activity_id comes
-        from. This is what lets the *next* continuation message in the same
-        conversation prefer this activity over runtime.activity_query's
-        site-wide "most recently updated" guess."""
+        confirmed -- see workflows/site_update/nodes.py for where
+        activity_id comes from. This is what lets the *next* site update
+        message in the same conversation prefer this activity outright,
+        ahead of runtime/activity_query.py's candidate-list lookup and
+        workflows/site_update/matching.py's scoring."""
         try:
             await self._current_activity.set_current(user_id=user_id, activity_id=activity_id)
         except Exception:  # noqa: BLE001

@@ -17,7 +17,6 @@ from mesiri_contracts.assistant.planner_decision import WorkflowKey
 
 from .account_admin.graph import build_account_admin_graph
 from .account_balance_query.graph import build_account_balance_query_graph
-from .activity_continuation.graph import build_activity_continuation_graph
 from .activity_query.graph import build_activity_query_graph
 from .dpr_request.graph import build_dpr_request_graph
 from .expense_capture.graph import build_expense_capture_graph
@@ -164,16 +163,19 @@ _DEFINITIONS: dict[WorkflowKey, WorkflowDefinition] = dict(
             WorkflowCategory.LABOUR,
             is_informational=True,
         ),
+        # Handles both "start a new Activity" and "append a Progress Update
+        # to an existing one" -- the separate WorkflowKey.ACTIVITY_
+        # CONTINUATION registry entry was retired when the two were merged
+        # (docs/execution/ACTIVITY_RESOLUTION_AND_CORRECTION_PLAN.md): which
+        # of the two a message means is now decided inside the graph itself
+        # (workflows/site_update/nodes.py's resolve_target), not by routing
+        # to a different WorkflowKey. The contract enum member
+        # WorkflowKey.ACTIVITY_CONTINUATION still exists for old persisted
+        # workflow_state rows; nothing produces it any more.
         _define(
             WorkflowKey.SITE_UPDATE,
             build_activity_creation_graph,
             WorkflowCategory.PROGRESS,
-        ),
-        _define(
-            WorkflowKey.ACTIVITY_CONTINUATION,
-            build_activity_continuation_graph,
-            WorkflowCategory.PROGRESS,
-            allows_completion_without_draft=True,
         ),
         _define(
             WorkflowKey.WORKER_PROMOTION,
