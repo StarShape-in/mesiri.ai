@@ -36,6 +36,7 @@ from runtime.activity_query import ActivityQueryService
 from runtime.activity_search_service import ActivitySearchService
 from runtime.dpr_request_query import DprRequestQueryService
 from runtime.duplicate_expense_query import DuplicateExpenseQueryService
+from runtime.entity_resolution.material_resolution import classify_material_matches
 from runtime.entity_resolution.member_resolution import MemberNameResolutionService
 from runtime.expense_query_service import ExpenseQueryService, resolve_date_range
 from runtime.inbound_journey._shared import _log
@@ -127,6 +128,10 @@ async def _run_material_unit_gates(
     (None) rather than dropping the reply entirely, same principle as the
     project-selection gate below.
     """
+    # Function-level, mirroring _run_member_name_gate's own import of the
+    # same vocabulary below.
+    from workflows.entities import Ambiguous, Resolved
+
     material_id = canonical_event.fields.get("material_id")
     material: dict | None = None
 
@@ -144,12 +149,24 @@ async def _run_material_unit_gates(
             )
             return None
 
-        if len(matches) == 1:
-            material = matches[0]
-            canonical_event.fields["material_id"] = str(material["id"])
-        elif len(matches) > 1:
+        # Phase 3 (ENTITY_RESOLUTION_PLAN.md §5): the same
+        # Resolved/Ambiguous/Missing vocabulary _run_member_name_gate speaks,
+        # over the catalog's own SQL matching rather than difflib scoring --
+        # see runtime/entity_resolution/material_resolution.py for why
+        # materials need only that half of the layer.
+        outcome = classify_material_matches(str(name), matches)
+
+        if isinstance(outcome, Resolved):
+            # The full row, not just the outcome's id/name -- the unit gate
+            # below needs default_unit_id, which the shared Resolved
+            # deliberately does not carry (it is entity-agnostic).
+            material = next(m for m in matches if str(m["id"]) == outcome.entity_id)
+            canonical_event.fields["material_id"] = outcome.entity_id
+        elif isinstance(outcome, Ambiguous):
             await pending_report_store.set_pending(user_id=actor_user_id, event=canonical_event)
-            return render_material_picker([(str(c["id"]), c["name"]) for c in matches])
+            return render_material_picker(
+                [(c.entity_id, c.display_name) for c in outcome.candidates]
+            )
         else:
             # The reported name matched nothing. Offering to add it is
             # checked BEFORE the whole-catalog fallback picker below: once

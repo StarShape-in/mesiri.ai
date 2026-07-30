@@ -243,6 +243,49 @@ whose good behaviour already exists, so if the generic mechanism cannot express
 it without special-casing, the abstraction is wrong and should be reconsidered
 rather than forced.
 
+### 5.1 Phase 3 result (shipped 2026-07-30)
+
+**Verdict: the abstraction holds, but it is two things, not one.** Materials
+migrated onto the shared vocabulary with no special-casing and no behaviour
+change — all 39 existing material gate/resume tests passed untouched, which is
+the correctness check this phase was defined to be. Two findings, both recorded
+in `runtime/entity_resolution/material_resolution.py`'s module docstring:
+
+**Finding 1 — the layer splits into a matching half and a vocabulary half, and
+each entity needs only what it needs.** `member_resolution.py` supplies both to
+USER: difflib near-match scoring *and* `Resolved`/`Ambiguous`/`Missing`.
+Materials need only the vocabulary — their matching already happens in SQL
+(`find_by_name_exact_active`, then `find_by_name_fuzzy`'s substring/ILIKE) and
+substring is genuinely the better technique for a curated catalog: "cement"
+must match "OPC Cement 53 Grade", which difflib scores at 0.35 and would throw
+away. Phase 3 therefore did **not** re-implement scoring for materials. This is
+the abstraction being honest, not a gap in it — and it is the shape Phase 4
+should expect, since ACCOUNT/VENDOR are catalog-like (SQL matching) while
+AUDIENCE is person-like (scoring).
+
+**Finding 2 — MATERIAL deliberately gets no `EntityType` member.** `EntityType`
+answers "which workflow provides a missing X?", and *no workflow provides
+MATERIAL*: a catalog entry is created by a direct `create_material` write inside
+`_create_material_and_resume`, not by a confirmed workflow the way CREATE_USER
+is. Adding the member would make `workflow_that_provides(MATERIAL)` return
+`None` — a lie in the one table whose entire purpose is answering that question.
+So §3's chaining half (insert a step → run the provider workflow → resume) does
+not apply to materials at all, and the create-offer/resume legs in `resume.py`
+are untouched. **Phase 4 should check this per entity before assuming a
+provider exists.**
+
+**One tension left deliberately unresolved.** A *single* substring match
+auto-resolves silently, which contradicts `find_by_name_fuzzy`'s own docstring
+("candidates for a WhatsApp disambiguation picker, never auto-accepted"). This
+predates Phase 3 and was preserved rather than "fixed" mid-migration: unlike the
+USER case, it is bounded — the resolved material's real name is rendered in the
+confirmation prompt the user must still answer, so a wrong substring hit is
+visible and rejectable before any write, whereas a wrong USER match silently
+grants a stranger access to org data. Pinned by
+`test_material_resolution.py::test_a_single_substring_match_is_auto_accepted`,
+which is written to fail loudly if anyone tightens it, so the change is made
+deliberately rather than by accident.
+
 ---
 
 ## 6. Non-goals
