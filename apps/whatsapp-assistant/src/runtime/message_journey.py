@@ -44,6 +44,7 @@ from runtime.inbound_journey import (
     resume_pending_report_with_material_unit_choice,
     resume_pending_report_with_member_candidate,
     resume_pending_report_with_member_create_offer,
+    resume_pending_report_with_petty_cash_recipient,
     resume_pending_report_with_project,
     resume_pending_report_with_site,
     resume_pending_report_with_stock_choice,
@@ -1076,6 +1077,36 @@ def build_message_handlers(
             # matched one or more active users closely but not exactly --
             # resumes with member_name patched to the tapped user's exact
             # name, or falls through to the create offer for "Someone else".
+            # A tap on "who is this cash for?" -- _run_petty_cash_recipient_
+            # gate's Ambiguous case. Checked before the member picker below:
+            # both resolve a person, and only the row-id prefix distinguishes
+            # which request is being continued.
+            pcr_reply = await resume_pending_report_with_petty_cash_recipient(
+                message,
+                ctx.user_id,
+                pending_report_store=pending_report_store,
+                member_resolver=member_resolver,
+                petty_cash_query=petty_cash_query,
+                planner=planner,
+                workflow_runtime=workflow_runtime,
+                actor=ctx,
+                inventory_query=inventory_query,
+                message_logger=message_logger,
+            )
+            timer.lap("resume_petty_cash_recipient")
+            if pcr_reply is not None:
+                await send_reply_spec(
+                    pcr_reply,
+                    wa_id,
+                    send_text=sender.send_text,
+                    send_list=sender.send_list,
+                    send_button=sender.send_button,
+                )
+                await message_logger.log_reply(
+                    correlation_id=message.correlation_id, reply=pcr_reply.text
+                )
+                return
+
             member_candidate_reply = await resume_pending_report_with_member_candidate(
                 message,
                 ctx.user_id,

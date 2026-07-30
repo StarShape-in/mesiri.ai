@@ -18,6 +18,8 @@ from channel.replies import (
     render_member_create_offer,
     render_member_not_found_reply,
     render_no_projects_reply,
+    render_petty_cash_recipient_not_found_reply,
+    render_petty_cash_recipient_picker,
     render_project_picker,
     render_site_picker,
     render_unit_mismatch_reply,
@@ -69,6 +71,15 @@ _MATERIAL_EVENT_TYPES = frozenset(
     {
         CanonicalEventType.MATERIAL_RECEIPT_REQUESTED,
         CanonicalEventType.MATERIAL_USAGE_REQUESTED,
+    }
+)
+
+# Both legs name a person: an issue credits their advance account, a return
+# debits it -- so both need the recipient resolved before a draft is built.
+_PETTY_CASH_EVENT_TYPES = frozenset(
+    {
+        CanonicalEventType.PETTY_CASH_ISSUE_REQUESTED,
+        CanonicalEventType.PETTY_CASH_RETURN_REQUESTED,
     }
 )
 
@@ -347,6 +358,72 @@ async def _run_member_name_gate(
         await pending_report_store.set_pending(user_id=actor_user_id, event=canonical_event)
         return render_member_create_offer(str(name_hint))
     return ReplySpec(text=render_member_not_found_reply(str(name_hint)))
+
+
+async def _run_petty_cash_recipient_gate(
+    canonical_event: CanonicalEventV2,
+    *,
+    member_resolver: MemberNameResolutionService,
+    pending_report_store: PendingReportStore,
+    actor_user_id: str,
+) -> ReplySpec | None:
+    """Resolve PETTY_CASH's `recipient_name` against the org's real active
+    users BEFORE a draft is built -- Phase 4 of ENTITY_RESOLUTION_PLAN.md §5,
+    and the same ADR-E1 move _run_member_name_gate makes for
+    ADD_PROJECT_MEMBER.
+
+    Until now the only lookup was `find_by_full_name_active` (exact,
+    case-insensitive) inside _seed_petty_cash_recipient. A near-miss --
+    exactly §1's ഹൈസം/Hysam against a real "Hisham" -- resolved to nothing,
+    so `recipient_account_id` stayed unset, build_draft produced a draft
+    missing that leg of the transfer, and transfer_validation.py rejected it
+    *after* the user had already confirmed. A doomed confirmation, for the
+    one workflow where the thing being confirmed is money leaving an
+    account.
+
+    - Resolved: rewrite `recipient_name` to that user's exact stored name so
+      _seed_petty_cash_recipient's own exact lookup finds the same row, then
+      fall through unchanged.
+    - Ambiguous: hold the event and ask, never auto-pick -- a wrong pick
+      credits the wrong person's advance account.
+    - Missing: stop honestly here rather than building a draft that cannot
+      succeed. Deliberately NOT an offer to create the user the way the
+      member gate's Missing case is: issuing cash to someone is a poor
+      moment to also be creating their account, and unlike a project
+      membership there is no harmless "add them, then continue" -- the
+      created user would immediately be the destination of a money movement.
+
+    Never raises: a lookup failure degrades to letting it through
+    unresolved, same posture as every other gate in this module -- the
+    pre-existing validation still rejects honestly downstream.
+    """
+    if canonical_event.event_type not in _PETTY_CASH_EVENT_TYPES:
+        return None
+    name_hint = canonical_event.fields.get("recipient_name")
+    if not name_hint:
+        return None
+
+    from workflows.entities import Ambiguous, Missing, Resolved
+
+    try:
+        outcome = await member_resolver.resolve(
+            organization_id=canonical_event.organization_id, name_hint=str(name_hint)
+        )
+    except Exception:
+        _log.exception(
+            "petty_cash_recipient_gate.lookup_failed correlation_id=%s",
+            canonical_event.correlation_id,
+        )
+        return None
+
+    if isinstance(outcome, Resolved):
+        canonical_event.fields["recipient_name"] = outcome.display_name
+        return None
+    if isinstance(outcome, Ambiguous):
+        await pending_report_store.set_pending(user_id=actor_user_id, event=canonical_event)
+        return render_petty_cash_recipient_picker(str(name_hint), outcome.candidates)
+    assert isinstance(outcome, Missing)
+    return ReplySpec(text=render_petty_cash_recipient_not_found_reply(str(name_hint)))
 
 
 async def _run_project_gate(

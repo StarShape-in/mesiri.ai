@@ -9,6 +9,7 @@ from channel.replies import (
     ALL_SITES_ROW_ID,
     MATERIAL_CANDIDATE_NONE_ROW_ID,
     MEMBER_CANDIDATE_NONE_ROW_ID,
+    PETTY_CASH_RECIPIENT_NONE_ROW_ID,
     ReplySpec,
     render_material_create_declined_reply,
     render_material_create_offer,
@@ -18,6 +19,7 @@ from channel.replies import (
     render_member_create_declined_reply,
     render_member_create_offer,
     render_member_not_found_reply,
+    render_petty_cash_recipient_not_found_reply,
 )
 from interactions.pending_report import PendingReportStore
 from memory.recent_turns import RecentTurnsStore
@@ -51,6 +53,7 @@ from runtime.inventory_query import MaterialInventoryQueryService
 from runtime.logging_ports import MessageLogger
 from runtime.material_catalog_query import MaterialCatalogQueryService
 from runtime.org_settings_query import OrganizationSettingsQueryService
+from runtime.petty_cash_query import PettyCashRecipientQueryService
 from workflows import WorkflowRuntime
 from workflows.create_user.nodes import find_mentioned_phone_number
 
@@ -133,6 +136,7 @@ async def resume_pending_report_with_project(
     return reply
 
 
+_PETTY_CASH_RECIPIENT_ROW_PREFIX = "pcr_"
 _MATERIAL_ROW_PREFIX = "mat_"
 _UNIT_YES_ROW_PREFIX = "unit_yes_"
 _UNIT_NO_ROW_ID = "unit_no"
@@ -755,6 +759,104 @@ async def resume_pending_report_with_member_candidate(
         return ReplySpec(text="That selection expired — please resend your request.")
 
     event.fields["member_name"] = display_name
+    reply = await _plan_and_run(
+        event,
+        planner=planner,
+        workflow_runtime=workflow_runtime,
+        inventory_query=inventory_query,
+        pending_report_store=pending_report_store,
+        actor_user_id=actor_user_id,
+    )
+    await _complete_resume_leg(message, event, message_logger)
+    return reply
+
+
+async def resume_pending_report_with_petty_cash_recipient(
+    message: NormalizedMessage,
+    actor_user_id: str,
+    *,
+    pending_report_store: PendingReportStore,
+    member_resolver: MemberNameResolutionService,
+    petty_cash_query: PettyCashRecipientQueryService,
+    planner: Planner,
+    workflow_runtime: WorkflowRuntime,
+    actor: ActorIdentity | None = None,
+    inventory_query: MaterialInventoryQueryService | None = None,
+    message_logger: MessageLogger | None = None,
+) -> ReplySpec | None:
+    """Resume a petty-cash issuance held by _run_petty_cash_recipient_gate,
+    now that the user tapped who the cash is actually for -- or "None of
+    these".
+
+    Unlike resume_pending_report_with_member_candidate, this cannot simply
+    patch the name and hand off to _plan_and_run: the recipient's *advance
+    account* still has to be resolved (created on first issuance), which is
+    a DB round trip, and _plan_and_run does not re-run the seeding pass that
+    would otherwise do it. So this leg performs that resolution itself --
+    the same call _seed_petty_cash_recipient makes -- before planning.
+
+    That ordering is deliberate: the account is only ever created for the
+    person the user actually chose. Resolving accounts for every candidate
+    up front would have made the picker cheaper to build and would have
+    created advance accounts for people who were never picked.
+    """
+    if message.modality is not InputModality.INTERACTIVE:
+        return None
+    row_id = message.metadata.get("interactive_reply_id")
+    if not row_id or not str(row_id).startswith(_PETTY_CASH_RECIPIENT_ROW_PREFIX):
+        return None
+
+    event = await pending_report_store.pop_pending(user_id=actor_user_id)
+    if event is None:
+        if message_logger:
+            await _safe(message_logger.mark_completed(correlation_id=message.correlation_id))
+        return ReplySpec(text="That selection expired — please resend your request.")
+
+    name_hint = str(event.fields.get("recipient_name") or "")
+
+    if row_id == PETTY_CASH_RECIPIENT_NONE_ROW_ID:
+        await _complete_resume_leg(message, event, message_logger)
+        return ReplySpec(text=render_petty_cash_recipient_not_found_reply(name_hint))
+
+    entity_id = str(row_id)[len(_PETTY_CASH_RECIPIENT_ROW_PREFIX):]
+    try:
+        display_name = await member_resolver.get_active_display_name(
+            organization_id=event.organization_id, entity_id=entity_id
+        )
+    except Exception:
+        _log.exception(
+            "petty_cash_recipient.lookup_failed correlation_id=%s", event.correlation_id
+        )
+        display_name = None
+
+    if display_name is None:
+        await _complete_resume_leg(message, event, message_logger)
+        return ReplySpec(text="That selection expired — please resend your request.")
+
+    event.fields["recipient_name"] = display_name
+
+    # The leg _plan_and_run won't do for us -- see the docstring above.
+    try:
+        account = await petty_cash_query.resolve_or_create_advance_account(
+            organization_id=event.organization_id,
+            recipient_name=display_name,
+            created_by=actor.user_id if actor is not None else actor_user_id,
+        )
+    except Exception:
+        _log.exception(
+            "petty_cash_recipient.account_failed correlation_id=%s", event.correlation_id
+        )
+        account = None
+
+    if account is None:
+        await _complete_resume_leg(message, event, message_logger)
+        return ReplySpec(
+            text="Sorry, I couldn't set up that account — please resend your request."
+        )
+
+    event.fields["recipient_account_id"] = str(account.id)
+    event.fields["recipient_account_name"] = account.name
+
     reply = await _plan_and_run(
         event,
         planner=planner,
