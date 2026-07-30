@@ -73,6 +73,7 @@ if TYPE_CHECKING:
     from runtime.evidence_query import EvidenceAttachService
     from runtime.expense_category_query import ExpenseCategoryQueryService
     from runtime.expense_query_service import ExpenseQueryService
+    from runtime.first_message_query import FirstMessageQueryService
     from runtime.inventory_query import MaterialInventoryQueryService
     from runtime.labour_query_service import LabourQueryService
     from runtime.logging_ports import MessageLogger, TraceLogger
@@ -128,6 +129,7 @@ def build_message_handlers(
     evidence_query: EvidenceAttachService,
     escalation_query: EscalationCreateService,
     capability_help: CapabilityHelpService,
+    first_message_query: FirstMessageQueryService,
     labour_query_service: LabourQueryService,
     activity_search_service: ActivitySearchService,
     dpr_request_query: DprRequestQueryService,
@@ -854,6 +856,7 @@ def build_message_handlers(
                 batch_store=batch_store,
                 escalation_query=escalation_query,
                 capability_help=capability_help,
+                first_message_query=first_message_query,
             )
             timer.lap("process_inbound_message_held_media")
             if len(held_batch) > 1:
@@ -872,7 +875,18 @@ def build_message_handlers(
         # above. Text only -- voice can't be checked until Sarvam
         # transcribes it, so the identical check runs again inside
         # understanding/pipeline.py post-transcription instead.
+        # handle_greeting_trigger is pure and I/O-free, so probing it first
+        # to decide whether the first-message lookup is worth doing costs
+        # nothing -- and keeps that database read off every message that
+        # isn't a greeting, which is nearly all of them.
         greeting_reply = interaction_handler.handle_greeting_trigger(message)
+        if greeting_reply is not None:
+            greeting_reply = interaction_handler.handle_greeting_trigger(
+                message,
+                is_first_message=await first_message_query.is_first_message(
+                    sender_wa_id=wa_id, correlation_id=message.correlation_id
+                ),
+            )
         if greeting_reply is not None:
             if greeting_reply.list_rows:
                 await sender.send_list(
@@ -1274,6 +1288,7 @@ def build_message_handlers(
             batch_store=batch_store,
             escalation_query=escalation_query,
             capability_help=capability_help,
+            first_message_query=first_message_query,
         )
         timer.lap("process_inbound_message")
 

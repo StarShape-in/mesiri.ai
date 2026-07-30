@@ -597,6 +597,11 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from runtime.escalation_query import EscalationCreateService
 
     escalation_query = EscalationCreateService(material_db)
+    # Answers "has this number ever messaged us before?", the one thing the
+    # long-dead is_first_message flag needed. See first_message_query.py.
+    from runtime.first_message_query import FirstMessageQueryService
+
+    first_message_query = FirstMessageQueryService(material_db)
     # #1 Multi-Activity / #13 Cross-Module Trigger: queues segments AFTER
     # the first in a multi-segment message, started one at a time as each
     # prior segment's confirmation resolves. See workflows/batch_store.py
@@ -777,6 +782,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         evidence_query=evidence_query,
         escalation_query=escalation_query,
         capability_help=capability_help,
+        first_message_query=first_message_query,
         labour_query_service=labour_query_service,
         activity_search_service=activity_search_service,
         dpr_request_query=dpr_request_query,

@@ -40,6 +40,7 @@ from runtime.duplicate_expense_query import DuplicateExpenseQueryService
 from runtime.escalation_query import EscalationCreateService
 from runtime.expense_category_query import ExpenseCategoryQueryService
 from runtime.expense_query_service import ExpenseQueryService
+from runtime.first_message_query import FirstMessageQueryService
 from runtime.inbound_journey._shared import _log
 from runtime.inbound_journey.reply import JourneyResult, _render_reply, _safe
 from runtime.inbound_journey.seeding import (
@@ -213,6 +214,7 @@ async def process_inbound_message(
     batch_store: PendingBatchStore | None = None,
     escalation_query: EscalationCreateService | None = None,
     capability_help: CapabilityHelpService | None = None,
+    first_message_query: FirstMessageQueryService | None = None,
 ) -> JourneyResult:
     mlog: MessageLogger = message_logger or NoopMessageLogger()
     tlog: TraceLogger = trace_logger or NoopTraceLogger()
@@ -990,7 +992,30 @@ async def process_inbound_message(
     # held_reply, when set, always wins: the report is being held pending a
     # material/unit/project clarification, so nothing from planner/workflow
     # ran this turn.
-    reply = held_reply or _render_reply(workflow_run, workflow_resume, planner_decision, resolved)
+    # Only the UNRECOGNIZED greeting branch changes copy on this, so the
+    # database read is skipped for every other outcome (see
+    # runtime/first_message_query.py, and _render_reply's own branch).
+    is_first_message = False
+    if (
+        first_message_query is not None
+        and held_reply is None
+        and workflow_run is None
+        and workflow_resume is None
+        and planner_decision is not None
+        and planner_decision.decision_type is PlannerDecisionType.DIRECT_REPLY
+        and planner_decision.reason is CanonicalEventType.UNRECOGNIZED
+    ):
+        is_first_message = await first_message_query.is_first_message(
+            sender_wa_id=message.sender.wa_id, correlation_id=correlation_id
+        )
+
+    reply = held_reply or _render_reply(
+        workflow_run,
+        workflow_resume,
+        planner_decision,
+        resolved,
+        is_first_message=is_first_message,
+    )
 
     # Attach the low-confidence caveat (if any) ONLY to a freshly-started
     # confirmation for THIS message (workflow_run.status STARTED). Never on
