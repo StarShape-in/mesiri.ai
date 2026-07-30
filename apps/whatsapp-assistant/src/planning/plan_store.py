@@ -141,7 +141,19 @@ class PlanStore:
         await self._redis.set_json(self._key(user_id), new_plan.to_dict(), ttl_seconds=_DEFAULT_TTL_SECONDS)
         return new_plan
 
-    async def mark_step_running(self, *, user_id: str, step_id: str) -> Plan:
+    async def mark_step_running(
+        self, *, user_id: str, step_id: str, workflow_instance_id: str | None = None
+    ) -> Plan:
+        """Mark a step RUNNING, recording which WorkflowInstance it is
+        running as.
+
+        ``workflow_instance_id`` is what every later advance decision
+        matches on -- see PlanStep.workflow_instance_id. Optional only so a
+        caller that starts a step some other way (or a test) can mark
+        RUNNING without one; a step marked RUNNING with no instance id can
+        never be advanced, by design, since there is then no honest way to
+        tell which confirmation belongs to it.
+        """
         plan = await self.get_plan(user_id=user_id)
         if plan is None:
             raise PlanNotFoundError(f"no active plan for user {user_id}")
@@ -154,6 +166,8 @@ class PlanStore:
         # to PlanStep later -- which is exactly how workflow_instance_id
         # would have been lost the moment a step was marked RUNNING.
         updated = dataclasses.replace(step, status=StepStatus.RUNNING)
+        if workflow_instance_id is not None:
+            updated = dataclasses.replace(updated, workflow_instance_id=workflow_instance_id)
         return await self._replace_step(user_id=user_id, step_id=step_id, updated=updated)
 
     async def mark_step_done(
