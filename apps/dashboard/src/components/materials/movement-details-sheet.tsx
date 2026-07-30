@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Loader2, AlertTriangle, Copy, History, Undo2 } from 'lucide-react'
+import { Loader2, AlertTriangle, Copy, History, Undo2, CheckCircle2 } from 'lucide-react'
 import {
   Sheet,
   SheetContent,
@@ -167,16 +167,27 @@ export function MovementDetailsSheet({ direction, id, open, onOpenChange }: Move
                   Open Ledger
                 </Button>
               )}
-              {canCorrect && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-8 gap-1.5 text-xs"
-                  onClick={() => setCorrectionOpen(true)}
-                >
-                  <Undo2 className="size-3.5" />
-                  Correct Movement
-                </Button>
+              {/* Hidden once a correction exists, rather than shown disabled:
+                  a second correction does not undo twice, it posts a second
+                  offsetting movement and doubles the adjustment. The backend
+                  409s either way -- this stops the user reaching for it. */}
+              {movement.already_reversed ? (
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+                  <CheckCircle2 className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+                  Already corrected
+                </span>
+              ) : (
+                canCorrect && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 gap-1.5 text-xs"
+                    onClick={() => setCorrectionOpen(true)}
+                  >
+                    <Undo2 className="size-3.5" />
+                    Correct Movement
+                  </Button>
+                )
               )}
               <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" onClick={copyId}>
                 <Copy className="size-3.5" />

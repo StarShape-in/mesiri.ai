@@ -59,6 +59,9 @@ export interface MaterialReceipt {
   movement_reason: InflowReason
   notes: string | null
   reverses_movement_id: string | null
+  // Only populated by the detail endpoints — a correction has already been
+  // posted against this movement, so offering "Correct" again would 409.
+  already_reversed?: boolean
   created_at: string
   created_by: string | null
   updated_at: string | null
@@ -84,6 +87,9 @@ export interface MaterialUsage {
   movement_reason: OutflowReason
   notes: string | null
   reverses_movement_id: string | null
+  // Only populated by the detail endpoints — a correction has already been
+  // posted against this movement, so offering "Correct" again would 409.
+  already_reversed?: boolean
   created_at: string
   created_by: string | null
   updated_at: string | null
@@ -245,8 +251,27 @@ export interface CreateInflowPayload {
   occurred_date: string
 }
 
-export async function createInflow(payload: CreateInflowPayload): Promise<{ id: string; status: string }> {
-  const res = await api.post<{ id: string; status: string }>('/materials/inflows', payload)
+// A retried request must not become a second delivery. The key is generated
+// once when a record dialog opens and reused for every submit attempt from
+// that dialog, so a double tap or a resend after a timeout replays the first
+// result instead of recording again. See the backend's _claim_idempotency_key.
+export function newIdempotencyKey(): string {
+  return crypto.randomUUID()
+}
+
+function idempotencyHeaders(key?: string) {
+  return key ? { headers: { 'Idempotency-Key': key } } : undefined
+}
+
+export async function createInflow(
+  payload: CreateInflowPayload,
+  idempotencyKey?: string
+): Promise<{ id: string; status: string }> {
+  const res = await api.post<{ id: string; status: string }>(
+    '/materials/inflows',
+    payload,
+    idempotencyHeaders(idempotencyKey)
+  )
   return res.data
 }
 
@@ -286,11 +311,60 @@ export interface CreateOutflowPayload {
   work_item?: string
   notes?: string
   occurred_date: string
+  // Send false to have the backend refuse an issue that would take stock
+  // below zero (it returns a 409 carrying the real balance). Defaults to true
+  // server-side so WhatsApp and mobile are unaffected; the dashboard opts in
+  // and turns the refusal into a confirmation.
+  allow_negative?: boolean
 }
 
-export async function createOutflow(payload: CreateOutflowPayload): Promise<{ id: string; status: string }> {
-  const res = await api.post<{ id: string; status: string }>('/materials/outflows', payload)
+export async function createOutflow(
+  payload: CreateOutflowPayload,
+  idempotencyKey?: string
+): Promise<{ id: string; status: string }> {
+  const res = await api.post<{ id: string; status: string }>(
+    '/materials/outflows',
+    payload,
+    idempotencyHeaders(idempotencyKey)
+  )
   return res.data
+}
+
+export interface StockCheck {
+  material_id: string
+  site_id: string | null
+  available: string
+  unit: string | null
+}
+
+// The balance the backend's own guard will use, so the dialog can warn before
+// submitting rather than after a rejection.
+export async function fetchStockCheck(
+  materialId: string,
+  siteId?: string | null
+): Promise<StockCheck> {
+  const res = await api.get<StockCheck>('/materials/stock-check', {
+    params: { material_id: materialId, site_id: siteId ?? undefined },
+  })
+  return res.data
+}
+
+// Shape of the 409 body the outflow endpoint returns when a quantity exceeds
+// available stock and allow_negative was not set.
+export interface OverStockConflict {
+  message: string
+  available: string
+  requested: string
+  unit: string
+  material_name: string
+}
+
+export function asOverStockConflict(err: any): OverStockConflict | null {
+  const detail = err?.response?.data?.detail
+  if (err?.response?.status === 409 && detail && typeof detail === 'object' && 'available' in detail) {
+    return detail as OverStockConflict
+  }
+  return null
 }
 
 export async function reverseOutflow(
