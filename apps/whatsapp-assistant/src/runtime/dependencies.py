@@ -207,6 +207,15 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     # and runtime/inbound_journey.py's project-selection gate) -- same
     # redis_client, same never-authoritative principle.
     pending_report_store = PendingReportStore(redis_client)
+    # The shared Plan store (ENTITY_RESOLUTION_PLAN.md / COMPOSITE_REQUEST_
+    # PLAN_LAYER.md) -- one plan per user, same redis_client, same
+    # never-authoritative principle. This layer's only current producer is
+    # start_member_create_plan (the CREATE_USER -> ADD_PROJECT_MEMBER chain);
+    # the composite-request plan layer's Phase 4 is a second producer into
+    # this same store, not a second store.
+    from planning.plan_store import PlanStore
+
+    plan_store = PlanStore(redis_client)
     # Holds a genuinely new image awaiting "what is this photo for?" (see
     # interactions/pending_media.py and interactions/image_purpose.py) --
     # same redis_client, same never-authoritative principle.
@@ -624,6 +633,12 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from runtime.first_message_query import FirstMessageQueryService
 
     first_message_query = FirstMessageQueryService(material_db)
+    # Resolves ADD_PROJECT_MEMBER's member_name against the org's real active
+    # users before a draft is ever built (ENTITY_RESOLUTION_PLAN.md ADR-E1).
+    # See runtime/entity_resolution/member_resolution.py.
+    from runtime.entity_resolution.member_resolution import MemberNameResolutionService
+
+    member_resolver = MemberNameResolutionService(material_db)
     # #1 Multi-Activity / #13 Cross-Module Trigger: queues segments AFTER
     # the first in a multi-segment message, started one at a time as each
     # prior segment's confirmation resolves. See workflows/batch_store.py
@@ -805,6 +820,8 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         escalation_query=escalation_query,
         capability_help=capability_help,
         first_message_query=first_message_query,
+        member_resolver=member_resolver,
+        plan_store=plan_store,
         labour_query_service=labour_query_service,
         activity_search_service=activity_search_service,
         dpr_request_query=dpr_request_query,

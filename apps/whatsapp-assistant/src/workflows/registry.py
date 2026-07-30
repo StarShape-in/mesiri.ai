@@ -23,6 +23,7 @@ from .add_project_member.graph import build_add_project_member_graph
 from .automation_setup.graph import build_automation_setup_graph
 from .create_user.graph import build_create_user_graph
 from .dpr_request.graph import build_dpr_request_graph
+from .entities import EntityType
 from .expense_capture.graph import build_expense_capture_graph
 from .expense_query.graph import build_expense_query_graph
 from .labour_query.graph import build_labour_query_graph
@@ -139,6 +140,22 @@ class WorkflowDefinition:
     # (REVERSE, EXPENSE_SUBMIT, ACCOUNT_ADMIN) which still write a record most
     # of the time and so still respect the single-active gate.
     allows_completion_without_draft: bool = False
+    # -- Composite-request / entity-resolution spine ---------------------
+    # docs/execution/COMPOSITE_REQUEST_PLAN_LAYER.md §4.1 and
+    # docs/execution/ENTITY_RESOLUTION_PLAN.md §3.2 -- one declaration, two
+    # readers. The entity-resolution layer reads `provides` backwards ("a
+    # USER is missing -- which workflow provides one?", workflow_that_
+    # provides below). The composite-request plan layer orders steps from
+    # the explicit StepRefs a decomposer emits, not from this field directly
+    # (see workflows/planning/ordering.py's docstring) -- `requires` here is
+    # documentation of what a bare (non-plan) run of this workflow needs
+    # resolved before it can proceed, e.g. for role/capability display.
+    #
+    # Empty for every workflow that neither produces nor consumes a named
+    # entity another workflow could supply (queries, corrections, finance
+    # capture) -- most of the table leaves both at the default.
+    provides: frozenset[EntityType] = frozenset()
+    requires: frozenset[EntityType] = frozenset()
 
     @property
     def menu_row_id(self) -> str:
@@ -185,6 +202,8 @@ def _define(
     allowed_roles: frozenset[str] | None = None,
     is_informational: bool = False,
     allows_completion_without_draft: bool = False,
+    provides: frozenset[EntityType] = frozenset(),
+    requires: frozenset[EntityType] = frozenset(),
 ) -> tuple[WorkflowKey, WorkflowDefinition]:
     """Build a (key, definition) pair, keeping the table below readable.
 
@@ -207,6 +226,8 @@ def _define(
         is_informational=is_informational,
         # Informational implies it; spelled out here so the table stays flat.
         allows_completion_without_draft=allows_completion_without_draft or is_informational,
+        provides=provides,
+        requires=requires,
     )
 
 
@@ -361,6 +382,8 @@ _DEFINITIONS: dict[WorkflowKey, WorkflowDefinition] = dict(
             one_liner="Report work done or progress on an activity",
             examples=("Concrete pour finished on the 3rd floor",),
             semantic_hint="general_site_update",
+            requires=frozenset({EntityType.PROJECT, EntityType.SITE}),
+            provides=frozenset({EntityType.ACTIVITY}),
         ),
         _define(
             WorkflowKey.ACTIVITY_CORRECTION,
@@ -439,6 +462,7 @@ _DEFINITIONS: dict[WorkflowKey, WorkflowDefinition] = dict(
             # Mirrors process.py's _PROJECT_CREATE_ROLES.
             allowed_roles=frozenset({"ADMIN", "PROJECT_MANAGER"}),
             allows_completion_without_draft=True,
+            provides=frozenset({EntityType.PROJECT}),
         ),
         _define(
             WorkflowKey.SITE_CREATE,
@@ -451,6 +475,8 @@ _DEFINITIONS: dict[WorkflowKey, WorkflowDefinition] = dict(
             # Mirrors process.py's _PROJECT_CREATE_ROLES (same set gates both).
             allowed_roles=frozenset({"ADMIN", "PROJECT_MANAGER"}),
             allows_completion_without_draft=True,
+            requires=frozenset({EntityType.PROJECT}),
+            provides=frozenset({EntityType.SITE}),
         ),
         _define(
             WorkflowKey.PROJECT_DETAIL_QUERY,
@@ -473,6 +499,8 @@ _DEFINITIONS: dict[WorkflowKey, WorkflowDefinition] = dict(
             # Mirrors process.py's _PROJECT_CREATE_ROLES (same set gates all three).
             allowed_roles=frozenset({"ADMIN", "PROJECT_MANAGER"}),
             allows_completion_without_draft=True,
+            requires=frozenset({EntityType.USER, EntityType.PROJECT}),
+            provides=frozenset({EntityType.MEMBERSHIP}),
         ),
         _define(
             WorkflowKey.CREATE_USER,
@@ -485,6 +513,7 @@ _DEFINITIONS: dict[WorkflowKey, WorkflowDefinition] = dict(
             # Mirrors process.py's _PROJECT_CREATE_ROLES (same set gates all four).
             allowed_roles=frozenset({"ADMIN", "PROJECT_MANAGER"}),
             allows_completion_without_draft=True,
+            provides=frozenset({EntityType.USER}),
         ),
         _define(
             WorkflowKey.AUTOMATION_SETUP,
@@ -516,6 +545,28 @@ def is_implemented(key: WorkflowKey) -> bool:
 def iter_definitions() -> Iterator[WorkflowDefinition]:
     """Every registered workflow, in registration order."""
     return iter(_DEFINITIONS.values())
+
+
+def workflow_that_provides(entity_type: EntityType) -> WorkflowKey | None:
+    """The workflow that creates ``entity_type``, or None if nothing does.
+
+    Read "backwards" by the entity-resolution layer
+    (docs/execution/ENTITY_RESOLUTION_PLAN.md §3.2): a workflow blocked on a
+    Missing USER looks this up to find CREATE_USER, without either module
+    naming the other. Assumes at most one provider per EntityType -- true for
+    every member declared today; a genuine second provider would need this
+    to return a tuple, not a single key, so it fails loudly rather than
+    picking arbitrarily if that ever changes.
+    """
+    providers = [d.key for d in _DEFINITIONS.values() if entity_type in d.provides]
+    if not providers:
+        return None
+    if len(providers) > 1:
+        raise ValueError(
+            f"{entity_type}: more than one workflow declares it in `provides` "
+            f"({providers}) -- workflow_that_provides assumes exactly one"
+        )
+    return providers[0]
 
 
 def is_informational(key: WorkflowKey) -> bool:

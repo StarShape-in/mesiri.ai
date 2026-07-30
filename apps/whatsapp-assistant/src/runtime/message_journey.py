@@ -40,6 +40,8 @@ from runtime.inbound_journey import (
     resume_pending_report_with_material,
     resume_pending_report_with_material_create,
     resume_pending_report_with_material_unit_choice,
+    resume_pending_report_with_member_candidate,
+    resume_pending_report_with_member_create_offer,
     resume_pending_report_with_project,
     resume_pending_report_with_site,
     resume_pending_report_with_stock_choice,
@@ -63,12 +65,14 @@ if TYPE_CHECKING:
     from memory.coordinator import ConversationMemoryCoordinator
     from mesiri_contracts.common.storage import ObjectStoragePort
     from planner import Planner
+    from planning.plan_store import PlanStore
     from runtime.activity_query import ActivityQueryService
     from runtime.activity_search_service import ActivitySearchService
     from runtime.capability_help import CapabilityHelpService
     from runtime.dependencies import Settings
     from runtime.dpr_request_query import DprRequestQueryService
     from runtime.duplicate_expense_query import DuplicateExpenseQueryService
+    from runtime.entity_resolution.member_resolution import MemberNameResolutionService
     from runtime.escalation_query import EscalationCreateService
     from runtime.evidence_query import EvidenceAttachService
     from runtime.expense_category_query import ExpenseCategoryQueryService
@@ -130,6 +134,8 @@ def build_message_handlers(
     escalation_query: EscalationCreateService,
     capability_help: CapabilityHelpService,
     first_message_query: FirstMessageQueryService,
+    member_resolver: MemberNameResolutionService,
+    plan_store: PlanStore,
     labour_query_service: LabourQueryService,
     activity_search_service: ActivitySearchService,
     dpr_request_query: DprRequestQueryService,
@@ -527,6 +533,7 @@ def build_message_handlers(
                 _offer_project_setup,
                 _offer_team_photo,
                 _recorded_attendance_report_id,
+                advance_member_plan_after_user_created,
             )
 
             try:
@@ -571,6 +578,24 @@ def build_message_handlers(
                 )
             except Exception:  # noqa: BLE001 — offer never disturbs the saved project/site
                 _log.exception("project_setup.offer_failed user=%s", ctx.user_id)
+            # Member-create plan advance (ENTITY_RESOLUTION_PLAN.md): after a
+            # confirmed CREATE_USER, check whether it was the first step of a
+            # member-create plan (start_member_create_plan) and, if so,
+            # finish the original "add X as PM" request the Missing offer
+            # paused -- see advance_member_plan_after_user_created's
+            # docstring. A cheap no-op for the overwhelmingly common
+            # standalone CREATE_USER with no plan waiting.
+            try:
+                member_resume_prompt = await advance_member_plan_after_user_created(
+                    handled,
+                    plan_store=plan_store,
+                    workflow_runtime=workflow_runtime,
+                    actor=ctx,
+                )
+                if member_resume_prompt:
+                    await sender.send_text(wa_id, member_resume_prompt)
+            except Exception:  # noqa: BLE001 — the user was still created either way
+                _log.exception("member_plan.advance_failed user=%s", ctx.user_id)
             # Phase 8 perf: user reply is already sent above. These 4 writes
             # are order-independent audit rows -- run them concurrently.
             await asyncio.gather(
@@ -857,6 +882,7 @@ def build_message_handlers(
                 escalation_query=escalation_query,
                 capability_help=capability_help,
                 first_message_query=first_message_query,
+                member_resolver=member_resolver,
             )
             timer.lap("process_inbound_message_held_media")
             if len(held_batch) > 1:
@@ -979,6 +1005,66 @@ def build_message_handlers(
                 )
                 await message_logger.log_reply(
                     correlation_id=message.correlation_id, reply=material_create_reply.text
+                )
+                return
+
+            # A tap on the member-name picker sent by _run_member_name_gate
+            # (ENTITY_RESOLUTION_PLAN.md) when a project-member name hint
+            # matched one or more active users closely but not exactly --
+            # resumes with member_name patched to the tapped user's exact
+            # name, or falls through to the create offer for "Someone else".
+            member_candidate_reply = await resume_pending_report_with_member_candidate(
+                message,
+                ctx.user_id,
+                pending_report_store=pending_report_store,
+                member_resolver=member_resolver,
+                planner=planner,
+                workflow_runtime=workflow_runtime,
+                actor=ctx,
+                inventory_query=inventory_query,
+                message_logger=message_logger,
+            )
+            timer.lap("resume_member_candidate")
+            if member_candidate_reply is not None:
+                await send_reply_spec(
+                    member_candidate_reply,
+                    wa_id,
+                    send_text=sender.send_text,
+                    send_list=sender.send_list,
+                    send_button=sender.send_button,
+                )
+                await message_logger.log_reply(
+                    correlation_id=message.correlation_id, reply=member_candidate_reply.text
+                )
+                return
+
+            # A Yes/No tap on "create this user and continue adding them to
+            # the project?" -- _run_member_name_gate's Missing case. Yes
+            # starts the CREATE_USER -> ADD_PROJECT_MEMBER chain (see
+            # resume.py's start_member_create_plan); its own reply is
+            # CREATE_USER's first question (usually the phone number), not a
+            # finished confirmation -- distinct row-id prefix from every
+            # other resume above, dispatched independently.
+            member_create_reply = await resume_pending_report_with_member_create_offer(
+                message,
+                ctx.user_id,
+                pending_report_store=pending_report_store,
+                plan_store=plan_store,
+                workflow_runtime=workflow_runtime,
+                actor=ctx,
+                message_logger=message_logger,
+            )
+            timer.lap("resume_member_create")
+            if member_create_reply is not None:
+                await send_reply_spec(
+                    member_create_reply,
+                    wa_id,
+                    send_text=sender.send_text,
+                    send_list=sender.send_list,
+                    send_button=sender.send_button,
+                )
+                await message_logger.log_reply(
+                    correlation_id=message.correlation_id, reply=member_create_reply.text
                 )
                 return
 
@@ -1289,6 +1375,7 @@ def build_message_handlers(
             escalation_query=escalation_query,
             capability_help=capability_help,
             first_message_query=first_message_query,
+            member_resolver=member_resolver,
         )
         timer.lap("process_inbound_message")
 

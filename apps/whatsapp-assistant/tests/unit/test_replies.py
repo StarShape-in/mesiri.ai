@@ -18,6 +18,10 @@ from channel.replies import (
     render_direct_reply,
     render_evidence_attached_reply,
     render_image_purpose_picker,
+    render_member_candidate_picker,
+    render_member_create_declined_reply,
+    render_member_create_offer,
+    render_member_not_found_reply,
     render_no_open_activity_for_evidence_reply,
     render_no_projects_reply,
     render_project_picker,
@@ -295,3 +299,48 @@ def test_a_restricted_match_is_dropped_for_a_role_that_cannot_use_it():
     )
     assert reply.list_rows is not None
     assert [r.id for r in reply.list_rows] == ["wf_project.detail_query"]
+
+
+# ---------------------------------------------------------------------------
+# Member-name resolution (see runtime/entity_resolution/member_resolution.py)
+# ---------------------------------------------------------------------------
+
+
+def test_member_candidate_picker_lists_candidates_plus_someone_else():
+    from workflows.entities import Candidate
+
+    reply = render_member_candidate_picker(
+        "Hysam", (Candidate(entity_id="u1", display_name="Hisham"),)
+    )
+    assert reply.list_rows is not None
+    ids = [r.id for r in reply.list_rows]
+    assert ids == ["member_u1", "member_none"]
+    assert reply.list_rows[0].title == "Hisham"
+    assert reply.list_rows[-1].title == "Someone else"
+
+
+def test_member_candidate_picker_caps_at_nine_plus_someone_else():
+    from workflows.entities import Candidate
+
+    candidates = tuple(Candidate(entity_id=f"u{i}", display_name=f"Person {i}") for i in range(12))
+    reply = render_member_candidate_picker("X", candidates)
+    assert reply.list_rows is not None
+    assert len(reply.list_rows) == 10  # WhatsApp's own 10-row cap
+    assert reply.list_rows[-1].id == "member_none"
+
+
+def test_member_create_offer_has_yes_and_no_buttons():
+    reply = render_member_create_offer("Hysam")
+    assert reply.buttons is not None
+    assert {b.id for b in reply.buttons} == {"membernew_yes", "membernew_no"}
+    assert "Hysam" in reply.text
+
+
+def test_member_create_declined_reply_names_the_person():
+    assert "Hysam" in render_member_create_declined_reply("Hysam")
+
+
+def test_member_not_found_reply_is_distinct_from_the_create_offer():
+    text = render_member_not_found_reply("Hysam")
+    assert "Hysam" in text
+    assert "admin" in text.lower()

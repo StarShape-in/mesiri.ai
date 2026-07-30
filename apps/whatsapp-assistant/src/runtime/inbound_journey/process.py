@@ -37,6 +37,7 @@ from runtime.activity_search_service import ActivitySearchService
 from runtime.capability_help import CapabilityHelpService
 from runtime.dpr_request_query import DprRequestQueryService
 from runtime.duplicate_expense_query import DuplicateExpenseQueryService
+from runtime.entity_resolution.member_resolution import MemberNameResolutionService
 from runtime.escalation_query import EscalationCreateService
 from runtime.expense_category_query import ExpenseCategoryQueryService
 from runtime.expense_query_service import ExpenseQueryService
@@ -48,6 +49,7 @@ from runtime.inbound_journey.seeding import (
     _build_query_pdf,
     _inject_inventory_context,
     _run_material_unit_gates,
+    _run_member_name_gate,
     _run_project_gate,
     _run_site_gate,
     _run_stock_gate,
@@ -220,6 +222,7 @@ async def process_inbound_message(
     escalation_query: EscalationCreateService | None = None,
     capability_help: CapabilityHelpService | None = None,
     first_message_query: FirstMessageQueryService | None = None,
+    member_resolver: MemberNameResolutionService | None = None,
 ) -> JourneyResult:
     mlog: MessageLogger = message_logger or NoopMessageLogger()
     tlog: TraceLogger = trace_logger or NoopTraceLogger()
@@ -547,6 +550,27 @@ async def process_inbound_message(
                 mlog.mark_failed(correlation_id=correlation_id, error_code=type(exc).__name__)
             )
             raise
+
+        # --- Member-name resolution gate ---
+        # ADD_PROJECT_MEMBER's member_name is still free text at this point
+        # -- resolve it against the org's real active users before the
+        # planner or a confirmation prompt ever sees it, so an unmatched or
+        # near-miss name (the live Hysam/Hisham bug, ENTITY_RESOLUTION_PLAN.md
+        # §1) is caught here instead of as a late "couldn't find an active
+        # user" after the user already tapped Yes. See _run_member_name_gate.
+        if (
+            held_reply is None
+            and canonical_event.event_type is CanonicalEventType.ADD_PROJECT_MEMBER_REQUESTED
+            and member_resolver is not None
+            and pending_report_store is not None
+        ):
+            held_reply = await _run_member_name_gate(
+                canonical_event,
+                member_resolver=member_resolver,
+                pending_report_store=pending_report_store,
+                actor_user_id=actor_user_id,
+                actor_role=actor.role if actor is not None else None,
+            )
 
         # --- Material/unit resolution gate ---
         # A material report can be otherwise complete (material_name/quantity/

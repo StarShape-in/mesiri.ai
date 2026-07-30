@@ -22,6 +22,7 @@ from mesiri_contracts.assistant.canonical_event import CanonicalEventType
 from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
 
 if TYPE_CHECKING:
+    from workflows.entities import Candidate
     from workflows.registry import WorkflowDefinition
 
 # Every workflows.registry import in this module is function-level and
@@ -569,6 +570,84 @@ def render_material_not_found_reply(name: str) -> str:
     distinct from the picker case for the same reason render_no_projects_reply
     is: tapping won't help, there's nothing to choose from."""
     return f'I couldn\'t find "{name}" in the materials catalog. Ask your admin to add it first.'
+
+
+# ---------------------------------------------------------------------------
+# Member-name resolution (ENTITY_RESOLUTION_PLAN.md) -- ADD_PROJECT_MEMBER's
+# member_name gate. Mirrors the material picker/create-offer pair above in
+# shape and row-id convention exactly; the difference is what backs the
+# match (member_resolution.py's near-match scoring, not catalog ILIKE) and
+# that Missing chains into a real second workflow (CREATE_USER) rather than
+# a single inline record.
+# ---------------------------------------------------------------------------
+
+#: Tapped when none of the offered candidates was who the sender meant --
+#: falls through to the same create-offer Missing would have shown, matched
+#: verbatim by resume_pending_report_with_member_candidate.
+MEMBER_CANDIDATE_NONE_ROW_ID = "member_none"
+
+
+def render_member_candidate_picker(
+    name_hint: str, candidates: tuple[Candidate, ...]
+) -> ReplySpec:
+    """Ask which active user a project-member name hint refers to -- the
+    reported name matched nobody exactly but scored close to one or more
+    real people (member_resolution.resolve_name_hint's Ambiguous case).
+    ``candidates`` is workflows.entities.Candidate instances. Row id
+    "member_{entity_id}", matched verbatim by
+    resume_pending_report_with_member_candidate; the trailing "Someone
+    else" row carries MEMBER_CANDIDATE_NONE_ROW_ID and falls through to the
+    same create-offer a Missing result would show.
+
+    Never auto-picks even a single, high-scoring candidate -- see
+    workflows/entities.py's Ambiguous docstring on why this always asks."""
+    rows = tuple(
+        ListRow(f"member_{c.entity_id}", c.display_name) for c in candidates[:9]
+    ) + (ListRow(MEMBER_CANDIDATE_NONE_ROW_ID, "Someone else"),)
+    return ReplySpec(
+        text=f'I couldn\'t find an exact match for "{name_hint}" — did you mean one of these?',
+        list_button_label="Choose one",
+        list_rows=rows,
+    )
+
+
+def render_member_create_offer(name_hint: str) -> ReplySpec:
+    """No active user matched at all, and the sender's role is allowed to
+    create one (WorkflowKey.CREATE_USER's allowed_roles, checked by the
+    caller before this is ever rendered -- ADR-E5) -- offer to create them
+    inline and finish the original add-to-project request once they exist,
+    instead of the old dead-end "couldn't find an active user named X."
+    Row ids "membernew_yes"/"membernew_no", matched verbatim by
+    resume_pending_report_with_member_create_offer."""
+    return ReplySpec(
+        text=(
+            f'"{name_hint}" isn\'t an active user yet.\n\n'
+            "Create them and continue adding them to the project?"
+        ),
+        buttons=(ListRow("membernew_yes", "Yes, create"), ListRow("membernew_no", "No")),
+    )
+
+
+def render_member_create_declined_reply(name_hint: str) -> str:
+    """The sender declined to create the user. Nudge toward a spelling
+    mistake first, same reasoning as render_material_create_declined_reply
+    -- a near-miss transliteration is the likeliest reason a real, already-
+    registered person didn't match."""
+    return (
+        f'Ok — "{name_hint}" wasn\'t added to the project.\n\n'
+        "If it was a spelling mistake, resend the request with the correct name."
+    )
+
+
+def render_member_not_found_reply(name_hint: str) -> str:
+    """No active user matched, and the sender's role isn't allowed to create
+    one (ADR-E5) -- distinct from render_member_create_offer for the same
+    reason render_material_not_found_reply is distinct from the create
+    offer: there is nothing left for this sender to tap."""
+    return (
+        f'I couldn\'t find an active user named "{name_hint}", and your role '
+        "can't add a new one. Ask your admin to add them first."
+    )
 
 
 def render_usage_exceeds_stock_reply(
