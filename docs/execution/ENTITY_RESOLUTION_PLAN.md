@@ -235,13 +235,18 @@ A strangler, not a big-bang rewrite. Each phase leaves the system working.
 | **1** | `EntityType`, resolution outcome, registry `provides`/`requires`, and the shared **N-capable `PlanStore`** (see §8.1) | The mechanism exists, and there is only one of it |
 | **2** | Migrate **USER** onto it (the live Hysam bug), including `Ambiguous` fuzzy matching | End-to-end on a real failure |
 | **3** | Migrate **MATERIAL** | The strongest correctness check — the generic path must reproduce `resume_pending_report_with_material_create` exactly. If it can't, the design is wrong |
-| **4** | Migrate ACCOUNT, VENDOR, AUDIENCE, PROJECT, SITE; delete each bespoke resolver as it moves | The ~10 duplicates collapse |
+| **4** | ~~Migrate ACCOUNT, VENDOR, AUDIENCE, PROJECT, SITE~~ → **done as VENDOR, petty-cash recipient, AUDIENCE**; ACCOUNT/PROJECT/SITE struck as not name-resolution at all (§5.2–5.3) | The duplicates collapse — and turn out to be fewer, but realer, than counted |
 
 Phases 1–2 fix the reported bug. Phases 3–4 are where the duplication actually
 dies. **Phase 3 is the honest test of this plan** — materials are the one entity
 whose good behaviour already exists, so if the generic mechanism cannot express
 it without special-casing, the abstraction is wrong and should be reconsidered
 rather than forced.
+
+> **Status: all phases shipped, 2026-07-30.** The abstraction held. Results
+> and corrections are recorded in §5.1–5.4 below — including two defects the
+> migrations found in already-shipped machinery, and three entities struck
+> from Phase 4 as not being resolution problems at all.
 
 ### 5.1 Phase 3 result (shipped 2026-07-30)
 
@@ -350,10 +355,69 @@ three entity types. Two of those three still exact-match and hard-reject
 today: an automation audience ("ask Ilan or Hysam") and a petty-cash
 recipient both fail on exactly the transliteration §1 opens with.
 
-**Remaining Phase 4 work, in value order:** AUDIENCE and petty-cash recipient
-(one shared fix — route both through `resolve_name_hint`, as `member_name`
-already is). ACCOUNT, PROJECT, and SITE need no migration; the honest close
-for them is deleting this row from the plan, not writing code to satisfy it.
+### 5.3 Phase 4 complete — and one correction to "one shared fix"
+
+**Shipped: VENDOR, petty-cash recipient, AUDIENCE.** All three now resolve
+before a draft exists, on the shared vocabulary, each with a picker carrying
+the escape row §5.1 requires.
+
+**ACCOUNT, PROJECT and SITE are struck from the plan, not deferred.** Per the
+table above none of them is a name→row lookup: ACCOUNT is a picker over
+seeded candidates, PROJECT/SITE are auth-scoped pickers with no free-text
+hint. Writing code to satisfy that row would be work done to make this
+document look finished. **Phase 4 is closed.**
+
+**A correction to §5.2's own recommendation.** That section proposed AUDIENCE
+and petty-cash as "one shared fix". They share a *resolver* but not a
+*shape*, and the difference decided both implementations:
+
+- **Petty cash** could not use the cheap in-graph slot mechanism VENDOR used.
+  After the user taps a name, resolving that person's *advance account* is a
+  DB round trip, and a node may never do I/O — so it needed the full
+  gate + picker + resume-leg shape. The resume leg resolves the account
+  itself, since `_plan_and_run` does not re-run the seeding pass. That
+  ordering is the point: the account is created only for the person actually
+  chosen. Resolving candidates up front would have been simpler and would
+  have created advance accounts for people nobody picked.
+- **AUDIENCE** is N names, not one. It resolves in order and stops at the
+  first unsettled name, asking about that one alone; answering re-enters the
+  gate. The loop lives in the gate, so three unknown names is that leg three
+  times with no special handling.
+
+Both `Missing` cases deliberately **stop** rather than continuing without the
+person, and neither offers to create the user the way the member gate's
+`Missing` does. Issuing cash is a poor moment to also be creating the payee —
+the new user would immediately be the destination of a money movement — and
+an automation that silently drops a name fails precisely when it was meant to
+help, with nobody finding out until the reminder never arrived.
+
+### 5.4 The threshold bug Phase 4 surfaced
+
+Building AUDIENCE turned up a defect in the *shared* scorer, found because a
+test used a realistic roster rather than a convenient one:
+
+> `"Ilan"` against an org holding **"Ilan Usman"** scored **0.571** — under
+> `_ASK_THRESHOLD` — and returned `Missing`: *"I couldn't find Ilan"*, about
+> someone plainly in the org.
+
+The failure mode is worse than the miss itself: whether a first name worked
+depended on **how long the surname happened to be**. `"Rajesh"`/`"Rajesh
+Kumar"` scores 0.667 and worked; `"Ilan"`/`"Ilan Usman"` did not. Nothing
+about that is predictable or workable-around, and people refer to each other
+by first name constantly — so this was live for members and petty-cash
+recipients too, not only automations.
+
+**Fix:** a hint matching a *whole word* of a candidate's name is always
+offered, regardless of ratio. Deliberately a candidate signal only, never a
+resolve — an org can hold two people sharing a first name, so it still ends
+in the picker the caller was going to show anyway. Whole words only, so
+`"an"` cannot match `"Anand"`. Pinned by
+`test_audience_name_gate.py::test_a_bare_first_name_is_offered_rather_than_declared_missing`.
+
+This is the second time a Phase-4 entity exposed a flaw in machinery Phase 2
+had already shipped and tested (§5.2's `find_by_name_fuzzy` tension was the
+first). Migrating a new entity onto shared code is, in practice, the most
+effective review that code gets.
 
 ---
 
