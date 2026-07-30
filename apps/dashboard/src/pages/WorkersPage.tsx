@@ -17,6 +17,7 @@ import {
   ChevronLeft,
   ChevronRight,
   AlertTriangle,
+  Trash2,
 } from 'lucide-react'
 import { useScope } from '@/lib/ScopeContext'
 import { KpiCard } from '@/components/ui/kpi-card'
@@ -47,6 +48,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
+  deleteWorkerApi,
   fetchWorkersApi,
   fetchWorkerStatisticsApi,
   updateWorkerApi,
@@ -63,6 +65,11 @@ type SortOrder = 'asc' | 'desc'
 
 export default function WorkersPage() {
   const { scope } = useScope()
+  // Always rendered. Hiding it behind a role guessed in the browser is what
+  // made this undiagnosable: the button silently vanished and there was no way
+  // to tell whether the role, the flag, or the deploy was at fault. The server
+  // enforces both gates and returns a reason, which the UI now shows.
+  const [deleting, setDeleting] = React.useState(false)
   const [workers, setWorkers] = React.useState<WorkforceWorkerItem[]>([])
   const [loading, setLoading] = React.useState(true)
   // The roster failing to load must not read as an empty register --
@@ -215,6 +222,63 @@ export default function WorkersPage() {
       }
     }
     loadWorkers()
+  }
+
+  const handleBulkDelete = async () => {
+    const ids = [...selectedIds]
+    if (
+      !confirm(
+        [
+          `Permanently delete ${ids.length} worker(s) from the register?`,
+          '',
+          'This cannot be undone. Normal practice is to Retire a worker instead,',
+          'which keeps their attendance history intact.',
+          '',
+          'A worker who still appears on any attendance report will be skipped —',
+          'delete those reports first.',
+        ].join(String.fromCharCode(10))
+      )
+    ) {
+      return
+    }
+    setDeleting(true)
+    setError(null)
+    setSelectedIds([])
+
+    const blocked: string[] = []
+    let removed = 0
+    for (const id of ids) {
+      try {
+        await deleteWorkerApi(id)
+        removed++
+      } catch (err: any) {
+        const status = err?.response?.status
+        const detail = err?.response?.data?.detail
+        if (status === 409) {
+          // Expected and informative: they still have attendance.
+          blocked.push(detail || id)
+        } else if (status === 403) {
+          setError(detail || 'Deleting workers is not permitted for your role or this environment.')
+          break
+        } else {
+          blocked.push(`Could not delete worker ${id}`)
+        }
+      }
+    }
+
+    await loadWorkers()
+    await loadStatistics()
+    setDeleting(false)
+
+    if (blocked.length > 0) {
+      const shown = blocked.slice(0, 5)
+      const suffix = blocked.length > 5 ? [`...and ${blocked.length - 5} more`] : []
+      setError(
+        [`Deleted ${removed} worker(s). ${blocked.length} skipped:`, ...shown, ...suffix].join(
+          String.fromCharCode(10)
+        )
+      )
+    }
   }
 
   // Export CSV
@@ -689,6 +753,21 @@ export default function WorkersPage() {
           <Download className="size-3.5" />
           Export Selected CSV
         </Button>
+        {/* Development cleanup. Retire is the normal action -- this exists to
+            clear test data, and the endpoint refuses while a worker still has
+            attendance. */}
+        {(
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={deleting}
+            onClick={handleBulkDelete}
+            className="h-7 text-xs font-semibold gap-1.5 text-rose-600 border-rose-500/40 hover:bg-rose-500/10"
+          >
+            <Trash2 className="size-3.5" />
+            {deleting ? 'Deleting...' : 'Delete Selected'}
+          </Button>
+        )}
       </BulkActionBar>
 
       {/* Modals */}

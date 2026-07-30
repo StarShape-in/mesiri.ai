@@ -18,7 +18,6 @@ import {
   Trash2,
 } from 'lucide-react'
 import { useScope } from '@/lib/ScopeContext'
-import { useAuth } from '@/lib/AuthContext'
 import { toLocalISODate } from '@/lib/utils'
 import { KpiCard } from '@/components/ui/kpi-card'
 import { Badge } from '@/components/ui/badge'
@@ -54,11 +53,10 @@ type SortOrder = 'asc' | 'desc'
 
 export default function AttendancePage() {
   const { scope } = useScope()
-  // Delete is admin-only in the UI, and the endpoint independently requires
-  // both ADMIN and MESIRI_ALLOW_LABOUR_DELETE -- hiding the button is a
-  // courtesy, not the security boundary.
-  const { me } = useAuth()
-  const isAdmin = String(me?.role || '').toUpperCase() === 'ADMIN'
+  // Always rendered. Hiding it behind a role guessed in the browser is what
+  // made this undiagnosable: the button silently vanished and there was no way
+  // to tell whether the role, the flag, or the deploy was at fault. The server
+  // enforces both gates and returns a reason, which the UI now shows.
   const [deletingId, setDeletingId] = React.useState<string | null>(null)
   const [reports, setReports] = React.useState<LabourAttendanceSummaryItem[]>([])
   const [statement, setStatement] = React.useState<LabourStatement | null>(null)
@@ -463,7 +461,7 @@ export default function AttendancePage() {
 
                 {/* Development cleanup. Hidden for non-admins; the endpoint
                     enforces both ADMIN and the server-side flag regardless. */}
-                {isAdmin && (
+                {(
                   <TableHead className="text-xs font-semibold h-10 w-12 text-right">Delete</TableHead>
                 )}
               </TableRow>
@@ -471,13 +469,13 @@ export default function AttendancePage() {
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={isAdmin ? 9 : 8} className="h-32 text-center text-xs text-muted-foreground">
+                  <TableCell colSpan={9} className="h-32 text-center text-xs text-muted-foreground">
                     Loading attendance reports...
                   </TableCell>
                 </TableRow>
               ) : paginatedReports.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={isAdmin ? 9 : 8} className="h-32 text-center text-xs text-muted-foreground">
+                  <TableCell colSpan={9} className="h-32 text-center text-xs text-muted-foreground">
                     No attendance reports logged for the selected scope & date filter.
                   </TableCell>
                 </TableRow>
@@ -556,7 +554,7 @@ export default function AttendancePage() {
                         </Button>
                       </TableCell>
 
-                      {isAdmin && (
+                      {(
                         <TableCell className="text-xs py-3 text-right">
                           <Button
                             variant="ghost"

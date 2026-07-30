@@ -1271,6 +1271,14 @@ export async function fetchAttendanceReportsApi(params?: {
   return res.data
 }
 
+/** Development cleanup only. 403 unless MESIRI_ALLOW_LABOUR_DELETE is set and
+ *  the caller is ADMIN. Returns 409 while the worker still appears on any
+ *  attendance line — delete those reports first. */
+export async function deleteWorkerApi(workerId: string): Promise<{ worker_id: string; name: string }> {
+  const res = await api.delete(`/labour/workers/${workerId}`)
+  return res.data
+}
+
 export interface DeleteAttendanceResult {
   report_id: string
   deleted_lines: number

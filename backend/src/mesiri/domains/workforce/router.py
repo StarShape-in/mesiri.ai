@@ -60,6 +60,39 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/labour", tags=["labour"])
 
+#: Who may run the destructive development-cleanup endpoints below.
+#: A bare "ADMIN" was too narrow: OWNER and SUPER_ADMIN are already treated as
+#: admin-equivalent for privileged actions elsewhere (expenses/router.py:578,
+#: finance/router.py:886), and excluding them locked out exactly the accounts
+#: most likely to be clearing test data.
+_LABOUR_DELETE_ROLES = frozenset({"ADMIN", "OWNER", "SUPER_ADMIN"})
+
+
+def _assert_may_delete_labour(auth_context: AuthorizationContext, what: str) -> None:
+    """Both gates for the delete endpoints, in one place so they cannot drift.
+
+    The environment flag is checked first: it is the gate that makes shipping
+    these endpoints safe at all, since the dashboard they appear in is the same
+    build customers use.
+    """
+    from mesiri.bootstrap.settings import Settings
+
+    if not Settings().allow_labour_delete:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Deleting {what} is disabled in this environment. "
+                "Set MESIRI_ALLOW_LABOUR_DELETE to enable it (development only)."
+            ),
+        )
+    role = str(getattr(auth_context, "role", "")).upper()
+    if role not in _LABOUR_DELETE_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Role {role or 'unknown'} may not delete {what}",
+        )
+
+
 # Matches expenses/router.py's _ATTACHMENT_URL_TTL_SECONDS -- same object
 # storage port, same "long enough for one page view" reasoning.
 _ATTACHMENT_URL_TTL_SECONDS = 600
@@ -723,6 +756,77 @@ async def get_attendance_report(
     return item
 
 
+class DeleteWorkerResponse(BaseModel):
+    worker_id: uuid.UUID
+    name: str
+
+
+@router.delete("/workers/{worker_id}", response_model=DeleteWorkerResponse)
+async def delete_worker(
+    worker_id: uuid.UUID,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Permanently delete one register entry. Development cleanup only.
+
+    Same two gates as deleting attendance: `MESIRI_ALLOW_LABOUR_DELETE` must be
+    set, and the caller must be ADMIN. Normal operation retires a worker
+    (`status='inactive'`) rather than deleting them, because attendance
+    references the register and history must outlive a person leaving the site.
+
+    **Refuses with 409 while any attendance line still points at this worker.**
+    `labour_attendance_lines.worker_id` is a foreign key with no cascade, so the
+    delete would fail at the database anyway -- but a raw FK error tells the
+    caller nothing about what to do. The two alternatives were both worse:
+    deleting their attendance too would destroy records that belong to other
+    workers on the same report, and silently clearing worker_id would leave
+    name-only lines, which is exactly the fragmented state roadmap phase 4
+    removed. So it says how many reports are in the way, and the order to work
+    in: attendance first, then the register.
+    """
+    _assert_may_delete_labour(auth_context, "workers")
+
+    from sqlalchemy import text
+
+    owned = (
+        await conn.execute(
+            text(
+                "SELECT name FROM workforce_workers "
+                "WHERE id = :id AND organization_id = :org"
+            ),
+            {"id": worker_id, "org": auth_context.organization_id},
+        )
+    ).first()
+    if owned is None:
+        raise HTTPException(status_code=404, detail="Worker not found")
+
+    referencing = (
+        await conn.execute(
+            text("SELECT COUNT(*) FROM labour_attendance_lines WHERE worker_id = :id"),
+            {"id": worker_id},
+        )
+    ).scalar_one()
+    if referencing:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{owned[0]} still appears on {referencing} attendance line(s). "
+                "Delete those attendance reports first, then the worker."
+            ),
+        )
+
+    await conn.execute(
+        text("DELETE FROM workforce_workers WHERE id = :id"), {"id": worker_id}
+    )
+    logger.warning(
+        "labour.worker_deleted worker_id=%s org=%s by=%s",
+        worker_id,
+        auth_context.organization_id,
+        getattr(auth_context, "user_id", "?"),
+    )
+    return DeleteWorkerResponse(worker_id=worker_id, name=owned[0])
+
+
 class DeleteAttendanceReportResponse(BaseModel):
     """What was actually removed, per table, so the caller can see the blast
     radius rather than trust a bare 204."""
@@ -769,18 +873,7 @@ async def delete_attendance_report(
     fails with a foreign-key violation. The count is reported back, because
     breaking a correction chain is worth knowing about.
     """
-    from mesiri.bootstrap.settings import Settings
-
-    if not Settings().allow_labour_delete:
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                "Deleting attendance is disabled in this environment. "
-                "Set MESIRI_ALLOW_LABOUR_DELETE to enable it (development only)."
-            ),
-        )
-    if str(getattr(auth_context, "role", "")).upper() != "ADMIN":
-        raise HTTPException(status_code=403, detail="Only an admin can delete attendance")
+    _assert_may_delete_labour(auth_context, "attendance")
 
     from sqlalchemy import text
 
