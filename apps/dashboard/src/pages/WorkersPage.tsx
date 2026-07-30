@@ -261,7 +261,17 @@ export default function WorkersPage() {
           setError(detail || 'Deleting workers is not permitted for your role or this environment.')
           break
         } else {
-          blocked.push(`Could not delete worker ${id}`)
+          // Anything else is unexpected, so say exactly what came back. The
+          // first version reported only "Could not delete worker <uuid>",
+          // which hid the status and the server's own message and made the
+          // failure impossible to diagnose from the screen -- the same
+          // mistake as hiding the button behind a browser-side role guess.
+          const name = workers.find((w) => w.id === id)?.name || id
+          blocked.push(
+            `${name}: HTTP ${status ?? 'no response'}` +
+              (detail ? ` — ${typeof detail === 'string' ? detail : JSON.stringify(detail)}` : '') +
+              (status ? '' : ` (${err?.message || 'request failed'})`)
+          )
         }
       }
     }

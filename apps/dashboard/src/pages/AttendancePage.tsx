@@ -232,12 +232,20 @@ export default function AttendancePage() {
       }
     } catch (err: any) {
       const status = err?.response?.status
-      setError(
-        status === 403
-          ? err?.response?.data?.detail ||
-            'Deleting attendance is not permitted for your role or this environment.'
-          : 'Could not delete that attendance report.'
-      )
+      const detail = err?.response?.data?.detail
+      if (status === 403) {
+        setError(
+          detail || 'Deleting attendance is not permitted for your role or this environment.'
+        )
+      } else {
+        // Say what actually came back rather than a generic failure, so the
+        // cause is visible on the screen instead of only in the server log.
+        setError(
+          `Could not delete that attendance report — HTTP ${status ?? 'no response'}` +
+            (detail ? `: ${typeof detail === 'string' ? detail : JSON.stringify(detail)}` : '') +
+            (status ? '' : ` (${err?.message || 'request failed'})`)
+        )
+      }
     } finally {
       setDeletingId(null)
     }
