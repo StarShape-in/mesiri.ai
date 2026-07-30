@@ -26,11 +26,21 @@ from __future__ import annotations
 
 import pytest
 
+from mesiri_ai.adapters.deepseek.adapter import (
+    _DECOMPOSITION_PROMPT as DEEPSEEK_DECOMPOSITION_PROMPT,
+)
 from mesiri_ai.adapters.deepseek.adapter import _EXTRACTION_PROMPT as DEEPSEEK_PROMPT
+from mesiri_ai.adapters.gemini.adapter import (
+    _DECOMPOSITION_PROMPT as GEMINI_DECOMPOSITION_PROMPT,
+)
 from mesiri_ai.adapters.gemini.adapter import _EXTRACTION_PROMPT as GEMINI_PROMPT
 from mesiri_contracts.assistant.enums import SemanticType
 
 PROMPTS = {"deepseek": DEEPSEEK_PROMPT, "gemini": GEMINI_PROMPT}
+DECOMPOSITION_PROMPTS = {
+    "deepseek": DEEPSEEK_DECOMPOSITION_PROMPT,
+    "gemini": GEMINI_DECOMPOSITION_PROMPT,
+}
 
 
 @pytest.mark.parametrize("provider", sorted(PROMPTS))
@@ -82,4 +92,36 @@ def test_a_name_is_never_invented_for_an_unnamed_group(provider):
     real person and offered for the permanent register."""
     assert "never invent a name" in PROMPTS[provider].lower(), (
         f"{provider} does not forbid inventing a name"
+    )
+
+
+@pytest.mark.parametrize("provider", sorted(DECOMPOSITION_PROMPTS))
+def test_decomposition_prompt_asks_for_the_two_required_keys(provider):
+    """docs/execution/COMPOSITE_REQUEST_PLAN_LAYER.md §9 -- both fields are
+    load-bearing: the Gemini/DeepSeek adapters' decompose() guard on
+    len(segments) >= 2 regardless of what is_multi_intent says, so both keys
+    must actually be asked for."""
+    prompt = DECOMPOSITION_PROMPTS[provider]
+    assert "is_multi_intent" in prompt, f"{provider} never asks for is_multi_intent"
+    assert "segments" in prompt, f"{provider} never asks for segments"
+
+
+@pytest.mark.parametrize("provider", sorted(DECOMPOSITION_PROMPTS))
+def test_decomposition_prompt_forbids_classifying_each_segment(provider):
+    """Splitting and classifying are different jobs on purpose (§9) -- each
+    segment is classified afterward by the SAME extract() every single-intent
+    message already goes through, unmodified. A decomposer that also
+    classifies would be a second, divergent classification path."""
+    assert "classify" in DECOMPOSITION_PROMPTS[provider].lower(), (
+        f"{provider}'s decomposition prompt does not address classification at all"
+    )
+
+
+@pytest.mark.parametrize("provider", sorted(DECOMPOSITION_PROMPTS))
+def test_decomposition_prompt_forbids_reordering(provider):
+    """Dependency order is derived later, from what each segment's own
+    extraction produces (planning/ordering.py) -- the split step must
+    preserve the sender's original order, not impose one."""
+    assert "reorder" in DECOMPOSITION_PROMPTS[provider].lower(), (
+        f"{provider}'s decomposition prompt never forbids reordering segments"
     )

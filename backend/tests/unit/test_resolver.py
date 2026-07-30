@@ -278,3 +278,112 @@ async def test_generate_json_raises_without_any_gemini_key():
     resolver = DynamicAIProviderResolver(db, redis, settings)
     with pytest.raises(MesiriError):
         await resolver.generate_json("sys prompt", "user prompt")
+
+
+@pytest.mark.anyio
+async def test_decompose_reuses_the_extraction_route_deepseek_by_default():
+    """docs/execution/COMPOSITE_REQUEST_PLAN_LAYER.md §9: decompose() reuses
+    the existing extraction route rather than a new routing capability --
+    FakeSettings has no explicit routing config, so it falls through to
+    the same deepseek-by-default extraction route generate_json's sibling
+    test exercises."""
+    from mesiri_ai.models import DecompositionResult
+
+    settings = FakeSettings()
+    db = MagicMock()
+    if hasattr(db, "transaction"):
+        del db.transaction
+    redis = AsyncMock()
+    redis.get.return_value = None
+
+    resolver = DynamicAIProviderResolver(db, redis, settings)
+
+    class FakeDeepSeekProvider:
+        provider = "deepseek"
+
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def decompose(self, text, *, correlation_id=None):
+            return DecompositionResult(
+                is_multi_intent=True,
+                segments=["create a project called Starship", "create a site called Site A"],
+                provider="deepseek",
+            )
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            "mesiri_ai.resolver._build_deepseek_provider",
+            lambda *a, **kw: FakeDeepSeekProvider(),
+        )
+        result = await resolver.decompose("Starship then Site A", correlation_id="cor_3")
+
+    assert result.is_multi_intent is True
+    assert result.segments == [
+        "create a project called Starship",
+        "create a site called Site A",
+    ]
+    assert result.provider == "deepseek"
+
+
+@pytest.mark.anyio
+async def test_decompose_falls_back_to_the_configured_fallback_provider_on_failure():
+    from mesiri_ai.core.errors import malformed_output
+    from mesiri_ai.models import DecompositionResult
+
+    settings = FakeSettings()
+    db = MagicMock()
+    redis = AsyncMock()
+    redis.get.return_value = json.dumps(
+        {
+            "routing": {
+                "voice": {"provider_id": "sarvam", "model": "saaras:v2.5"},
+                "extraction": {
+                    "provider_id": "deepseek",
+                    "model": "deepseek-primary",
+                    "fallback_provider_id": "gemini",
+                    "fallback_model": "gemini-fallback",
+                },
+                "vision": {"provider_id": "gemini", "model": "gemini-vision"},
+            },
+            "secrets": {
+                "gemini": {"api_key": "gemini-key"},
+                "deepseek": {"api_key": "ds-key"},
+                "sarvam": {"api_key": "sarvam-key"},
+            },
+        }
+    )
+
+    resolver = DynamicAIProviderResolver(db, redis, settings)
+
+    class FailingDeepSeekProvider:
+        provider = "deepseek"
+
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def decompose(self, text, *, correlation_id=None):
+            raise malformed_output("deepseek", "boom", correlation_id=correlation_id)
+
+    class FallbackGeminiProvider:
+        provider = "gemini"
+
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def decompose(self, text, *, correlation_id=None):
+            return DecompositionResult(is_multi_intent=False, provider="gemini")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            "mesiri_ai.resolver._build_deepseek_provider",
+            lambda *a, **kw: FailingDeepSeekProvider(),
+        )
+        mp.setattr(
+            "mesiri_ai.resolver._build_gemini_provider",
+            lambda *a, **kw: FallbackGeminiProvider(),
+        )
+        result = await resolver.decompose("some message", correlation_id="cor_4")
+
+    assert result.provider == "gemini"
+    assert result.is_multi_intent is False
