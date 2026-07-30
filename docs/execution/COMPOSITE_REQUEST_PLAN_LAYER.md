@@ -1,0 +1,509 @@
+# Composite Request Plan Layer — Design Doc
+
+**Status:** Design only — no code written. **Blocked on reconciliation with
+the Entity Resolution & Continuation design doc (see §4), which must land
+first.**
+**Owner:** Ilan Usman
+**Started:** 2026-07-30
+**Last updated:** 2026-07-30
+**Linear:** _(epic to be created — see §11)_
+
+> **Resuming in a new session?** Read §4 first. This layer does not stand
+> alone: it shares its central data structure with the entity-resolution
+> layer, and building it before that reconciliation is agreed will produce
+> two competing orchestrators. Then read §2 (what already exists) and §3
+> (the binding principles).
+
+> **Purpose of this document.** Durable memory for this layer. If a future
+> session — human or AI — loses all conversational context, this file alone
+> should explain what exists, what is being built, what remains, why each
+> decision was made, and what to do next.
+
+---
+
+## 1. What this layer is
+
+**One WhatsApp message may state several things that must happen in a
+particular order, and Mesiri must do all of them.**
+
+The message that motivates it, verbatim from the field:
+
+> create a project named Paraclette and then create a site named Tower B,
+> add Hysamm for it with WhatsApp number 9847656072, make him the project
+> manager, and create an activity that slab work is started
+
+That is five intents with a real dependency structure:
+
+```
+1. create project "Paraclette"
+2. create site "Tower B"              needs (1)
+3. create user "Hysamm" +919847656072
+4. make Hysamm PM of Paraclette       needs (1) and (3)
+5. activity "slab work started"       needs (1) and (2)
+```
+
+Today this message produces **one** workflow — whichever single intent the
+extractor happened to pick — and silently drops the rest.
+
+**What this layer is not.** It is not a new LangGraph graph, and it must
+never become one. See ADR-C1.
+
+---
+
+## 2. What already exists (verified 2026-07-30)
+
+This layer is roughly 70% built. Naming it accurately matters, because the
+temptation is to rebuild rather than extend.
+
+| Piece | Where | State |
+|---|---|---|
+| Multi-segment canonicalization | [`canonicalization/builder.py:478`](../../apps/whatsapp-assistant/src/canonicalization/builder.py) `build_canonical_events` | Returns a **list**. Only ever produces >1 for the one deterministic material→activity case (`_build_linked_activity_segment`). Its own docstring states free-text splitting is not attempted. |
+| Segment queue | [`workflows/batch_store.py`](../../apps/whatsapp-assistant/src/workflows/batch_store.py) `PendingBatchStore` | Redis, per user, 30-min TTL, pop-one-at-a-time, running outcome log. **Flat FIFO — no dependency notion.** |
+| Segment runner | [`workflows/batch.py`](../../apps/whatsapp-assistant/src/workflows/batch.py) | `start_segment`, `(2 of 3)` prefixing, per-segment outcome lines, closing summary. |
+| Batch kickoff | [`runtime/inbound_journey/process.py:898`](../../apps/whatsapp-assistant/src/runtime/inbound_journey/process.py) | Primary segment starts normally; remainder queued. |
+| Single-source-of-truth registry | [`workflows/registry.py:73`](../../apps/whatsapp-assistant/src/workflows/registry.py) `WorkflowDefinition` | Explicitly designed so "adding a workflow means editing one table rather than hunting down per-key sets scattered across modules." This is where the dependency graph belongs. |
+| Single-active invariant | [`workflows/runtime.py:281`](../../apps/whatsapp-assistant/src/workflows/runtime.py) | At most one `AWAITING_CONFIRMATION` instance per user, enforced by a partial unique index. **Non-negotiable — §7.5 explains how a plan lives inside it.** |
+
+What is missing is exactly three things: decomposition (§9), ordering (§7.1),
+and late binding (§7.2).
+
+### 2.1 The blocking structural fact
+
+`CanonicalEventV2` carries `organization_id` / `project_id` / `site_id`
+resolved by `context/resolver.py` **before any workflow runs**.
+[`site_create/nodes.py:36`](../../apps/whatsapp-assistant/src/workflows/site_create/nodes.py) reads
+`state["project_id"]` and gives up if empty.
+
+For "create Paraclette, then Tower B under it," Paraclette does not exist at
+context-resolution time. Step 2 is therefore **structurally guaranteed to
+fail today** — not a bug in `site_create`, a layering fact. §7.2 is the
+answer.
+
+---
+
+## 3. Binding principles
+
+- **P1 — No new graphs.** Leaf workflows are correct and stay untouched. A
+  composite request is orchestration *above* them, never a new graph that
+  re-implements their domain rules.
+- **P2 — Order is derived, never authored.** Nowhere in the codebase will
+  the sentence "site after project" be written. It falls out of a
+  topological sort over registry declarations.
+- **P3 — Nothing is written before the user has seen the whole plan.**
+  Decomposition is an LLM judgement; the plan preview is the safety net.
+- **P4 — Partial failure is reported honestly, never papered over.**
+  Inherits [`batch.py`](../../apps/whatsapp-assistant/src/workflows/batch.py)'s
+  existing stance: every segment gets exactly one outcome line, success or
+  failure alike.
+- **P5 — One plan, one executor.** See §4. This is the principle that keeps
+  this layer and the entity-resolution layer from becoming two systems.
+- **P6 — The single-active invariant is not relaxed.** The plan occupies the
+  one slot; its steps do not each take one.
+
+---
+
+## 4. Relationship to the Entity Resolution & Continuation layer
+
+> **Reconciled against [`ENTITY_RESOLUTION_PLAN.md`](ENTITY_RESOLUTION_PLAN.md)
+> (his doc, dated 2026-07-30). One field-naming match, one real structural
+> gap found — §4.4. Do not start either layer's Phase 1 until §4.4 is
+> resolved.**
+
+That doc covers the *other* half of the same problem: a **single** intent
+that discovers mid-flight that a prerequisite entity does not exist ("add
+Hysam as PM" when no user Hysam exists →
+[`projects/handlers.py:173`](../../backend/src/mesiri/application/projects/handlers.py)
+hard-rejects, per his §1).
+
+The two layers split exactly as expected:
+
+| | Entity Resolution layer (his) | **This layer** |
+|---|---|---|
+| Trigger | One intent, prerequisite missing at runtime | One message, several intents stated up front |
+| Discovers dependencies | During execution | Before execution |
+| Motivating message | ഹൈസം / "add Hysam as PM" (his §1) | the Paraclette message (§1, this doc) |
+
+**Not alternatives, no scope overlap.** The Paraclette message needs both —
+the moment "Hysamm" is misspelled, a *planned* step hits a *missing entity*.
+
+### 4.1 The shared registry field — already agreed, no naming fight
+
+His §3.2 independently proposed `provides` / `requires` on
+`WorkflowDefinition` — the exact names guessed in the first draft of this
+section. **Adopted verbatim, no change needed:**
+
+```python
+provides: frozenset[EntityType]   # CREATE_USER -> {USER}
+requires: frozenset[EntityType]   # ADD_PROJECT_MEMBER -> {USER, PROJECT}
+```
+
+- His layer reads it **backwards**: "a USER is missing — which workflow
+  provides one?" (his §3.2, `workflow_that_provides`)
+- This layer reads it **forwards**: "these five steps — what order?" (§7.1)
+
+One table, two readers, zero disagreement.
+
+### 4.2 `EntityType`'s location — his open question #3, answered here
+
+His §7.3 asks whether `EntityType` belongs in `shared/contracts`. His own
+precedent answers it: `WorkflowCategory` is deliberately kept out of
+contracts as registry-local metadata. `EntityType` should live the same
+place — proposed: `workflows/registry.py` itself, or a new
+`workflows/entities.py` if the enum grows large enough to want its own
+module. Not `shared/contracts` unless a backend resolver ever keys off it
+directly (his own caveat).
+
+### 4.3 `allowed_roles` — two different uses, not a conflict
+
+His ADR-E5 filters entity-creation *offers* by `allowed_roles`: don't offer
+CREATE_USER to a SITE_ENGINEER who triggered a missing-USER lookup. That is
+the field's **existing, documented purpose** — discovery/offer filtering,
+not enforcement (`registry.py`'s own comment on the field). His use is
+consistent with what the field already is. No change needed for his layer.
+
+This layer's §7.3 wants something stronger: a **hard, load-bearing,
+whole-plan** permission check before a multi-step preview is shown, so a
+plan doesn't stop halfway through something already approved. That is a
+genuine promotion of the field from advisory to enforcing, and stays
+sequestered in this doc's own Phase 5 (separately reviewed), not his Phase 2.
+**These are two different consumers of the same field, at two different
+strictness levels — call this out explicitly wherever both docs are read
+together, since the field name is identical and the difference is easy to
+miss.**
+
+### 4.4 The one real gap — his continuation is depth-1, this layer needs N
+
+His mechanism (§3.3, ADR-E3) generalizes `PendingReportStore`: hold **one**
+paused `CanonicalEventV2` plus which single entity is missing, run the
+provider workflow, substitute the id, resume. ADR-E3 explicitly scopes this
+to **depth 1** and calls a stack out-of-scope for V1 — a reasonable limit
+for "one intent, one missing prerequisite."
+
+This layer needs an **ordered list** of N steps (§6, `Plan`/`PlanStep`),
+because the Paraclette message has five, with real dependencies between them.
+A depth-1 pause is a plan of size 1; a plan is not reducible to a depth-1
+pause. If his layer is built on `PendingReportStore` and this layer is built
+on a separate `PlanStore`, we get exactly the two-orchestrator outcome both
+docs are trying to avoid — two Redis shapes, two resume paths, and an
+undefined answer for what happens when a *planned* step (this layer) hits a
+*missing entity* (his layer) partway through a five-step plan.
+
+**Proposed resolution, for him to confirm before either Phase 1 starts:**
+his Phase 1 "one generic continuation" is implemented as inserting one step
+into a `Plan` of size 1 (§6's `Plan`/`PlanStep`/`PlanStore`), not as a
+generalized `PendingReportStore`. Concretely: `PendingReportStore`'s "hold
+event + missing entity + resume" becomes "hold a one-step `Plan`; a missing
+entity inserts a `PlanStep` before it; resume is `PlanStore`'s existing
+pop-and-advance." ADR-E3's depth-1 limit is then an **operating constraint
+on what the entity-resolution layer is allowed to insert** (still true, still
+enforced), not a property baked into the storage shape. His Phase 2 (USER)
+and Phase 3 (MATERIAL) prove the mechanism against a plan of size 1 — this
+layer's Phase 4 proves it against a plan of size 5. Same store, same resume
+path, one written down in Phase 1 instead of twice.
+
+This is the one item that must be settled, in writing, in his doc, before
+either side writes code — everything else in this section is already
+compatible as-is.
+
+### 4.5 What this doc still defers to his
+
+- The `EntityType` enum's members and the fuzzy-match/`Ambiguous` mechanics
+  (his §3.1, `match_worker` prior art).
+- Cross-script matching policy (his open question #2 — Malayalam original vs.
+  transliteration).
+- The seven `resume_pending_report_with_*` collapse (his §5, Phase 4).
+- ADR-E2 (backend resolvers stay as defence-in-depth) and ADR-E4 (offers are
+  always tappable, never auto-create) — both apply unchanged to any step this
+  layer inserts too.
+
+This doc owns: decomposition (§9), topological ordering (§7.1), symbolic
+references and just-in-time canonicalization (§7.2, ADR-C2), the plan
+preview (§8), plan-wide permission gating (§7.3, Phase 5), and
+dependency-aware cancellation (§7.4).
+
+---
+
+## 5. Architecture Decision Records
+
+**ADR-C1 — No composite graphs.**
+*Rejected:* authoring a LangGraph graph per combination (`project+site`,
+`project+site+member`, `site+member`, `project+member+activity`, …).
+*Why:* combinatorial in the number of workflows, and every combo graph
+re-implements domain rules that already live in the leaf workflows. Ordering
+is not a property of *pairs of workflows*; it is a property of what each
+workflow **produces and consumes**. Declare that once per workflow (~28
+declarations) and the order is derived (P2).
+
+**ADR-C2 — Steps are canonicalized just-in-time, not up front.**
+*Rejected:* extending `CanonicalEventV2` with nullable reference fields so a
+whole plan can be canonicalized in one pass.
+*Why:* §2.1. `project_id` cannot be resolved for step 2 before step 1 runs.
+Building each step's `CanonicalEventV2` immediately before that step
+executes means `site_create/nodes.py` sees a real `project_id` and **needs
+zero changes**. `CanonicalEventV2` is unchanged. Every leaf workflow is
+unchanged. This is the cheapest possible seam.
+
+**ADR-C3 — One confirmation for the whole plan.**
+*Rejected:* the current per-segment behaviour (each segment gets its own
+YES).
+*Why:* five taps, and at tap #1 the user cannot see what they are agreeing
+to. A plan preview is also the only structural defence against a bad LLM
+decomposition (P3). Per-step prompts survive only for steps needing genuine
+disambiguation.
+
+**ADR-C4 — Fail forward with dependency-aware cancellation; no rollback.**
+*Rejected:* two-phase commit / compensating transactions across modules.
+*Why:* the writes span independent domain modules with their own ledgers
+(ADR-D2/P3 in the Daily Reporting plan forbids cross-module writes anyway).
+Instead: a failed step **cancels its dependents without attempting them**
+(they would fail, or worse, attach to the wrong project) while independent
+steps still run. See §7.4.
+
+**ADR-C5 — Role gates are checked for the entire plan before the preview.**
+*Why:* the gates today are per-`workflow_key` early returns in
+[`process.py:836`](../../apps/whatsapp-assistant/src/runtime/inbound_journey/process.py).
+Under a plan, hitting one mid-execution means stopping halfway through
+something the user already approved. See §7.3 — and note this is a real
+change to a governance surface, not a refactor.
+
+---
+
+## 6. Contracts
+
+New package `apps/whatsapp-assistant/src/planning/`.
+
+```python
+# planning/plan.py
+
+@dataclass(frozen=True, slots=True)
+class StepRef:
+    """A value not known until an earlier step has executed."""
+    step_id: str          # "s1"
+    output_key: str       # "project_id"
+
+@dataclass(frozen=True, slots=True)
+class PlanStep:
+    step_id: str
+    workflow_key: WorkflowKey
+    #: Extracted fields. Values may be literals OR StepRef.
+    fields: dict[str, object | StepRef]
+    #: Derived from the registry, not authored per step.
+    depends_on: tuple[str, ...]
+    status: StepStatus    # PENDING | RUNNING | DONE | FAILED | CANCELLED
+    #: Populated on DONE. Feeds every StepRef pointing at this step.
+    outputs: dict[str, str]
+
+@dataclass(frozen=True, slots=True)
+class Plan:
+    plan_id: str
+    correlation_id: str
+    steps: tuple[PlanStep, ...]     # already topologically ordered
+    origin: PlanOrigin              # DECOMPOSITION | RESOLUTION | MIXED
+```
+
+`PlanOrigin` exists so the two producers (§4.2) are distinguishable in
+traces without being distinguishable in machinery.
+
+**Registry additions** (shared — see §4.1):
+
+```
+PROJECT_CREATE      provides={PROJECT}     requires={}
+SITE_CREATE         provides={SITE}        requires={PROJECT}
+CREATE_USER         provides={USER}        requires={}
+ADD_PROJECT_MEMBER  provides={MEMBERSHIP}  requires={PROJECT, USER}
+SITE_UPDATE         provides={ACTIVITY}    requires={PROJECT, SITE}
+```
+
+`PendingBatchStore` generalizes into `PlanStore` (same Redis key shape, same
+TTL reasoning, same pop-once discipline). `batch.py`'s formatting functions
+largely survive.
+
+---
+
+## 7. Execution semantics
+
+### 7.1 Ordering
+Topological sort over `depends_on`, derived from registry
+`provides`/`requires`. A cycle or an unsatisfiable requirement **refuses the
+whole plan and asks** rather than executing a prefix of it.
+
+### 7.2 Binding — the hard part
+Each `StepRef` resolves in this order:
+
+1. **A prior step in this plan provides it** → bind to that step's output.
+2. **It resolves by name against the database** → bind the existing entity.
+   *This is what makes "add Hysamm to Paraclette" work when Paraclette
+   already exists.*
+3. **Neither** → hand to the entity-resolution layer (§4.3), which either
+   offers to create it (inserting a step, §4.2) or asks.
+
+Existing-vs-new is therefore **one code path, not two**.
+
+`provides` must carry not just *which* entity a workflow creates but the
+**id that flows into dependent steps**. This is the part that silently
+breaks if left implicit; `PlanStep.outputs` is where it is made explicit and
+typed.
+
+### 7.3 Permissions
+Every step's role requirement is checked **before the preview is rendered**
+(ADR-C5). A plan containing one disallowed step is refused as a whole, naming
+the offending step. This requires the role gates currently living as literals
+in `process.py` to become registry data — noting that
+[`registry.py`](../../apps/whatsapp-assistant/src/workflows/registry.py)'s
+`allowed_roles` field today is *explicitly documented as discovery metadata
+and not an enforcement gate*. **Promoting it to load-bearing is a deliberate
+change to a security surface and needs its own review**, not a quiet
+refactor. Until that review happens, Phase 3 keeps the `process.py` gates and
+runs them in a loop over the plan's steps.
+
+### 7.4 Failure
+A failed step marks its transitive dependents `CANCELLED` without attempting
+them. Independent steps still run. In the Paraclette example, if step 1
+fails: steps 2/4/5 cancel, step 3 (create user — no dependency on 1) still
+runs. The user gets one honest line per step, via
+`summarize_batch_outcome`, which already does exactly this.
+
+### 7.5 The single-active invariant
+One `WorkflowInstance` in `AWAITING_CONFIRMATION` holds the **plan**. Its
+steps start and complete inside that slot. The partial unique index in
+[`runtime.py:281`](../../apps/whatsapp-assistant/src/workflows/runtime.py) is
+untouched (P6).
+
+---
+
+## 8. Confirmation UX
+
+```
+I'll do 5 things:
+1. Create project Paraclette
+2. Create site Tower B under it
+3. Add Hysamm (+91 98476 56072) as a new user
+4. Make Hysamm project manager of Paraclette
+5. Log activity "slab work started" at Tower B
+
+YES to do all  ·  EDIT  ·  NO
+```
+
+`EDIT` scope is an open question (§12). One YES executes the whole plan —
+including, in this example, creating a user and granting them
+project-manager rights, which is the largest blast radius in the list. That
+is the deliberate trade for P3's preview.
+
+---
+
+## 9. Decomposition
+
+Understanding returns exactly one `semantic_type`
+([`understanding/pipeline.py`](../../apps/whatsapp-assistant/src/understanding/pipeline.py)).
+Two options, both real:
+
+| | Extend existing extraction to return `intents[]` | Separate decomposer call |
+|---|---|---|
+| Latency | None added | +1 call per message unless gated |
+| Risk | Regresses single-intent accuracy on **every** existing path | Isolated |
+| Effort | Prompt change across both adapters | New module |
+
+**Leaning: separate call, gated by a cheap heuristic** (conjunction count /
+imperative-verb count / length) so the overwhelmingly common single-intent
+message pays nothing. Needs measurement before committing — §12.
+
+Decomposition runs on `translated_text`, so the Malayalam path is covered by
+construction.
+
+---
+
+## 10. Phases
+
+Numbered to slot alongside his phases (his §5), not to duplicate them. His
+Phase 0 (doc + Module Placement Log row) is done — both docs now exist.
+
+| Phase | Content | Owner | Gate |
+|---|---|---|---|
+| **0** | §4.4 confirmed in writing in his doc: his continuation is built on `Plan`/`PlanStep`/`PlanStore` (§6, this doc), not a standalone `PendingReportStore` generalization. | Joint — his doc, this ask | **Blocking. Nothing below starts without this.** |
+| **1** | `EntityType`, `Resolved`/`Ambiguous`/`Missing`, registry `provides`/`requires`, `Plan`/`PlanStep`/`PlanStore` primitives built together (not sequentially) so his continuation is the first real consumer. | His doc, jointly-designed store | The mechanism exists |
+| **2** | Migrate USER (his live bug) — a `Plan` of size 1, one step inserted on `Missing`. | His doc | End-to-end on the real Hysam failure |
+| **3** | Migrate MATERIAL — must reproduce `resume_pending_report_with_material_create` exactly via the shared store. | His doc | Honest test of the shared abstraction |
+| **4** | Decomposition (§9) + topological ordering (§7.1) + just-in-time canonicalization (§7.2) + plan preview (§8) + dependency-aware cancellation (§7.4). The Paraclette message works end to end — a `Plan` of size 5, some steps inserted by decomposition, one possibly inserted by entity resolution if a name doesn't match. | This doc | Scenario test from a real WhatsApp message |
+| **5** | Migrate ACCOUNT/VENDOR/AUDIENCE/PROJECT/SITE, deleting each bespoke resolver. | His doc | The ~10 duplicates collapse |
+| **6** | Promote role gates to registry data for whole-plan pre-check (§7.3) — **separate security review**, not bundled into Phase 4. | This doc | Security review |
+
+Phase 1 is the one place both docs' timelines actually merge — building the
+store once, together, is what makes §4.4 true rather than aspirational.
+Phases 2–3 (his) then land with zero change to this layer's later work,
+and Phase 4 (this doc) inherits a store already proven against two real
+entity types before it ever has to handle five ordered steps at once.
+
+---
+
+## 11. Where work stopped / what to do next
+
+Design only for both layers, written 2026-07-30. Both documents now exist;
+reconciliation is done except for one open item.
+
+**Next action — the single blocking ask, to put back to him:**
+
+> Build Phase 1's "one generic continuation" on the `Plan`/`PlanStep`/
+> `PlanStore` shape (§6 of this doc) instead of generalizing
+> `PendingReportStore` on its own. Concretely: the paused
+> `CanonicalEventV2` + missing-entity bookkeping his §3.3 describes becomes a
+> `Plan` with exactly one `PlanStep`; a `Missing` result inserts a step ahead
+> of it; resume is `PlanStore`'s pop-and-advance. His ADR-E3 depth-1 limit
+> stays exactly as scoped — it becomes a rule about what the
+> entity-resolution layer is allowed to insert, not a property of the
+> storage shape. Nothing else in his design changes.
+
+Resolved already, no further action needed:
+
+1. ~~Field names~~ — `provides`/`requires`, matched independently, adopted (§4.1).
+2. ~~`EntityType` location~~ — `workflows/registry.py` / new `workflows/entities.py`, not `shared/contracts` (§4.2).
+3. ~~`allowed_roles` reuse~~ — his offer-filtering use and this layer's hard
+   plan-wide gate are different consumers of the same field; documented
+   side by side so the identical name doesn't get conflated later (§4.3).
+
+---
+
+## 12. Open questions
+
+- **Decomposition trigger** (§9): heuristic gate, or always-on second call?
+  Wants latency measurement on real traffic.
+- **`EDIT` scope** (§8): drop a step, or re-state the whole request? Dropping
+  a step whose outputs others depend on has to cascade — likely "drop step
+  and its dependents, re-preview."
+- **Plan TTL.** `PendingBatchStore` uses 30 minutes. A five-step plan with a
+  disambiguation round may legitimately outlive that.
+- **Idempotency on re-delivery.** WhatsApp redelivery mid-plan. `pop_once`
+  covers the current batch; a plan with committed steps needs a stronger
+  guarantee.
+- **Do informational steps belong in a plan at all?** ("create the project
+  and tell me the cement stock.") Probably yes, unordered and exempt from the
+  single-active gate, as they are today.
+
+---
+
+## 13. Test strategy
+
+- **Ordering**: pure unit tests over the registry declarations. No LLM, no
+  Redis. Every pair in the registry, plus cycle detection.
+- **Binding**: the three §7.2 cases, each with an existing and a non-existing
+  entity.
+- **Regression anchor**: the existing material→activity batch must behave
+  **identically** after Phase 2. It is the only multi-segment case that works
+  today and is therefore the strongest correctness check available.
+- **Scenario**: the Paraclette message, and its Malayalam equivalent, as
+  end-to-end fixtures under `scenarios/`.
+
+---
+
+## 14. Risks
+
+| Risk | Mitigation |
+|---|---|
+| **Two orchestrators** (§4.2) | Phase 0 is blocking. This is the one that produces unfixable architecture. |
+| Bad decomposition silently creates five wrong records | P3 — preview before any write. Decomposition ships last (Phase 4). |
+| One YES grants project-manager rights | Accepted, with the full preview as the control. Revisit if it proves too loose in practice. |
+| Role gates promoted to registry data weaken enforcement | Phase 5 is separately reviewed; Phase 3 keeps the existing `process.py` gates. |
+| Scope collision with the entity-resolution layer's `resume.py` collapse | §4.3 lists what this doc defers. Do not touch `resume.py` from this layer. |
+
+---
+
+*Last updated: 2026-07-30 (initial draft — Phase 0 not started)*
