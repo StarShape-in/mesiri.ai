@@ -97,6 +97,19 @@ class PlanStep:
     #: Populated once this step reaches DONE -- feeds every StepRef pointing
     #: at this step_id in a later step's fields.
     outputs: dict[str, str] = field(default_factory=dict)
+    #: The WorkflowInstance this step is actually running as, once started.
+    #:
+    #: Load-bearing, not bookkeeping: a plan outlives the turn that created
+    #: it (PlanStore's 30-minute TTL), and a user can abandon a RUNNING step
+    #: and later start a *different* workflow of the same key. Without this,
+    #: "is this confirmation the one my plan is waiting for?" can only be
+    #: answered by workflow_key + status, which matches any same-key
+    #: workflow the user happens to confirm inside the TTL window -- the
+    #: real bug this field was added to close (an abandoned "create Hysam"
+    #: plan hijacking a later unrelated "create Rajesh" and offering Rajesh
+    #: project-manager rights on Hysam's project). Every advance/resume
+    #: decision must match on this, never on workflow_key alone.
+    workflow_instance_id: str | None = None
 
     @property
     def depends_on(self) -> frozenset[str]:
@@ -116,6 +129,7 @@ class PlanStep:
             "fields": {k: _encode_field(v) for k, v in self.fields.items()},
             "status": self.status.value,
             "outputs": dict(self.outputs),
+            "workflow_instance_id": self.workflow_instance_id,
         }
 
     @classmethod
@@ -126,6 +140,7 @@ class PlanStep:
             fields={k: _decode_field(v) for k, v in raw.get("fields", {}).items()},
             status=StepStatus(raw.get("status", StepStatus.PENDING.value)),
             outputs=dict(raw.get("outputs", {})),
+            workflow_instance_id=raw.get("workflow_instance_id"),
         )
 
 

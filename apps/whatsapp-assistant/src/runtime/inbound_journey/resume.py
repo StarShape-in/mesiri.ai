@@ -794,32 +794,6 @@ async def start_member_create_plan(
         return None
 
     role_hint = original_event.fields.get("role")
-    create_user_step = PlanStep(
-        step_id=_CREATE_USER_STEP_ID,
-        workflow_key=WorkflowKey.CREATE_USER,
-        fields={"full_name": name_hint, "role": role_hint},
-        status=StepStatus.RUNNING,
-    )
-    add_member_step = PlanStep(
-        step_id=_ADD_MEMBER_STEP_ID,
-        workflow_key=WorkflowKey.ADD_PROJECT_MEMBER,
-        fields={
-            "member_name": StepRef(step_id=_CREATE_USER_STEP_ID, output_key="full_name"),
-            "role": role_hint,
-            "created_by_role": original_event.fields.get("created_by_role"),
-            "project_id": str(original_event.project_id or ""),
-        },
-        status=StepStatus.PENDING,
-    )
-    plan = Plan(
-        plan_id=_new_id("plan"),
-        correlation_id=original_event.correlation_id,
-        user_id=user_id,
-        origin=PlanOrigin.RESOLUTION,
-        steps=(create_user_step, add_member_step),
-    )
-    await plan_store.start_plan(plan=plan)
-
     corr_id = _new_id("member_create")
     decision = PlannerDecisionV2(
         correlation_id=corr_id,
@@ -851,12 +825,46 @@ async def start_member_create_plan(
         run = await workflow_runtime.start(decision, event)
     except Exception:  # noqa: BLE001 -- never raise into the tap handler
         _log.exception("member_create_plan.start_failed org=%s", org_id)
-        await _safe(plan_store.clear(user_id=user_id))
         return None
     if not run.pending_prompt:
         _log.error("member_create_plan.no_prompt org=%s status=%s", org_id, run.status.value)
-        await _safe(plan_store.clear(user_id=user_id))
         return None
+
+    # Persisted only AFTER the workflow actually started, so the plan can
+    # record the real workflow_instance_id it is waiting on -- the guard that
+    # stops an abandoned plan from later attaching itself to a *different*
+    # CREATE_USER the same user starts inside the TTL window (see
+    # advance_member_plan_after_user_created). Storing first and patching
+    # afterwards would leave a window where the plan matches any CREATE_USER;
+    # storing after means a failed start simply leaves no plan behind at all,
+    # which is also why the two failure branches above no longer need to
+    # clear one.
+    create_user_step = PlanStep(
+        step_id=_CREATE_USER_STEP_ID,
+        workflow_key=WorkflowKey.CREATE_USER,
+        fields={"full_name": name_hint, "role": role_hint},
+        status=StepStatus.RUNNING,
+        workflow_instance_id=run.workflow_instance_id,
+    )
+    add_member_step = PlanStep(
+        step_id=_ADD_MEMBER_STEP_ID,
+        workflow_key=WorkflowKey.ADD_PROJECT_MEMBER,
+        fields={
+            "member_name": StepRef(step_id=_CREATE_USER_STEP_ID, output_key="full_name"),
+            "role": role_hint,
+            "created_by_role": original_event.fields.get("created_by_role"),
+            "project_id": str(original_event.project_id or ""),
+        },
+        status=StepStatus.PENDING,
+    )
+    plan = Plan(
+        plan_id=_new_id("plan"),
+        correlation_id=original_event.correlation_id,
+        user_id=user_id,
+        origin=PlanOrigin.RESOLUTION,
+        steps=(create_user_step, add_member_step),
+    )
+    await _safe(plan_store.start_plan(plan=plan))
     return run.pending_prompt
 
 
@@ -940,6 +948,37 @@ async def advance_member_plan_after_user_created(
     result = handled.result
     if not isinstance(result, WorkflowResumeResult):
         return None
+
+    user_id = str(getattr(actor, "user_id", None) or "")
+    if not user_id:
+        return None
+
+    # A plan is only ever waiting on ONE specific CREATE_USER instance. Every
+    # decision below matches on that instance id, never on workflow_key alone
+    # -- a plan outlives its turn (PlanStore's 30-minute TTL) and the same
+    # user can abandon this one and legitimately start a different
+    # CREATE_USER inside the window. Matching on key+status alone let an
+    # abandoned "create Hysam" plan attach itself to a later "create Rajesh"
+    # and offer Rajesh project-manager rights on Hysam's project.
+    def _is_our_instance(plan_step: PlanStep | None) -> bool:
+        return (
+            plan_step is not None
+            and plan_step.workflow_instance_id is not None
+            and plan_step.workflow_instance_id == result.workflow_instance_id
+        )
+
+    # A rejected/cancelled CREATE_USER ends the plan it belonged to. Without
+    # this the plan would linger for the rest of its TTL with its first step
+    # still RUNNING, waiting for a confirmation that is never coming.
+    if result.status in (
+        WorkflowResumeStatus.REJECTED,
+        WorkflowResumeStatus.CANCELLED,
+    ):
+        plan = await plan_store.get_plan(user_id=user_id)
+        if plan is not None and _is_our_instance(plan.step(_CREATE_USER_STEP_ID)):
+            await _safe(plan_store.clear(user_id=user_id))
+        return None
+
     if result.status is not WorkflowResumeStatus.CONFIRMED:
         return None
     confirmed = result.confirmed_action
@@ -949,15 +988,17 @@ async def advance_member_plan_after_user_created(
     if execution is None or execution.status is not ExecutionStatus.SUCCEEDED:
         return None
 
-    user_id = str(getattr(actor, "user_id", None) or "")
-    if not user_id:
-        return None
-
     plan = await plan_store.get_plan(user_id=user_id)
     if plan is None:
         return None
     create_step = plan.step(_CREATE_USER_STEP_ID)
     if create_step is None or create_step.status is not StepStatus.RUNNING:
+        return None
+    if not _is_our_instance(create_step):
+        # Someone else's CREATE_USER (or a plan from before this field
+        # existed). Left untouched rather than cleared -- this confirmation
+        # is not ours to draw conclusions from, and clearing here would let
+        # an unrelated workflow silently cancel a legitimately waiting plan.
         return None
 
     full_name = confirmed.draft_action.fields.get("full_name")

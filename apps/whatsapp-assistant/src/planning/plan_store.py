@@ -19,6 +19,7 @@ until that migrates, plan-layer doc §10 Phase 2/3 regression anchor).
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any, Protocol
 
 from .plan import Plan, PlanOrigin, PlanStep, StepStatus
@@ -133,13 +134,12 @@ class PlanStore:
         step = plan.step(step_id)
         if step is None:
             raise StepNotFoundError(f"plan {plan.plan_id}: no step {step_id!r}")
-        updated = PlanStep(
-            step_id=step.step_id,
-            workflow_key=step.workflow_key,
-            fields=step.fields,
-            status=StepStatus.RUNNING,
-            outputs=step.outputs,
-        )
+        # dataclasses.replace, not a field-by-field rebuild: every status
+        # mutation here must carry the whole step forward untouched apart
+        # from what it is changing. A rebuild silently drops any field added
+        # to PlanStep later -- which is exactly how workflow_instance_id
+        # would have been lost the moment a step was marked RUNNING.
+        updated = dataclasses.replace(step, status=StepStatus.RUNNING)
         return await self._replace_step(user_id=user_id, step_id=step_id, updated=updated)
 
     async def mark_step_done(
@@ -153,13 +153,7 @@ class PlanStore:
         step = plan.step(step_id)
         if step is None:
             raise StepNotFoundError(f"plan {plan.plan_id}: no step {step_id!r}")
-        updated = PlanStep(
-            step_id=step.step_id,
-            workflow_key=step.workflow_key,
-            fields=step.fields,
-            status=StepStatus.DONE,
-            outputs=dict(outputs),
-        )
+        updated = dataclasses.replace(step, status=StepStatus.DONE, outputs=dict(outputs))
         return await self._replace_step(user_id=user_id, step_id=step_id, updated=updated)
 
     async def mark_step_failed(self, *, user_id: str, step_id: str) -> Plan:
@@ -179,21 +173,9 @@ class PlanStore:
 
         def _apply(s: PlanStep) -> PlanStep:
             if s.step_id == step_id:
-                return PlanStep(
-                    step_id=s.step_id,
-                    workflow_key=s.workflow_key,
-                    fields=s.fields,
-                    status=StepStatus.FAILED,
-                    outputs=s.outputs,
-                )
+                return dataclasses.replace(s, status=StepStatus.FAILED)
             if s.step_id in to_cancel and s.status is StepStatus.PENDING:
-                return PlanStep(
-                    step_id=s.step_id,
-                    workflow_key=s.workflow_key,
-                    fields=s.fields,
-                    status=StepStatus.CANCELLED,
-                    outputs=s.outputs,
-                )
+                return dataclasses.replace(s, status=StepStatus.CANCELLED)
             return s
 
         new_plan = plan.with_steps(tuple(_apply(s) for s in plan.steps))
