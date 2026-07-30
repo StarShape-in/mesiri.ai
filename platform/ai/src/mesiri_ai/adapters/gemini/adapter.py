@@ -18,7 +18,13 @@ from typing import Any
 
 from ...core.errors import malformed_output
 from ...core.fallback import call_with_resilience
-from ...models import ExtractionResult, SpeechResult, TranslationResult, VisionResult
+from ...models import (
+    DecompositionResult,
+    ExtractionResult,
+    SpeechResult,
+    TranslationResult,
+    VisionResult,
+)
 
 _log = logging.getLogger("mesiri.ai.gemini")
 
@@ -434,6 +440,37 @@ _EXTRACTION_PROMPT = (
 )
 
 
+# docs/execution/COMPOSITE_REQUEST_PLAN_LAYER.md §9: only ever called on text
+# extract() already returned semantic_type "unknown" for -- a single message
+# describing several distinct requests has no representable single
+# semantic_type, so "unknown" is that call's honest, correct answer, not a
+# failure. This prompt's ONLY job is to say whether that "unknown" was really
+# several requests at once and, if so, split them -- it must NOT classify
+# each part itself (that is extract()'s job, run once per returned segment,
+# unaltered) and must NOT reorder them (dependency order is derived later
+# from what each segment's own extraction produces -- see
+# planning/ordering.py). A message that is genuinely one thing, a greeting,
+# or gibberish must return is_multi_intent: false, not a forced split --
+# today's single "I didn't understand that" reply is the safe fallback, and
+# a wrong split is not.
+_DECOMPOSITION_PROMPT = (
+    "The text may be in any language -- read it directly. It already failed "
+    "single-request classification, meaning it may describe MULTIPLE distinct "
+    "requests in one message (e.g. \"create a project called X, then a site "
+    "called Y, then add a new user Z\" -- three separate requests: create a "
+    "project, create a site, create a user).\n\n"
+    "Decide: does this text state more than one distinct, actionable request? "
+    "If yes, split it into separate sub-texts, each one grammatically complete "
+    "on its own and in the SAME order the sender said them -- never reorder, "
+    "never merge two requests into one, never invent a request the text does "
+    "not state. If the text is really just one request, or is not an "
+    "actionable request at all (a greeting, a question, gibberish), say so.\n\n"
+    'Return strict JSON with keys: "is_multi_intent" (boolean), "segments" '
+    '(array of strings -- empty when is_multi_intent is false). Do NOT '
+    "classify what type each segment is; that happens separately."
+)
+
+
 _TRANSLATION_PROMPT = (
     "Translate the following text to English. Also identify the source language if possible. "
     'Return strict JSON with keys: "translated_text" and "detected_language". '
@@ -719,6 +756,25 @@ class GeminiProvider:
                 k: float(v) for k, v in (data.get("field_confidences", {}) or {}).items()
             },
             detected_language=data.get("detected_language"),
+            provider=self.provider,
+            model=self._settings.model,
+            latency_ms=latency_ms,
+        )
+
+    async def decompose(
+        self, text: str, *, correlation_id: str | None = None
+    ) -> DecompositionResult:
+        prompt = f"{_DECOMPOSITION_PROMPT}\n\nText:\n{text}"
+        raw_text, latency_ms = await self._generate(
+            prompt, correlation_id, "decompose", json_mode=True, thinking_budget=0
+        )
+        data = self._parse_json(raw_text, correlation_id)
+        return DecompositionResult(
+            is_multi_intent=bool(data.get("is_multi_intent", False)),
+            # Normalization (fewer than two segments is never a real split,
+            # whatever is_multi_intent claimed) lives once, on the model
+            # itself -- see DecompositionResult's validator.
+            segments=[str(s) for s in (data.get("segments") or [])],
             provider=self.provider,
             model=self._settings.model,
             latency_ms=latency_ms,

@@ -9,7 +9,13 @@ from __future__ import annotations
 
 import asyncio
 
-from .models import ExtractionResult, SpeechResult, TranslationResult, VisionResult
+from .models import (
+    DecompositionResult,
+    ExtractionResult,
+    SpeechResult,
+    TranslationResult,
+    VisionResult,
+)
 
 
 class FakeSpeechProvider:
@@ -102,6 +108,33 @@ class FakeExtractionProvider:
         if self._error is not None:
             raise self._error
         assert self._result is not None, "FakeExtractionProvider needs a result or an error"
+        return self._result
+
+
+class FakeDecompositionProvider:
+    """Fake for DecompositionProvider.decompose() -- mirrors
+    FakeExtractionProvider's shape exactly."""
+
+    provider = "fake"
+
+    def __init__(
+        self,
+        result: DecompositionResult | None = None,
+        *,
+        error: BaseException | None = None,
+    ) -> None:
+        self._result = result if result is not None else DecompositionResult()
+        self._error = error
+        self.calls = 0
+        self.last_text: str | None = None
+
+    async def decompose(
+        self, text: str, *, correlation_id: str | None = None
+    ) -> DecompositionResult:
+        self.calls += 1
+        self.last_text = text
+        if self._error is not None:
+            raise self._error
         return self._result
 
 

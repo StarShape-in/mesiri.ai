@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class SpeechResult(BaseModel):
@@ -80,3 +80,47 @@ class ExtractionResult(BaseModel):
     provider: str | None = None
     model: str | None = None
     latency_ms: float | None = None
+
+
+class DecompositionResult(BaseModel):
+    """Output of a decomposition call -- splitting, not classifying.
+
+    docs/execution/COMPOSITE_REQUEST_PLAN_LAYER.md §9: a message like "create
+    a project called Starship and then create a site called Site A, then add
+    a new user Hysam" returns ExtractionResult.semantic_type == "unknown",
+    because a single semantic_type field cannot represent three intents at
+    once. Decomposition is a SEPARATE call from extraction, run only when
+    extraction already returned unknown -- it does not classify each part
+    (that stays extract()'s job, run once per segment afterward, unchanged),
+    it only decides whether the text is actually several distinct requests
+    and, if so, where the boundaries are.
+
+    ``segments`` are plain sub-texts in the order the sender said them --
+    never reordered here (see planning/ordering.py: dependency order is
+    derived later, from what each segment's own extraction produces, not
+    imposed at split time). Empty when ``is_multi_intent`` is False; a
+    decomposer that isn't confident this is genuinely multiple requests
+    should say so via ``is_multi_intent=False`` rather than guess at a split,
+    since the fallback (today's single unrecognized-message reply) is safe
+    and a wrong split is not.
+    """
+
+    is_multi_intent: bool = False
+    segments: list[str] = Field(default_factory=list)
+    provider: str | None = None
+    model: str | None = None
+    latency_ms: float | None = None
+
+    @model_validator(mode="after")
+    def _normalize(self) -> DecompositionResult:
+        """Enforced HERE, once, rather than duplicated per adapter: fewer
+        than two non-blank segments is never a split, whatever a provider
+        claimed for ``is_multi_intent``. A one-element "split" would turn an
+        ordinary single-intent message into a pointless one-step "plan", and
+        a provider hallucinating true with an empty list must not silently
+        become one either."""
+        segments = [s for s in self.segments if s.strip()]
+        confirmed = self.is_multi_intent and len(segments) >= 2
+        self.is_multi_intent = confirmed
+        self.segments = segments if confirmed else []
+        return self

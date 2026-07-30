@@ -15,7 +15,13 @@ import logging
 from typing import Any
 
 from mesiri_ai import fixtures
-from mesiri_ai.models import ExtractionResult, SpeechResult, TranslationResult, VisionResult
+from mesiri_ai.models import (
+    DecompositionResult,
+    ExtractionResult,
+    SpeechResult,
+    TranslationResult,
+    VisionResult,
+)
 from mesiri_contracts.common.errors import MesiriError
 
 logger = logging.getLogger(__name__)
@@ -392,6 +398,51 @@ class DynamicAIProviderResolver:
                     fallback_id,
                 )
                 return await _call_extract(fallback_id, fallback_model)
+            raise
+
+    async def decompose(
+        self, text: str, *, correlation_id: str | None = None
+    ) -> DecompositionResult:
+        """Split (never classify) text that already failed single-intent
+        extraction (docs/execution/COMPOSITE_REQUEST_PLAN_LAYER.md §9).
+
+        Reuses the "extraction" route's provider/model rather than adding a
+        new routing capability -- same reasoning as generate_json below:
+        it's the same underlying model doing a different job on the same
+        text, and every org already has an extraction route configured.
+        """
+        config = await self._resolve_config()
+        route = config["routing"].get("extraction", {"provider_id": "fake", "model": ""})
+        provider_id = route["provider_id"]
+        model = route["model"]
+        fallback_id = route.get("fallback_provider_id")
+        fallback_model = route.get("fallback_model") or ""
+
+        async def _call_decompose(pid: str, mdl: str) -> DecompositionResult:
+            if pid == "gemini":
+                provider = self._cached_gemini_provider(config, mdl)
+                return await provider.decompose(text, correlation_id=correlation_id)
+            if pid == "deepseek":
+                provider = self._cached_deepseek_provider(config, mdl)
+                return await provider.decompose(text, correlation_id=correlation_id)
+            # No fake/fabricated split: an unconfigured route degrades to
+            # "not multi-intent" (today's single-message behaviour), never a
+            # guessed segmentation. Unlike extract()'s fake fallback (which
+            # exists so tests without real providers still exercise the
+            # whole pipeline against a known fixture), there is no
+            # equivalent safe fixture for an arbitrary multi-intent split.
+            return DecompositionResult(provider="fake")
+
+        try:
+            return await _call_decompose(provider_id, model)
+        except MesiriError:
+            if fallback_id:
+                logger.warning(
+                    "decomposition primary provider %r failed, trying fallback %r",
+                    provider_id,
+                    fallback_id,
+                )
+                return await _call_decompose(fallback_id, fallback_model)
             raise
 
     async def generate_json(

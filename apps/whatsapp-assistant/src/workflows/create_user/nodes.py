@@ -75,13 +75,89 @@ def _normalize_phone(number_hint: object) -> str | None:
     return digits if len(digits) >= _MIN_DIGITS else None
 
 
+_NUMBER_SLOT_NAME = "whatsapp_number"
+
+
+def resolve_whatsapp_number(state: WorkflowGraphState) -> dict:
+    """Resolve the new user's WhatsApp number via a real slot-fill, run
+    before build_draft.
+
+    Added for ENTITY_RESOLUTION_PLAN.md's CREATE_USER -> ADD_PROJECT_MEMBER
+    chain (runtime/inbound_journey/resume.py's start_member_create_plan),
+    which deliberately starts this workflow with only a name and no number --
+    the number is never in the original "add X as PM" message. Before this
+    node existed, a missing number produced only a bare pending_prompt with
+    no `awaiting_slot` (see build_draft's prior version), so the run
+    completed as terminal COMPLETED (workflows/runtime.py's start(): only an
+    `awaiting_slot` value persists a resumable COLLECTING_FIELDS state).
+    Nothing was left listening, so the reply to "What's their WhatsApp
+    number?" landed as an ordinary new message, Understanding called it
+    `unknown`, and the number was silently lost -- confirmed by a live
+    trace, not a hypothetical.
+
+    Mirrors expense_capture/nodes.py's resolve_account shape (pop
+    `_slot_answer_text` set by WorkflowRuntime.provide_input on resume,
+    validate, clear `awaiting_slot` on success or re-ask on failure) --
+    free-text, not choice-based, so match_slot_answer/SlotCandidate don't
+    apply here; _normalize_phone is the existing validator, unchanged.
+
+    A message that already carries a number (the common, non-chained
+    "create Rajesh, 9198765xxxxx, as site engineer" case) is unaffected --
+    resolves and clears on the very first pass, same as before this node
+    existed.
+
+    No full_name yet either: falls through unresolved, deferring to
+    build_draft's own missing-name prompt (a single-message retry, not a
+    slot) -- that field's behaviour is intentionally untouched here."""
+    fields = dict(state.get("collected_fields") or {})
+    if not str(fields.get("full_name") or "").strip():
+        return {}
+
+    answer_text = fields.pop("_slot_answer_text", None)
+    if answer_text is not None:
+        phone = _normalize_phone(answer_text)
+        if phone is not None:
+            fields["whatsapp_number"] = phone
+            return {"collected_fields": fields, "awaiting_slot": None}
+        return {
+            "collected_fields": fields,
+            "awaiting_slot": _NUMBER_SLOT_NAME,
+            "pending_prompt": f"Sorry, that doesn't look right. {_INVALID_NUMBER_PROMPT}",
+        }
+
+    raw_number = fields.get("whatsapp_number")
+    if str(raw_number or "").strip():
+        phone = _normalize_phone(raw_number)
+        if phone is not None:
+            fields["whatsapp_number"] = phone
+            return {"collected_fields": fields, "awaiting_slot": None}
+        return {
+            "collected_fields": fields,
+            "awaiting_slot": _NUMBER_SLOT_NAME,
+            "pending_prompt": _INVALID_NUMBER_PROMPT,
+        }
+
+    return {
+        "collected_fields": fields,
+        "awaiting_slot": _NUMBER_SLOT_NAME,
+        "pending_prompt": _MISSING_NUMBER_PROMPT,
+    }
+
+
 def build_draft(state: WorkflowGraphState) -> dict:
     """Map collected fields into a DraftAction, or -- if AI extraction never
-    filled in a name or a plausible number -- complete with a clarifying
-    reply and no draft at all (see WorkflowDefinition.
-    allows_completion_without_draft in workflows/registry.py, which permits
-    WorkflowKey.CREATE_USER to complete without a draft for exactly this
-    case)."""
+    filled in a name -- complete with a clarifying reply and no draft at all
+    (see WorkflowDefinition.allows_completion_without_draft in workflows/
+    registry.py, which permits WorkflowKey.CREATE_USER to complete without a
+    draft for exactly this case).
+
+    By the time this runs, resolve_whatsapp_number has already guaranteed
+    whatsapp_number is either a normalized, valid number or the graph never
+    reached here at all (see graph.py's conditional edge) -- except when
+    full_name itself was missing, in which case resolve_whatsapp_number is a
+    no-op and whatsapp_number may still be raw/absent. The checks below stay
+    as defence in depth for that path and for any future caller that invokes
+    this node directly."""
     fields = dict(state.get("collected_fields") or {})
     full_name = str(fields.get("full_name") or "").strip()
     if not full_name:

@@ -15,7 +15,7 @@ import httpx
 
 from ...core.errors import malformed_output
 from ...core.fallback import call_with_resilience
-from ...models import ExtractionResult, TranslationResult
+from ...models import DecompositionResult, ExtractionResult, TranslationResult
 
 try:
     from mesiri.bootstrap.settings import DeepSeekSettings
@@ -357,6 +357,28 @@ _EXTRACTION_PROMPT = (
 )
 
 
+# Mirrors the Gemini adapter's _DECOMPOSITION_PROMPT exactly -- see that
+# module's copy for the full reasoning (docs/execution/
+# COMPOSITE_REQUEST_PLAN_LAYER.md §9). Only ever called on text extract()
+# already returned "unknown" for; splits, never classifies, never reorders.
+_DECOMPOSITION_PROMPT = (
+    "The text may be in any language -- read it directly. It already failed "
+    "single-request classification, meaning it may describe MULTIPLE distinct "
+    "requests in one message (e.g. \"create a project called X, then a site "
+    "called Y, then add a new user Z\" -- three separate requests: create a "
+    "project, create a site, create a user).\n\n"
+    "Decide: does this text state more than one distinct, actionable request? "
+    "If yes, split it into separate sub-texts, each one grammatically complete "
+    "on its own and in the SAME order the sender said them -- never reorder, "
+    "never merge two requests into one, never invent a request the text does "
+    "not state. If the text is really just one request, or is not an "
+    "actionable request at all (a greeting, a question, gibberish), say so.\n\n"
+    'Return strict JSON with keys: "is_multi_intent" (boolean), "segments" '
+    '(array of strings -- empty when is_multi_intent is false). Do NOT '
+    "classify what type each segment is; that happens separately."
+)
+
+
 class DeepSeekExtractionProvider:
     provider = "deepseek"
 
@@ -428,6 +450,53 @@ class DeepSeekExtractionProvider:
                 k: float(v) for k, v in (data.get("field_confidences", {}) or {}).items()
             },
             detected_language=data.get("detected_language"),
+            provider=self.provider,
+            model=self._s.model,
+            latency_ms=latency_ms,
+        )
+
+    async def decompose(
+        self, text: str, *, correlation_id: str | None = None
+    ) -> DecompositionResult:
+        api_key = self._s.api_key.get_secret_value() if self._s.api_key else None
+
+        async def _raw() -> Any:
+            async with httpx.AsyncClient(timeout=self._s.timeout_seconds) as client:
+                resp = await client.post(
+                    f"{self._s.base_url.rstrip('/')}/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    json={
+                        "model": self._s.model,
+                        "messages": [
+                            {"role": "system", "content": _DECOMPOSITION_PROMPT},
+                            {"role": "user", "content": text},
+                        ],
+                        "response_format": {"type": "json_object"},
+                        "temperature": 0,
+                    },
+                )
+                resp.raise_for_status()
+                return resp.json()
+
+        raw, latency_ms = await call_with_resilience(
+            _raw,
+            provider=self.provider,
+            operation="decompose",
+            timeout_seconds=self._s.timeout_seconds,
+            max_retries=self._s.max_retries,
+            correlation_id=correlation_id,
+        )
+        try:
+            content = raw["choices"][0]["message"]["content"]
+            data = json.loads(content)
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            raise malformed_output("deepseek", str(exc), correlation_id=correlation_id) from exc
+
+        return DecompositionResult(
+            is_multi_intent=bool(data.get("is_multi_intent", False)),
+            # Normalization lives once, on DecompositionResult itself -- see
+            # its validator (mirrors the Gemini adapter's identical reasoning).
+            segments=[str(s) for s in (data.get("segments") or [])],
             provider=self.provider,
             model=self._s.model,
             latency_ms=latency_ms,
