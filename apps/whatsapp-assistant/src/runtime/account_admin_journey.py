@@ -36,6 +36,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from channel.replies import ReplySpec
 from mesiri_contracts.assistant.canonical_event import CanonicalEventType, IntentCompleteness
 from mesiri_contracts.assistant.enums import InputModality
 from mesiri_contracts.assistant.planner_decision import (
@@ -65,10 +66,19 @@ _ACCOUNT_ADMIN_ROLES = frozenset({"ADMIN", "FINANCE"})
 class AccountAdminCommandResult:
     """None from try_handle() means "not a recognized command at all" --
     the caller falls through to the normal journey. This type is only ever
-    returned once the text *is* recognized, so reply_text is always
-    populated (a permission denial included)."""
+    returned once the text *is* recognized, so reply is always populated (a
+    permission denial included).
 
-    reply_text: str
+    ``reply`` is the full ReplySpec, not a bare string -- a live report
+    ("Confirm this action? Create a new user... Reply YES to confirm or NO
+    to cancel", sent as plain text with no tappable buttons) turned out to
+    apply here too: ACCOUNT_ADMIN's graph produces a real confirmable draft
+    the same shape as CREATE_USER's, and this used to render it via
+    render_workflow_run_reply (string-only) instead of render_workflow_run_
+    reply_spec (the one place that decides plain text vs Yes/No buttons vs
+    a tappable list for a WorkflowRunResult)."""
+
+    reply: ReplySpec
     workflow_run: WorkflowRunResult | None = None
 
 
@@ -92,12 +102,12 @@ async def try_handle_account_admin_command(
 
     if actor is None or not actor.organization_id:
         return AccountAdminCommandResult(
-            reply_text="⛔ I couldn't identify your organization for that command."
+            reply=ReplySpec(text="⛔ I couldn't identify your organization for that command.")
         )
 
     if str(actor.role or "").strip().upper() not in _ACCOUNT_ADMIN_ROLES:
         return AccountAdminCommandResult(
-            reply_text="⛔ Only an admin or finance user can manage accounts."
+            reply=ReplySpec(text="⛔ Only an admin or finance user can manage accounts.")
         )
 
     event = CanonicalEventV2(
@@ -123,9 +133,9 @@ async def try_handle_account_admin_command(
     )
     result = await workflow_runtime.start(decision, event)
 
-    from interactions.response_handler import render_workflow_run_reply
+    from runtime.inbound_journey.reply import render_workflow_run_reply_spec
 
     return AccountAdminCommandResult(
-        reply_text=render_workflow_run_reply(result, pending_prompt=result.pending_prompt),
+        reply=render_workflow_run_reply_spec(result),
         workflow_run=result,
     )

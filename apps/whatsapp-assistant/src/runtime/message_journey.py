@@ -730,11 +730,23 @@ def build_message_handlers(
             _log.exception("account_admin.command_failed user=%s", ctx.user_id)
             account_admin_handled = None
         if account_admin_handled is not None:
-            await sender.send_text(wa_id, account_admin_handled.reply_text)
+            # send_reply_spec, not sender.send_text -- account_admin_handled
+            # .reply carries Yes/No buttons for a real confirmable draft
+            # (e.g. "Create account Site Cash?"), and send_text would have
+            # silently dropped them to plain "Reply YES/NO" text, the same
+            # bug class the member-create chain had.
+            await send_reply_spec(
+                account_admin_handled.reply,
+                wa_id,
+                send_text=sender.send_text,
+                send_list=sender.send_list,
+                send_button=sender.send_button,
+            )
             run = account_admin_handled.workflow_run
             await asyncio.gather(
                 message_logger.log_reply(
-                    correlation_id=message.correlation_id, reply=account_admin_handled.reply_text
+                    correlation_id=message.correlation_id,
+                    reply=account_admin_handled.reply.text,
                 ),
                 message_logger.link_workflow_instance(
                     correlation_id=message.correlation_id,

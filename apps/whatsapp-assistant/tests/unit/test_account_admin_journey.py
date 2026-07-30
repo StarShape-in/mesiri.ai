@@ -79,7 +79,11 @@ async def test_create_account_by_admin_starts_a_confirmable_workflow():
     assert result is not None
     assert result.workflow_run is not None
     assert result.workflow_run.status is WorkflowRunStatus.STARTED
-    assert "Confirm this action" in result.reply_text
+    assert "Confirm this action" in result.reply.text
+    # The live bug this fixes: a real confirmable draft used to render as
+    # plain "Reply YES/NO" text instead of tappable buttons.
+    assert result.reply.buttons is not None
+    assert {b.title for b in result.reply.buttons} == {"Yes", "No"}
 
 
 async def test_create_account_by_finance_role_is_allowed():
@@ -97,7 +101,8 @@ async def test_create_account_by_site_engineer_is_denied():
     )
     assert result is not None
     assert result.workflow_run is None
-    assert "Only an admin or finance user" in result.reply_text
+    assert "Only an admin or finance user" in result.reply.text
+    assert result.reply.buttons is None
 
 
 async def test_no_actor_is_denied_gracefully():
