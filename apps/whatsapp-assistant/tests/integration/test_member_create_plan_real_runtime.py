@@ -1,7 +1,7 @@
-"""End-to-end reproduction of the live trace: does advance_member_plan_after_
-user_created actually fire after the *real* WorkflowRuntime (not a fake that
-just replays canned results) drives CREATE_USER through start -> pause on
-missing number -> slot answer -> confirm?
+"""End-to-end reproduction of the live trace: does plan_executor.advance_plan
+actually fire after the *real* WorkflowRuntime (not a fake that just replays
+canned results) drives CREATE_USER through start -> pause on missing number
+-> slot answer -> confirm?
 
 test_member_create_plan.py's own WorkflowRuntime fake only ever replayed
 pre-built WorkflowRunResults, so it could never have caught a bug in how
@@ -10,6 +10,17 @@ workflow_instance_id actually flows through start()/provide_input()/resume()
 WorkflowRuntime, a real FakeWorkflowInstanceRepository (the same one
 workflows/runtime.py's own test suite trusts), and the real compiled
 create_user/add_project_member graphs.
+
+Originally exercised resume.py's hand-written advance_member_plan_after_
+user_created, hardcoded to this one chain's two step ids. That function is
+retired -- message_journey.py now calls plan_executor.advance_plan
+generically for every confirmation (docs/execution/
+COMPOSITE_REQUEST_PLAN_LAYER.md §4.2's one-plan-one-executor invariant).
+This file still proves the exact same real-graph, real-instance-id sequence
+survives being driven by the generic executor instead -- the strongest
+available evidence for the swap, since it is the only test in the repo that
+exercises this chain against actual compiled LangGraph graphs rather than a
+canned-result fake.
 
 Skipped automatically when ``langgraph`` isn't installed.
 """
@@ -36,10 +47,8 @@ from mesiri_contracts.assistant.planner_decision import (  # noqa: E402
 )
 from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2  # noqa: E402
 from planning.plan_store import PlanStore  # noqa: E402
-from runtime.inbound_journey.resume import (  # noqa: E402
-    advance_member_plan_after_user_created,
-    start_member_create_plan,
-)
+from runtime.inbound_journey.resume import start_member_create_plan  # noqa: E402
+from runtime.plan_executor import advance_plan  # noqa: E402
 from workflows.add_project_member.graph import build_add_project_member_graph  # noqa: E402
 from workflows.create_user.graph import build_create_user_graph  # noqa: E402
 from workflows.fakes import FakeWorkflowInstanceRepository, FakeWorkflowRegistry  # noqa: E402
@@ -161,14 +170,14 @@ async def test_the_exact_live_sequence_reaches_the_confirmation_prompt():
     )
     handled = _mock_handled(resume_result, execution)
 
-    reply_final = await advance_member_plan_after_user_created(
+    reply_final = await advance_plan(
         handled, plan_store=plan_store, workflow_runtime=runtime, actor=actor
     )
 
     assert reply_final is not None, (
-        "advance_member_plan_after_user_created returned None -- the chain "
-        "stopped at 'user created' exactly like the live trace showed, "
-        "instead of continuing to ADD_PROJECT_MEMBER"
+        "advance_plan returned None -- the chain stopped at 'user created' "
+        "exactly like the live trace showed, instead of continuing to "
+        "ADD_PROJECT_MEMBER"
     )
     assert "confirm" in reply_final.text.lower()
     # The live bug this session's user actually hit: a plain-text "Reply
@@ -176,6 +185,35 @@ async def test_the_exact_live_sequence_reaches_the_confirmation_prompt():
     # this used to return a bare pending_prompt string.
     assert reply_final.buttons is not None
     assert {b.title for b in reply_final.buttons} == {"Yes", "No"}
+
+    # Step 5: the plan does NOT clear here -- unlike the old hardcoded
+    # advance, the generic executor keeps it alive through the final step
+    # (§4.2). "Yes" to ADD_PROJECT_MEMBER should close it out with a summary.
+    plan_mid = await plan_store.get_plan(user_id=USR)
+    assert plan_mid is not None, "the generic executor must keep the plan alive through the final step"
+    assert plan_mid.step("add_member").status.value == "running"
+
+    loaded3 = await runtime.get_awaiting_confirmation(USR)
+    assert loaded3 is not None, "no AWAITING_CONFIRMATION instance found for ADD_PROJECT_MEMBER"
+    resume_result2 = await runtime.resume(loaded3, ResumeAction.CONFIRM)
+    assert resume_result2.status.value == "confirmed", resume_result2.status
+
+    execution2 = ExecutionResult(
+        status=ExecutionStatus.SUCCEEDED,
+        idempotency_key=resume_result2.workflow_instance_id,
+        material_row_id="66666666-6666-4666-8666-666666666666",
+    )
+    handled2 = _mock_handled(resume_result2, execution2)
+
+    reply_closing = await advance_plan(
+        handled2, plan_store=plan_store, workflow_runtime=runtime, actor=actor
+    )
+
+    assert reply_closing is not None
+    assert "here's what i did" in reply_closing.text.lower()
+    assert await plan_store.get_plan(user_id=USR) is None, (
+        "the plan must be released once every step has reached a terminal status"
+    )
 
 
 # ---------------------------------------------------------------------------

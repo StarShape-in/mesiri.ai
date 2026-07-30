@@ -554,8 +554,8 @@ def build_message_handlers(
                 _offer_project_setup,
                 _offer_team_photo,
                 _recorded_attendance_report_id,
-                advance_member_plan_after_user_created,
             )
+            from runtime.plan_executor import advance_plan
 
             try:
                 promotion_offered = await _maybe_trigger_worker_promotion(
@@ -599,36 +599,41 @@ def build_message_handlers(
                 )
             except Exception:  # noqa: BLE001 — offer never disturbs the saved project/site
                 _log.exception("project_setup.offer_failed user=%s", ctx.user_id)
-            # Member-create plan advance (ENTITY_RESOLUTION_PLAN.md): after a
-            # confirmed CREATE_USER, check whether it was the first step of a
-            # member-create plan (start_member_create_plan) and, if so,
-            # finish the original "add X as PM" request the Missing offer
-            # paused -- see advance_member_plan_after_user_created's
-            # docstring. A cheap no-op for the overwhelmingly common
-            # standalone CREATE_USER with no plan waiting.
+            # Plan advance (docs/execution/COMPOSITE_REQUEST_PLAN_LAYER.md
+            # §4.2/§7.1): after ANY confirmed/rejected workflow, check
+            # whether it was a step in a Plan waiting on this exact
+            # instance -- the entity-resolution layer's CREATE_USER ->
+            # ADD_PROJECT_MEMBER chain (ENTITY_RESOLUTION_PLAN.md §3.3) and a
+            # decomposed multi-intent plan (§9) both run through this same
+            # call, generically, rather than one hand-written advance per
+            # chain. A cheap no-op (one Redis read) for the overwhelmingly
+            # common confirmation with no plan waiting on it at all.
             try:
-                member_resume_reply = await advance_member_plan_after_user_created(
+                plan_reply = await advance_plan(
                     handled,
                     plan_store=plan_store,
                     workflow_runtime=workflow_runtime,
                     actor=ctx,
                 )
-                if member_resume_reply is not None:
-                    # send_reply_spec, not sender.send_text -- this reply
-                    # carries Yes/No buttons for the ADD_PROJECT_MEMBER
-                    # confirmation it just started (render_workflow_run_
-                    # reply_spec attaches them), and send_text would have
-                    # silently dropped them to plain "Reply YES/NO" text,
-                    # same bug class start_member_create_plan had.
+                if plan_reply is not None:
+                    # send_reply_spec, not sender.send_text -- a mid-plan
+                    # reply carries Yes/No buttons for whatever step just
+                    # started (render_workflow_run_reply_spec attaches
+                    # them), and send_text would have silently dropped them
+                    # to plain "Reply YES/NO" text, the same bug class
+                    # start_member_create_plan had. The closing summary is
+                    # plain text either way (format_plan_summary), which
+                    # ReplySpec/send_reply_spec already handle correctly.
                     await send_reply_spec(
-                        member_resume_reply,
+                        plan_reply,
                         wa_id,
                         send_text=sender.send_text,
                         send_list=sender.send_list,
                         send_button=sender.send_button,
                     )
-            except Exception:  # noqa: BLE001 — the user was still created either way
-                _log.exception("member_plan.advance_failed user=%s", ctx.user_id)
+            except Exception:  # noqa: BLE001 — the confirmed/rejected step's own
+                # outcome was already recorded either way.
+                _log.exception("plan.advance_failed user=%s", ctx.user_id)
             # Was missing until now: every other fast-path step laps the
             # timer, but this one (and its three siblings above) didn't --
             # so the "prepipeline" trace a user pastes back for debugging
@@ -636,7 +641,7 @@ def build_message_handlers(
             # *something* between handle_fast_path and the final gather()
             # took some amount of time. Diagnosing a live "chain stopped at
             # user created" report needed this and didn't have it.
-            timer.lap("member_plan_advance")
+            timer.lap("plan_advance")
             # Phase 8 perf: user reply is already sent above. These 4 writes
             # are order-independent audit rows -- run them concurrently.
             await asyncio.gather(

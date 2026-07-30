@@ -19,13 +19,10 @@ from channel.replies import (
     render_member_create_offer,
     render_member_not_found_reply,
 )
-from interactions.handler import InteractionHandled
 from interactions.pending_report import PendingReportStore
 from memory.recent_turns import RecentTurnsStore
-from mesiri_contracts.application.results.execution_result import ExecutionStatus
 from mesiri_contracts.assistant.canonical_event import CanonicalEventType
 from mesiri_contracts.assistant.canonical_event import IntentCompleteness as _IntentCompleteness
-from mesiri_contracts.assistant.draft_action import DraftActionType
 from mesiri_contracts.assistant.enums import InputModality
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage
 from mesiri_contracts.assistant.planner_decision import PlannerDecisionType, WorkflowKey
@@ -33,8 +30,6 @@ from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
 from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
 from mesiri_contracts.common.ids import new_id as _new_id
 from planner import Planner
-from planning.binding import build_event
-from planning.outputs import build_step_outputs
 from planning.plan import Plan, PlanOrigin, PlanStep, StepRef, StepStatus
 from planning.plan_store import PlanStore
 from runtime.entity_resolution.member_resolution import MemberNameResolutionService
@@ -56,7 +51,7 @@ from runtime.inventory_query import MaterialInventoryQueryService
 from runtime.logging_ports import MessageLogger
 from runtime.material_catalog_query import MaterialCatalogQueryService
 from runtime.org_settings_query import OrganizationSettingsQueryService
-from workflows import WorkflowResumeResult, WorkflowResumeStatus, WorkflowRuntime
+from workflows import WorkflowRuntime
 from workflows.create_user.nodes import find_mentioned_phone_number
 
 _PROJECT_ROW_PREFIX = "proj_"
@@ -996,185 +991,3 @@ async def resume_pending_report_with_member_create_offer(
         )
     return reply
 
-
-async def advance_member_plan_after_user_created(
-    handled: InteractionHandled,
-    *,
-    plan_store: PlanStore,
-    workflow_runtime: WorkflowRuntime,
-    actor: ActorIdentity | None,
-) -> ReplySpec | None:
-    """After a confirmed CREATE_USER execution, check whether it was the
-    first step of a member-create plan (start_member_create_plan) and, if
-    so, finish the job the original "add X as PM" request actually asked
-    for -- start ADD_PROJECT_MEMBER with the newly created user's exact name
-    already filled in, instead of leaving the user to re-state their
-    original request from scratch.
-
-    Called from runtime/message_journey.py's post-confirmation hook,
-    alongside _offer_project_setup -- same shape (inspect a just-confirmed
-    execution, decide whether a follow-up fires), different trigger and
-    different chain.
-
-    Returns the full ReplySpec for the newly started ADD_PROJECT_MEMBER
-    workflow's own confirmation -- built via render_workflow_run_reply_spec
-    so it carries Yes/No buttons like every other confirmation prompt, not
-    a bare pending_prompt string sent as plain text (the same bug class
-    start_member_create_plan had; see its own docstring) -- or None if this
-    confirmation wasn't part of a plan this function tracks (an ordinary
-    CREATE_USER with no chain is the overwhelmingly common case and must be
-    a cheap no-op).
-    """
-    result = handled.result
-    if not isinstance(result, WorkflowResumeResult):
-        return None
-
-    user_id = str(getattr(actor, "user_id", None) or "")
-    if not user_id:
-        return None
-
-    # A plan is only ever waiting on ONE specific CREATE_USER instance. Every
-    # decision below matches on that instance id, never on workflow_key alone
-    # -- a plan outlives its turn (PlanStore's 30-minute TTL) and the same
-    # user can abandon this one and legitimately start a different
-    # CREATE_USER inside the window. Matching on key+status alone let an
-    # abandoned "create Hysam" plan attach itself to a later "create Rajesh"
-    # and offer Rajesh project-manager rights on Hysam's project.
-    def _is_our_instance(plan_step: PlanStep | None) -> bool:
-        return (
-            plan_step is not None
-            and plan_step.workflow_instance_id is not None
-            and plan_step.workflow_instance_id == result.workflow_instance_id
-        )
-
-    # A rejected/cancelled CREATE_USER ends the plan it belonged to. Without
-    # this the plan would linger for the rest of its TTL with its first step
-    # still RUNNING, waiting for a confirmation that is never coming.
-    if result.status in (
-        WorkflowResumeStatus.REJECTED,
-        WorkflowResumeStatus.CANCELLED,
-    ):
-        plan = await plan_store.get_plan(user_id=user_id)
-        if plan is not None and _is_our_instance(plan.step(_CREATE_USER_STEP_ID)):
-            await _safe(plan_store.clear(user_id=user_id))
-        return None
-
-    if result.status is not WorkflowResumeStatus.CONFIRMED:
-        return None
-    confirmed = result.confirmed_action
-    if confirmed is None or confirmed.draft_action.action_type is not DraftActionType.CREATE_USER:
-        return None
-    execution = handled.execution_result
-    if execution is None or execution.status is not ExecutionStatus.SUCCEEDED:
-        return None
-
-    plan = await plan_store.get_plan(user_id=user_id)
-    if plan is None:
-        # The overwhelmingly common case -- an ordinary CREATE_USER with no
-        # plan waiting on it. Silent on purpose: logging here would mean a
-        # WARNING on every single confirmed user creation in the org.
-        return None
-    create_step = plan.step(_CREATE_USER_STEP_ID)
-    if create_step is None or create_step.status is not StepStatus.RUNNING:
-        _log.info(
-            "member_plan.step_not_running user=%s plan_id=%s step_status=%s",
-            user_id,
-            plan.plan_id,
-            create_step.status.value if create_step else None,
-        )
-        return None
-    if not _is_our_instance(create_step):
-        # Someone else's CREATE_USER (or a plan from before this field
-        # existed). Left untouched rather than cleared -- this confirmation
-        # is not ours to draw conclusions from, and clearing here would let
-        # an unrelated workflow silently cancel a legitimately waiting plan.
-        # Logged at WARNING, unlike the two branches above: a plan existing
-        # and RUNNING but pointing at a *different* instance than the one
-        # just confirmed is the one state genuinely worth knowing about --
-        # it means either the hijack guard is doing its job (a stale plan
-        # correctly ignored an unrelated confirmation) or something is wrong
-        # with instance tracking, and only the log line can tell those apart.
-        _log.warning(
-            "member_plan.instance_mismatch user=%s plan_id=%s plan_instance=%s confirmed_instance=%s",
-            user_id,
-            plan.plan_id,
-            create_step.workflow_instance_id,
-            result.workflow_instance_id,
-        )
-        return None
-
-    full_name = confirmed.draft_action.fields.get("full_name")
-    if not full_name or not execution.material_row_id:
-        await _safe(plan_store.clear(user_id=user_id))
-        return None
-
-    try:
-        plan = await plan_store.mark_step_done(
-            user_id=user_id,
-            step_id=_CREATE_USER_STEP_ID,
-            # Built generically from what CREATE_USER `provides` in the
-            # registry plus the confirmed draft's own scalar fields, rather
-            # than the hand-written {"user_id": ..., "full_name": ...} this
-            # used to be. Produces exactly the same two keys for this chain
-            # (which is why the member-create tests still pass unchanged),
-            # and is the same call an N-step decomposed plan's executor
-            # makes -- so a PROJECT_CREATE step publishes `project_id` for
-            # a later SITE_CREATE's StepRef without anyone wiring that pair
-            # by hand. See planning/outputs.py.
-            outputs=build_step_outputs(
-                workflow_key=create_step.workflow_key,
-                row_id=execution.material_row_id,
-                draft_fields=confirmed.draft_action.fields,
-            ),
-        )
-        next_step = await plan_store.next_runnable_step(user_id=user_id)
-    except Exception:  # noqa: BLE001 -- the user was created either way; a plan-advance
-        # failure must not look like the create itself failed.
-        _log.exception("member_plan.advance_failed user=%s", user_id)
-        await _safe(plan_store.clear(user_id=user_id))
-        return None
-
-    if next_step is None or next_step.step_id != _ADD_MEMBER_STEP_ID:
-        await _safe(plan_store.clear(user_id=user_id))
-        return None
-
-    # Every StepRef resolved and the event rebuilt in one call, by the layer
-    # that owns that job (planning/binding.py, ADR-C2) -- this used to be a
-    # hand-rolled ref walk plus a pop("project_id") to move the project from
-    # `fields` onto the event's scope, which only worked because this one
-    # chain's shape was known here. UnresolvedStepRefError is a contract bug
-    # between producer and consumer, not a user-facing state, so it is caught
-    # and logged rather than surfaced.
-    try:
-        event = build_event(next_step, plan, correlation_id=_new_id("member_resume"))
-    except Exception:  # noqa: BLE001 -- the user was created either way
-        _log.exception("member_plan.bind_failed user=%s", user_id)
-        await _safe(plan_store.clear(user_id=user_id))
-        return None
-
-    await _safe(plan_store.clear(user_id=user_id))
-    if not event.project_id or not event.fields.get("member_name"):
-        return None
-
-    decision = PlannerDecisionV2(
-        correlation_id=event.correlation_id,
-        source_message_id=event.source_message_id,
-        decision_type=PlannerDecisionType.START_WORKFLOW,
-        workflow_key=next_step.workflow_key,
-        reason=next_step.event_type,
-        organization_id=event.organization_id,
-        user_id=event.user_id,
-        project_id=event.project_id,
-    )
-    org_id = event.organization_id
-
-    await _safe(workflow_runtime.abandon_optional_question(user_id))
-    try:
-        run = await workflow_runtime.start(decision, event)
-    except Exception:  # noqa: BLE001 -- the user was still created successfully
-        _log.exception("member_plan.resume_start_failed org=%s", org_id)
-        return None
-    if not run.pending_prompt:
-        _log.error("member_plan.resume_no_prompt org=%s status=%s", org_id, run.status.value)
-        return None
-    return render_workflow_run_reply_spec(run)

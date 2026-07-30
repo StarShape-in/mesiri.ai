@@ -6,17 +6,23 @@ runtime/message_journey.py's post-confirmation hook every time any workflow
 confirmation resolves; a cheap no-op (one Redis read) when no plan is
 waiting, which is the overwhelmingly common case.
 
-## What this replaces
+## What this replaced
 
-`resume.py`'s advance_member_plan_after_user_created does this same job
-hardcoded to exactly two named step ids for exactly one chain. That was
-correct at the scale it was written for and is not general: an N-step
-decomposed plan needs to advance from *whatever* step is running to
-*whatever* is next, without either being named in code. This module is that
-loop, and the entity-resolution layer's own two-step chain is just a plan of
-size 2 running through it (§4.2's one-plan-one-executor invariant -- the
-whole reason PlanStore was built N-capable from the start rather than as a
-size-1 store to widen later).
+`resume.py` used to have its own advance_member_plan_after_user_created,
+hardcoded to exactly two named step ids for exactly one chain. Correct at
+the scale it was written for, but not general: an N-step decomposed plan
+needs to advance from *whatever* step is running to *whatever* is next,
+without either being named in code. This module is that loop; the retired
+function's own chain is now just a plan of size 2 running through it
+(§4.2's one-plan-one-executor invariant -- the whole reason PlanStore was
+built N-capable from the start rather than as a size-1 store to widen
+later). message_journey.py now calls this module's `advance_plan`
+generically for every confirmation instead. See
+tests/unit/test_member_create_plan.py and tests/integration/
+test_member_create_plan_real_runtime.py for the falsification tests that
+prove the swap: the retired function's own scenario, driven through this
+generic path, against both fakes and a real WorkflowRuntime with real
+compiled LangGraph graphs.
 
 ## Why every decision matches on workflow_instance_id
 
