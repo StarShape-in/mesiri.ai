@@ -8,11 +8,13 @@ from typing import Any
 
 import pytest
 
+from mesiri_contracts.assistant.canonical_event import CanonicalEventType
 from mesiri_contracts.assistant.planner_decision import WorkflowKey
 from planning.plan import Plan, PlanOrigin, PlanStep, StepRef, StepStatus
 from planning.plan_store import PlanNotFoundError, PlanStore, StepNotFoundError
 
 USR = "22222222-2222-4222-8222-222222222222"
+ORG = "11111111-1111-4111-8111-111111111111"
 
 
 class _FakeRedis:
@@ -30,19 +32,35 @@ class _FakeRedis:
 
 
 def _paraclette_plan() -> Plan:
+    """Three steps: create the project, create a site under it (scope ref),
+    and create a user (independent of both)."""
     return Plan(
         plan_id="plan_1",
         correlation_id="cor_1",
         user_id=USR,
+        organization_id=ORG,
         origin=PlanOrigin.DECOMPOSITION,
+        source_message_id="msg_1",
         steps=(
-            PlanStep(step_id="s1", workflow_key=WorkflowKey.PROJECT_CREATE, fields={"name": "Paraclette"}),
+            PlanStep(
+                step_id="s1",
+                workflow_key=WorkflowKey.PROJECT_CREATE,
+                event_type=CanonicalEventType.PROJECT_CREATE_REQUESTED,
+                fields={"name": "Paraclette"},
+            ),
             PlanStep(
                 step_id="s2",
                 workflow_key=WorkflowKey.SITE_CREATE,
-                fields={"name": "Tower B", "project": StepRef("s1", "project_id")},
+                event_type=CanonicalEventType.SITE_CREATE_REQUESTED,
+                fields={"name": "Tower B"},
+                scope={"project_id": StepRef("s1", "project_id")},
             ),
-            PlanStep(step_id="s3", workflow_key=WorkflowKey.CREATE_USER, fields={"name": "Hysamm"}),
+            PlanStep(
+                step_id="s3",
+                workflow_key=WorkflowKey.CREATE_USER,
+                event_type=CanonicalEventType.CREATE_USER_REQUESTED,
+                fields={"full_name": "Hysamm"},
+            ),
         ),
     )
 
@@ -127,7 +145,12 @@ async def test_insert_step_splices_a_resolution_step_ahead_of_the_blocked_one():
     # simulate inserting a disambiguation/creation step ahead of ADD_PROJECT_
     # MEMBER-shaped s2 to exercise the splice, since the fixture's s2 depends
     # on s1 already. Insert an unrelated no-dependency step before s2.
-    new_step = PlanStep(step_id="s_new", workflow_key=WorkflowKey.CREATE_USER, fields={"name": "Hysamm"})
+    new_step = PlanStep(
+        step_id="s_new",
+        workflow_key=WorkflowKey.CREATE_USER,
+        event_type=CanonicalEventType.CREATE_USER_REQUESTED,
+        fields={"full_name": "Hysamm"},
+    )
     plan = await store.insert_step(user_id=USR, step=new_step, before_step_id="s2")
 
     order = [s.step_id for s in plan.steps]

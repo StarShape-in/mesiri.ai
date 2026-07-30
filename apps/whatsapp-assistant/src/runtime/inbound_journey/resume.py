@@ -29,6 +29,7 @@ from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
 from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
 from mesiri_contracts.common.ids import new_id as _new_id
 from planner import Planner
+from planning.binding import build_event
 from planning.plan import Plan, PlanOrigin, PlanStep, StepRef, StepStatus
 from planning.plan_store import PlanStore
 from runtime.entity_resolution.member_resolution import MemberNameResolutionService
@@ -738,19 +739,6 @@ async def resume_pending_report_with_member_candidate(
     return reply
 
 
-def _resolve_step_field(value: object, outputs_by_step: dict[str, dict[str, str]]) -> object:
-    """Resolve a single PlanStep field value if it is a StepRef, otherwise
-    return it unchanged. Deliberately narrow -- not the generic recursive
-    resolution the composite-request plan layer's Phase 4 will need for
-    arbitrary steps, only enough to unblock the one fixed-shape chain this
-    module builds (see start_member_create_plan). ADR-C2's just-in-time
-    reasoning applies identically at this small scale: the value a StepRef
-    names does not exist until the referenced step has actually run."""
-    if not isinstance(value, StepRef):
-        return value
-    return outputs_by_step.get(value.step_id, {}).get(value.output_key)
-
-
 async def start_member_create_plan(
     *,
     name_hint: str,
@@ -842,6 +830,7 @@ async def start_member_create_plan(
     create_user_step = PlanStep(
         step_id=_CREATE_USER_STEP_ID,
         workflow_key=WorkflowKey.CREATE_USER,
+        event_type=CanonicalEventType.CREATE_USER_REQUESTED,
         fields={"full_name": name_hint, "role": role_hint},
         status=StepStatus.RUNNING,
         workflow_instance_id=run.workflow_instance_id,
@@ -849,19 +838,29 @@ async def start_member_create_plan(
     add_member_step = PlanStep(
         step_id=_ADD_MEMBER_STEP_ID,
         workflow_key=WorkflowKey.ADD_PROJECT_MEMBER,
+        event_type=CanonicalEventType.ADD_PROJECT_MEMBER_REQUESTED,
         fields={
             "member_name": StepRef(step_id=_CREATE_USER_STEP_ID, output_key="full_name"),
             "role": role_hint,
             "created_by_role": original_event.fields.get("created_by_role"),
-            "project_id": str(original_event.project_id or ""),
         },
+        # Which project this adds to is SCOPE, not a collected field --
+        # add_project_member reads it off the event, the same way
+        # site_create reads state["project_id"]. Previously carried in
+        # `fields` and popped back out by hand before building the event;
+        # `scope` is now the typed home for it (plan-layer doc §11.1(b)).
+        scope={"project_id": str(original_event.project_id or "")},
         status=StepStatus.PENDING,
     )
     plan = Plan(
         plan_id=_new_id("plan"),
         correlation_id=original_event.correlation_id,
         user_id=user_id,
+        organization_id=org_id,
         origin=PlanOrigin.RESOLUTION,
+        source_message_id=original_event.source_message_id,
+        conversation_id=original_event.conversation_id,
+        permissions=tuple(original_event.permissions),
         steps=(create_user_step, add_member_step),
     )
     await _safe(plan_store.start_plan(plan=plan))
@@ -1023,41 +1022,35 @@ async def advance_member_plan_after_user_created(
         await _safe(plan_store.clear(user_id=user_id))
         return None
 
-    outputs_by_step = {s.step_id: s.outputs for s in plan.steps}
-    resolved_fields = {
-        key: _resolve_step_field(value, outputs_by_step) for key, value in next_step.fields.items()
-    }
-    project_id = str(resolved_fields.pop("project_id", "") or "")
+    # Every StepRef resolved and the event rebuilt in one call, by the layer
+    # that owns that job (planning/binding.py, ADR-C2) -- this used to be a
+    # hand-rolled ref walk plus a pop("project_id") to move the project from
+    # `fields` onto the event's scope, which only worked because this one
+    # chain's shape was known here. UnresolvedStepRefError is a contract bug
+    # between producer and consumer, not a user-facing state, so it is caught
+    # and logged rather than surfaced.
+    try:
+        event = build_event(next_step, plan, correlation_id=_new_id("member_resume"))
+    except Exception:  # noqa: BLE001 -- the user was created either way
+        _log.exception("member_plan.bind_failed user=%s", user_id)
+        await _safe(plan_store.clear(user_id=user_id))
+        return None
+
     await _safe(plan_store.clear(user_id=user_id))
-    if not project_id or not resolved_fields.get("member_name"):
+    if not event.project_id or not event.fields.get("member_name"):
         return None
 
-    org_id = str(getattr(actor, "organization_id", None) or "")
-    if not org_id:
-        return None
-
-    corr_id = _new_id("member_resume")
     decision = PlannerDecisionV2(
-        correlation_id=corr_id,
-        source_message_id=corr_id,
+        correlation_id=event.correlation_id,
+        source_message_id=event.source_message_id,
         decision_type=PlannerDecisionType.START_WORKFLOW,
-        workflow_key=WorkflowKey.ADD_PROJECT_MEMBER,
-        reason=CanonicalEventType.ADD_PROJECT_MEMBER_REQUESTED,
-        organization_id=org_id,
-        user_id=user_id,
-        project_id=project_id,
+        workflow_key=next_step.workflow_key,
+        reason=next_step.event_type,
+        organization_id=event.organization_id,
+        user_id=event.user_id,
+        project_id=event.project_id,
     )
-    event = CanonicalEventV2(
-        event_id=corr_id,
-        correlation_id=corr_id,
-        source_message_id=corr_id,
-        event_type=CanonicalEventType.ADD_PROJECT_MEMBER_REQUESTED,
-        completeness=_IntentCompleteness.ACTIONABLE,
-        organization_id=org_id,
-        user_id=user_id,
-        project_id=project_id,
-        fields=resolved_fields,
-    )
+    org_id = event.organization_id
 
     await _safe(workflow_runtime.abandon_optional_question(user_id))
     try:

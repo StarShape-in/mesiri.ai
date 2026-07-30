@@ -9,13 +9,24 @@ from __future__ import annotations
 
 import pytest
 
+from mesiri_contracts.assistant.canonical_event import CanonicalEventType
 from mesiri_contracts.assistant.planner_decision import WorkflowKey
 from planning.ordering import PlanCycleError, PlanUnresolvedRefError, topological_order
 from planning.plan import PlanStep, StepRef
 
+#: Ordering is indifferent to event_type -- it reads only StepRefs -- so
+#: these tests use one placeholder rather than a realistic per-key mapping.
+_ANY = CanonicalEventType.PROJECT_CREATE_REQUESTED
 
-def _step(step_id: str, workflow_key: WorkflowKey, **fields) -> PlanStep:
-    return PlanStep(step_id=step_id, workflow_key=workflow_key, fields=fields)
+
+def _step(step_id: str, workflow_key: WorkflowKey, *, scope=None, **fields) -> PlanStep:
+    return PlanStep(
+        step_id=step_id,
+        workflow_key=workflow_key,
+        event_type=_ANY,
+        fields=fields,
+        scope=scope or {},
+    )
 
 
 def test_single_step_plan_orders_trivially():
@@ -31,32 +42,50 @@ def test_independent_steps_keep_original_relative_order():
 
 
 def test_dependent_step_moves_after_its_dependency_even_if_authored_first():
-    site = _step("s2", WorkflowKey.SITE_CREATE, name="Tower B", project=StepRef("s1", "project_id"))
+    site = _step(
+        "s2",
+        WorkflowKey.SITE_CREATE,
+        name="Tower B",
+        scope={"project_id": StepRef("s1", "project_id")},
+    )
     project = _step("s1", WorkflowKey.PROJECT_CREATE, name="Paraclette")
     # site authored before project in the input list -- must still come after.
     ordered = topological_order([site, project])
     assert [s.step_id for s in ordered] == ["s1", "s2"]
 
 
+def test_depends_on_sees_refs_in_scope_not_just_fields():
+    """The project a site belongs to is scope, not a collected field -- a
+    dependency expressed only through scope must still order correctly."""
+    site = _step(
+        "s2", WorkflowKey.SITE_CREATE, name="Tower B",
+        scope={"project_id": StepRef("s1", "project_id")},
+    )
+    assert site.depends_on == frozenset({"s1"})
+
+
 def test_full_paraclette_plan_orders_correctly():
     project = _step("s1", WorkflowKey.PROJECT_CREATE, name="Paraclette")
     site = _step(
-        "s2", WorkflowKey.SITE_CREATE, name="Tower B", project=StepRef("s1", "project_id")
+        "s2", WorkflowKey.SITE_CREATE, name="Tower B",
+        scope={"project_id": StepRef("s1", "project_id")},
     )
     user = _step("s3", WorkflowKey.CREATE_USER, name="Hysamm", phone="+919847656072")
     member = _step(
         "s4",
         WorkflowKey.ADD_PROJECT_MEMBER,
-        project=StepRef("s1", "project_id"),
-        user=StepRef("s3", "user_id"),
+        member_name=StepRef("s3", "full_name"),
         role="PROJECT_MANAGER",
+        scope={"project_id": StepRef("s1", "project_id")},
     )
     activity = _step(
         "s5",
         WorkflowKey.SITE_UPDATE,
-        project=StepRef("s1", "project_id"),
-        site=StepRef("s2", "site_id"),
         narrative="slab work started",
+        scope={
+            "project_id": StepRef("s1", "project_id"),
+            "site_id": StepRef("s2", "site_id"),
+        },
     )
     # Authored out of dependency order on purpose.
     ordered = topological_order([activity, member, user, site, project])

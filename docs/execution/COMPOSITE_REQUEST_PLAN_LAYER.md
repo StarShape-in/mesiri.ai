@@ -1,18 +1,16 @@
 # Composite Request Plan Layer — Design Doc
 
-**Status:** Phase 1 done (shared spine + `planning/`, built jointly with the
-entity-resolution layer — see §11). Phases 2–3 absorbed into it. **Next is
-Phase 4 (decomposition), blocked on §11.1's two known gaps.**
+**Status:** Phase 1 done and §11.1's two gaps closed (2026-07-30). `PlanStep`/`Plan` now carry everything a step needs to rebuild a complete `CanonicalEventV2`, and `planning/binding.py` does it just-in-time. **Next is Phase 4 (decomposition) — unblocked.**
 **Owner:** Ilan Usman
 **Started:** 2026-07-30
 **Last updated:** 2026-07-30
 **Linear:** _(epic to be created — see §11)_
 
-> **Resuming in a new session?** Read §11 first — it says what is built, what
-> is next, and the two Phase-1 gaps that Phase 4 will hit. Then §4 (how this
-> layer and the entity-resolution layer interlock — they share one store and
-> one executor, and splitting them would produce two competing
-> orchestrators), §2 (what already exists) and §3 (the binding principles).
+> **Resuming in a new session?** Read §11 first — it says what is built and
+> what is next. Then §4 (how this layer and the entity-resolution layer
+> interlock — they share one store and one executor, and splitting them would
+> produce two competing orchestrators), §9 (decomposition, the remaining
+> piece, now settled by real trace evidence) and §3 (the binding principles).
 
 > **Purpose of this document.** Durable memory for this layer. If a future
 > session — human or AI — loses all conversational context, this file alone
@@ -403,12 +401,52 @@ Two options, both real:
 | Risk | Regresses single-intent accuracy on **every** existing path | Isolated |
 | Effort | Prompt change across both adapters | New module |
 
-**Leaning: separate call, gated by a cheap heuristic** (conjunction count /
-imperative-verb count / length) so the overwhelmingly common single-intent
-message pays nothing. Needs measurement before committing — §12.
+**Settled 2026-07-30 by a real trace — separate call, gated on
+`semantic_type == unknown`.**
+
+A live Malayalam voice note asked for three things ("create a project called
+Starship, then a site called Site A, then a new user Hysam — I'll send his
+number"). It returned `semantic_type: unknown`, `confidence: high`,
+`event_type: Unrecognized`, and the user got *"Hello. What are you reporting
+today?"* after 6336 ms.
+
+Two independent causes, both contract-level rather than model-level:
+
+1. **`semantic_type` is single-valued.** The extraction prompt
+   ([`gemini/adapter.py:72`](../../platform/ai/src/mesiri_ai/adapters/gemini/adapter.py))
+   asks for one value from a closed enum, and grepping both the Gemini and
+   DeepSeek prompts for any multi-intent provision returns zero. Three
+   intents have no representable form.
+2. **`create_user` was explicitly disqualified.**
+   [`adapter.py:431`](../../platform/ai/src/mesiri_ai/adapters/gemini/adapter.py)
+   says verbatim: *"if no number is stated anywhere in the message this is
+   NOT create_user (it is more likely add_project_member or unrecognized)."*
+   The sender promised the number in a follow-up, so no digits were present.
+
+`unknown` was therefore the **correct** answer to the question actually
+asked. The model was confidently reporting that the message is not one of
+our categories, and it was right.
+
+**This kills the original framing.** Decomposition cannot post-process the
+primary `semantic_type`, because for exactly the messages that need
+decomposing that field carries no signal at all. It must be its own call.
+
+**And it hands us a near-free gate.** Rather than counting conjunctions:
+run the decomposer only when `semantic_type == unknown`. That is a small
+slice of traffic which today produces a useless greeting anyway, so the
+worst case of a wasted call is a message that was already being discarded.
+**No latency is added to any path that currently works.** `unknown` also
+covers genuine gibberish and greetings, so the decomposer must be free to
+answer "this really is one intent, or none" and fall through unchanged.
 
 Decomposition runs on `translated_text`, so the Malayalam path is covered by
 construction.
+
+**A deferred required field is normal, not an error.** "I'll send his
+number" means the `CREATE_USER` step is legitimately incomplete at plan
+time. This needs no special handling: the step runs, and `CREATE_USER`'s own
+`build_draft` asks for the phone number, exactly as it does today. §6 models
+a step's fields as what is *known so far*, never as a complete command.
 
 ---
 
@@ -423,7 +461,7 @@ Phase 0 (doc + Module Placement Log row) is done — both docs now exist.
 | **1** | `EntityType`, `Resolved`/`Ambiguous`/`Missing`, registry `provides`/`requires`, `Plan`/`PlanStep`/`PlanStore` primitives built together (not sequentially) so his continuation is the first real consumer. | His doc, jointly-designed store | **Done** — commit `ee3cd7b`. Shipped N-capable, with §11.1's two gaps. |
 | **2** | Migrate USER (his live bug) — a `Plan` of size 2 (create_user → add_member). | His doc | **Done** — `ee3cd7b`, plus `1ba6462` (stale-plan hijack fix). Not yet verified on a live send. |
 | **3** | Migrate MATERIAL — must reproduce `resume_pending_report_with_material_create` exactly via the shared store. | His doc | Not started. The honest falsification test of the shared abstraction. |
-| **4** | Decomposition (§9) + topological ordering (§7.1) + just-in-time canonicalization (§7.2) + plan preview (§8) + dependency-aware cancellation (§7.4). The Paraclette message works end to end — a `Plan` of size 5, some steps inserted by decomposition, one possibly inserted by entity resolution if a name doesn't match. | This doc | Not started. **Blocked on §11.1.** |
+| **4** | Decomposition (§9) + plan preview (§8). Ordering (§7.1), just-in-time canonicalization (§7.2, `planning/binding.py`) and dependency-aware cancellation (§7.4) are already built and tested. | This doc | **Unblocked** — §11.1 closed. The decomposer is the remaining piece; see §9, now settled by real trace evidence. |
 | **5** | Migrate ACCOUNT/VENDOR/AUDIENCE/PROJECT/SITE, deleting each bespoke resolver. | His doc | Not started. |
 | **6** | Whole-plan permission pre-check (§7.3) — via the real gates or one extracted predicate, **not** by promoting `allowed_roles` (ADR-C5 withdrawn, see his §8.2). Separate security review. | This doc | Not started. |
 
@@ -465,14 +503,22 @@ Resolved already, no further action needed:
    plans against the real gates, or extracts one predicate both call.
 4. ~~Shared store~~ — §4.4 accepted and built (his §8.1).
 
-### 11.1 Phase 1's two known gaps — blocking for Phase 4 only
+### 11.1 Phase 1's two known gaps — ✅ CLOSED 2026-07-30
 
-Both are **latent, not live**: the entity-resolution layer routes around each
-by hand for the one fixed-shape chain it builds, which is legitimate at that
-scale. Its own `_resolve_step_field` says so — *"deliberately narrow, not the
-generic recursive resolution the composite-request plan layer's Phase 4 will
-need."* Phase 4 is where they stop being avoidable. Recorded here so they are
-not rediscovered as bugs.
+**Both fixed.** `PlanStep` now carries `event_type` and keeps `fields` and
+`scope` apart; `Plan` carries `organization_id` / `permissions` /
+`conversation_id` / `source_message_id`; and the new `planning/binding.py`
+rebuilds a complete `CanonicalEventV2` per step just-in-time. The
+entity-resolution layer's two hand-rolled workarounds (`_resolve_step_field`
+and the `resolved_fields.pop("project_id")`) are deleted — it now calls
+`build_event` like any other consumer will.
+
+Verified: the real Starship voice note is expressible and executable as a
+3-step plan, with the site step's project resolving to the project step's
+output and landing on `event.project_id`, not in `fields`.
+
+The original statement of both gaps is kept below, because the *reasoning*
+is what stops them being reintroduced.
 
 **(a) `PlanStep` cannot reconstruct a `CanonicalEventV2`.**
 `workflow_runtime.start()` requires a real event, and `PlanStep` stores only
@@ -552,8 +598,8 @@ re-route by hand. This is the actual hard part of ADR-C2.
 | ~~Role gates promoted to registry data weaken enforcement~~ | **Closed by withdrawing ADR-C5** (his §8.2). Phase 6 uses the real gates or one extracted predicate; `allowed_roles` stays advisory. |
 | Scope collision with the entity-resolution layer's `resume.py` collapse | §4.5 lists what this doc defers. Do not touch `resume.py` from this layer. |
 | **A plan outlives its turn and attaches to the wrong workflow** | Realized once already (`1ba6462`): an abandoned plan hijacked a later unrelated `CREATE_USER`. Every advance/clear decision must match on `PlanStep.workflow_instance_id`, never on `workflow_key` alone. Phase 4 has N steps and so N times the exposure. |
-| Phase 1's two known gaps are rediscovered as bugs in Phase 4 | §11.1 records both with their evidence. Read it before starting Phase 4. |
+| ~~Phase 1's two known gaps are rediscovered as bugs in Phase 4~~ | **Closed** — both fixed (§11.1). The reasoning is kept in the doc so they are not reintroduced; `SCOPE_KEYS` validation makes the fields-vs-scope mistake unrepresentable rather than merely discouraged. |
 
 ---
 
-*Last updated: 2026-07-30 (Phases 0–2 done; Phase 4 next, blocked on §11.1)*
+*Last updated: 2026-07-30 (Phases 0–2 done, §11.1 closed; Phase 4 next, unblocked)*
