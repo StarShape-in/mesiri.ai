@@ -17,6 +17,9 @@ this codebase gets.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Iterable
+
 from mesiri_contracts.assistant.draft_action import DraftActionType
 from mesiri_contracts.assistant.v2.draft_action import DraftActionV2
 from mesiri_contracts.common.ids import new_id
@@ -52,6 +55,12 @@ _KNOWN_ROLES = frozenset({"ADMIN", "PROJECT_MANAGER", "SITE_ENGINEER", "FINANCE"
 # 3-digit "number").
 _MIN_DIGITS = 10
 
+#: E.164's own maximum. Bounds find_mentioned_phone_number's search on the
+#: long side, the same way _MIN_DIGITS bounds it on the short side -- a
+#: 20-digit reference number mentioned nearby must not be mistaken for a
+#: phone number just because it also happens to be all digits.
+_MAX_DIGITS = 15
+
 
 def _normalize_role(role_hint: object) -> str:
     """Mirrors workflows/add_project_member/nodes.py's _normalize_role
@@ -73,6 +82,41 @@ def _normalize_phone(number_hint: object) -> str | None:
     to plausibly be a phone number at all."""
     digits = "".join(ch for ch in str(number_hint or "") if ch.isdigit())
     return digits if len(digits) >= _MIN_DIGITS else None
+
+
+def find_mentioned_phone_number(texts: Iterable[str]) -> str | None:
+    """Scan free-form text -- recent conversation turns, typically -- for a
+    plausible phone number already stated, and return it normalized.
+
+    Built for exactly the case a live user report surfaced: "+91 97781
+    90485 create Hysam in project hospital" states the number and the
+    request in the same message, but ADD_PROJECT_MEMBER's own extraction
+    schema has no phone-number field, so the number was silently dropped --
+    several turns later, CREATE_USER asked for it again from scratch, which
+    reads as "I already told you that" from the sender's side. See
+    runtime/inbound_journey/resume.py's start_member_create_plan, the one
+    caller: before asking, it checks memory.recent_turns.RecentTurnsStore
+    for exactly this.
+
+    Deliberately conservative, the same floor/ceiling _normalize_phone and
+    E.164 respectively impose: only a maximal run of digit-ish characters
+    (allowing +, spaces, hyphens within it) between _MIN_DIGITS and
+    _MAX_DIGITS digits counts. Short numbers (a headcount, an amount) and
+    long ones (an order/reference id) are excluded on purpose -- a wrong
+    guess here is silently offered to the sender as their own new user's
+    phone number, so the bar is "clearly phone-shaped", not "any digits".
+
+    Scans in order and returns the FIRST match -- if a number appears in
+    more than one turn, the earliest-stated one wins, since that is closest
+    to how the sender is likely to have meant it (stated once, referred to
+    since).
+    """
+    for text in texts:
+        for run in re.findall(r"[\d][\d\s\-+]*\d", str(text or "")):
+            digits = "".join(ch for ch in run if ch.isdigit())
+            if _MIN_DIGITS <= len(digits) <= _MAX_DIGITS:
+                return digits
+    return None
 
 
 _NUMBER_SLOT_NAME = "whatsapp_number"

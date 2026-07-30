@@ -18,6 +18,7 @@ from channel.replies import (
 )
 from interactions.handler import InteractionHandled
 from interactions.pending_report import PendingReportStore
+from memory.recent_turns import RecentTurnsStore
 from mesiri_contracts.application.results.execution_result import ExecutionStatus
 from mesiri_contracts.assistant.canonical_event import CanonicalEventType
 from mesiri_contracts.assistant.canonical_event import IntentCompleteness as _IntentCompleteness
@@ -46,6 +47,7 @@ from runtime.inventory_query import MaterialInventoryQueryService
 from runtime.logging_ports import MessageLogger
 from runtime.material_catalog_query import MaterialCatalogQueryService
 from workflows import WorkflowResumeResult, WorkflowResumeStatus, WorkflowRuntime
+from workflows.create_user.nodes import find_mentioned_phone_number
 
 _PROJECT_ROW_PREFIX = "proj_"
 
@@ -746,6 +748,7 @@ async def start_member_create_plan(
     actor: ActorIdentity | None,
     plan_store: PlanStore,
     workflow_runtime: WorkflowRuntime,
+    recent_turns: RecentTurnsStore | None = None,
 ) -> str | None:
     """Start CREATE_USER for real, and remember (in the shared PlanStore)
     that the held ADD_PROJECT_MEMBER request should resume once it succeeds.
@@ -770,11 +773,25 @@ async def start_member_create_plan(
     starting CREATE_USER itself -- there is no lower-level shortcut. CREATE_
     USER's role is seeded from the SAME role hint the original add-member
     request carried (a project manager added as PM plausibly gets that as
-    their org-wide role too), and CREATE_USER's own build_draft still asks
-    for the one field it genuinely cannot infer -- the phone number.
+    their org-wide role too).
 
-    Returns CREATE_USER's own pending_prompt (its next question, usually the
-    phone number), or None if nothing could be started.
+    ``recent_turns``, when supplied, is checked for a phone number the
+    sender already stated earlier in this conversation (e.g. "+91 97781
+    90485 create Hysam in project hospital" -- ADD_PROJECT_MEMBER's own
+    extraction has no phone-number field, so that number is otherwise
+    dropped on the floor, and CREATE_USER re-asking for it several turns
+    later reads as "I already told you that"). When found, it is seeded
+    directly, so CREATE_USER's own build_draft has everything it needs on
+    this very first pass and goes straight to its confirmation prompt --
+    which already says "please double check this number", the existing
+    safety net for a value the sender didn't just re-type on purpose. When
+    not found (or ``recent_turns`` is None), CREATE_USER's own build_draft
+    asks for it as before -- this is purely additive, never a regression on
+    the case nothing was mentioned.
+
+    Returns CREATE_USER's own pending_prompt (a confirmation if the number
+    was recalled, otherwise its next question -- usually the phone number),
+    or None if nothing could be started.
     """
     org_id = str(getattr(actor, "organization_id", None) or "")
     user_id = str(getattr(actor, "user_id", None) or "")
@@ -782,6 +799,17 @@ async def start_member_create_plan(
         return None
 
     role_hint = original_event.fields.get("role")
+
+    recalled_number: str | None = None
+    if recent_turns is not None:
+        try:
+            turns = await recent_turns.recent(user_id=user_id)
+            recalled_number = find_mentioned_phone_number(t.user_text for t in turns)
+        except Exception:  # noqa: BLE001 -- a recall miss just means CREATE_USER
+            # asks for the number the normal way; never worth failing the
+            # create-offer over.
+            _log.warning("member_create_plan.recall_failed user=%s", user_id, exc_info=True)
+
     corr_id = _new_id("member_create")
     decision = PlannerDecisionV2(
         correlation_id=corr_id,
@@ -792,6 +820,13 @@ async def start_member_create_plan(
         organization_id=org_id,
         user_id=user_id,
     )
+    event_fields: dict[str, object] = {
+        "full_name": name_hint,
+        "role": role_hint,
+        "created_by_role": getattr(actor, "role", None),
+    }
+    if recalled_number is not None:
+        event_fields["whatsapp_number"] = recalled_number
     event = CanonicalEventV2(
         event_id=corr_id,
         correlation_id=corr_id,
@@ -800,11 +835,7 @@ async def start_member_create_plan(
         completeness=_IntentCompleteness.ACTIONABLE,
         organization_id=org_id,
         user_id=user_id,
-        fields={
-            "full_name": name_hint,
-            "role": role_hint,
-            "created_by_role": getattr(actor, "role", None),
-        },
+        fields=event_fields,
     )
 
     await _safe(workflow_runtime.abandon_optional_question(user_id))
@@ -876,6 +907,7 @@ async def resume_pending_report_with_member_create_offer(
     workflow_runtime: WorkflowRuntime,
     actor: ActorIdentity | None = None,
     message_logger: MessageLogger | None = None,
+    recent_turns: RecentTurnsStore | None = None,
 ) -> ReplySpec | None:
     """Resume a report held by the member-create offer
     (_run_member_name_gate's Missing case), now that the sender said whether
@@ -911,6 +943,7 @@ async def resume_pending_report_with_member_create_offer(
         actor=actor,
         plan_store=plan_store,
         workflow_runtime=workflow_runtime,
+        recent_turns=recent_turns,
     )
     await _complete_resume_leg(message, event, message_logger)
     if prompt is None:

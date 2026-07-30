@@ -63,6 +63,7 @@ if TYPE_CHECKING:
     from interactions.team_photo_hint import TeamPhotoHintStore
     from memory.context_loader import ConversationMemoryLoader
     from memory.coordinator import ConversationMemoryCoordinator
+    from memory.recent_turns import RecentTurnsStore
     from mesiri_contracts.common.storage import ObjectStoragePort
     from planner import Planner
     from planning.plan_store import PlanStore
@@ -136,6 +137,7 @@ def build_message_handlers(
     first_message_query: FirstMessageQueryService,
     member_resolver: MemberNameResolutionService,
     plan_store: PlanStore,
+    recent_turns_store: RecentTurnsStore,
     labour_query_service: LabourQueryService,
     activity_search_service: ActivitySearchService,
     dpr_request_query: DprRequestQueryService,
@@ -1061,6 +1063,7 @@ def build_message_handlers(
                 workflow_runtime=workflow_runtime,
                 actor=ctx,
                 message_logger=message_logger,
+                recent_turns=recent_turns_store,
             )
             timer.lap("resume_member_create")
             if member_create_reply is not None:

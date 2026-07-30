@@ -216,6 +216,17 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from planning.plan_store import PlanStore
 
     plan_store = PlanStore(redis_client)
+    # A second handle onto the same recent-turns keys build_conversation_
+    # memory's own RecentTurnsStore writes (below) -- RecentTurnsStore holds
+    # no state of its own beyond the redis client, so two instances against
+    # the same redis_client read/write the identical rows through Redis
+    # itself, not through Python object identity. Needed here, standalone,
+    # because build_conversation_memory only returns the loader/coordinator
+    # pair, and start_member_create_plan's phone-number recall (see
+    # runtime/inbound_journey/resume.py) is a third, independent reader.
+    from memory.recent_turns import RecentTurnsStore
+
+    recent_turns_store = RecentTurnsStore(redis_client)
     # Holds a genuinely new image awaiting "what is this photo for?" (see
     # interactions/pending_media.py and interactions/image_purpose.py) --
     # same redis_client, same never-authoritative principle.
@@ -822,6 +833,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         first_message_query=first_message_query,
         member_resolver=member_resolver,
         plan_store=plan_store,
+        recent_turns_store=recent_turns_store,
         labour_query_service=labour_query_service,
         activity_search_service=activity_search_service,
         dpr_request_query=dpr_request_query,

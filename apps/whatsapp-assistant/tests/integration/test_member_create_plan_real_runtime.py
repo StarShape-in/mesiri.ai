@@ -22,6 +22,7 @@ pytest.importorskip("langgraph")
 
 from typing import Any  # noqa: E402
 
+from memory.recent_turns import ConversationTurn, RecentTurnsStore  # noqa: E402
 from mesiri_contracts.application.results.execution_result import (  # noqa: E402
     ExecutionResult,
     ExecutionStatus,
@@ -167,3 +168,115 @@ async def test_the_exact_live_sequence_reaches_the_confirmation_prompt():
         "instead of continuing to ADD_PROJECT_MEMBER"
     )
     assert "confirm" in prompt_final.lower()
+
+
+# ---------------------------------------------------------------------------
+# start_member_create_plan's phone-number recall (memory.recent_turns) --
+# the fix for "I already gave you that number" when it was stated in an
+# earlier, differently-classified message rather than in reply to CREATE_
+# USER's own question.
+# ---------------------------------------------------------------------------
+
+
+async def test_a_number_recalled_from_recent_turns_skips_straight_to_confirmation():
+    repo = FakeWorkflowInstanceRepository()
+    runtime = WorkflowRuntime(
+        registry=FakeWorkflowRegistry({WorkflowKey.CREATE_USER: build_create_user_graph()}),
+        repo=repo,
+    )
+    plan_store = PlanStore(_FakeRedis())
+    recent_turns = RecentTurnsStore(_FakeRedis())
+    await recent_turns.append(
+        user_id=USR,
+        turn=ConversationTurn(
+            user_text="+91 97781 90485 create Hysam in project hospital",
+            assistant_reply="\"Hysam\" isn't an active user yet.",
+            correlation_id="cor_orig",
+        ),
+    )
+
+    prompt = await start_member_create_plan(
+        name_hint="Hysam",
+        original_event=_original_add_member_event(),
+        actor=_Actor(),
+        plan_store=plan_store,
+        workflow_runtime=runtime,
+        recent_turns=recent_turns,
+    )
+
+    assert prompt is not None
+    assert "confirm" in prompt.lower(), (
+        f"expected the recalled number to skip straight to a confirmation prompt, got: {prompt!r}"
+    )
+    assert "919778190485" in prompt
+
+
+async def test_no_recent_turns_still_asks_for_the_number_as_before():
+    """Purely additive -- nothing mentioned means CREATE_USER's own
+    build_draft asks, exactly as it did before recall existed."""
+    repo = FakeWorkflowInstanceRepository()
+    runtime = WorkflowRuntime(
+        registry=FakeWorkflowRegistry({WorkflowKey.CREATE_USER: build_create_user_graph()}),
+        repo=repo,
+    )
+    plan_store = PlanStore(_FakeRedis())
+    recent_turns = RecentTurnsStore(_FakeRedis())  # nothing appended
+
+    prompt = await start_member_create_plan(
+        name_hint="Hysam",
+        original_event=_original_add_member_event(),
+        actor=_Actor(),
+        plan_store=plan_store,
+        workflow_runtime=runtime,
+        recent_turns=recent_turns,
+    )
+
+    assert prompt is not None and "number" in prompt.lower()
+
+
+async def test_recent_turns_omitted_entirely_still_asks_for_the_number():
+    """recent_turns is optional -- an older/unwired caller must behave
+    exactly as it did before this parameter existed."""
+    repo = FakeWorkflowInstanceRepository()
+    runtime = WorkflowRuntime(
+        registry=FakeWorkflowRegistry({WorkflowKey.CREATE_USER: build_create_user_graph()}),
+        repo=repo,
+    )
+    plan_store = PlanStore(_FakeRedis())
+
+    prompt = await start_member_create_plan(
+        name_hint="Hysam",
+        original_event=_original_add_member_event(),
+        actor=_Actor(),
+        plan_store=plan_store,
+        workflow_runtime=runtime,
+    )
+
+    assert prompt is not None and "number" in prompt.lower()
+
+
+async def test_an_unrelated_recent_number_like_a_headcount_does_not_get_used():
+    repo = FakeWorkflowInstanceRepository()
+    runtime = WorkflowRuntime(
+        registry=FakeWorkflowRegistry({WorkflowKey.CREATE_USER: build_create_user_graph()}),
+        repo=repo,
+    )
+    plan_store = PlanStore(_FakeRedis())
+    recent_turns = RecentTurnsStore(_FakeRedis())
+    await recent_turns.append(
+        user_id=USR,
+        turn=ConversationTurn(
+            user_text="12 workers on site today", assistant_reply="Recorded.", correlation_id="c1"
+        ),
+    )
+
+    prompt = await start_member_create_plan(
+        name_hint="Hysam",
+        original_event=_original_add_member_event(),
+        actor=_Actor(),
+        plan_store=plan_store,
+        workflow_runtime=runtime,
+        recent_turns=recent_turns,
+    )
+
+    assert prompt is not None and "number" in prompt.lower()

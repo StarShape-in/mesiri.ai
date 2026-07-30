@@ -152,3 +152,55 @@ def test_resolve_number_slot_answer_with_an_invalid_number_reasks():
     update = resolve_whatsapp_number(state)
     assert update["awaiting_slot"] == _NUMBER_SLOT_NAME
     assert "valid" in update["pending_prompt"].lower()
+
+
+# ---------------------------------------------------------------------------
+# find_mentioned_phone_number -- short-term memory recall for the case a
+# phone number was stated in an earlier, differently-classified message
+# ("+91 97781 90485 create Hysam in project hospital" -- ADD_PROJECT_MEMBER's
+# own extraction has no phone-number field, so the number is otherwise lost).
+# ---------------------------------------------------------------------------
+
+from workflows.create_user.nodes import find_mentioned_phone_number
+
+
+def test_finds_a_number_stated_alongside_an_unrelated_request():
+    assert (
+        find_mentioned_phone_number(["+91 97781 90485 create Hysam in project hospital"])
+        == "919778190485"
+    )
+
+
+def test_finds_a_plainly_stated_number():
+    assert find_mentioned_phone_number(["his number is 9198765432"]) == "9198765432"
+
+
+def test_no_number_at_all_is_none():
+    assert find_mentioned_phone_number(["create Hysam in project hospital"]) is None
+
+
+def test_a_headcount_is_not_mistaken_for_a_number():
+    assert find_mentioned_phone_number(["12 workers on site today"]) is None
+
+
+def test_an_amount_is_not_mistaken_for_a_number():
+    assert find_mentioned_phone_number(["paid 1500 to ABC Hardware"]) is None
+
+
+def test_an_oversized_reference_number_is_not_mistaken_for_a_phone_number():
+    assert find_mentioned_phone_number(["order number 123456789012345678 was placed"]) is None
+
+
+def test_scans_multiple_turns_and_returns_the_first_match():
+    turns = ["create Hysam in project hospital", "his number is 9198765432", "make him PM"]
+    assert find_mentioned_phone_number(turns) == "9198765432"
+
+
+def test_earliest_of_two_numbers_wins():
+    turns = ["call 9198765432", "actually call 9111111111"]
+    assert find_mentioned_phone_number(turns) == "9198765432"
+
+
+def test_empty_input_is_none():
+    assert find_mentioned_phone_number([]) is None
+    assert find_mentioned_phone_number([""]) is None
