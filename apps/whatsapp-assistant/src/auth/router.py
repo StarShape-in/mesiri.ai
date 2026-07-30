@@ -60,6 +60,7 @@ users_table = sa.Table(
     sa.Column("id", sa.UUID, primary_key=True),
     sa.Column("organization_id", sa.UUID),
     sa.Column("email", sa.String),
+    sa.Column("username", sa.String),
     sa.Column("hashed_password", sa.String),
     sa.Column("full_name", sa.String),
     sa.Column("role", sa.String),
@@ -71,6 +72,11 @@ users_table = sa.Table(
 # Schemas
 # ---------------------------------------------------------------------------
 class UserLogin(BaseModel):
+    # Field kept named `email` for backward compatibility with the existing
+    # dashboard login form -- it accepts either an email or a username
+    # (see login() below), so no frontend change is required for a
+    # WhatsApp-created user (whose username is their WhatsApp number) to log
+    # in with what they were told to type.
     email: str
     password: str
 
@@ -149,7 +155,12 @@ async def login(creds: UserLogin):
             .outerjoin(
                 organizations_table, users_table.c.organization_id == organizations_table.c.id
             )
-            .where(users_table.c.email == creds.email)
+            .where(
+                sa.or_(
+                    users_table.c.email == creds.email,
+                    users_table.c.username == creds.email,
+                )
+            )
         )
 
         result = await conn.execute(query)

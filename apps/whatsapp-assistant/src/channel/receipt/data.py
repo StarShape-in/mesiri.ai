@@ -503,6 +503,23 @@ def build_receipt_data(
         ]
         id_prefix = "PM"
         accent, badge_icon = "#4F46E5", "user"
+    elif draft.action_type is DraftActionType.CREATE_USER:
+        category = "New User"
+        value = "Created"
+        subtitle = f"New user: {fields.get('full_name', '—')}"
+        sections = [
+            [
+                ReceiptField("user", "Name", str(fields.get("full_name") or "—")),
+                ReceiptField("whatsapp", "Number", str(fields.get("whatsapp_number") or "—")),
+                ReceiptField("layers", "Role", str(fields.get("role") or "—").replace("_", " ").title()),
+            ],
+            [
+                ReceiptField("user", "Added by", reporter),
+                ReceiptField("whatsapp", "Source", "WhatsApp"),
+            ],
+        ]
+        id_prefix = "US"
+        accent, badge_icon = "#4F46E5", "user"
     else:
         # Defensive only -- every DraftActionType above is expected to have
         # an explicit case. A genuinely new, uncased type renders a generic

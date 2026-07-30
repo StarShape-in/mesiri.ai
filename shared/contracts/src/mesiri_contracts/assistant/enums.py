@@ -203,4 +203,16 @@ class SemanticType(str, Enum):
     # runtime/inbound_journey.py and
     # application/projects/add_member_validation.py).
     ADD_PROJECT_MEMBER = "add_project_member"
+    # Creating a brand new person/user with WhatsApp access (e.g. "add
+    # Rajesh, 9198765xxxxx, as site engineer") -- distinct from
+    # ADD_PROJECT_MEMBER, which only ever adds an EXISTING user to a
+    # project. Provisioning a new identity/access grant is a materially
+    # bigger blast radius than adding an already-vetted person to one more
+    # project, so this is ADMIN/PROJECT_MANAGER only, same enforcement
+    # split as every other write here (see runtime/inbound_journey.py and
+    # application/identity/create_user_validation.py). The new user gets no
+    # email/password and cannot log into the dashboard until an admin adds
+    # those later -- WhatsApp text can supply a name and phone number
+    # reliably, never a real email or a secure password.
+    CREATE_USER = "create_user"
     UNKNOWN = "unknown"

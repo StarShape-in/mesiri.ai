@@ -644,6 +644,11 @@ def test_informational_and_no_draft_keys_are_pinned() -> None:
         # finish with a clarifying "which project?"/"who should I add?" and
         # no draft.
         WorkflowKey.ADD_PROJECT_MEMBER,
+        # Same reasoning as ADD_PROJECT_MEMBER: build_draft's own
+        # completeness check (workflows/create_user/nodes.py) may finish
+        # with a clarifying "what's this person's name?"/"what's their
+        # WhatsApp number?" and no draft.
+        WorkflowKey.CREATE_USER,
     }
 
 

@@ -492,6 +492,27 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         AddProjectMemberExecutionDispatcher(add_project_member_handler), "membership"
     )
 
+    # Create user: same in-process capability-boundary wiring as
+    # Project/Site creation above. Wrapped in ProjectingExecutionDispatcher
+    # with entity_type "user" -- same as users/router.py's own REST
+    # create_user endpoint calling project_entity("user", user_id) after its
+    # own insert, so the new person is immediately resolvable by name (e.g.
+    # so "add them to Skyline Towers" right after works without waiting for
+    # the next reconcile tick).
+    from mesiri.application.identity.create_user_dispatcher import CreateUserExecutionDispatcher
+    from mesiri.application.identity.handlers import CreateUserHandler
+    from mesiri.infrastructure.postgres.repositories.create_user_execution import (
+        PostgresCreateUserExecutionRepository,
+    )
+
+    create_user_handler = CreateUserHandler(
+        PostgresCreateUserExecutionRepository(),
+        db=material_db,
+    )
+    create_user_dispatcher = ProjectingExecutionDispatcher(
+        CreateUserExecutionDispatcher(create_user_handler), "user"
+    )
+
     execution_dispatcher = ActionTypeRoutingDispatcher(
         {
             DraftActionType.RECORD_MATERIAL_RECEIPT: material_dispatcher,
@@ -510,6 +531,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             DraftActionType.CREATE_SITE: create_site_dispatcher,
             DraftActionType.CREATE_AUTOMATION: create_automation_dispatcher,
             DraftActionType.ADD_PROJECT_MEMBER: add_project_member_dispatcher,
+            DraftActionType.CREATE_USER: create_user_dispatcher,
         }
     )
     # Read-only inventory lookups for the material.inventory_query workflow --

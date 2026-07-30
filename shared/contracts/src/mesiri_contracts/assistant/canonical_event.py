@@ -104,6 +104,9 @@ class CanonicalEventType(str, Enum):
     # SemanticType.ADD_PROJECT_MEMBER -> an existing user added to the
     # project resolved by context (see enums.py's docstring on that type).
     ADD_PROJECT_MEMBER_REQUESTED = "AddProjectMemberRequested"
+    # SemanticType.CREATE_USER -> a brand new user record with WhatsApp
+    # access (see enums.py's docstring on that type).
+    CREATE_USER_REQUESTED = "CreateUserRequested"
     CLARIFICATION_REQUIRED = "ClarificationRequired"
     UNRECOGNIZED = "Unrecognized"
 

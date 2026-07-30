@@ -38,6 +38,7 @@ class DraftActionType(str, Enum):
     CREATE_SITE = "create_site"
     CREATE_AUTOMATION = "create_automation"
     ADD_PROJECT_MEMBER = "add_project_member"
+    CREATE_USER = "create_user"
     # Future v1 domains: record_equipment_usage
 
 

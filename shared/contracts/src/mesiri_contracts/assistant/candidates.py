@@ -193,6 +193,16 @@ class AddProjectMemberCandidate(Candidate):
     # target_name/new_name already work.
 
 
+class CreateUserCandidate(Candidate):
+    semantic_type: SemanticType = SemanticType.CREATE_USER
+    # Conventional keys: full_name, whatsapp_number (both required to route
+    # -- see canonicalization/mapping.py), role (optional hint, e.g. "site
+    # engineer"; absent defaults to SITE_ENGINEER, same as
+    # AddProjectMemberCandidate's role). whatsapp_number is stated as-is --
+    # no resolution needed, since this always creates a brand new row (same
+    # reasoning as ProjectCreateCandidate's docstring).
+
+
 class AccountAdminCandidate(Candidate):
     semantic_type: SemanticType = SemanticType.ACCOUNT_ADMIN
     # Conventional keys: action (create/rename/deactivate, required to
@@ -227,4 +237,5 @@ CANDIDATE_TYPES: dict[SemanticType, type[Candidate]] = {
     SemanticType.PROJECT_DETAIL_QUERY: ProjectDetailQueryCandidate,
     SemanticType.AUTOMATION_SETUP: AutomationSetupCandidate,
     SemanticType.ADD_PROJECT_MEMBER: AddProjectMemberCandidate,
+    SemanticType.CREATE_USER: CreateUserCandidate,
 }

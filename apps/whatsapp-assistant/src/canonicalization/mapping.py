@@ -31,6 +31,10 @@ _SIMPLE_EVENT_TYPE: dict[SemanticType, CanonicalEventType] = {
     # an optional hint that travels as a plain field, not a router), same
     # reasoning as SITE_CREATE above.
     SemanticType.ADD_PROJECT_MEMBER: CanonicalEventType.ADD_PROJECT_MEMBER_REQUESTED,
+    # Always a new users row -- no candidate-field split (role is an
+    # optional hint that travels as a plain field, not a router), same
+    # reasoning as ADD_PROJECT_MEMBER above.
+    SemanticType.CREATE_USER: CanonicalEventType.CREATE_USER_REQUESTED,
     # Always a new site_issues row -- no candidate-field split (issue_type/
     # severity are closed enums the AI picks directly, unlike direction/
     # query_kind/target_kind/update_kind), so this belongs here rather than
@@ -178,6 +182,10 @@ REQUIRED_FIELDS: dict[CanonicalEventType, tuple[str, ...]] = {
     # reasoning as SITE_CREATE_REQUESTED above); role has a sensible
     # default (SITE_ENGINEER) the workflow's own build_draft applies.
     CanonicalEventType.ADD_PROJECT_MEMBER_REQUESTED: ("member_name",),
+    # Both required -- unlike ADD_PROJECT_MEMBER's member_name (resolved
+    # against an existing user), there is no existing record to fall back
+    # on here, so a missing name or number leaves nothing safe to create.
+    CanonicalEventType.CREATE_USER_REQUESTED: ("full_name", "whatsapp_number"),
     # Mirrors EXPENSE_REQUESTED: ("amount",) -- one required field (the
     # closed-enum issue_type), everything else (severity, narrative, delay)
     # optional.

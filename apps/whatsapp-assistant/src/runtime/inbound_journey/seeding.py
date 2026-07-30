@@ -643,8 +643,9 @@ def _seed_project_create_role(
     """Feed the sender's role into the draft, same reasoning as
     _seed_account_admin_role -- defense-in-depth for
     application/projects/create_validation.py's, create_site_validation.
-    py's, and add_member_validation.py's role checks (PROJECT_CREATE,
-    SITE_CREATE, and ADD_PROJECT_MEMBER all share it, same as the gate
+    py's, add_member_validation.py's, and application/users/
+    create_user_validation.py's role checks (PROJECT_CREATE, SITE_CREATE,
+    ADD_PROJECT_MEMBER, and CREATE_USER all share it, same as the gate
     below). Not the primary gate: the _PROJECT_CREATE_ROLES check below
     (before workflow_runtime.start()) already refuses a disallowed role
     before a draft is ever built."""
@@ -652,6 +653,7 @@ def _seed_project_create_role(
         WorkflowKey.PROJECT_CREATE,
         WorkflowKey.SITE_CREATE,
         WorkflowKey.ADD_PROJECT_MEMBER,
+        WorkflowKey.CREATE_USER,
     ):
         return
     event.fields["created_by_role"] = actor.role

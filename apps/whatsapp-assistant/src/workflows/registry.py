@@ -21,6 +21,7 @@ from .activity_correction.graph import build_activity_correction_graph
 from .activity_query.graph import build_activity_query_graph
 from .add_project_member.graph import build_add_project_member_graph
 from .automation_setup.graph import build_automation_setup_graph
+from .create_user.graph import build_create_user_graph
 from .dpr_request.graph import build_dpr_request_graph
 from .expense_capture.graph import build_expense_capture_graph
 from .expense_query.graph import build_expense_query_graph
@@ -470,6 +471,18 @@ _DEFINITIONS: dict[WorkflowKey, WorkflowDefinition] = dict(
             examples=("Add Rajesh to Skyline Towers as site engineer",),
             semantic_hint="add_project_member",
             # Mirrors process.py's _PROJECT_CREATE_ROLES (same set gates all three).
+            allowed_roles=frozenset({"ADMIN", "PROJECT_MANAGER"}),
+            allows_completion_without_draft=True,
+        ),
+        _define(
+            WorkflowKey.CREATE_USER,
+            build_create_user_graph,
+            WorkflowCategory.PROJECT,
+            title="Add a New User",
+            one_liner="Give a new person their own WhatsApp access",
+            examples=("Add Rajesh, 9198765xxxxx, as site engineer",),
+            semantic_hint="create_user",
+            # Mirrors process.py's _PROJECT_CREATE_ROLES (same set gates all four).
             allowed_roles=frozenset({"ADMIN", "PROJECT_MANAGER"}),
             allows_completion_without_draft=True,
         ),

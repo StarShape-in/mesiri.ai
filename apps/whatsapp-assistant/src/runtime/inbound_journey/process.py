@@ -117,11 +117,16 @@ _ACCOUNT_ADMIN_DENIED_REPLY = "⛔ Only an admin or finance user can manage acco
 # add_member_validation.py's role set is the same, mirroring
 # projects/router.py's add_project_member REST endpoint (ADMIN-only there is
 # stricter; this WhatsApp path additionally allows PROJECT_MANAGER, matching
-# PROJECT_CREATE/SITE_CREATE's own precedent).
+# PROJECT_CREATE/SITE_CREATE's own precedent). Also gates
+# WorkflowKey.CREATE_USER -- provisioning a brand new person's WhatsApp
+# access is a bigger blast radius than any of the three above, but the same
+# role set was the explicit call here (not ADMIN-only): see
+# application/identity/create_user_validation.py.
 _PROJECT_CREATE_ROLES = frozenset({"ADMIN", "PROJECT_MANAGER"})
 _PROJECT_CREATE_DENIED_REPLY = "⛔ Only an admin or project manager can create a project."
 _SITE_CREATE_DENIED_REPLY = "⛔ Only an admin or project manager can create a site."
 _ADD_PROJECT_MEMBER_DENIED_REPLY = "⛔ Only an admin or project manager can add a project member."
+_CREATE_USER_DENIED_REPLY = "⛔ Only an admin or project manager can add a new user."
 
 # Matches domains/automations/router.py's _TARGET_OTHERS_ROLES and
 # application/automations/create_validation.py's _TARGET_OTHERS_ROLES
@@ -828,20 +833,16 @@ async def process_inbound_message(
                     # role checks (fed by _seed_project_create_role above)
                     # are the defense-in-depth backstop if this is ever
                     # bypassed.
-                    if planner_decision.workflow_key in (
-                        WorkflowKey.PROJECT_CREATE,
-                        WorkflowKey.SITE_CREATE,
-                        WorkflowKey.ADD_PROJECT_MEMBER,
-                    ) and str(getattr(actor, "role", None) or "").strip().upper() not in (
-                        _PROJECT_CREATE_ROLES
-                    ):
-                        denied_reply = (
-                            _PROJECT_CREATE_DENIED_REPLY
-                            if planner_decision.workflow_key is WorkflowKey.PROJECT_CREATE
-                            else _SITE_CREATE_DENIED_REPLY
-                            if planner_decision.workflow_key is WorkflowKey.SITE_CREATE
-                            else _ADD_PROJECT_MEMBER_DENIED_REPLY
-                        )
+                    _project_create_denied_replies = {
+                        WorkflowKey.PROJECT_CREATE: _PROJECT_CREATE_DENIED_REPLY,
+                        WorkflowKey.SITE_CREATE: _SITE_CREATE_DENIED_REPLY,
+                        WorkflowKey.ADD_PROJECT_MEMBER: _ADD_PROJECT_MEMBER_DENIED_REPLY,
+                        WorkflowKey.CREATE_USER: _CREATE_USER_DENIED_REPLY,
+                    }
+                    if planner_decision.workflow_key in _project_create_denied_replies and str(
+                        getattr(actor, "role", None) or ""
+                    ).strip().upper() not in _PROJECT_CREATE_ROLES:
+                        denied_reply = _project_create_denied_replies[planner_decision.workflow_key]
                         await send_text(message.sender.wa_id, denied_reply)
                         await _safe(
                             mlog.log_reply(correlation_id=correlation_id, reply=denied_reply)
