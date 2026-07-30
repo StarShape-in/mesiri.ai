@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
-import { RefreshCw, ChevronDown, ChevronRight, Check, RotateCcw, Code, Cpu, Link2 } from 'lucide-react';
+import { RefreshCw, ChevronDown, ChevronRight, Check, RotateCcw, Code, Cpu, Link2, Copy } from 'lucide-react';
 import { api } from './api';
 
 interface InboundMessageSummary {
@@ -561,6 +561,120 @@ const ContextPanel = ({
   );
 };
 
+// Plain-text serialization for the "Copy all" button below. Deliberately
+// dumps each stage's raw stage_payload (the same JSON ContextStageCard's own
+// "toggle raw JSON" button shows) rather than re-deriving a curated field
+// list the way renderStageBody does for the UI -- a second field list here
+// would drift from that one exactly the way the four capability-copy lists
+// this codebase has already had to consolidate once did. Raw JSON is also
+// strictly more useful for the purpose this button exists for (pasting a
+// full repro into a bug report or an AI debugging session): nothing is
+// filtered out.
+function formatFullTraceAsText({
+  detail,
+  context,
+  trace,
+}: {
+  detail: InboundMessageDetail;
+  context: StageContextEntry[];
+  trace: JourneyTraceEntry[];
+}): string {
+  const lines: string[] = [];
+
+  lines.push(`USER (${detail.normalized_message?.sender?.profile_name || detail.sender_wa_id})`);
+  lines.push(detail.body_text || '[Media message or no text]');
+  lines.push('');
+  lines.push('ASSISTANT');
+  lines.push(detail.assistant_reply || '(no reply was triggered for this message)');
+
+  const withPayload = context.filter((entry) => entry.stage_payload !== null);
+  if (withPayload.length > 0) {
+    lines.push('');
+    lines.push('--- AI Context — how this message was understood ---');
+    for (const entry of withPayload) {
+      const meta = STAGE_META[entry.stage] || { label: entry.stage, icon: '•', hint: '' };
+      lines.push('');
+      lines.push(`${meta.icon} ${meta.label}${entry.succeeded ? '' : ' (FAILED)'}`);
+      lines.push(JSON.stringify(entry.stage_payload, null, 2));
+    }
+  }
+
+  if (trace.length > 0) {
+    lines.push('');
+    lines.push('--- Pipeline Trace ---');
+    for (const t of trace) {
+      const duration = t.duration_ms !== null ? `${t.duration_ms}ms` : '—';
+      const failure = t.succeeded ? '' : ` FAILED (${t.error_code}: ${t.error_message || 'no message'})`;
+      lines.push(`${t.stage}: ${duration}${failure}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+// Copies the whole message detail view -- conversation, every AI Context
+// stage, and the pipeline trace -- as one plain-text block, in one click.
+// Fetches /context and /trace itself rather than lifting ContextPanel's/
+// TracePanel's state up into the parent: those two components are correct
+// and self-contained as they are, and this is the only caller that needs
+// their data outside their own render, so one extra pair of GETs on click
+// (not on every render) is cheaper than restructuring both into controlled
+// components for a single consumer.
+const CopyAllButton = ({
+  message,
+  detail,
+}: {
+  message: InboundMessageSummary;
+  detail: InboundMessageDetail;
+}) => {
+  const [state, setState] = useState<'idle' | 'copying' | 'copied' | 'error'>('idle');
+
+  const handleCopy = async () => {
+    setState('copying');
+    try {
+      const [contextRes, traceRes] = await Promise.all([
+        api.get<StageContextEntry[]>(`/admin/logs/messages/${message.correlation_id}/context`),
+        api.get<JourneyTraceEntry[]>(`/admin/logs/messages/${message.correlation_id}/trace`),
+      ]);
+      const text = formatFullTraceAsText({ detail, context: contextRes.data, trace: traceRes.data });
+      await navigator.clipboard.writeText(text);
+      setState('copied');
+    } catch (err) {
+      console.error('Failed to copy trace', err);
+      setState('error');
+    } finally {
+      setTimeout(() => setState('idle'), 2000);
+    }
+  };
+
+  const label = state === 'copied' ? 'Copied' : state === 'error' ? 'Copy failed' : state === 'copying' ? 'Copying…' : 'Copy all';
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      disabled={state === 'copying'}
+      title="Copy the conversation, full AI context, and pipeline trace as text"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+        border: '1px solid var(--neutral-200)',
+        borderRadius: 'var(--radius-xs)',
+        background: state === 'copied' ? 'var(--success-soft)' : '#ffffff',
+        color: state === 'copied' ? 'var(--success)' : state === 'error' ? 'var(--error)' : 'var(--neutral-600)',
+        fontSize: '11px',
+        fontWeight: 600,
+        padding: '4px 10px',
+        cursor: state === 'copying' ? 'default' : 'pointer',
+      }}
+    >
+      {state === 'copied' ? <Check size={12} /> : <Copy size={12} />}
+      {label}
+    </button>
+  );
+};
+
 const LogDetailPanel = ({
   message,
   onUpdate,
@@ -644,8 +758,11 @@ const LogDetailPanel = ({
         
         {/* Chat Visualizer Flow */}
         <div style={{ backgroundColor: '#ffffff', borderRadius: 'var(--radius-sm)', border: '1px solid var(--neutral-200)', padding: 'var(--space-4)', boxShadow: '0 1px 2px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-          <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--neutral-500)', borderBottom: '1px solid var(--neutral-100)', paddingBottom: 'var(--space-2)', marginBottom: 'var(--space-2)' }}>
-            Conversation Flow
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--neutral-100)', paddingBottom: 'var(--space-2)', marginBottom: 'var(--space-2)' }}>
+            <span style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--neutral-500)' }}>
+              Conversation Flow
+            </span>
+            <CopyAllButton message={message} detail={detail} />
           </div>
 
           {/* User Message Bubble */}
