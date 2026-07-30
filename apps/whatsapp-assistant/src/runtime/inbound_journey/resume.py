@@ -31,6 +31,7 @@ from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
 from mesiri_contracts.common.ids import new_id as _new_id
 from planner import Planner
 from planning.binding import build_event
+from planning.outputs import build_step_outputs
 from planning.plan import Plan, PlanOrigin, PlanStep, StepRef, StepStatus
 from planning.plan_store import PlanStore
 from runtime.entity_resolution.member_resolution import MemberNameResolutionService
@@ -1085,7 +1086,20 @@ async def advance_member_plan_after_user_created(
         plan = await plan_store.mark_step_done(
             user_id=user_id,
             step_id=_CREATE_USER_STEP_ID,
-            outputs={"user_id": execution.material_row_id, "full_name": str(full_name)},
+            # Built generically from what CREATE_USER `provides` in the
+            # registry plus the confirmed draft's own scalar fields, rather
+            # than the hand-written {"user_id": ..., "full_name": ...} this
+            # used to be. Produces exactly the same two keys for this chain
+            # (which is why the member-create tests still pass unchanged),
+            # and is the same call an N-step decomposed plan's executor
+            # makes -- so a PROJECT_CREATE step publishes `project_id` for
+            # a later SITE_CREATE's StepRef without anyone wiring that pair
+            # by hand. See planning/outputs.py.
+            outputs=build_step_outputs(
+                workflow_key=create_step.workflow_key,
+                row_id=execution.material_row_id,
+                draft_fields=confirmed.draft_action.fields,
+            ),
         )
         next_step = await plan_store.next_runnable_step(user_id=user_id)
     except Exception:  # noqa: BLE001 -- the user was created either way; a plan-advance

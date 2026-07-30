@@ -12,6 +12,7 @@ from __future__ import annotations
 from .binding import UnresolvedStepRefError, build_event, resolve_step
 from .decomposition import DecomposedPlanResult, SkippedSegment, build_plan_from_segments
 from .ordering import PlanCycleError, PlanUnresolvedRefError, topological_order
+from .outputs import build_step_outputs
 from .plan import (
     SCOPE_KEYS,
     InvalidScopeKeyError,
@@ -36,6 +37,7 @@ __all__ = [
     "UnresolvedStepRefError",
     "build_event",
     "build_plan_from_segments",
+    "build_step_outputs",
     "resolve_step",
     "PlanCycleError",
     "PlanUnresolvedRefError",
