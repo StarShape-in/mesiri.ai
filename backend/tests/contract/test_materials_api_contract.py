@@ -13,8 +13,10 @@ test_projects_api_contract.py.
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import uuid
+from decimal import Decimal
 
 import pytest
 import sqlalchemy as sa
@@ -871,3 +873,222 @@ async def test_reversal_produces_opposite_movement_and_net_zero_stock(
             "reversing a RECEIPT must post an ISSUE, not another RECEIPT"
         )
         assert reversal_movement["reversal_of_movement_id"] == original_movement
+
+
+# ---------------------------------------------------------------------------
+# Phase A -- integrity guards (migration 0459)
+# ---------------------------------------------------------------------------
+async def _receive(client, ctx, material_id, unit_id, qty):
+    resp = await client.post(
+        "/materials/inflows",
+        json={
+            "project_id": str(ctx["project_id"]),
+            "site_id": str(ctx["site_id"]),
+            "material_id": material_id,
+            "unit_id": unit_id,
+            "quantity": str(qty),
+            "movement_reason": "RECEIVED",
+            "occurred_date": str(datetime.date.today()),
+        },
+        headers=_auth(ctx["token"]),
+    )
+    assert resp.status_code == 201
+    return resp.json()["id"]
+
+
+async def _stock(client, ctx, material_id) -> Decimal:
+    resp = await client.get(
+        "/materials/inventory",
+        params={"project_id": str(ctx["project_id"]), "material_id": material_id},
+        headers=_auth(ctx["token"]),
+    )
+    rows = resp.json()
+    return Decimal(rows[0]["current_stock"]) if rows else Decimal("0")
+
+
+async def test_a_movement_cannot_be_corrected_twice(client, admin_ctx):
+    """The headline Phase A defect: correcting twice does not undo twice. It
+    posts a second offsetting movement, so a 100-bag receipt reversed twice
+    leaves stock 200 light -- permanently, because the ledger is append-only.
+    """
+    bags_id = await _bags_unit_id(client, admin_ctx["token"])
+    material_id = await _make_material(client, admin_ctx["token"], "Cement DR", bags_id)
+    receipt_id = await _receive(client, admin_ctx, material_id, bags_id, 100)
+
+    first = await client.post(
+        f"/materials/inflows/{receipt_id}/reverse",
+        json={"reason_note": "wrong quantity"},
+        headers=_auth(admin_ctx["token"]),
+    )
+    assert first.status_code == 201
+
+    second = await client.post(
+        f"/materials/inflows/{receipt_id}/reverse",
+        json={"reason_note": "oops, again"},
+        headers=_auth(admin_ctx["token"]),
+    )
+    assert second.status_code == 409
+    assert "already corrected" in str(second.json()["detail"])
+
+    # One correction applied: 100 in, 100 out, net zero -- not -100.
+    assert await _stock(client, admin_ctx, material_id) == Decimal("0")
+
+
+async def test_detail_endpoint_reports_already_reversed(client, admin_ctx):
+    """So the dashboard can hide Correct instead of offering an action that 409s."""
+    bags_id = await _bags_unit_id(client, admin_ctx["token"])
+    material_id = await _make_material(client, admin_ctx["token"], "Cement AR", bags_id)
+    receipt_id = await _receive(client, admin_ctx, material_id, bags_id, 20)
+
+    before = await client.get(
+        f"/materials/inflows/{receipt_id}", headers=_auth(admin_ctx["token"])
+    )
+    assert before.json()["already_reversed"] is False
+
+    await client.post(
+        f"/materials/inflows/{receipt_id}/reverse", json={}, headers=_auth(admin_ctx["token"])
+    )
+    after = await client.get(
+        f"/materials/inflows/{receipt_id}", headers=_auth(admin_ctx["token"])
+    )
+    assert after.json()["already_reversed"] is True
+
+
+async def test_material_names_are_case_and_whitespace_insensitive(client, admin_ctx):
+    """One stockpile, one catalog row. Allowing "cement" beside "Cement" splits
+    stock in two, and the WhatsApp resolver (already lower()-based) then picks
+    between them arbitrarily."""
+    bags_id = await _bags_unit_id(client, admin_ctx["token"])
+    await _make_material(client, admin_ctx["token"], "Cement CI", bags_id)
+
+    for variant in ("cement ci", "  Cement CI  ", "CEMENT CI"):
+        resp = await client.post(
+            "/materials",
+            json={"name": variant, "default_unit_id": bags_id},
+            headers=_auth(admin_ctx["token"]),
+        )
+        assert resp.status_code == 409, f"{variant!r} should collide"
+        assert "already exists" in str(resp.json()["detail"])
+
+
+async def test_idempotency_key_makes_a_retried_inflow_safe(client, admin_ctx):
+    """A double tap, or a client retrying after a timeout on site wifi, must not
+    become two deliveries nobody can tell apart."""
+    bags_id = await _bags_unit_id(client, admin_ctx["token"])
+    material_id = await _make_material(client, admin_ctx["token"], "Cement IDEM", bags_id)
+    body = {
+        "project_id": str(admin_ctx["project_id"]),
+        "site_id": str(admin_ctx["site_id"]),
+        "material_id": material_id,
+        "unit_id": bags_id,
+        "quantity": "40",
+        "movement_reason": "RECEIVED",
+        "occurred_date": str(datetime.date.today()),
+    }
+    headers = {**_auth(admin_ctx["token"]), "Idempotency-Key": f"test-{uuid.uuid4()}"}
+
+    first = await client.post("/materials/inflows", json=body, headers=headers)
+    second = await client.post("/materials/inflows", json=body, headers=headers)
+
+    assert first.status_code == 201
+    assert second.json()["status"] == "replayed"
+    assert second.json()["id"] == first.json()["id"]
+    assert await _stock(client, admin_ctx, material_id) == Decimal("40")
+
+
+async def test_outflow_beyond_stock_is_refused_unless_explicitly_allowed(client, admin_ctx):
+    """Typing 500 instead of 50 must not silently become permanent."""
+    bags_id = await _bags_unit_id(client, admin_ctx["token"])
+    material_id = await _make_material(client, admin_ctx["token"], "Cement NEG", bags_id)
+    await _receive(client, admin_ctx, material_id, bags_id, 20)
+
+    outflow = {
+        "project_id": str(admin_ctx["project_id"]),
+        "site_id": str(admin_ctx["site_id"]),
+        "material_id": material_id,
+        "unit_id": bags_id,
+        "quantity": "500",
+        "movement_reason": "CONSUMED",
+        "occurred_date": str(datetime.date.today()),
+        "allow_negative": False,
+    }
+    refused = await client.post(
+        "/materials/outflows", json=outflow, headers=_auth(admin_ctx["token"])
+    )
+    assert refused.status_code == 409
+    detail = refused.json()["detail"]
+    assert Decimal(detail["available"]) == Decimal("20")
+    assert Decimal(detail["requested"]) == Decimal("500")
+
+    # Negative stock is a real situation (deliveries recorded late), so this is
+    # a confirmation, never a prohibition.
+    allowed = await client.post(
+        "/materials/outflows",
+        json={**outflow, "allow_negative": True},
+        headers=_auth(admin_ctx["token"]),
+    )
+    assert allowed.status_code == 201
+
+
+async def test_stock_check_reports_the_balance_the_guard_uses(client, admin_ctx):
+    bags_id = await _bags_unit_id(client, admin_ctx["token"])
+    material_id = await _make_material(client, admin_ctx["token"], "Cement SC", bags_id)
+    await _receive(client, admin_ctx, material_id, bags_id, 75)
+
+    resp = await client.get(
+        "/materials/stock-check",
+        params={"material_id": material_id, "site_id": str(admin_ctx["site_id"])},
+        headers=_auth(admin_ctx["token"]),
+    )
+    assert resp.status_code == 200
+    assert Decimal(resp.json()["available"]) == Decimal("75")
+
+
+async def test_concurrent_outflows_cannot_both_pass_the_same_stock(client, admin_ctx):
+    """Without the advisory lock the guard is theatre: two issues of 8 against
+    10 both read 10, both pass, both insert, and each user is told it was fine.
+    """
+    bags_id = await _bags_unit_id(client, admin_ctx["token"])
+    material_id = await _make_material(client, admin_ctx["token"], "Cement RACE", bags_id)
+    await _receive(client, admin_ctx, material_id, bags_id, 10)
+
+    outflow = {
+        "project_id": str(admin_ctx["project_id"]),
+        "site_id": str(admin_ctx["site_id"]),
+        "material_id": material_id,
+        "unit_id": bags_id,
+        "quantity": "8",
+        "movement_reason": "CONSUMED",
+        "occurred_date": str(datetime.date.today()),
+        "allow_negative": False,
+    }
+    first, second = await asyncio.gather(
+        client.post("/materials/outflows", json=outflow, headers=_auth(admin_ctx["token"])),
+        client.post("/materials/outflows", json=outflow, headers=_auth(admin_ctx["token"])),
+    )
+
+    assert sorted([first.status_code, second.status_code]) == [201, 409]
+    assert await _stock(client, admin_ctx, material_id) >= Decimal("0")
+
+
+async def test_allow_negative_default_leaves_other_write_paths_unchanged(client, admin_ctx):
+    """WhatsApp and mobile do not send the flag; they must keep working exactly
+    as before this phase, so the default has to stay permissive."""
+    bags_id = await _bags_unit_id(client, admin_ctx["token"])
+    material_id = await _make_material(client, admin_ctx["token"], "Cement DEF", bags_id)
+
+    resp = await client.post(
+        "/materials/outflows",
+        json={
+            "project_id": str(admin_ctx["project_id"]),
+            "site_id": str(admin_ctx["site_id"]),
+            "material_id": material_id,
+            "unit_id": bags_id,
+            "quantity": "5",
+            "movement_reason": "CONSUMED",
+            "occurred_date": str(datetime.date.today()),
+        },
+        headers=_auth(admin_ctx["token"]),
+    )
+    assert resp.status_code == 201
+    assert await _stock(client, admin_ctx, material_id) == Decimal("-5")
