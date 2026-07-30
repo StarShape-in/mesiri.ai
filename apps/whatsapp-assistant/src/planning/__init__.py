@@ -10,6 +10,7 @@ the decomposer itself (Phase 4), neither of which exist yet.
 from __future__ import annotations
 
 from .binding import UnresolvedStepRefError, build_event, resolve_step
+from .decomposition import DecomposedPlanResult, SkippedSegment, build_plan_from_segments
 from .ordering import PlanCycleError, PlanUnresolvedRefError, topological_order
 from .plan import (
     SCOPE_KEYS,
@@ -24,14 +25,17 @@ from .plan_store import PlanStore
 
 __all__ = [
     "SCOPE_KEYS",
+    "DecomposedPlanResult",
     "InvalidScopeKeyError",
     "Plan",
     "PlanOrigin",
     "PlanStep",
+    "SkippedSegment",
     "StepRef",
     "StepStatus",
     "UnresolvedStepRefError",
     "build_event",
+    "build_plan_from_segments",
     "resolve_step",
     "PlanCycleError",
     "PlanUnresolvedRefError",
