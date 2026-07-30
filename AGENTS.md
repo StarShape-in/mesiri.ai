@@ -3,6 +3,21 @@
 > **You are an AI coding agent working in this monorepo.**  
 > Follow these rules on every task unless a folder-specific `AGENTS.md` overrides them.
 
+> ## ⚠️ Read [CLAUDE.md](CLAUDE.md) first — it governs *process* on every task
+>
+> [CLAUDE.md](CLAUDE.md) is the **Mesiri Development Protocol**: the mandatory
+> investigate → plan → **wait for approval** → implement → test → branch/commit/push → report →
+> update Linear → **stop** cycle that every feature, bug fix and enhancement must follow.
+>
+> This file (`AGENTS.md`) governs **code style, the 3 R's, and the Module Placement Log**.
+> `CLAUDE.md` governs **workflow, approval gates, Git discipline and reporting**.
+> Where they overlap, `CLAUDE.md` wins on process. Both apply to every agent working here —
+> not only Claude.
+>
+> Two rules from it that are violated most often, repeated here so they are unmissable:
+> **never write code before the plan is approved**, and **never continue into the next phase
+> without explicit approval.**
+
 ---
 
 ## The 3 R's of Coding
@@ -107,7 +122,7 @@ Update the row's status as work progresses. A stale or missing row is worse than
 
 | Feature | Belongs in | Design doc | Status |
 |---|---|---|---|
-| Materials catalogue + units-of-measure + immutable movement ledger (retires the `_UNIT_ALIASES` stopgap from `1ad7977`) | `backend/domains/materials/` (`posting.py` done), `backend/migrations/` (`0290`/`0300`/`0310` done, including production self-heal fixes), `apps/whatsapp-assistant/src/runtime/material_catalog_query.py` (done, wired into `inbound_journey.py`'s resolution gate), `apps/dashboard/src/components/materials/manage-catalogue-dialog.tsx` (done) | [docs/execution/MATERIALS_CATALOGUE_PLAN.md](docs/execution/MATERIALS_CATALOGUE_PLAN.md) | in progress — backend/WhatsApp/dashboard pieces largely landed by Ilan as of 2026-07-12; verify end-to-end before marking done |
+| Materials catalogue + units-of-measure + immutable movement ledger (retires the `_UNIT_ALIASES` stopgap from `1ad7977`) | `backend/domains/materials/` (`posting.py` done), `backend/migrations/` (`0290`/`0300`/`0310` done, including production self-heal fixes), `apps/whatsapp-assistant/src/runtime/material_catalog_query.py` (done, wired into `inbound_journey.py`'s resolution gate), `apps/dashboard/src/components/materials/manage-catalogue-dialog.tsx` (done) | [docs/execution/MATERIALS_CATALOGUE_PLAN.md](docs/execution/MATERIALS_CATALOGUE_PLAN.md) | done — complete and verified end-to-end across backend (45 tests passing), WhatsApp assistant (46 tests passing), migrations 0290/0300/0310, and dashboard UI |
 | Unit conversion within the same physical dimension (e.g. feet ↔ cm) — store as reported, calculate on demand when asked in a different unit | **Owned by Ilan** — he confirmed he'll implement this himself, extending `units_of_measure` (`0290`). Do not implement from this side; check the live schema before assuming this is still open if picked up later. | Open decision logged in the materials catalogue plan above | assigned to Ilan |
 | Post-confirmation receipt image (WhatsApp) — after any confirmed record (material receipt/usage today, extensible to expense/labour/equipment later), reply with one visual receipt card instead of plain "✅ Recorded" text. Single shared template across all record types, data-driven, never a different image layout per type. | `apps/whatsapp-assistant/src/channel/receipt/` (`data.py`/`template.py`/`render.py`/`builder.py`, done — Jinja2 HTML/CSS re-implementation of the user-supplied `RecordCard` React design, rendered to PNG via Python `playwright`, headless Chromium, in-process, no new service). `interactions/ports.py`'s new `ReceiptBuilder` protocol, wired via `interactions/handler.py`'s `_resume_and_render()`. `WhatsAppSender.send_image()` in `channel/whatsapp/outbound.py`. | None (design notes in commit `f146707`) | done — manually verified by rendering a real PNG and visually checking it; not yet confirmed against a live WhatsApp send |
 | Finance module (WhatsApp-first) — wire confirmed expenses to real money movement, then a LangGraph spine for mid-workflow slot-filling ("which account?"), then one workflow per capability (queries, transfers, petty cash, vendor/payee, account admin, receipts, reversal, duplicate detection). Purchases/procurement and the dashboard UI are explicitly out of scope here. | `backend/src/mesiri/{application,infrastructure/postgres/repositories}/{expenses,finance,vendors}/`, `backend/migrations/` (`0367`-`0370`), `apps/whatsapp-assistant/src/{workflows,runtime,interactions,canonicalization,understanding,planner}/`, `shared/contracts/.../{v2/workflow_state,draft_action,planner_decision,canonical_event,enums,candidates}.py`, `platform/ai/src/mesiri_ai/adapters/{gemini,deepseek}/` (extraction prompts) | [docs/execution/FINANCE_MODULE_PLAN.md](docs/execution/FINANCE_MODULE_PLAN.md) (Linear epics [STA-140](https://linear.app/starshape-pvt/issue/STA-140)/[STA-141](https://linear.app/starshape-pvt/issue/STA-141)) | V1 complete (Slices 0–8) as of 2026-07-25 (Slice 6 fully: account-admin, receipt-capture, and missing-receipt-nudge portions, the first two done out of order); V2 (budgets, approvals, reports, analytics, dashboard) not started |
