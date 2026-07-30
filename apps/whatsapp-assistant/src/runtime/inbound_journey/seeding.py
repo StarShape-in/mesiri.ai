@@ -1454,7 +1454,7 @@ async def start_project_setup_followup(
     project_id: str,
     actor: Any,
     workflow_runtime: WorkflowRuntime,
-) -> str | None:
+) -> ReplySpec | None:
     """Start SITE_CREATE (stage "site") or ADD_PROJECT_MEMBER (stage
     "member") directly, with `project_id` already known -- called when the
     user taps "Add a Site now" / "Add a Teammate now" on the offer built by
@@ -1473,9 +1473,15 @@ async def start_project_setup_followup(
     make create_site_validation.py's/add_member_validation.py's role check
     reject the eventual confirm with no created_by_role to check.
 
-    Returns the new workflow's pending_prompt (the question it's now
-    asking), or None if nothing could be started -- the caller falls back to
-    a generic "please try again" reply.
+    Returns a ReplySpec for the question the new workflow is now asking, or
+    None if nothing could be started -- the caller falls back to a generic
+    "please try again" reply. A ReplySpec, not a bare string: SITE_CREATE and
+    ADD_PROJECT_MEMBER can both build a real confirmable draft here, and the
+    account-admin/CREATE_USER fixes for the same "plain text instead of
+    Yes/No buttons" bug apply here too -- see
+    runtime/inbound_journey/reply.py's render_workflow_run_reply_spec, the
+    one place that decides plain text vs Yes/No buttons vs a tappable list
+    for a WorkflowRunResult.
     """
     workflow_key = WorkflowKey.SITE_CREATE if stage == "site" else WorkflowKey.ADD_PROJECT_MEMBER
     reason = (
@@ -1523,7 +1529,10 @@ async def start_project_setup_followup(
             "project_setup.no_prompt org=%s stage=%s status=%s", org_id, stage, run.status.value
         )
         return None
-    return run.pending_prompt
+
+    from runtime.inbound_journey.reply import render_workflow_run_reply_spec
+
+    return render_workflow_run_reply_spec(run)
 
 
 async def _create_promoted_workers(

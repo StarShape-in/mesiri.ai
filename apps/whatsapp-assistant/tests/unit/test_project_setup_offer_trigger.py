@@ -207,11 +207,11 @@ async def test_offer_project_setup_store_failure_never_raises():
 async def test_start_site_followup_starts_site_create_with_project_pre_seeded():
     runtime = _FakeWorkflowRuntime(pending_prompt="What should the new site be called?")
 
-    prompt = await start_project_setup_followup(
+    reply = await start_project_setup_followup(
         stage="site", project_id=NEW_PROJECT_ID, actor=_FakeActor(role="ADMIN"), workflow_runtime=runtime
     )
 
-    assert prompt == "What should the new site be called?"
+    assert reply is not None and reply.text == "What should the new site be called?"
     decision, event = runtime.started_with
     assert decision.workflow_key is WorkflowKey.SITE_CREATE
     assert decision.project_id == NEW_PROJECT_ID
@@ -222,11 +222,11 @@ async def test_start_site_followup_starts_site_create_with_project_pre_seeded():
 async def test_start_member_followup_starts_add_project_member_with_project_pre_seeded():
     runtime = _FakeWorkflowRuntime(pending_prompt="Who should I add to this project?")
 
-    prompt = await start_project_setup_followup(
+    reply = await start_project_setup_followup(
         stage="member", project_id=PRJ, actor=_FakeActor(role="PROJECT_MANAGER"), workflow_runtime=runtime
     )
 
-    assert prompt == "Who should I add to this project?"
+    assert reply is not None and reply.text == "Who should I add to this project?"
     decision, event = runtime.started_with
     assert decision.workflow_key is WorkflowKey.ADD_PROJECT_MEMBER
     assert decision.project_id == PRJ
@@ -236,11 +236,11 @@ async def test_start_member_followup_starts_add_project_member_with_project_pre_
 async def test_start_followup_returns_none_when_the_run_produces_no_prompt():
     runtime = _FakeWorkflowRuntime(pending_prompt=None)
 
-    prompt = await start_project_setup_followup(
+    reply = await start_project_setup_followup(
         stage="site", project_id=NEW_PROJECT_ID, actor=_FakeActor(), workflow_runtime=runtime
     )
 
-    assert prompt is None
+    assert reply is None
 
 
 async def test_start_followup_never_raises_on_a_broken_runtime():
@@ -251,8 +251,8 @@ async def test_start_followup_never_raises_on_a_broken_runtime():
         async def start(self, decision, event):
             raise RuntimeError("boom")
 
-    prompt = await start_project_setup_followup(
+    reply = await start_project_setup_followup(
         stage="site", project_id=NEW_PROJECT_ID, actor=_FakeActor(), workflow_runtime=_BrokenRuntime()
     )
 
-    assert prompt is None
+    assert reply is None

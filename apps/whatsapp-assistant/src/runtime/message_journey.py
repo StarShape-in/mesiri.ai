@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 from channel.replies import (
     CATEGORY_SEMANTIC_HINT,
     SILENTLY_IGNORED_RAW_TYPES,
+    ReplySpec,
     render_unsupported_media_reply,
 )
 from context.live_identity import (
@@ -468,7 +469,7 @@ def build_message_handlers(
                     await project_setup_offer_store.clear(user_id=ctx.user_id)
                 except Exception:  # noqa: BLE001
                     _log.warning("project_setup.clear_failed user=%s", ctx.user_id)
-                reply_text = render_setup_offer_skipped_reply()
+                reply = ReplySpec(text=render_setup_offer_skipped_reply())
             else:
                 expected_stage = "site" if setup_tap == "setup_add_site" else "member"
                 try:
@@ -477,10 +478,10 @@ def build_message_handlers(
                     _log.warning("project_setup.pop_failed user=%s", ctx.user_id)
                     offer = None
                 if offer is None or offer.stage != expected_stage:
-                    reply_text = render_setup_offer_expired_reply()
+                    reply = ReplySpec(text=render_setup_offer_expired_reply())
                 else:
                     try:
-                        prompt = await start_project_setup_followup(
+                        reply = await start_project_setup_followup(
                             stage=offer.stage,
                             project_id=offer.project_id,
                             actor=ctx,
@@ -488,13 +489,19 @@ def build_message_handlers(
                         )
                     except Exception:  # noqa: BLE001 — a tap must always get some reply
                         _log.exception("project_setup.followup_failed user=%s", ctx.user_id)
-                        prompt = None
-                    reply_text = prompt or (
-                        "Sorry, I couldn't start that — please try again."
+                        reply = None
+                    reply = reply or ReplySpec(
+                        text="Sorry, I couldn't start that — please try again."
                     )
-            await sender.send_text(wa_id, reply_text)
+            await send_reply_spec(
+                reply,
+                wa_id,
+                send_text=sender.send_text,
+                send_list=sender.send_list,
+                send_button=sender.send_button,
+            )
             await message_logger.log_reply(
-                correlation_id=message.correlation_id, reply=reply_text
+                correlation_id=message.correlation_id, reply=reply.text
             )
             await message_logger.mark_completed(correlation_id=message.correlation_id)
             return
