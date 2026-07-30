@@ -19,6 +19,13 @@ One tick:
      `notifications` row per recipient (migration 0453's UNIQUE constraint
      is the real at-most-once guarantee; a claim lost to a race is a
      harmless no-op, not a duplicate), then mark the automation run.
+  2b. Same for every project with `auto_generate_dpr=true` whose own
+     reporting_cutoff_time/reporting_timezone says it's due
+     (project_auto_dpr.py's `queue_due_project_auto_dprs`) -- generates
+     that project's own DPR and notifies its ADMIN/PROJECT_MANAGER
+     recipients. Not a user-owned automation row (see that module's
+     docstring for why), but the same due-check/claim/mark shape, so it
+     rides the same tick rather than needing its own scheduler.
   3. Drain and send every pending notification
      (runtime/send_pending_notifications.py's `drain_and_send` -- the exact
      same 24h-session-window / quiet-hours / skip-with-reason policy #9
@@ -172,6 +179,13 @@ async def run_tick(*, db: Any) -> dict[str, int] | None:
 
         try:
             fired = await _queue_due_automations(conn, db=db)
+
+            from .project_auto_dpr import queue_due_project_auto_dprs
+
+            try:
+                fired += await queue_due_project_auto_dprs(conn, db=db)
+            except Exception:  # noqa: BLE001
+                logger.exception("automation_runner.project_auto_dpr_failed")
 
             sent_skipped = {"sent": 0, "skipped": 0}
             try:

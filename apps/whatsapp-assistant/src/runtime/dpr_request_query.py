@@ -38,16 +38,22 @@ class DprRequestQueryService:
         site_id: str | None,
         report_date: datetime.date,
     ) -> dict[str, Any]:
-        """Status of `report_date`'s SITE-level DPR for this project/site.
-        `report_date` is the CALLER's responsibility to resolve against the
-        sender's timezone (see runtime/inbound_journey.py's `today_for`) --
-        this service does no timezone math of its own, same split
+        """Status of `report_date`'s DPR for this scope. `site_id` set ->
+        the SITE-level report; `site_id` None (project_id still required)
+        -> the PROJECT-level roll-up (see backend's dpr.py module docstring,
+        ADR-D9/P8) -- added for runtime/project_auto_dpr.py, which has no
+        single site to ask about, only the whole project's own auto-DPR
+        setting. `report_date` is the CALLER's responsibility to resolve
+        against the relevant timezone (see runtime/inbound_journey.py's
+        `today_for` for the per-user case, application/automations/
+        scheduling.py's `local_now` for the per-project one) -- this
+        service does no timezone math of its own, same split
         labour_query_service.py's `resolve_date_range` makes. Always
         returns a dict (never None) -- `status` is one of "not_generated"
         (no daily_reports row for that date yet), "pending_render" (a
         version exists but rendered_object_key is still NULL), or "ready"
         (a PDF is stored -- `object_key`/`code` are set)."""
-        if not project_id or not site_id:
+        if not project_id:
             return {"status": "not_generated", "object_key": None, "code": None}
 
         import sqlalchemy as sa
@@ -55,7 +61,7 @@ class DprRequestQueryService:
         try:
             org_id = uuid.UUID(organization_id)
             proj_uuid = uuid.UUID(project_id)
-            site_uuid = uuid.UUID(site_id)
+            site_uuid = uuid.UUID(site_id) if site_id else None
         except (TypeError, ValueError):
             return {"status": "not_generated", "object_key": None, "code": None}
 
@@ -76,6 +82,11 @@ class DprRequestQueryService:
             sa.column("rendered_object_key"),
         )
 
+        scope_clause = (
+            sa.and_(daily_reports.c.site_id == site_uuid, daily_reports.c.level == "SITE")
+            if site_uuid is not None
+            else sa.and_(daily_reports.c.site_id.is_(None), daily_reports.c.level == "PROJECT")
+        )
         query = (
             sa.select(
                 daily_reports.c.code,
@@ -91,9 +102,8 @@ class DprRequestQueryService:
             .where(
                 daily_reports.c.organization_id == org_id,
                 daily_reports.c.project_id == proj_uuid,
-                daily_reports.c.site_id == site_uuid,
                 daily_reports.c.report_date == report_date,
-                daily_reports.c.level == "SITE",
+                scope_clause,
             )
             .limit(1)
         )
