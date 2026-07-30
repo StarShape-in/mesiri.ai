@@ -224,9 +224,9 @@ async def test_the_starship_message_produces_the_whole_plan_preview():
     assert "Create project Starship" in reply.text
     assert "Create site Site A under Starship" in reply.text
     assert "Add Hysam (9198765xxxxx) as a new user" in reply.text
-    # Yes/No, not a per-step confirmation -- nothing has started.
+    # Yes/No/Edit, not a per-step confirmation -- nothing has started.
     assert reply.buttons is not None
-    assert {b.title for b in reply.buttons} == {"Yes", "No"}
+    assert {b.title for b in reply.buttons} == {"Yes", "No", "Edit"}
     assert decomposition.calls == 1
     assert extraction.calls == 3
 

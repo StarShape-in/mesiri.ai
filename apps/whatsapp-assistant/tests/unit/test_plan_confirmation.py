@@ -6,14 +6,20 @@ from __future__ import annotations
 
 from typing import Any
 
-from channel.replies import PLAN_CONFIRM_NO_ROW_ID, PLAN_CONFIRM_YES_ROW_ID
+from channel.replies import (
+    PLAN_CONFIRM_NO_ROW_ID,
+    PLAN_CONFIRM_YES_ROW_ID,
+    PLAN_EDIT_CANCEL_ROW_ID,
+    PLAN_EDIT_ROW_ID,
+    PLAN_REMOVE_ROW_PREFIX,
+)
 from mesiri_contracts.assistant.canonical_event import CanonicalEventType
 from mesiri_contracts.assistant.draft_action import DraftActionType
 from mesiri_contracts.assistant.enums import InputModality
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage
 from mesiri_contracts.assistant.planner_decision import WorkflowKey
 from mesiri_contracts.assistant.v2.draft_action import DraftActionV2
-from planning.plan import Plan, PlanOrigin, PlanStep, StepStatus
+from planning.plan import Plan, PlanOrigin, PlanStep, StepRef, StepStatus
 from planning.plan_store import PlanStore
 from runtime.inbound_journey.plan_confirmation import resume_pending_plan_confirmation
 from workflows.runtime import WorkflowRunResult, WorkflowRunStatus
@@ -216,3 +222,134 @@ async def test_yes_is_safe_to_retry_after_a_start_failure():
     plan = await store.get_plan(user_id=USR)
     assert plan is not None
     assert plan.step("s1").status is StepStatus.PENDING
+
+
+def _dependent_plan() -> Plan:
+    """project (s1) -> site under it (s2, scope ref) -> user (s3, independent)."""
+    return Plan(
+        plan_id="plan_2",
+        correlation_id="cor_2",
+        user_id=USR,
+        organization_id=ORG,
+        origin=PlanOrigin.DECOMPOSITION,
+        steps=(
+            PlanStep(
+                step_id="s1",
+                workflow_key=WorkflowKey.PROJECT_CREATE,
+                event_type=CanonicalEventType.PROJECT_CREATE_REQUESTED,
+                fields={"name": "Starship"},
+            ),
+            PlanStep(
+                step_id="s2",
+                workflow_key=WorkflowKey.SITE_CREATE,
+                event_type=CanonicalEventType.SITE_CREATE_REQUESTED,
+                fields={"name": "Site A"},
+                scope={"project_id": StepRef("s1", "project_id")},
+            ),
+            PlanStep(
+                step_id="s3",
+                workflow_key=WorkflowKey.CREATE_USER,
+                event_type=CanonicalEventType.CREATE_USER_REQUESTED,
+                fields={"full_name": "Hysam"},
+            ),
+        ),
+    )
+
+
+async def test_edit_shows_a_picker_of_the_plans_current_steps():
+    store = PlanStore(_FakeRedis())
+    await store.start_plan(plan=_dependent_plan())
+
+    reply = await resume_pending_plan_confirmation(
+        _tap(PLAN_EDIT_ROW_ID),
+        USR,
+        plan_store=store,
+        workflow_runtime=_FakeWorkflowRuntime([]),
+    )
+
+    assert reply is not None
+    assert reply.list_rows is not None
+    # "Keep all" plus one row per step.
+    assert len(reply.list_rows) == 4
+    assert reply.list_rows[0].title == "Keep all"
+    row_ids = {row.id for row in reply.list_rows[1:]}
+    assert row_ids == {f"{PLAN_REMOVE_ROW_PREFIX}s1", f"{PLAN_REMOVE_ROW_PREFIX}s2", f"{PLAN_REMOVE_ROW_PREFIX}s3"}
+
+
+async def test_edit_cancel_returns_to_the_unchanged_preview():
+    store = PlanStore(_FakeRedis())
+    await store.start_plan(plan=_dependent_plan())
+
+    reply = await resume_pending_plan_confirmation(
+        _tap(PLAN_EDIT_CANCEL_ROW_ID),
+        USR,
+        plan_store=store,
+        workflow_runtime=_FakeWorkflowRuntime([]),
+    )
+
+    assert reply is not None
+    assert reply.text.startswith("I'll do 3 things:")
+    assert reply.buttons is not None
+    assert {b.title for b in reply.buttons} == {"Yes", "No", "Edit"}
+    # Nothing removed.
+    plan = await store.get_plan(user_id=USR)
+    assert len(plan.steps) == 3
+
+
+async def test_removing_a_step_cascades_and_re_shows_the_preview():
+    """Removing the project must also drop the site under it -- the same
+    dependency-closure rule ADR-C4 uses for a failed step, applied here to a
+    step the user chose to drop before anything ran."""
+    store = PlanStore(_FakeRedis())
+    await store.start_plan(plan=_dependent_plan())
+
+    reply = await resume_pending_plan_confirmation(
+        _tap(f"{PLAN_REMOVE_ROW_PREFIX}s1"),
+        USR,
+        plan_store=store,
+        workflow_runtime=_FakeWorkflowRuntime([]),
+    )
+
+    assert reply is not None
+    assert reply.text.startswith("I'll do this:")  # only s3 (user) survives
+    assert reply.buttons is not None
+    plan = await store.get_plan(user_id=USR)
+    assert [s.step_id for s in plan.steps] == ["s3"]
+
+
+async def test_removing_every_step_says_nothing_is_left():
+    store = PlanStore(_FakeRedis())
+    await store.start_plan(plan=_pending_plan(n_steps=1))
+
+    reply = await resume_pending_plan_confirmation(
+        _tap(f"{PLAN_REMOVE_ROW_PREFIX}s1"),
+        USR,
+        plan_store=store,
+        workflow_runtime=_FakeWorkflowRuntime([]),
+    )
+
+    assert reply is not None
+    assert "resend" in reply.text.lower()
+    assert await store.get_plan(user_id=USR) is None
+
+
+async def test_removing_a_step_from_an_expired_plan_says_it_expired():
+    reply = await resume_pending_plan_confirmation(
+        _tap(f"{PLAN_REMOVE_ROW_PREFIX}s1"),
+        USR,
+        plan_store=PlanStore(_FakeRedis()),
+        workflow_runtime=_FakeWorkflowRuntime([]),
+    )
+    assert reply is not None
+    assert "expired" in reply.text.lower()
+
+
+async def test_edit_on_an_expired_plan_says_it_expired():
+    reply = await resume_pending_plan_confirmation(
+        _tap(PLAN_EDIT_ROW_ID),
+        USR,
+        plan_store=PlanStore(_FakeRedis()),
+        workflow_runtime=_FakeWorkflowRuntime([]),
+    )
+    assert reply is not None
+    assert "expired" in reply.text.lower()

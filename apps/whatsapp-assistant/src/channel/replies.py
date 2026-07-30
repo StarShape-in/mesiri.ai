@@ -631,6 +631,49 @@ def render_member_candidate_picker(
     )
 
 
+#: The automation-audience picker's escape hatch. Distinct prefix again --
+#: three person-pickers now coexist (member, petty-cash recipient, audience)
+#: and each continues a different held request.
+AUDIENCE_CANDIDATE_NONE_ROW_ID = "aud_none"
+
+
+def render_audience_candidate_picker(
+    name_hint: str, candidates: tuple[Candidate, ...]
+) -> ReplySpec:
+    """Ask which active user one of an automation's audience names refers to.
+
+    Asked one name at a time: "remind Ilan and Hysam every Monday" resolves
+    Ilan silently and stops on Hysam, and answering it re-runs the gate,
+    which either asks about the next unresolved name or lets the automation
+    through. One question per unknown name is more taps than a single
+    summary, but it keeps the request alive -- the alternative was making
+    the user retype the whole sentence (ENTITY_RESOLUTION_PLAN.md §5.3).
+
+    Row id "aud_{entity_id}", matched verbatim by
+    resume_pending_report_with_audience_candidate."""
+    rows = tuple(ListRow(f"aud_{c.entity_id}", c.display_name) for c in candidates[:9]) + (
+        ListRow(AUDIENCE_CANDIDATE_NONE_ROW_ID, "None of these"),
+    )
+    return ReplySpec(
+        text=f'I couldn\'t find "{name_hint}" — who should I remind?',
+        list_button_label="Choose one",
+        list_rows=rows,
+    )
+
+
+def render_audience_not_found_reply(name_hint: str) -> str:
+    """Nothing close enough to offer for one of the audience names.
+
+    Stops rather than quietly creating the automation for everyone else:
+    a reminder that silently omits someone is worse than one that was never
+    created, because nobody finds out until the thing it was meant to
+    prevent has already happened."""
+    return (
+        f'I couldn\'t find an active user called "{name_hint}" to remind.\n\n'
+        "Check the spelling, or ask an admin to add them first."
+    )
+
+
 #: The petty-cash recipient picker's escape hatch. Distinct prefix from
 #: MEMBER_CANDIDATE_NONE_ROW_ID's "member_" so the two resume legs never
 #: catch each other's taps -- both resolve a person, but one continues an
@@ -705,19 +748,56 @@ def render_member_create_offer(name_hint: str) -> ReplySpec:
 #: both buttons' titles read "Yes"/"No" the same way.
 PLAN_CONFIRM_YES_ROW_ID = "plan_confirm_yes"
 PLAN_CONFIRM_NO_ROW_ID = "plan_confirm_no"
+#: §12's open question, resolved: EDIT means "pick one step to drop, then
+#: re-preview" -- not a free-text rewrite. Tapping this shows
+#: render_plan_edit_picker; PLAN_EDIT_CANCEL_ROW_ID backs out of that picker
+#: with nothing changed; PLAN_REMOVE_ROW_PREFIX + a step_id removes it (and
+#: its dependents -- see PlanStore.remove_step) and returns to the preview.
+PLAN_EDIT_ROW_ID = "plan_edit"
+PLAN_EDIT_CANCEL_ROW_ID = "plan_edit_cancel"
+PLAN_REMOVE_ROW_PREFIX = "plan_remove_"
 
 
 def render_plan_preview_reply(plan_text: str) -> ReplySpec:
     """The whole-plan preview (§8) -- one numbered line per step (already
     rendered by planning/preview.py's render_plan_preview, kept out of this
     module since it needs Plan/PlanStep, which channel/ must not depend on),
-    plus the single Yes/No that starts the whole thing or discards it."""
+    plus Yes/No/Edit. Three buttons is Meta Cloud API's own cap
+    (channel/whatsapp/outbound.py's _REPLY_BUTTON_MAX_COUNT) -- there is no
+    room for a fourth without dropping one of these three."""
     return ReplySpec(
         text=plan_text,
         buttons=(
             ListRow(PLAN_CONFIRM_YES_ROW_ID, "Yes"),
             ListRow(PLAN_CONFIRM_NO_ROW_ID, "No"),
+            ListRow(PLAN_EDIT_ROW_ID, "Edit"),
         ),
+    )
+
+
+def render_plan_edit_picker(steps: list[tuple[str, str]]) -> ReplySpec:
+    """Which step to drop. ``steps`` is a list of (row_id, description)
+    pairs the caller already resolved to plain text
+    (planning/preview.py's describe_step) -- plain tuples, not Plan/PlanStep,
+    same reasoning as render_project_picker's own (project_id, name,
+    location) tuples: this module stays within channel/'s dependency rule.
+
+    A "Keep all" row up front, mirroring render_material_picker/
+    render_member_candidate_picker's own escape hatch for a picker the
+    sender opened but didn't actually want to act on.
+    """
+    # Not truncated here -- channel/whatsapp/outbound.py's send_list already
+    # truncates every row's title/description to Meta's own limits at send
+    # time (the one place that already owns that responsibility for every
+    # other picker in this module).
+    rows = [ListRow(PLAN_EDIT_CANCEL_ROW_ID, "Keep all", "Don't remove anything")]
+    rows.extend(
+        ListRow(row_id, f"Step {i}", description) for i, (row_id, description) in enumerate(steps, start=1)
+    )
+    return ReplySpec(
+        text="Which step should I remove?",
+        list_button_label="Choose a step",
+        list_rows=tuple(rows),
     )
 
 
@@ -730,6 +810,13 @@ def render_plan_confirmation_expired_reply() -> str:
     answered Yes/No -- mirrors render_setup_offer_expired_reply's honest
     "this offer is gone" wording rather than pretending to still hold it."""
     return "That request has expired — please resend it."
+
+
+def render_plan_emptied_by_edit_reply() -> str:
+    """Every step was removed via EDIT -- nothing left to confirm. Distinct
+    wording from render_plan_cancelled_reply (an explicit No) since this is
+    a side effect of repeated removal, not a single deliberate decision."""
+    return "That removed everything in this request — please resend it."
 
 
 def render_member_create_declined_reply(name_hint: str) -> str:

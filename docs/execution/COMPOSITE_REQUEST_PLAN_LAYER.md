@@ -1,6 +1,6 @@
 # Composite Request Plan Layer — Design Doc
 
-**Status:** Phases 1–4 done (2026-07-30). Decomposition, entity-linking, the generic executor, wiring into `process_inbound_message`, the member-create swap, and the §8 preview are all live. **The Paraclette/Starship message works end to end**, gated behind its own Yes/No before anything executes. Remaining: Phase 5 (migrate the other entity types), Phase 6 (whole-plan permission pre-check, separate security review), and the known §9 gap (a segment missing a required field is silently dropped — now the preview's job to surface, not yet done).
+**Status:** Phases 1–4 done (2026-07-30), including `EDIT` (drop a step and its dependents, re-preview). Decomposition, entity-linking, the generic executor, wiring into `process_inbound_message`, the member-create swap, and the §8 preview with Yes/No/Edit are all live. **The Paraclette/Starship message works end to end**, gated behind its own Yes/No/Edit before anything executes. Remaining: Phase 5 (migrate the other entity types), Phase 6 (whole-plan permission pre-check, separate security review — **now confirmed a real gap**: `plan_executor.py` has no role check at all, so a disallowed step is caught only by backend-layer defense-in-depth, not refused upfront the way the single-message path does), the known §9 gap (a segment missing a required field is silently dropped, not yet surfaced in the preview), and the fact that the material/unit/project/site gates from the single-message path never re-run per decomposed segment.
 **Owner:** Ilan Usman
 **Started:** 2026-07-30
 **Last updated:** 2026-07-30
@@ -382,21 +382,37 @@ I'll do 5 things:
 YES to do all  ·  EDIT  ·  NO
 ```
 
-`EDIT` scope is an open question (§12), **not built** — only Yes/No exist
-today. One YES executes the whole plan — including, in this example,
-creating a user and granting them project-manager rights, which is the
-largest blast radius in the list. That is the deliberate trade for P3's
-preview.
+One YES executes the whole plan — including, in this example, creating a
+user and granting them project-manager rights, which is the largest blast
+radius in the list. That is the deliberate trade for P3's preview.
 
-**Built 2026-07-30**, matching the mockup above closely but not
+**Preview built 2026-07-30**, matching the mockup above closely but not
 exactly — `planning/preview.py`'s `render_plan_preview` renders one line per
 step (`describe_step`, bespoke phrasing for the five workflow keys the
 entity-linking rule connects, a `registry.title`-based fallback for
 anything else), `channel/replies.py`'s `render_plan_preview_reply` attaches
-the Yes/No (`PLAN_CONFIRM_YES_ROW_ID`/`PLAN_CONFIRM_NO_ROW_ID`, distinct
+Yes/No/Edit (`PLAN_CONFIRM_YES_ROW_ID`/`PLAN_CONFIRM_NO_ROW_ID`, distinct
 from `CONFIRM_BUTTONS`' `confirm_yes`/`confirm_no` on purpose — see that
 constant's own new comment on why a plan-level Yes needs its own row ids
 even though both buttons read "Yes"/"No").
+
+**`EDIT` built 2026-07-30** — §12's open question resolved as *"drop a step
+and its dependents, re-preview"*, the option that open question itself
+named as likeliest. Tapping Edit shows a picker (one `ListRow` per current
+step, `describe_step` again for the label, plus a "Keep all" row to back
+out unchanged) via `channel/replies.py`'s `render_plan_edit_picker`.
+Tapping a step calls the new `PlanStore.remove_step`, which reuses
+`mark_step_failed`'s exact `_transitive_dependents` closure — removing the
+project also removes the site under it, for the same reason ADR-C4 cancels
+a dependent step that failed — but **deletes** rather than marks
+`CANCELLED`: nothing was ever attempted, so nothing belongs in the eventual
+closing summary. Removing every step clears the plan outright
+(`render_plan_emptied_by_edit_reply`) rather than leaving an empty,
+un-runnable husk in Redis. There is still no free-text edit and no
+per-field edit — only "drop this whole step, or don't" — which is
+deliberately the smallest change that closes the actual gap: before this,
+a wrong step anywhere in a 5-step plan meant rejecting all five and
+resending from scratch.
 
 The sequencing this forced: `try_start_decomposed_plan`
 (`runtime/inbound_journey/decomposed_plan.py`) no longer starts the plan —
@@ -631,9 +647,9 @@ re-route by hand. This is the actual hard part of ADR-C2.
 
 - **Decomposition trigger** (§9): heuristic gate, or always-on second call?
   Wants latency measurement on real traffic.
-- **`EDIT` scope** (§8): drop a step, or re-state the whole request? Dropping
-  a step whose outputs others depend on has to cascade — likely "drop step
-  and its dependents, re-preview."
+- ~~**`EDIT` scope**~~ **Closed 2026-07-30** — drop a step and its
+  transitive dependents, re-preview, exactly as guessed here. See §8 and
+  `PlanStore.remove_step`.
 - **Plan TTL.** `PendingBatchStore` uses 30 minutes. A five-step plan with a
   disambiguation round may legitimately outlive that.
 - **Idempotency on re-delivery.** WhatsApp redelivery mid-plan. `pop_once`
@@ -670,6 +686,8 @@ re-route by hand. This is the actual hard part of ADR-C2.
 | Scope collision with the entity-resolution layer's `resume.py` collapse | §4.5 lists what this doc defers. Do not touch `resume.py` from this layer. |
 | **A plan outlives its turn and attaches to the wrong workflow** | Realized once already (`1ba6462`): an abandoned plan hijacked a later unrelated `CREATE_USER`. Every advance/clear decision must match on `PlanStep.workflow_instance_id`, never on `workflow_key` alone. Phase 4 has N steps and so N times the exposure. |
 | ~~Phase 1's two known gaps are rediscovered as bugs in Phase 4~~ | **Closed** — both fixed (§11.1). The reasoning is kept in the doc so they are not reintroduced; `SCOPE_KEYS` validation makes the fields-vs-scope mistake unrepresentable rather than merely discouraged. |
+| **A disallowed step executes with no upfront refusal** | Confirmed 2026-07-30, not hypothetical: `plan_executor.py` and `decomposed_plan.py` have zero role/`actor` awareness, so `process.py`'s per-workflow role gates (`_PROJECT_CREATE_ROLES` etc.) — which only ever check the primary `canonical_event` — never run for any step inside a decomposed plan. Checked the backend independently: `application/projects/create_validation.py` re-validates the same role server-side, so this is **not a live authorization bypass** — but it means "should not even be an option" is violated for decomposed steps: a disallowed user taps through a multi-step preview before hitting a confusing rejection, instead of the option never appearing. This is Phase 6's job, now confirmed live rather than theoretical. |
+| **The single-message gates never re-run per decomposed segment** | Confirmed 2026-07-30: the material-unit resolution, project-selection, site-selection, and stock-sufficiency gates (`runtime/inbound_journey/seeding.py`) exist only in the single-message path; `decomposed_plan.py` goes straight from `build_canonical_event` to `build_plan_from_segments` for every segment. An ambiguous material name or a sender with multiple projects and no project named in a segment gets no picker in the decomposed path — the step proceeds with whatever raw fields extraction gave it, surfacing only as a downstream validation failure at execution time. Not yet scoped into any phase above; needs its own decision (re-run the gates per segment inside `decomposed_plan.py`, most likely) before it does. |
 
 ---
 

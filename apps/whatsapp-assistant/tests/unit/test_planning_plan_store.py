@@ -186,3 +186,63 @@ async def test_plans_are_scoped_per_user():
     await store.start_plan(plan=_paraclette_plan())
     assert await store.has_pending(user_id="usr_other") is False
     assert await store.has_pending(user_id=USR) is True
+
+
+async def test_remove_step_drops_only_the_named_step_when_nothing_depends_on_it():
+    store = PlanStore(_FakeRedis())
+    await store.start_plan(plan=_paraclette_plan())
+
+    plan = await store.remove_step(user_id=USR, step_id="s3")
+
+    assert plan is not None
+    assert [s.step_id for s in plan.steps] == ["s1", "s2"]
+
+
+async def test_remove_step_cascades_to_transitive_dependents():
+    """Removing the project must also drop the site under it -- its scope
+    references the project's own output, so it cannot run without it."""
+    store = PlanStore(_FakeRedis())
+    await store.start_plan(plan=_paraclette_plan())
+
+    plan = await store.remove_step(user_id=USR, step_id="s1")
+
+    assert plan is not None
+    assert [s.step_id for s in plan.steps] == ["s3"]  # independent -- kept
+
+
+async def test_removed_steps_are_deleted_not_cancelled():
+    """Unlike mark_step_failed, there is no execution outcome to report --
+    the user removed this before it was ever attempted, so it must not
+    appear at all, not even as CANCELLED."""
+    store = PlanStore(_FakeRedis())
+    await store.start_plan(plan=_paraclette_plan())
+
+    plan = await store.remove_step(user_id=USR, step_id="s1")
+
+    assert plan.step("s1") is None
+    assert plan.step("s2") is None
+
+
+async def test_removing_every_step_clears_the_plan_entirely():
+    store = PlanStore(_FakeRedis())
+    await store.start_plan(plan=_paraclette_plan())
+
+    # s1 cascades to s2; then remove the only step left.
+    await store.remove_step(user_id=USR, step_id="s1")
+    plan = await store.remove_step(user_id=USR, step_id="s3")
+
+    assert plan is None
+    assert await store.get_plan(user_id=USR) is None
+
+
+async def test_remove_step_on_missing_plan_raises_plan_not_found():
+    store = PlanStore(_FakeRedis())
+    with pytest.raises(PlanNotFoundError):
+        await store.remove_step(user_id=USR, step_id="s1")
+
+
+async def test_remove_step_on_unknown_step_id_raises_step_not_found():
+    store = PlanStore(_FakeRedis())
+    await store.start_plan(plan=_paraclette_plan())
+    with pytest.raises(StepNotFoundError):
+        await store.remove_step(user_id=USR, step_id="does-not-exist")

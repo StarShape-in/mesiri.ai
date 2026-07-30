@@ -256,6 +256,48 @@ class PlanStore:
         )
         return new_plan
 
+    async def remove_step(self, *, user_id: str, step_id: str) -> Plan | None:
+        """Drop ``step_id`` and every step that transitively depends on it,
+        from a plan the user is EDITING before confirming it (§8's EDIT --
+        §12's open question resolved as "drop step and its dependents,
+        re-preview"). Only ever called on an all-PENDING plan -- see
+        resume_pending_plan_confirmation, which only offers EDIT from the
+        preview, before Yes has started anything.
+
+        Unlike mark_step_failed, dependents are DELETED outright, not marked
+        CANCELLED -- there is no execution outcome to report on a step the
+        user chose to remove before it was ever attempted, so it must not
+        appear in the eventual closing summary the way a real cascade
+        failure does.
+
+        Reuses mark_step_failed's exact dependency-closure logic
+        (_transitive_dependents) for the same reason ADR-C4 exists: a step
+        with no dependency on the removed one is untouched and stays in the
+        plan, exactly as it would survive that step failing outright.
+
+        Returns the updated Plan, or None if removing it left nothing --
+        the plan is cleared in that case rather than left as an empty,
+        un-runnable husk in Redis.
+        """
+        plan = await self.get_plan(user_id=user_id)
+        if plan is None:
+            raise PlanNotFoundError(f"no active plan for user {user_id}")
+        if plan.step(step_id) is None:
+            raise StepNotFoundError(f"plan {plan.plan_id}: no step {step_id!r}")
+
+        to_remove = _transitive_dependents(plan, step_id) | {step_id}
+        remaining = tuple(s for s in plan.steps if s.step_id not in to_remove)
+
+        if not remaining:
+            await self.clear(user_id=user_id)
+            return None
+
+        new_plan = plan.with_steps(remaining)
+        await self._redis.set_json(
+            self._key(user_id), new_plan.to_dict(), ttl_seconds=_DEFAULT_TTL_SECONDS
+        )
+        return new_plan
+
     async def clear(self, *, user_id: str) -> None:
         # No delete primitive on the M1 client/fake -- overwrite with an
         # immediately-expired marker, same trick as batch_store.py's clear.
