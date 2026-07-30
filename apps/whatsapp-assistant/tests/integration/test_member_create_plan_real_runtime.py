@@ -113,14 +113,17 @@ async def test_the_exact_live_sequence_reaches_the_confirmation_prompt():
     actor = _Actor()
 
     # Step 1: "Yes, create" -- starts CREATE_USER with just a name.
-    prompt1 = await start_member_create_plan(
+    reply1 = await start_member_create_plan(
         name_hint="Hysam",
         original_event=_original_add_member_event(),
         actor=actor,
         plan_store=plan_store,
         workflow_runtime=runtime,
     )
-    assert prompt1 is not None and "number" in prompt1.lower(), prompt1
+    assert reply1 is not None and "number" in reply1.text.lower(), reply1
+    # A plain question (AWAITING_INPUT, no slot_options) -- no buttons yet,
+    # unlike the confirmation reply1 becomes once the number is known.
+    assert reply1.buttons is None
 
     # Step 2: the phone number reply. handle_slot_answer's own logic, done
     # directly here to isolate WorkflowRuntime/PlanStore from the interaction
@@ -158,16 +161,21 @@ async def test_the_exact_live_sequence_reaches_the_confirmation_prompt():
     )
     handled = _mock_handled(resume_result, execution)
 
-    prompt_final = await advance_member_plan_after_user_created(
+    reply_final = await advance_member_plan_after_user_created(
         handled, plan_store=plan_store, workflow_runtime=runtime, actor=actor
     )
 
-    assert prompt_final is not None, (
+    assert reply_final is not None, (
         "advance_member_plan_after_user_created returned None -- the chain "
         "stopped at 'user created' exactly like the live trace showed, "
         "instead of continuing to ADD_PROJECT_MEMBER"
     )
-    assert "confirm" in prompt_final.lower()
+    assert "confirm" in reply_final.text.lower()
+    # The live bug this session's user actually hit: a plain-text "Reply
+    # YES to confirm or NO to cancel" instead of tappable buttons, because
+    # this used to return a bare pending_prompt string.
+    assert reply_final.buttons is not None
+    assert {b.title for b in reply_final.buttons} == {"Yes", "No"}
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +203,7 @@ async def test_a_number_recalled_from_recent_turns_skips_straight_to_confirmatio
         ),
     )
 
-    prompt = await start_member_create_plan(
+    reply = await start_member_create_plan(
         name_hint="Hysam",
         original_event=_original_add_member_event(),
         actor=_Actor(),
@@ -204,11 +212,15 @@ async def test_a_number_recalled_from_recent_turns_skips_straight_to_confirmatio
         recent_turns=recent_turns,
     )
 
-    assert prompt is not None
-    assert "confirm" in prompt.lower(), (
-        f"expected the recalled number to skip straight to a confirmation prompt, got: {prompt!r}"
+    assert reply is not None
+    assert "confirm" in reply.text.lower(), (
+        f"expected the recalled number to skip straight to a confirmation prompt, got: {reply!r}"
     )
-    assert "919778190485" in prompt
+    assert "919778190485" in reply.text
+    # This exact case (a recalled number reaching STARTED on the very first
+    # call) is what exposed the missing-buttons bug live -- pin it here too.
+    assert reply.buttons is not None
+    assert {b.title for b in reply.buttons} == {"Yes", "No"}
 
 
 async def test_no_recent_turns_still_asks_for_the_number_as_before():
@@ -222,7 +234,7 @@ async def test_no_recent_turns_still_asks_for_the_number_as_before():
     plan_store = PlanStore(_FakeRedis())
     recent_turns = RecentTurnsStore(_FakeRedis())  # nothing appended
 
-    prompt = await start_member_create_plan(
+    reply = await start_member_create_plan(
         name_hint="Hysam",
         original_event=_original_add_member_event(),
         actor=_Actor(),
@@ -231,7 +243,7 @@ async def test_no_recent_turns_still_asks_for_the_number_as_before():
         recent_turns=recent_turns,
     )
 
-    assert prompt is not None and "number" in prompt.lower()
+    assert reply is not None and "number" in reply.text.lower()
 
 
 async def test_recent_turns_omitted_entirely_still_asks_for_the_number():
@@ -244,7 +256,7 @@ async def test_recent_turns_omitted_entirely_still_asks_for_the_number():
     )
     plan_store = PlanStore(_FakeRedis())
 
-    prompt = await start_member_create_plan(
+    reply = await start_member_create_plan(
         name_hint="Hysam",
         original_event=_original_add_member_event(),
         actor=_Actor(),
@@ -252,7 +264,7 @@ async def test_recent_turns_omitted_entirely_still_asks_for_the_number():
         workflow_runtime=runtime,
     )
 
-    assert prompt is not None and "number" in prompt.lower()
+    assert reply is not None and "number" in reply.text.lower()
 
 
 async def test_an_unrelated_recent_number_like_a_headcount_does_not_get_used():
@@ -270,7 +282,7 @@ async def test_an_unrelated_recent_number_like_a_headcount_does_not_get_used():
         ),
     )
 
-    prompt = await start_member_create_plan(
+    reply = await start_member_create_plan(
         name_hint="Hysam",
         original_event=_original_add_member_event(),
         actor=_Actor(),
@@ -279,4 +291,4 @@ async def test_an_unrelated_recent_number_like_a_headcount_does_not_get_used():
         recent_turns=recent_turns,
     )
 
-    assert prompt is not None and "number" in prompt.lower()
+    assert reply is not None and "number" in reply.text.lower()

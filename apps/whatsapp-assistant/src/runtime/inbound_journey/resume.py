@@ -36,7 +36,11 @@ from planning.plan_store import PlanStore
 from runtime.entity_resolution.member_resolution import MemberNameResolutionService
 from runtime.inbound_journey._shared import _log
 from runtime.inbound_journey.process import _plan_and_run
-from runtime.inbound_journey.reply import _complete_resume_leg, _safe
+from runtime.inbound_journey.reply import (
+    _complete_resume_leg,
+    _safe,
+    render_workflow_run_reply_spec,
+)
 from runtime.inbound_journey.seeding import (
     _actor_may_create_user,
     _run_material_unit_gates,
@@ -749,7 +753,7 @@ async def start_member_create_plan(
     plan_store: PlanStore,
     workflow_runtime: WorkflowRuntime,
     recent_turns: RecentTurnsStore | None = None,
-) -> str | None:
+) -> ReplySpec | None:
     """Start CREATE_USER for real, and remember (in the shared PlanStore)
     that the held ADD_PROJECT_MEMBER request should resume once it succeeds.
 
@@ -789,9 +793,22 @@ async def start_member_create_plan(
     asks for it as before -- this is purely additive, never a regression on
     the case nothing was mentioned.
 
-    Returns CREATE_USER's own pending_prompt (a confirmation if the number
-    was recalled, otherwise its next question -- usually the phone number),
-    or None if nothing could be started.
+    Returns the full ReplySpec for CREATE_USER's own next question -- a
+    Yes/No-buttoned confirmation if the number was recalled, otherwise a
+    plain-text question (usually the phone number) -- or None if nothing
+    could be started. Built via render_workflow_run_reply_spec, the one
+    place that decides plain text vs buttons vs a tappable list for a
+    WorkflowRunResult (see its own docstring): this function used to return
+    only run.pending_prompt as a bare string, which meant a recalled number
+    -- landing on STARTED, a real draft, on the very first call -- sent a
+    plain-text "Reply YES to confirm or NO to cancel" instead of tappable
+    buttons. That prompt was reachable before recall existed too, in
+    principle, but recall is what actually made STARTED reachable from
+    here on the very first pass; going through pending_prompt was correct
+    right up until it wasn't. render_workflow_run_reply_spec's own
+    docstring documents this exact bug class already happening once before,
+    in the slot-answer fast path -- reusing it here instead of a second
+    hand-rolled prompt extraction is what stops a third occurrence.
     """
     org_id = str(getattr(actor, "organization_id", None) or "")
     user_id = str(getattr(actor, "user_id", None) or "")
@@ -895,7 +912,7 @@ async def start_member_create_plan(
         steps=(create_user_step, add_member_step),
     )
     await _safe(plan_store.start_plan(plan=plan))
-    return run.pending_prompt
+    return render_workflow_run_reply_spec(run)
 
 
 async def resume_pending_report_with_member_create_offer(
@@ -937,7 +954,7 @@ async def resume_pending_report_with_member_create_offer(
         await _complete_resume_leg(message, event, message_logger)
         return ReplySpec(text=render_member_create_declined_reply(name_hint))
 
-    prompt = await start_member_create_plan(
+    reply = await start_member_create_plan(
         name_hint=name_hint,
         original_event=event,
         actor=actor,
@@ -946,11 +963,11 @@ async def resume_pending_report_with_member_create_offer(
         recent_turns=recent_turns,
     )
     await _complete_resume_leg(message, event, message_logger)
-    if prompt is None:
+    if reply is None:
         return ReplySpec(
             text="Sorry, I couldn't start that — please try again, or ask your admin."
         )
-    return ReplySpec(text=prompt)
+    return reply
 
 
 async def advance_member_plan_after_user_created(
@@ -959,7 +976,7 @@ async def advance_member_plan_after_user_created(
     plan_store: PlanStore,
     workflow_runtime: WorkflowRuntime,
     actor: ActorIdentity | None,
-) -> str | None:
+) -> ReplySpec | None:
     """After a confirmed CREATE_USER execution, check whether it was the
     first step of a member-create plan (start_member_create_plan) and, if
     so, finish the job the original "add X as PM" request actually asked
@@ -972,10 +989,14 @@ async def advance_member_plan_after_user_created(
     execution, decide whether a follow-up fires), different trigger and
     different chain.
 
-    Returns the newly started ADD_PROJECT_MEMBER workflow's own confirmation
-    prompt to send, or None if this confirmation wasn't part of a plan this
-    function tracks (an ordinary CREATE_USER with no chain is the
-    overwhelmingly common case and must be a cheap no-op).
+    Returns the full ReplySpec for the newly started ADD_PROJECT_MEMBER
+    workflow's own confirmation -- built via render_workflow_run_reply_spec
+    so it carries Yes/No buttons like every other confirmation prompt, not
+    a bare pending_prompt string sent as plain text (the same bug class
+    start_member_create_plan had; see its own docstring) -- or None if this
+    confirmation wasn't part of a plan this function tracks (an ordinary
+    CREATE_USER with no chain is the overwhelmingly common case and must be
+    a cheap no-op).
     """
     result = handled.result
     if not isinstance(result, WorkflowResumeResult):
@@ -1113,4 +1134,7 @@ async def advance_member_plan_after_user_created(
     except Exception:  # noqa: BLE001 -- the user was still created successfully
         _log.exception("member_plan.resume_start_failed org=%s", org_id)
         return None
-    return run.pending_prompt
+    if not run.pending_prompt:
+        _log.error("member_plan.resume_no_prompt org=%s status=%s", org_id, run.status.value)
+        return None
+    return render_workflow_run_reply_spec(run)

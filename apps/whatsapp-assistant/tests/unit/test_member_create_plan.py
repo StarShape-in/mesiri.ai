@@ -144,14 +144,15 @@ async def test_start_member_create_plan_persists_the_two_step_plan_and_starts_cr
             _awaiting_input(WorkflowKey.CREATE_USER, "What's their WhatsApp number?")
         ]
     )
-    prompt = await start_member_create_plan(
+    reply = await start_member_create_plan(
         name_hint="Hysam",
         original_event=_original_event(),
         actor=_Actor(),
         plan_store=store,
         workflow_runtime=runtime,
     )
-    assert prompt == "What's their WhatsApp number?"
+    assert reply.text == "What's their WhatsApp number?"
+    assert reply.buttons is None  # a plain question, not a confirmation
 
     # A real CREATE_USER workflow was started, seeded with the name hint.
     assert len(runtime.start_calls) == 1
@@ -307,14 +308,16 @@ async def test_advance_finishes_the_original_request_end_to_end():
             _started(WorkflowKey.ADD_PROJECT_MEMBER, "Confirm this action?")
         ]
     )
-    prompt = await advance_member_plan_after_user_created(
+    reply = await advance_member_plan_after_user_created(
         _handled_create_user_success(full_name="Hisham"),  # the exact created name
         plan_store=store,
         workflow_runtime=resume_runtime,
         actor=_Actor(),
     )
 
-    assert prompt == "Confirm this action?"
+    assert reply.text == "Confirm this action?"
+    assert reply.buttons is not None
+    assert {b.title for b in reply.buttons} == {"Yes", "No"}
     assert len(resume_runtime.start_calls) == 1
     decision, event = resume_runtime.start_calls[0]
     assert decision.workflow_key is WorkflowKey.ADD_PROJECT_MEMBER

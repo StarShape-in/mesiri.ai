@@ -588,14 +588,26 @@ def build_message_handlers(
             # docstring. A cheap no-op for the overwhelmingly common
             # standalone CREATE_USER with no plan waiting.
             try:
-                member_resume_prompt = await advance_member_plan_after_user_created(
+                member_resume_reply = await advance_member_plan_after_user_created(
                     handled,
                     plan_store=plan_store,
                     workflow_runtime=workflow_runtime,
                     actor=ctx,
                 )
-                if member_resume_prompt:
-                    await sender.send_text(wa_id, member_resume_prompt)
+                if member_resume_reply is not None:
+                    # send_reply_spec, not sender.send_text -- this reply
+                    # carries Yes/No buttons for the ADD_PROJECT_MEMBER
+                    # confirmation it just started (render_workflow_run_
+                    # reply_spec attaches them), and send_text would have
+                    # silently dropped them to plain "Reply YES/NO" text,
+                    # same bug class start_member_create_plan had.
+                    await send_reply_spec(
+                        member_resume_reply,
+                        wa_id,
+                        send_text=sender.send_text,
+                        send_list=sender.send_list,
+                        send_button=sender.send_button,
+                    )
             except Exception:  # noqa: BLE001 — the user was still created either way
                 _log.exception("member_plan.advance_failed user=%s", ctx.user_id)
             # Was missing until now: every other fast-path step laps the
