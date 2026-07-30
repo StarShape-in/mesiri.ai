@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from mesiri_contracts.assistant.planner_decision import WorkflowKey
 from planning.plan import Plan, PlanOrigin, PlanStep, StepRef, StepStatus
 from planning.plan_store import PlanNotFoundError, PlanStore, StepNotFoundError
@@ -136,21 +138,15 @@ async def test_insert_step_splices_a_resolution_step_ahead_of_the_blocked_one():
 
 async def test_mark_step_running_on_missing_plan_raises_plan_not_found():
     store = PlanStore(_FakeRedis())
-    try:
+    with pytest.raises(PlanNotFoundError):
         await store.mark_step_running(user_id=USR, step_id="s1")
-        assert False, "expected PlanNotFoundError"
-    except PlanNotFoundError:
-        pass
 
 
 async def test_mark_step_done_on_unknown_step_raises_step_not_found():
     store = PlanStore(_FakeRedis())
     await store.start_plan(plan=_paraclette_plan())
-    try:
+    with pytest.raises(StepNotFoundError):
         await store.mark_step_done(user_id=USR, step_id="does-not-exist", outputs={})
-        assert False, "expected StepNotFoundError"
-    except StepNotFoundError:
-        pass
 
 
 async def test_clear_empties_the_plan():
