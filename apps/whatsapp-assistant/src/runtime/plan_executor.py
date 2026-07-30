@@ -226,6 +226,27 @@ async def _start_next_runnable(
     return ReplySpec(text=format_plan_summary(plan))
 
 
+async def start_plan(
+    plan: Plan,
+    *,
+    plan_store: PlanStore,
+    workflow_runtime: WorkflowRuntime,
+) -> ReplySpec | None:
+    """Persist a freshly-built Plan (docs/execution/
+    COMPOSITE_REQUEST_PLAN_LAYER.md §9's decomposer, or any future producer)
+    and start its first runnable step.
+
+    Reuses _start_next_runnable rather than open-coding a "start step one"
+    special case -- starting a brand-new plan and advancing one already in
+    progress are the same operation (§4.2's one-plan-one-executor
+    invariant): both mean "given whatever is runnable right now, start it."
+    """
+    await plan_store.start_plan(plan=plan)
+    return await _start_next_runnable(
+        user_id=plan.user_id, plan_store=plan_store, workflow_runtime=workflow_runtime
+    )
+
+
 async def advance_plan(
     handled: InteractionHandled,
     *,

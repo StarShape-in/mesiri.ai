@@ -295,3 +295,68 @@ async def test_a_report_that_merely_mentions_hi_still_gets_extracted():
 
     assert extraction.calls == 1
     assert result.semantic_type != SemanticType.UNKNOWN
+
+
+async def test_understand_text_segment_classifies_one_decomposed_segment():
+    """docs/execution/COMPOSITE_REQUEST_PLAN_LAYER.md §9: a segment already
+    split out of a multi-intent message goes through the same extract() +
+    _apply_extraction path an ordinary message does, just called directly
+    on the segment's own text rather than through understand()."""
+    extraction = FakeExtractionProvider(
+        ExtractionResult(
+            semantic_type="project_create",
+            fields={"name": "Starship"},
+            provider="fake",
+            model="fake-model",
+            latency_ms=12.0,
+        )
+    )
+    pipeline = await _build(extraction=extraction)
+
+    result = await pipeline.understand_text_segment(
+        "create a project called Starship",
+        source_message_id="msg_1",
+        correlation_id="cor_1",
+    )
+
+    assert result.semantic_type == SemanticType.PROJECT_CREATE
+    assert result.candidates[0].fields["name"] == "Starship"
+    assert result.transcript == "create a project called Starship"
+    assert result.normalized_text == "create a project called Starship"
+    assert result.correlation_id == "cor_1"
+    assert result.source_message_id == "msg_1"
+    assert result.input_modality == InputModality.TEXT
+    assert extraction.calls == 1
+
+
+async def test_understand_text_segment_skips_the_greeting_shortcut():
+    """A bare "hi" as its own segment must still reach extraction -- the
+    deterministic greeting shortcut is understand()'s pre-pipeline check,
+    not something a segment (which the decomposer already judged to be
+    part of an actionable multi-intent message) should re-trigger."""
+    extraction = FakeExtractionProvider(
+        ExtractionResult(semantic_type="unknown", provider="fake", model="fake-model")
+    )
+    pipeline = await _build(extraction=extraction)
+
+    await pipeline.understand_text_segment(
+        "hi", source_message_id="msg_1", correlation_id="cor_1"
+    )
+
+    assert extraction.calls == 1
+
+
+async def test_understand_text_segment_passes_expense_categories_through():
+    extraction = FakeExtractionProvider(
+        ExtractionResult(semantic_type="expense", fields={"amount": 500}, provider="fake")
+    )
+    pipeline = await _build(extraction=extraction)
+
+    await pipeline.understand_text_segment(
+        "paid 500 to the hardware store",
+        source_message_id="msg_1",
+        correlation_id="cor_1",
+        expense_categories=["Materials", "Fuel"],
+    )
+
+    assert extraction.last_expense_categories == ["Materials", "Fuel"]

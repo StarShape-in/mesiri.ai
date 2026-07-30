@@ -432,3 +432,77 @@ async def test_summary_reports_every_step_honestly_including_failures():
     assert "skipped" in summary
     # Never a blanket "all done" that hides the two that didn't happen (P4).
     assert summary.count("\n") == 3
+
+
+async def test_start_plan_persists_and_starts_the_first_runnable_step():
+    """A brand-new decomposed plan (no confirmation yet) starts through the
+    exact same loop that advances one already in progress -- §4.2's
+    one-plan-one-executor invariant."""
+    plan = Plan(
+        plan_id="plan_new",
+        correlation_id="cor_new",
+        user_id=USR,
+        organization_id=ORG,
+        origin=PlanOrigin.DECOMPOSITION,
+        source_message_id="msg_new",
+        steps=(
+            PlanStep(
+                step_id="s1",
+                workflow_key=WorkflowKey.PROJECT_CREATE,
+                event_type=CanonicalEventType.PROJECT_CREATE_REQUESTED,
+                fields={"name": "Starship"},
+            ),
+            PlanStep(
+                step_id="s2",
+                workflow_key=WorkflowKey.SITE_CREATE,
+                event_type=CanonicalEventType.SITE_CREATE_REQUESTED,
+                fields={"name": "Site A"},
+                scope={"project_id": StepRef("s1", "project_id")},
+            ),
+        ),
+    )
+    store = _plan_store()
+    runtime = _FakeWorkflowRuntime([_started(WorkflowKey.PROJECT_CREATE, "Create Starship?", "wf_1")])
+
+    from runtime.plan_executor import start_plan
+
+    reply = await start_plan(plan, plan_store=store, workflow_runtime=runtime)
+
+    assert reply is not None
+    assert "(1 of 2)" in reply.text
+    assert "Create Starship?" in reply.text
+    stored = await store.get_plan(user_id=USR)
+    assert stored is not None
+    assert stored.step("s1").status is StepStatus.RUNNING
+    assert stored.step("s1").workflow_instance_id == "wf_1"
+
+
+async def test_start_plan_with_no_runnable_step_reports_the_summary_immediately():
+    """Every step already terminal (an edge case, but the loop must not
+    crash on it) -- start_plan should report and release rather than hang."""
+    plan = Plan(
+        plan_id="plan_done",
+        correlation_id="cor_done",
+        user_id=USR,
+        organization_id=ORG,
+        origin=PlanOrigin.DECOMPOSITION,
+        steps=(
+            PlanStep(
+                step_id="s1",
+                workflow_key=WorkflowKey.PROJECT_CREATE,
+                event_type=CanonicalEventType.PROJECT_CREATE_REQUESTED,
+                fields={},
+                status=StepStatus.DONE,
+            ),
+        ),
+    )
+    store = _plan_store()
+    runtime = _FakeWorkflowRuntime([])
+
+    from runtime.plan_executor import start_plan
+
+    reply = await start_plan(plan, plan_store=store, workflow_runtime=runtime)
+
+    assert reply is not None
+    assert "Here's what I did" in reply.text
+    assert await store.get_plan(user_id=USR) is None

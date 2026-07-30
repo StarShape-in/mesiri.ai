@@ -22,6 +22,7 @@ from interactions.pending_report import PendingReportStore
 from memory.context_loader import ConversationMemoryLoader
 from memory.context_pack import ContextPack
 from memory.coordinator import ConversationMemoryCoordinator
+from mesiri_ai.ports.decomposition import DecompositionProvider
 from mesiri_contracts.assistant.canonical_event import CanonicalEventType
 from mesiri_contracts.assistant.canonical_event import IntentCompleteness as _IntentCompleteness
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage
@@ -32,6 +33,7 @@ from mesiri_contracts.assistant.v2.resolved_context import ResolvedContextV2
 from mesiri_contracts.common.storage import ObjectStoragePort
 from planner import Planner, log_planner_decision
 from planner.ambiguity import AmbiguityAction, caveat_text, decide_ambiguity
+from planning.plan_store import PlanStore
 from runtime.activity_query import ActivityQueryService
 from runtime.activity_search_service import ActivitySearchService
 from runtime.capability_help import CapabilityHelpService
@@ -43,6 +45,7 @@ from runtime.expense_category_query import ExpenseCategoryQueryService
 from runtime.expense_query_service import ExpenseQueryService
 from runtime.first_message_query import FirstMessageQueryService
 from runtime.inbound_journey._shared import _log
+from runtime.inbound_journey.decomposed_plan import try_start_decomposed_plan
 from runtime.inbound_journey.reply import JourneyResult, _render_reply, _safe
 from runtime.inbound_journey.seeding import (
     _MATERIAL_EVENT_TYPES,
@@ -223,6 +226,8 @@ async def process_inbound_message(
     capability_help: CapabilityHelpService | None = None,
     first_message_query: FirstMessageQueryService | None = None,
     member_resolver: MemberNameResolutionService | None = None,
+    decomposition: DecompositionProvider | None = None,
+    plan_store: PlanStore | None = None,
 ) -> JourneyResult:
     mlog: MessageLogger = message_logger or NoopMessageLogger()
     tlog: TraceLogger = trace_logger or NoopTraceLogger()
@@ -550,6 +555,34 @@ async def process_inbound_message(
                 mlog.mark_failed(correlation_id=correlation_id, error_code=type(exc).__name__)
             )
             raise
+
+        # --- Composite-request decomposition (§9) ---
+        # UNRECOGNIZED + semantic_type UNKNOWN is the exact signature a
+        # multi-intent message produces (docs/execution/
+        # COMPOSITE_REQUEST_PLAN_LAYER.md §9's real trace evidence: three
+        # requests in one voice note came back "unknown" at high confidence,
+        # because a single semantic_type field cannot represent three
+        # intents -- "unknown" was the honest, correct single-intent answer).
+        # Give it one chance to turn into a multi-step Plan before falling
+        # through to the ordinary "I didn't understand" reply below.
+        # try_start_decomposed_plan degrades to None on every failure mode
+        # (not multi-intent, no decomposition provider wired, a provider
+        # outage, nothing plannable) -- this is set as `held_reply` the same
+        # way every other gate below is, so the planner/workflow stage is
+        # skipped exactly when a gate already produced the full reply, with
+        # no new branch of its own.
+        if held_reply is None and canonical_event.event_type is CanonicalEventType.UNRECOGNIZED:
+            held_reply = await try_start_decomposed_plan(
+                message_modality=message.modality,
+                understanding=understanding,
+                resolved=resolved,
+                pipeline=pipeline,
+                decomposition=decomposition,
+                workflow_runtime=workflow_runtime,
+                plan_store=plan_store,
+                expense_categories=expense_categories,
+                correlation_id=correlation_id,
+            )
 
         # --- Member-name resolution gate ---
         # ADD_PROJECT_MEMBER's member_name is still free text at this point

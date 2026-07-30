@@ -442,11 +442,39 @@ answer "this really is one intent, or none" and fall through unchanged.
 Decomposition runs on `translated_text`, so the Malayalam path is covered by
 construction.
 
-**A deferred required field is normal, not an error.** "I'll send his
-number" means the `CREATE_USER` step is legitimately incomplete at plan
-time. This needs no special handling: the step runs, and `CREATE_USER`'s own
-`build_draft` asks for the phone number, exactly as it does today. §6 models
-a step's fields as what is *known so far*, never as a complete command.
+**A deferred required field — corrected 2026-07-30, was wrong as first
+written.** This section originally claimed "no special handling: the step
+runs, and `CREATE_USER`'s own `build_draft` asks for the phone number,
+exactly as it does today." **Verified false** when wiring §9 into
+`process_inbound_message`: `canonicalization/mapping.py`'s `REQUIRED_FIELDS`
+requires `whatsapp_number` for `CREATE_USER_REQUESTED`, so a segment stating
+only `full_name` ("create a new user Hysam, I'll send his number now")
+canonicalizes to `CLARIFICATION_REQUIRED` — a `CanonicalEventType`
+`planner/routing.py`'s `WORKFLOW_KEY_BY_EVENT` has **no entry for by
+design** (its own docstring: `ClarificationRequired` never starts a
+workflow). `build_plan_from_segments` therefore drops that segment exactly
+the way it drops any other unroutable one — silently, correctly per its own
+contract, but not what "the step runs and asks" implied.
+
+Two other paths avoid this and were the source of the wrong assumption:
+the single-message path gets `render_clarify_reply`'s targeted "Almost
+there — I still need WhatsApp number" (`channel/replies.py`), and the
+entity-resolution layer's offer-driven create (`resume.py`'s
+`start_member_create_plan`) hand-builds its `CanonicalEventV2` and so never
+passes through `REQUIRED_FIELDS` at all. Neither escape hatch exists for a
+decomposed segment yet.
+
+**Current, honest V1 behavior:** the project and site in that example still
+get created — real progress — but the user-creation step is silently
+dropped rather than asked about. Silence was the deliberate interim choice
+over a misleading reply or a guessed phone number, not a considered design.
+Surfacing it ("I couldn't create Hysam yet — also send me his number") is
+real, un-scoped follow-up work, most naturally landing with the plan
+preview (§8): the preview is where a dropped segment can finally be told to
+the user instead of only logged. Test:
+`test_a_deferred_required_field_drops_the_segment_from_the_plan` in
+`test_decomposed_plan.py` names this gap explicitly so it isn't
+rediscovered as a bug.
 
 ---
 

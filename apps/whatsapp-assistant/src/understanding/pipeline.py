@@ -116,6 +116,48 @@ class UnderstandingPipeline:
         # dict insertion order, which Python 3.7+ guarantees).
         self._media_cache: dict[str, bytes] = {}
 
+    async def understand_text_segment(
+        self,
+        text: str,
+        *,
+        source_message_id: str,
+        correlation_id: str,
+        expense_categories: list[str] | None = None,
+    ) -> UnderstandingResult:
+        """Classify one already-split segment of a decomposed message
+        (docs/execution/COMPOSITE_REQUEST_PLAN_LAYER.md §9) -- the SAME
+        single-intent extract() call and _apply_extraction logic every
+        ordinary text message goes through, run once per segment rather than
+        once per message.
+
+        Deliberately skips the greeting/whoami deterministic shortcuts
+        _handle_text runs first: a segment of an already-confirmed
+        multi-intent message is never a bare greeting (the decomposition
+        prompt is explicit that a greeting/non-actionable message must come
+        back is_multi_intent=False, so this is never reached for one), and
+        running those checks per segment would risk a false match against a
+        short segment ("hi" as a person's name, say) that the whole-message
+        check never sees in isolation.
+
+        No semantic_hint parameter: a category-menu tap biases the ONE
+        thing the user is about to say, and a decomposed message is by
+        definition not that -- the hint would apply to only one segment
+        arbitrarily.
+        """
+        result = UnderstandingResult(
+            source_message_id=source_message_id,
+            correlation_id=correlation_id,
+            input_modality=InputModality.TEXT,
+        )
+        extraction = await self._extraction.extract(
+            text, expense_categories=expense_categories, correlation_id=correlation_id
+        )
+        result.transcript = text
+        result.normalized_text = text
+        result.detected_language = extraction.detected_language
+        self._apply_extraction(result, extraction, is_empty=False)
+        return result
+
     async def understand(
         self,
         message: NormalizedMessage,
