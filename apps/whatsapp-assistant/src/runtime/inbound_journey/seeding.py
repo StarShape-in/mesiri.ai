@@ -11,6 +11,8 @@ from backend.ports import ActorIdentity
 from canonicalization.occurred_date import today_for
 from channel.replies import (
     ReplySpec,
+    render_audience_candidate_picker,
+    render_audience_not_found_reply,
     render_material_create_offer,
     render_material_not_found_reply,
     render_material_picker,
@@ -358,6 +360,99 @@ async def _run_member_name_gate(
         await pending_report_store.set_pending(user_id=actor_user_id, event=canonical_event)
         return render_member_create_offer(str(name_hint))
     return ReplySpec(text=render_member_not_found_reply(str(name_hint)))
+
+
+#: Marks which audience name the picker currently on screen is about, so the
+#: resume leg can patch the right entry without re-deriving it. Only ever
+#: present on a held event -- cleared before the automation is drafted, so it
+#: never reaches CreateAutomationCommand.
+AUDIENCE_PENDING_NAME_FIELD = "_audience_pending_name"
+
+
+async def _run_audience_name_gate(
+    canonical_event: CanonicalEventV2,
+    *,
+    member_resolver: MemberNameResolutionService,
+    pending_report_store: PendingReportStore,
+    actor_user_id: str,
+) -> ReplySpec | None:
+    """Resolve an automation's `audience_names` against real active users
+    BEFORE the draft -- Phase 4 of ENTITY_RESOLUTION_PLAN.md §5, same ADR-E1
+    move as the member and petty-cash gates.
+
+    Until now these names travelled untouched all the way to
+    application/automations/handlers.py, which resolved them via
+    `find_by_full_name_active` (exact) at persist time and rejected the whole
+    command listing any it missed. So "remind Ilan and Hysam every Monday"
+    against an org whose real user is "Hisham" showed a confirmation, took a
+    Yes, and only then answered "couldn't find: Hysam" -- another doomed
+    confirmation, and the §1 bug once more.
+
+    Resolves in order and stops at the first name that isn't settled, asking
+    about that one alone; answering it re-enters this gate, which asks about
+    the next or lets the automation through. One question per unknown name
+    rather than one summary of all of them: the summary would be fewer
+    messages but would send the user back to retyping the whole sentence,
+    and a name they can tap is worth more on a phone at a site than a name
+    they have to spell correctly on the second attempt.
+
+    Names that DO resolve are rewritten to their exact stored spelling, so
+    the Handler's own exact lookup finds the same rows at persist time.
+
+    Never raises: a lookup failure degrades to letting it through
+    unresolved, same posture as every other gate here -- the Handler still
+    rejects honestly if a name really is unknown.
+    """
+    if canonical_event.event_type is not CanonicalEventType.AUTOMATION_SETUP_REQUESTED:
+        return None
+    names = canonical_event.fields.get("audience_names")
+    if not isinstance(names, list) or not names:
+        return None
+
+    from workflows.entities import Ambiguous, Missing, Resolved
+
+    resolved: list[str] = []
+    for index, raw in enumerate(names):
+        name = str(raw or "").strip()
+        if not name:
+            continue
+        try:
+            outcome = await member_resolver.resolve(
+                organization_id=canonical_event.organization_id, name_hint=name
+            )
+        except Exception:
+            _log.exception(
+                "audience_name_gate.lookup_failed correlation_id=%s",
+                canonical_event.correlation_id,
+            )
+            return None
+
+        if isinstance(outcome, Resolved):
+            resolved.append(outcome.display_name)
+            continue
+
+        # Unsettled. Persist what resolved so far so answering this question
+        # doesn't re-ask about the names already agreed on.
+        canonical_event.fields["audience_names"] = [
+            *resolved,
+            name,
+            *[str(n) for n in names[index + 1 :]],
+        ]
+        canonical_event.fields[AUDIENCE_PENDING_NAME_FIELD] = name
+
+        if isinstance(outcome, Ambiguous):
+            await pending_report_store.set_pending(
+                user_id=actor_user_id, event=canonical_event
+            )
+            return render_audience_candidate_picker(name, outcome.candidates)
+
+        assert isinstance(outcome, Missing)
+        canonical_event.fields.pop(AUDIENCE_PENDING_NAME_FIELD, None)
+        return ReplySpec(text=render_audience_not_found_reply(name))
+
+    canonical_event.fields["audience_names"] = resolved
+    canonical_event.fields.pop(AUDIENCE_PENDING_NAME_FIELD, None)
+    return None
 
 
 async def _run_petty_cash_recipient_gate(

@@ -80,6 +80,26 @@ def _similarity(a: str, b: str) -> float:
     return difflib.SequenceMatcher(a=a, b=b).ratio()
 
 
+def _names_a_whole_word_of(hint: str, display_name: str) -> bool:
+    """Whether ``hint`` is exactly one of ``display_name``'s words.
+
+    People refer to each other by first name -- "remind Ilan every Monday",
+    "give Rajesh 2000" -- while the roster stores full names. Pure ratio
+    scoring handles that only by accident, and badly: it depends on the
+    length of the part left over, so "Rajesh"/"Rajesh Kumar" clears 0.6
+    (0.667) while "Ilan"/"Ilan Usman" does not (0.571) and came back Missing
+    -- "I couldn't find Ilan" about someone plainly in the org. A shorter
+    first name was simply likelier to fail, which is not a rule anyone could
+    have predicted or worked around.
+
+    Deliberately a candidate signal only, never a resolve: an org can easily
+    hold two people sharing a first name, so this always ends in the picker
+    the caller was going to show anyway. Whole words only -- a substring test
+    would make "an" match "Anand".
+    """
+    return normalize_name(hint) in normalize_name(display_name).split()
+
+
 @dataclass(frozen=True, slots=True)
 class NamedCandidate:
     """One active row, as the pure scorer needs to see it -- id and display
@@ -113,13 +133,17 @@ def resolve_name_hint(name_hint: str, candidates: list[NamedCandidate]) -> Resol
         reverse=True,
     )
 
-    above_threshold = [(score, c) for score, c in scored if score >= _ASK_THRESHOLD]
-    if not above_threshold:
+    offered = [
+        (score, c)
+        for score, c in scored
+        if score >= _ASK_THRESHOLD or _names_a_whole_word_of(hint, c.display_name)
+    ]
+    if not offered:
         return Missing(name_hint=name_hint)
 
     return Ambiguous(
         candidates=tuple(
             Candidate(entity_id=c.entity_id, display_name=c.display_name)
-            for _, c in above_threshold[:_MAX_CANDIDATES]
+            for _, c in offered[:_MAX_CANDIDATES]
         )
     )

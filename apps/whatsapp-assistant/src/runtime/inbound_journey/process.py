@@ -51,6 +51,7 @@ from runtime.inbound_journey.seeding import (
     _MATERIAL_EVENT_TYPES,
     _build_query_pdf,
     _inject_inventory_context,
+    _run_audience_name_gate,
     _run_material_unit_gates,
     _run_member_name_gate,
     _run_petty_cash_recipient_gate,
@@ -605,6 +606,24 @@ async def process_inbound_message(
                 pending_report_store=pending_report_store,
                 actor_user_id=actor_user_id,
                 actor_role=actor.role if actor is not None else None,
+            )
+
+        # --- Automation audience gate ---
+        # An automation's audience_names used to travel untouched to the
+        # Handler, which resolved them at persist time and rejected the whole
+        # command listing any it missed -- after the user had confirmed. Same
+        # ADR-E1 move as the gates around it, asking one unknown name at a
+        # time so the request survives instead of needing a retype.
+        if (
+            held_reply is None
+            and member_resolver is not None
+            and pending_report_store is not None
+        ):
+            held_reply = await _run_audience_name_gate(
+                canonical_event,
+                member_resolver=member_resolver,
+                pending_report_store=pending_report_store,
+                actor_user_id=actor_user_id,
             )
 
         # --- Petty-cash recipient gate ---

@@ -7,10 +7,12 @@ from __future__ import annotations
 from backend.ports import ActorIdentity
 from channel.replies import (
     ALL_SITES_ROW_ID,
+    AUDIENCE_CANDIDATE_NONE_ROW_ID,
     MATERIAL_CANDIDATE_NONE_ROW_ID,
     MEMBER_CANDIDATE_NONE_ROW_ID,
     PETTY_CASH_RECIPIENT_NONE_ROW_ID,
     ReplySpec,
+    render_audience_not_found_reply,
     render_material_create_declined_reply,
     render_material_create_offer,
     render_material_create_unit_picker,
@@ -43,8 +45,10 @@ from runtime.inbound_journey.reply import (
     render_workflow_run_reply_spec,
 )
 from runtime.inbound_journey.seeding import (
+    AUDIENCE_PENDING_NAME_FIELD,
     _actor_may_create_user,
     _may_create_material,
+    _run_audience_name_gate,
     _run_material_unit_gates,
     _run_project_gate,
     _run_site_gate,
@@ -136,6 +140,7 @@ async def resume_pending_report_with_project(
     return reply
 
 
+_AUDIENCE_ROW_PREFIX = "aud_"
 _PETTY_CASH_RECIPIENT_ROW_PREFIX = "pcr_"
 _MATERIAL_ROW_PREFIX = "mat_"
 _UNIT_YES_ROW_PREFIX = "unit_yes_"
@@ -759,6 +764,92 @@ async def resume_pending_report_with_member_candidate(
         return ReplySpec(text="That selection expired — please resend your request.")
 
     event.fields["member_name"] = display_name
+    reply = await _plan_and_run(
+        event,
+        planner=planner,
+        workflow_runtime=workflow_runtime,
+        inventory_query=inventory_query,
+        pending_report_store=pending_report_store,
+        actor_user_id=actor_user_id,
+    )
+    await _complete_resume_leg(message, event, message_logger)
+    return reply
+
+
+async def resume_pending_report_with_audience_candidate(
+    message: NormalizedMessage,
+    actor_user_id: str,
+    *,
+    pending_report_store: PendingReportStore,
+    member_resolver: MemberNameResolutionService,
+    planner: Planner,
+    workflow_runtime: WorkflowRuntime,
+    actor: ActorIdentity | None = None,
+    inventory_query: MaterialInventoryQueryService | None = None,
+    message_logger: MessageLogger | None = None,
+) -> ReplySpec | None:
+    """Resume an automation held by _run_audience_name_gate, now that the
+    user tapped who one of its audience names meant -- or "None of these".
+
+    Patches that single name and re-enters the gate, which either asks about
+    the next unresolved name or lets the automation through to its
+    confirmation. The loop lives in the gate rather than here, so a reminder
+    naming three unknown people needs no special handling: it is simply this
+    leg, three times.
+
+    "None of these" stops rather than dropping that person and creating the
+    automation for everyone else -- a reminder that silently omits someone
+    fails exactly when it was supposed to help.
+    """
+    if message.modality is not InputModality.INTERACTIVE:
+        return None
+    row_id = message.metadata.get("interactive_reply_id")
+    if not row_id or not str(row_id).startswith(_AUDIENCE_ROW_PREFIX):
+        return None
+
+    event = await pending_report_store.pop_pending(user_id=actor_user_id)
+    if event is None:
+        if message_logger:
+            await _safe(message_logger.mark_completed(correlation_id=message.correlation_id))
+        return ReplySpec(text="That selection expired — please resend your request.")
+
+    pending_name = str(event.fields.get(AUDIENCE_PENDING_NAME_FIELD) or "")
+
+    if row_id == AUDIENCE_CANDIDATE_NONE_ROW_ID:
+        await _complete_resume_leg(message, event, message_logger)
+        return ReplySpec(text=render_audience_not_found_reply(pending_name))
+
+    entity_id = str(row_id)[len(_AUDIENCE_ROW_PREFIX):]
+    try:
+        display_name = await member_resolver.get_active_display_name(
+            organization_id=event.organization_id, entity_id=entity_id
+        )
+    except Exception:
+        _log.exception("audience_candidate.lookup_failed correlation_id=%s", event.correlation_id)
+        display_name = None
+
+    if display_name is None:
+        await _complete_resume_leg(message, event, message_logger)
+        return ReplySpec(text="That selection expired — please resend your request.")
+
+    names = event.fields.get("audience_names")
+    if isinstance(names, list):
+        event.fields["audience_names"] = [
+            display_name if str(n) == pending_name else str(n) for n in names
+        ]
+    event.fields.pop(AUDIENCE_PENDING_NAME_FIELD, None)
+
+    # Back through the gate -- the next unknown name, if any, asks itself.
+    held_reply = await _run_audience_name_gate(
+        event,
+        member_resolver=member_resolver,
+        pending_report_store=pending_report_store,
+        actor_user_id=actor_user_id,
+    )
+    if held_reply is not None:
+        await _complete_resume_leg(message, event, message_logger)
+        return held_reply
+
     reply = await _plan_and_run(
         event,
         planner=planner,

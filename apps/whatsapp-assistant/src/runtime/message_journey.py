@@ -39,6 +39,7 @@ from runtime.account_admin_journey import try_handle_account_admin_command
 from runtime.inbound_journey import (
     process_inbound_message,
     resume_pending_plan_confirmation,
+    resume_pending_report_with_audience_candidate,
     resume_pending_report_with_material,
     resume_pending_report_with_material_create,
     resume_pending_report_with_material_unit_choice,
@@ -1077,6 +1078,34 @@ def build_message_handlers(
             # matched one or more active users closely but not exactly --
             # resumes with member_name patched to the tapped user's exact
             # name, or falls through to the create offer for "Someone else".
+            # A tap on "who should I remind?" -- _run_audience_name_gate's
+            # Ambiguous case. Answering re-enters that gate, so a reminder
+            # naming several unknown people is simply this leg, repeated.
+            aud_reply = await resume_pending_report_with_audience_candidate(
+                message,
+                ctx.user_id,
+                pending_report_store=pending_report_store,
+                member_resolver=member_resolver,
+                planner=planner,
+                workflow_runtime=workflow_runtime,
+                actor=ctx,
+                inventory_query=inventory_query,
+                message_logger=message_logger,
+            )
+            timer.lap("resume_audience_candidate")
+            if aud_reply is not None:
+                await send_reply_spec(
+                    aud_reply,
+                    wa_id,
+                    send_text=sender.send_text,
+                    send_list=sender.send_list,
+                    send_button=sender.send_button,
+                )
+                await message_logger.log_reply(
+                    correlation_id=message.correlation_id, reply=aud_reply.text
+                )
+                return
+
             # A tap on "who is this cash for?" -- _run_petty_cash_recipient_
             # gate's Ambiguous case. Checked before the member picker below:
             # both resolve a person, and only the row-id prefix distinguishes
