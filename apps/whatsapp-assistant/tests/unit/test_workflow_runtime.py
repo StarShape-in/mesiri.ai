@@ -554,6 +554,9 @@ def test_workflow_registry_compiles_once_and_caches(monkeypatch: pytest.MonkeyPa
             key=WorkflowKey.MATERIAL_RECEIPT,
             builder=_fake_builder,
             category=registry_module.WorkflowCategory.MATERIAL,
+            title="Material Arrived",
+            one_liner="Record material delivered to site",
+            examples=("50 bags of cement arrived",),
         ),
     )
 
@@ -636,6 +639,11 @@ def test_informational_and_no_draft_keys_are_pinned() -> None:
         # finish with a clarifying "what time should this run?" and no
         # draft when AI extraction never filled in time_of_day.
         WorkflowKey.AUTOMATION_SETUP,
+        # Same reasoning as PROJECT_CREATE/SITE_CREATE: build_draft's own
+        # completeness check (workflows/add_project_member/nodes.py) may
+        # finish with a clarifying "which project?"/"who should I add?" and
+        # no draft.
+        WorkflowKey.ADD_PROJECT_MEMBER,
     }
 
 

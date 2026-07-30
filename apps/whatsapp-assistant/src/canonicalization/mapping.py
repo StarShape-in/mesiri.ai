@@ -27,6 +27,10 @@ _SIMPLE_EVENT_TYPE: dict[SemanticType, CanonicalEventType] = {
     SemanticType.SITE_CREATE: CanonicalEventType.SITE_CREATE_REQUESTED,
     SemanticType.PROJECT_DETAIL_QUERY: CanonicalEventType.PROJECT_DETAIL_QUERY_ASKED,
     SemanticType.AUTOMATION_SETUP: CanonicalEventType.AUTOMATION_SETUP_REQUESTED,
+    # Always a new project_members row -- no candidate-field split (role is
+    # an optional hint that travels as a plain field, not a router), same
+    # reasoning as SITE_CREATE above.
+    SemanticType.ADD_PROJECT_MEMBER: CanonicalEventType.ADD_PROJECT_MEMBER_REQUESTED,
     # Always a new site_issues row -- no candidate-field split (issue_type/
     # severity are closed enums the AI picks directly, unlike direction/
     # query_kind/target_kind/update_kind), so this belongs here rather than
@@ -170,6 +174,10 @@ REQUIRED_FIELDS: dict[CanonicalEventType, tuple[str, ...]] = {
     # sensible default the workflow's own build_draft applies, same
     # reasoning as ACCOUNT_ADMIN_REQUESTED's single required field above.
     CanonicalEventType.AUTOMATION_SETUP_REQUESTED: ("time_of_day",),
+    # Only member_name -- the project itself is resolved by context (same
+    # reasoning as SITE_CREATE_REQUESTED above); role has a sensible
+    # default (SITE_ENGINEER) the workflow's own build_draft applies.
+    CanonicalEventType.ADD_PROJECT_MEMBER_REQUESTED: ("member_name",),
     # Mirrors EXPENSE_REQUESTED: ("amount",) -- one required field (the
     # closed-enum issue_type), everything else (severity, narrative, delay)
     # optional.

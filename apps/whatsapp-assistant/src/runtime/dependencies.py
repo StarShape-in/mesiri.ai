@@ -466,6 +466,32 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     )
     create_automation_dispatcher = CreateAutomationExecutionDispatcher(create_automation_handler)
 
+    # Add project member: same in-process capability-boundary wiring as
+    # Project/Site creation above. Wrapped in ProjectingExecutionDispatcher
+    # with entity_type "membership" -- the repository sets
+    # ExecutionResult.material_row_id to the *user's* id specifically so
+    # this reuses the same wrapper unchanged (see
+    # add_project_member_execution.py's docstring), same as
+    # projects/router.py's own REST endpoint calling
+    # project_entity("membership", user_id) after its own insert.
+    from mesiri.application.projects.add_member_dispatcher import (
+        AddProjectMemberExecutionDispatcher,
+    )
+    from mesiri.application.projects.handlers import AddProjectMemberHandler
+    from mesiri.application.projects.name_resolution import PostgresMemberNameResolver
+    from mesiri.infrastructure.postgres.repositories.add_project_member_execution import (
+        PostgresAddProjectMemberExecutionRepository,
+    )
+
+    add_project_member_handler = AddProjectMemberHandler(
+        PostgresAddProjectMemberExecutionRepository(),
+        PostgresMemberNameResolver(),
+        db=material_db,
+    )
+    add_project_member_dispatcher = ProjectingExecutionDispatcher(
+        AddProjectMemberExecutionDispatcher(add_project_member_handler), "membership"
+    )
+
     execution_dispatcher = ActionTypeRoutingDispatcher(
         {
             DraftActionType.RECORD_MATERIAL_RECEIPT: material_dispatcher,
@@ -483,6 +509,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             DraftActionType.CREATE_PROJECT: create_project_dispatcher,
             DraftActionType.CREATE_SITE: create_site_dispatcher,
             DraftActionType.CREATE_AUTOMATION: create_automation_dispatcher,
+            DraftActionType.ADD_PROJECT_MEMBER: add_project_member_dispatcher,
         }
     )
     # Read-only inventory lookups for the material.inventory_query workflow --

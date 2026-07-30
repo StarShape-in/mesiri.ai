@@ -111,10 +111,15 @@ _ACCOUNT_ADMIN_DENIED_REPLY = "⛔ Only an admin or finance user can manage acco
 # WorkflowKey.SITE_CREATE -- create_site_validation.py's _SITE_CREATE_ROLES
 # is the identical set, since the REST endpoint that creates a site under a
 # project shares the same _CREATE_ROLES check as the one that creates the
-# project itself.
+# project itself. Also gates WorkflowKey.ADD_PROJECT_MEMBER --
+# add_member_validation.py's role set is the same, mirroring
+# projects/router.py's add_project_member REST endpoint (ADMIN-only there is
+# stricter; this WhatsApp path additionally allows PROJECT_MANAGER, matching
+# PROJECT_CREATE/SITE_CREATE's own precedent).
 _PROJECT_CREATE_ROLES = frozenset({"ADMIN", "PROJECT_MANAGER"})
 _PROJECT_CREATE_DENIED_REPLY = "⛔ Only an admin or project manager can create a project."
 _SITE_CREATE_DENIED_REPLY = "⛔ Only an admin or project manager can create a site."
+_ADD_PROJECT_MEMBER_DENIED_REPLY = "⛔ Only an admin or project manager can add a project member."
 
 # Matches domains/automations/router.py's _TARGET_OTHERS_ROLES and
 # application/automations/create_validation.py's _TARGET_OTHERS_ROLES
@@ -798,6 +803,7 @@ async def process_inbound_message(
                     if planner_decision.workflow_key in (
                         WorkflowKey.PROJECT_CREATE,
                         WorkflowKey.SITE_CREATE,
+                        WorkflowKey.ADD_PROJECT_MEMBER,
                     ) and str(getattr(actor, "role", None) or "").strip().upper() not in (
                         _PROJECT_CREATE_ROLES
                     ):
@@ -805,6 +811,8 @@ async def process_inbound_message(
                             _PROJECT_CREATE_DENIED_REPLY
                             if planner_decision.workflow_key is WorkflowKey.PROJECT_CREATE
                             else _SITE_CREATE_DENIED_REPLY
+                            if planner_decision.workflow_key is WorkflowKey.SITE_CREATE
+                            else _ADD_PROJECT_MEMBER_DENIED_REPLY
                         )
                         await send_text(message.sender.wa_id, denied_reply)
                         await _safe(

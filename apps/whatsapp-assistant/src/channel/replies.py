@@ -15,10 +15,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from mesiri_contracts.assistant.canonical_event import CanonicalEventType
 from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
+
+if TYPE_CHECKING:
+    from workflows.registry import WorkflowDefinition
+
+# Every workflows.registry import in this module is function-level and
+# deliberately so: the registry imports every LangGraph builder, and those
+# import back down into runtime, which imports this module. A module-level
+# import here would close that cycle. The registry is a static table, so the
+# repeated lookups cost nothing worth optimizing.
 
 _EXAMPLES = '  • "50 bags of cement arrived"\n  • "20 bags of cement used for the foundation"'
 
@@ -65,27 +75,38 @@ CONFIRM_BUTTONS: tuple[ListRow, ...] = (
 # The v1 domain modules (Material · Equipment & Machinery · Labour ·
 # Expense · Site Issue). Row ids are matched verbatim in
 # runtime/dependencies.py's category-tap fast path -- keep the two in sync.
-CATEGORY_ROWS: tuple[ListRow, ...] = (
-    ListRow("cat_material", "Material", "Arrived or used on site"),
-    ListRow("cat_equipment", "Equipment & Machinery", "Usage, hours, movement"),
-    ListRow("cat_labour", "Labour", "Headcount and attendance"),
-    ListRow("cat_expense", "Expense", "Petty cash spent"),
-    ListRow("cat_site_issue", "Site Issue", "Blocker or delay"),
-)
+def _category_rows() -> tuple[ListRow, ...]:
+    """The top level of the tiered menu, derived from workflows/registry.py.
 
-# What to say once a category is picked -- deterministic, no AI involved (see
-# runtime/dependencies.py). Keyed by the same row ids as CATEGORY_ROWS.
-# "cat_material" is handled separately (see render_category_prompt) -- it asks
-# Arrived/Used up front instead of a text prompt, so that field never has to
-# be inferred from speech at all on the common path (see MATERIAL_DIRECTION_
-# BUTTONS below).
-_CATEGORY_PROMPTS: dict[str, str] = {
-    "cat_equipment": 'Tell me about the equipment — for example:\n  • "JCB ran for 4 hours"',
-    "cat_labour": 'Tell me the headcount — for example:\n  • "12 workers on site today"',
-    "cat_expense": 'Tell me the expense — for example:\n  • "Paid 1500 to ABC Hardware"',
-    "cat_site_issue": (
-        'Tell me the issue — for example:\n  • "Ran out of cement, work stopped"'
-    ),
+    Hand-listed until 2026-07-30, when it covered 5 of 26 registered
+    workflows and one of those five ("Equipment & Machinery") pointed at a
+    graph that was never built -- tapping it walked the user into the "not
+    supported yet" reply. Deriving it means a workflow becomes discoverable
+    the day it is registered and undiscoverable the day it isn't, with no
+    second list to remember to update.
+    """
+    from workflows.registry import iter_menu_categories
+
+    return tuple(
+        ListRow(c.row_id, c.title, c.one_liner) for c in iter_menu_categories()
+    )
+
+
+# Kept as a module-level name because callers (admin/system_graph_router.py,
+# tests) read it as a constant. Built once at import; the registry is a
+# static table, so there is nothing to invalidate.
+CATEGORY_ROWS: tuple[ListRow, ...] = _category_rows()
+
+# Row ids from the flat pre-tiered menu, which can still arrive from a menu
+# sitting in a user's chat history. Mapped to their nearest tiered
+# equivalent rather than dropped, so an old tap opens the right submenu
+# instead of falling through to the AI pipeline as unrecognized text.
+# "cat_equipment" has no successor -- the graph was never built -- so it
+# maps to the one thing that can still help, the full menu.
+_LEGACY_CATEGORY_ROW_IDS: dict[str, str] = {
+    "cat_expense": "cat_finance",
+    "cat_site_issue": "cat_progress",
+    "cat_equipment": "",
 }
 
 # Tapping "Material" asks this before anything else -- a button tap can't be
@@ -111,17 +132,44 @@ def render_material_direction_followup(direction: str) -> str:
     already settled, only what/how much."""
     return _MATERIAL_ARRIVED_PROMPT if direction == "received" else _MATERIAL_USED_PROMPT
 
-# The semantic_type a category tap hints extraction toward for the user's
-# *next* message (see interactions/category_hint.py). A hint only ever
-# nudges classification -- the model can still override it if the text
-# clearly says otherwise (see the extraction prompts).
-CATEGORY_SEMANTIC_HINT: dict[str, str] = {
-    "cat_material": "material_update",
-    "cat_equipment": "equipment_usage",
-    "cat_labour": "labour_update",
-    "cat_expense": "expense",
-    "cat_site_issue": "site_issue",
-}
+def _menu_semantic_hints() -> dict[str, str]:
+    """The semantic_type a menu tap hints extraction toward for the user's
+    *next* message (see interactions/category_hint.py). A hint only ever
+    nudges classification -- the model can still override it if the text
+    clearly says otherwise (see the extraction prompts).
+
+    Keyed by *workflow* row id, not category row id: under the tiered menu a
+    category is far too coarse to bias extraction with. "Money" alone spans
+    expense, transfer, petty cash, and reversal, and hinting any one of them
+    off a category tap would bias four workflows toward whichever one lost
+    the coin flip. Tapping the workflow itself is precise, so that is where
+    the hint is set.
+
+    The material pair is deliberately absent: their row ids (dir_received/
+    dir_used) belong to the direction-lock handler, which sets the same hint
+    plus a direction and must stay the only writer for them.
+    """
+    from workflows.registry import iter_user_initiable
+
+    hints = {
+        d.menu_row_id: d.semantic_hint
+        for d in iter_user_initiable()
+        if d.semantic_hint and not d.menu_row_id_override
+    }
+    # Stale taps from the pre-tiered flat menu, which hinted at category
+    # level because that was the only level there was.
+    hints.update(
+        {
+            "cat_material": "material_update",
+            "cat_labour": "labour_update",
+            "cat_expense": "expense",
+            "cat_site_issue": "site_issue",
+        }
+    )
+    return hints
+
+
+CATEGORY_SEMANTIC_HINT: dict[str, str] = _menu_semantic_hints()
 
 # A photo's purpose is never assumed from the AI's own guess at what the
 # image shows -- every genuinely new image (not a tap resuming this very
@@ -203,6 +251,22 @@ def render_completion_photo_followup() -> str:
     neither of which benefits from a tappable list the way a multi-choice
     question would."""
     return "📷 Want to attach a completion photo?"
+
+
+def render_project_created_followup() -> str:
+    """Appended to the confirmation reply once a new Project is created via
+    WhatsApp. A brand-new project always starts with zero sites, and only
+    sometimes gets its creator auto-added as a member (project_execution.py's
+    persist_success only inserts a project_members row when the creator's
+    role isn't org-wide) -- either way nobody can log site work against it
+    yet. Static and unconditional rather than a DB-backed checklist: querying
+    membership/site counts here would race the write this reply is
+    describing, and every fresh project needs at least a site regardless."""
+    return (
+        "To start using this project, it still needs:\n"
+        "☐ A site — reply e.g. \"create a site called Block A at this project\"\n"
+        "☐ Team members — reply e.g. \"add Rajesh to this project as site engineer\""
+    )
 
 
 def render_evidence_attached_reply(*, count: int, activity_summary: str | None) -> str:
@@ -550,22 +614,64 @@ def render_direct_reply(
 
 
 def render_category_prompt(row_id: str) -> ReplySpec | None:
-    """The follow-up question after a category is tapped. Deterministic --
-    no AI call, since we defined these row ids ourselves (see
-    runtime/dependencies.py's category-tap fast path). None for an id that
-    doesn't match a known category (stale/foreign button, tampered payload).
+    """Resolve a tap on either level of the tiered menu. Deterministic -- no
+    AI call, since we defined these row ids ourselves (see
+    runtime/dependencies.py's category-tap fast path).
 
-    "cat_material" is the one category with a two-step tap (see
-    MATERIAL_DIRECTION_BUTTONS) -- every other category still gets a single
-    plain-text prompt, wrapped in a ReplySpec so the caller has one shape to
-    dispatch regardless of which category was tapped."""
-    if row_id == "cat_material":
+    Two levels, one function, because the caller dispatches both identically
+    (see runtime/message_journey.py's category-tap branch -- it sends the
+    ReplySpec and sets whatever hint the row carries, without caring which
+    level produced it):
+
+      * a category row  -> the list of workflows inside that category
+      * a workflow row   -> that workflow's prompt and example messages
+
+    Returns None for anything else: a stale/foreign button, a tampered
+    payload, or -- importantly -- the material Arrived/Used ids, which are
+    owned by handle_material_direction_tap further down the same chain and
+    must fall through to it untouched.
+    """
+    from workflows.registry import (
+        definition_by_menu_row_id,
+        menu_category_by_row_id,
+        user_initiable_in,
+    )
+
+    resolved_id = _LEGACY_CATEGORY_ROW_IDS.get(row_id, row_id)
+    if resolved_id == "":
+        # A legacy row whose workflow was never built. Say so rather than
+        # silently reopening the menu, which reads as a dropped tap.
         return ReplySpec(
-            text="📦 *Material* — did it arrive on site, or get used?",
-            buttons=MATERIAL_DIRECTION_BUTTONS,
+            text="That option isn't available any more. Here's what I can do:",
+            list_button_label="Choose one",
+            list_rows=CATEGORY_ROWS,
         )
-    text = _CATEGORY_PROMPTS.get(row_id)
-    return ReplySpec(text=text) if text is not None else None
+
+    category = menu_category_by_row_id(resolved_id)
+    if category is not None:
+        rows = tuple(
+            ListRow(d.menu_row_id, d.title, d.one_liner)
+            for d in user_initiable_in(category.category)
+        )
+        return ReplySpec(
+            text=f"*{category.title}* — what would you like to do?",
+            list_button_label="Choose one",
+            list_rows=rows,
+        )
+
+    definition = definition_by_menu_row_id(resolved_id)
+    if definition is None or definition.menu_row_id_override:
+        return None
+    return ReplySpec(text=_render_workflow_prompt(definition))
+
+
+def _render_workflow_prompt(definition: WorkflowDefinition) -> str:
+    """The prompt shown once a specific workflow is picked from the menu:
+    what it does, and how to phrase it. Examples come from the registry, so
+    what the menu teaches and what the control panel documents are the same
+    strings."""
+    examples = "\n".join(f'  • "{e}"' for e in definition.examples)
+    return f"*{definition.title}* — {definition.one_liner}.\n\nFor example:\n{examples}"
 
 
 def render_understanding_failed_reply() -> str:
@@ -582,5 +688,19 @@ def render_unsupported_reply() -> str:
     Distinct from ``render_understanding_failed_reply``: telling someone who
     reported an expense that we "couldn't make out" their message sends them
     rephrasing a message that was never the problem.
+
+    Generated from workflows/registry.py rather than written down. The
+    hand-written version of this string said "I can only record material
+    updates right now" and was still saying it long after finance, labour,
+    progress, and project workflows shipped -- a reply whose entire job is
+    to state the system's limits is the worst possible place for copy that
+    can silently fall out of date.
     """
-    return "I understood that, but I can only record material updates right now."
+    from workflows.registry import iter_menu_categories
+
+    lines = "\n".join(f"  • {c.title} — {c.one_liner.lower()}" for c in iter_menu_categories())
+    return (
+        "I understood that, but I can't do that one yet.\n\n"
+        f"Here's what I can help with:\n{lines}\n\n"
+        'Send "menu" to pick from the list.'
+    )

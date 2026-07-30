@@ -12,6 +12,7 @@ from uuid import UUID
 
 from mesiri_contracts.application.results.execution_result import ExecutionResult
 
+from .add_member_commands import AddProjectMemberCommand
 from .create_commands import CreateProjectCommand
 from .create_site_commands import CreateSiteCommand
 from .dtos import ProjectDTO
@@ -109,4 +110,36 @@ class CreateSiteExecutionRepository(ABC):
     ) -> ExecutionResult:
         """Claim the idempotency key and record a REJECTED result -- no
         site row is written."""
+        ...
+
+
+class AddProjectMemberExecutionRepository(ABC):
+    """Persists AddProjectMemberCommand execution outcomes -- the confirmed-
+    message (WhatsApp) write path. Mirrors CreateSiteExecutionRepository
+    above."""
+
+    @abstractmethod
+    async def check_idempotency(self, conn: AsyncConnection, key: str) -> ExecutionResult | None:
+        """Return the cached ExecutionResult if `key` was already claimed, else None."""
+        ...
+
+    @abstractmethod
+    async def persist_success(
+        self, conn: AsyncConnection, cmd: AddProjectMemberCommand
+    ) -> ExecutionResult:
+        """Claim the idempotency key and insert the new project_members row
+        -- against `conn`. Assumes cmd is already valid and
+        cmd.member_user_id is already resolved (the Handler is responsible
+        for both before calling this). Rejects (does not raise) if
+        cmd.project_id no longer resolves to a real project, or the user is
+        already a member of it -- either may have changed between
+        draft-build and confirmation."""
+        ...
+
+    @abstractmethod
+    async def persist_rejection(
+        self, conn: AsyncConnection, idempotency_key: str, reasons: list[str]
+    ) -> ExecutionResult:
+        """Claim the idempotency key and record a REJECTED result -- no
+        project_members row is written."""
         ...

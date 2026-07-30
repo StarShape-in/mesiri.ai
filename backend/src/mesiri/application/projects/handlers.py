@@ -13,13 +13,17 @@ from mesiri.infrastructure.postgres.database import PostgresDatabase
 from mesiri_contracts.application.results.execution_result import ExecutionResult, as_replay
 from mesiri_contracts.assistant.v2.confirmed_action import ConfirmedActionV2
 
+from .add_member_mapper import build_command as build_add_member_command
+from .add_member_validation import validate as validate_add_member
 from .create_mapper import build_command
 from .create_site_mapper import build_command as build_site_command
 from .create_site_validation import validate as validate_site
 from .create_validation import validate
 from .dtos import ProjectDTO
+from .name_resolution import MemberNameResolver
 from .queries import ListProjects
 from .repository import (
+    AddProjectMemberExecutionRepository,
     CreateProjectExecutionRepository,
     CreateSiteExecutionRepository,
     ProjectRepository,
@@ -28,6 +32,7 @@ from .repository import (
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncConnection
 
+    from .add_member_commands import AddProjectMemberCommand
     from .create_commands import CreateProjectCommand
     from .create_site_commands import CreateSiteCommand
 
@@ -131,5 +136,60 @@ class CreateSiteHandler:
         """CQRS entry point (WhatsApp M8 path) — owns the one transaction."""
         assert self._db is not None, "handle_confirmed requires db to be wired"
         cmd = build_site_command(confirmed)
+        async with self._db.transaction() as conn:
+            return await self.handle(conn, cmd)
+
+
+class AddProjectMemberHandler:
+    """Confirmed-message (WhatsApp) project-member addition. Mirrors
+    application/automations/handlers.py's CreateAutomationHandler shape --
+    handle() resolves member_name into member_user_id (a DB round trip, so
+    it cannot happen in the pure workflow node -- see workflows/
+    add_project_member/nodes.py's docstring) before running the ordinary
+    structural validate(). A name that doesn't resolve to any active org
+    user is a rejection, same "hard rejection, never a silent default"
+    reasoning application/finance/resolution.py's docstring states for
+    account names -- there is no sensible partial success for "add this
+    person" the way there can be for a multi-name audience."""
+
+    def __init__(
+        self,
+        repo: AddProjectMemberExecutionRepository,
+        name_resolver: MemberNameResolver,
+        db: PostgresDatabase | None = None,
+    ) -> None:
+        self._repo = repo
+        self._name_resolver = name_resolver
+        self._db = db
+
+    async def handle(
+        self, conn: AsyncConnection, cmd: AddProjectMemberCommand
+    ) -> ExecutionResult:
+        if not cmd.member_user_id and cmd.member_name:
+            resolved = await self._name_resolver.resolve(
+                conn, organization_id=cmd.organization_id, name=cmd.member_name
+            )
+            if resolved is None:
+                reasons = [f"couldn't find an active user named {cmd.member_name}"]
+                existing = await self._repo.check_idempotency(conn, cmd.idempotency_key)
+                if existing is not None:
+                    return as_replay(existing)
+                return await self._repo.persist_rejection(conn, cmd.idempotency_key, reasons)
+            cmd = cmd.model_copy(update={"member_user_id": resolved})
+
+        reasons = validate_add_member(cmd)
+
+        existing = await self._repo.check_idempotency(conn, cmd.idempotency_key)
+        if existing is not None:
+            return as_replay(existing)
+
+        if reasons:
+            return await self._repo.persist_rejection(conn, cmd.idempotency_key, reasons)
+        return await self._repo.persist_success(conn, cmd)
+
+    async def handle_confirmed(self, confirmed: ConfirmedActionV2) -> ExecutionResult:
+        """CQRS entry point (WhatsApp M8 path) — owns the one transaction."""
+        assert self._db is not None, "handle_confirmed requires db to be wired"
+        cmd = build_add_member_command(confirmed)
         async with self._db.transaction() as conn:
             return await self.handle(conn, cmd)

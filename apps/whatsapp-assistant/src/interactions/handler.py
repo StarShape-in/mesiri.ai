@@ -36,6 +36,7 @@ from channel.replies import (
     render_completion_photo_followup,
     render_greeting_menu,
     render_material_direction_followup,
+    render_project_created_followup,
 )
 from context.live_identity import whoami_reply
 from memory.coordinator import ConversationMemoryCoordinator
@@ -227,6 +228,16 @@ class InteractionHandler:
                     )
                 )
                 reply_text = f"{reply_text}\n\n{render_completion_photo_followup()}"
+            if (
+                execution_result.status is ExecutionStatus.SUCCEEDED
+                and result.confirmed_action.draft_action.action_type
+                is DraftActionType.CREATE_PROJECT
+            ):
+                # Post-creation readiness nudge: a freshly created project has
+                # no site and (usually) no team yet -- see
+                # render_project_created_followup's docstring. Never a reason
+                # to fail the reply, so this only appends text, no I/O.
+                reply_text = f"{reply_text}\n\n{render_project_created_followup()}"
             if self._receipt_builder is not None:
                 # Return the coroutine without awaiting it — the caller sends
                 # reply_text first so the user sees confirmation immediately,

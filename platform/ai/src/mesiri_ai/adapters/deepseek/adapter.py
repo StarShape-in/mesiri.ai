@@ -58,7 +58,7 @@ _EXTRACTION_PROMPT = (
     "inventory_query, labour_query, activity_query, dpr_request, finance_query, transfer, "
     "petty_cash, "
     "reversal, account_admin, project_create, site_create, "
-    "project_detail_query, automation_setup, unknown), "
+    "project_detail_query, automation_setup, add_project_member, unknown), "
     '"fields" (object of extracted values, in English except proper nouns/names), '
     '"missing_fields" (array of expected-but-absent keys), '
     '"field_confidences" (object mapping each field to 0..1). '
@@ -326,7 +326,19 @@ _EXTRACTION_PROMPT = (
     "have not yet reported, e.g. \"tell site engineers to submit DPR if they "
     "haven't\"). audience_names is an array of the person names as stated, only "
     "for USERS. message is the sender's own reminder wording, only for REMINDER, "
-    "omit for SEND_DPR/COMPLIANCE_SUMMARY."
+    "omit for SEND_DPR/COMPLIANCE_SUMMARY.\n"
+    "- add_project_member: member_name, role. Use this type when the user wants "
+    "to add an EXISTING person to an EXISTING project's team (e.g. \"add Rajesh "
+    "to the project as site engineer\", \"make Priya a project manager on this "
+    "project\") -- never creating a brand new person/user (that cannot be done "
+    "over WhatsApp at all) and never a worker/labour attendance entry (that's "
+    "labour_update). member_name is the person's name as stated -- always "
+    "extract it, it will be matched against the organization's real users "
+    "afterwards. role is an optional hint of what they should be (e.g. \"site "
+    "engineer\", \"project manager\") -- omit entirely if not stated. Which "
+    "project this adds to is NOT extracted here -- omit it entirely even if a "
+    "project name is mentioned elsewhere in the message; that is resolved "
+    "separately, same as site_create's project scope."
 )
 
 

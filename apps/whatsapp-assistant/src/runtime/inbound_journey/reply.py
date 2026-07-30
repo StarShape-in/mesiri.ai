@@ -131,7 +131,9 @@ def render_workflow_run_reply_spec(workflow_run: WorkflowRunResult) -> ReplySpec
         )
 
     if workflow_run.status is WorkflowRunStatus.NO_GRAPH:
-        # Understood, but expense/labour/equipment graphs don't exist yet.
+        # Understood, but this WorkflowKey has no graph registered.
+        # Equipment usage is the only such key left today; the reply lists
+        # what *is* built, generated from workflows/registry.py.
         return ReplySpec(text=render_unsupported_reply())
 
     return ReplySpec(

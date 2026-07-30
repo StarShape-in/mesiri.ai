@@ -76,6 +76,7 @@ class WorkflowKey(str, Enum):
     SITE_CREATE = "site.create"
     PROJECT_DETAIL_QUERY = "project.detail_query"
     AUTOMATION_SETUP = "automation.setup"
+    ADD_PROJECT_MEMBER = "project.add_member"
 
 
 class PlannerDecision(BaseModel):

@@ -105,7 +105,7 @@ async def test_answering_hands_the_worker_back_for_the_caller_to_write():
     assert resumed["collected_fields"][WORKERS_TO_CREATE] == [
         {"name": "Ravi", "trade": "mason", "daily_wage": "800"}
     ]
-    assert "Added to your Worker Register: Ravi" in resumed["pending_prompt"]
+    assert "Made permanent in your Worker Register: Ravi" in resumed["pending_prompt"]
     assert resumed["awaiting_slot"] is None
 
 

@@ -21,7 +21,6 @@ Platform-admin only. Two capabilities:
 
 from __future__ import annotations
 
-import re
 import uuid
 from datetime import UTC, datetime
 
@@ -193,52 +192,38 @@ def _node_id(value: str) -> str:
 # mermaid actually applies to.
 _LIFECYCLE_WORKFLOWS: set[str] = {"material.receipt", "material.usage"}
 
-_WORKFLOW_TITLES: dict[str, str] = {
-    "material.receipt": "Material Receipt",
-    "material.usage": "Material Usage",
-    "expense.submit": "Expense",
-    "equipment.usage": "Equipment Usage",
-    "labour.attendance": "Labour Attendance",
-    "site.update": "Site Update",
-    "who.am.i": "Who Am I",
-    "material.inventory_query": "Material Inventory Query",
-}
+def _workflow_titles() -> dict[str, str]:
+    """Display title per registered workflow, read from workflows/registry.py.
+
+    Hand-maintained until 2026-07-30, by which point it named 8 of the 26
+    registered workflows and the control panel simply rendered the other 18
+    untitled.
+    """
+    from workflows.registry import iter_definitions
+
+    return {d.key.value: d.title for d in iter_definitions()}
+
+
+_WORKFLOW_TITLES: dict[str, str] = _workflow_titles()
 
 # Workflows that only read and reply (COMPLETED with no draft_action) — never
 # reach a confirmation prompt, so they have no post-confirmation lifecycle.
 _READ_ONLY_WORKFLOWS: set[str] = {"who.am.i", "material.inventory_query"}
 
 
-def _quoted(text: str) -> list[str]:
-    """Pull the double-quoted example fragments out of a copy string."""
-    return re.findall(r'"([^"]+)"', text)
-
-
 def _example_messages_by_workflow() -> dict[str, list[str]]:
-    """Example messages per workflow, sourced verbatim from channel.replies so
-    the control panel shows exactly what the assistant tells users to send."""
-    from channel.replies import _CATEGORY_PROMPTS, _EXAMPLES
+    """Example messages per workflow, read from workflows/registry.py so the
+    control panel shows exactly what the assistant tells users to send.
 
-    material_examples = _quoted(_EXAMPLES)  # [received-example, used-example]
-    receipt = material_examples[:1]
-    usage = material_examples[1:2] or material_examples[:1]
-    return {
-        "material.receipt": receipt,
-        "material.usage": usage,
-        "equipment.usage": _quoted(_CATEGORY_PROMPTS.get("cat_equipment", "")),
-        "labour.attendance": _quoted(_CATEGORY_PROMPTS.get("cat_labour", "")),
-        "expense.submit": _quoted(_CATEGORY_PROMPTS.get("cat_expense", "")),
-        "site.update": ["Concrete pour finished on the 3rd floor"],
-        # Reachable via this route (canonicalization -> planner -> START_WORKFLOW)
-        # only for voice or non-English text -- English text matching
-        # whoami_phrases.json is always intercepted earlier by the pre-pipeline
-        # fast path (interactions/handler.py:handle_whoami_trigger), which
-        # answers with the simpler context/live_identity.py:whoami_reply()
-        # template instead of this workflow's project/site-aware one. See the
-        # "Who-am-I identity summary" entries below for both templates.
-        "who.am.i": ["Which project am I on?", "Which sites do I have?"],
-        "material.inventory_query": ["How much cement do we have?", "Show current material stock"],
-    }
+    These used to be recovered by regex-scraping double-quoted fragments out
+    of channel.replies prompt copy (a `_quoted()` helper over `_EXAMPLES` and
+    `_CATEGORY_PROMPTS`), which meant the control panel's documentation
+    depended on the punctuation of user-facing sentences. The registry now
+    carries the examples as data and both surfaces read the same field.
+    """
+    from workflows.registry import iter_definitions
+
+    return {d.key.value: list(d.examples) for d in iter_definitions() if d.examples}
 
 
 def _fast_paths() -> list[FastPathInfo]:

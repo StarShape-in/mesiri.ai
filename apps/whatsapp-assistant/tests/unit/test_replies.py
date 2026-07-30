@@ -88,20 +88,22 @@ def test_first_message_offers_examples_of_what_mesiri_can_record():
     assert "cement" in reply.text
 
 
-def test_greeting_carries_the_five_category_rows_and_nothing_else():
+def test_greeting_carries_the_tiered_menu_category_rows_and_nothing_else():
     """Only the greeting/unrecognized reply ever carries a menu -- and it's
-    exactly the five locked v1 modules, not Equipment and Machinery split
-    into two, and not a sixth 'Site Update' or similar sneaking in."""
+    exactly the top level of the tiered menu (workflows/registry.py's
+    iter_menu_categories()), not the retired flat 5-row v1 list."""
     reply = render_direct_reply(
         _decision(PlannerDecisionType.DIRECT_REPLY, CanonicalEventType.UNRECOGNIZED)
     )
     assert reply.list_rows == CATEGORY_ROWS
     assert [row.title for row in reply.list_rows] == [
         "Material",
-        "Equipment & Machinery",
+        "Site Progress",
         "Labour",
-        "Expense",
-        "Site Issue",
+        "Money",
+        "Projects & Team",
+        "Reminders",
+        "My Profile",
     ]
     assert reply.list_button_label
 

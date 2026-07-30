@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from backend.ports import ActorIdentity
+from channel.replies import CATEGORY_ROWS
 from interactions.classifier_port import InteractionClassifierPort
 from interactions.handler import InteractionHandler
 from mesiri_contracts.assistant.draft_action import DraftActionType
@@ -281,24 +282,68 @@ def _interactive_message(row_id: str, title: str = "Material") -> NormalizedMess
     )
 
 
-def test_category_tap_returns_the_matching_prompt():
-    """Material is the one category with a two-step tap -- it asks Arrived/
-    Used via buttons instead of a plain-text prompt (see channel/replies.py
-    MATERIAL_DIRECTION_BUTTONS)."""
+def test_category_tap_returns_the_workflows_inside_that_category():
+    """Tapping a category opens the second tier: the workflows it contains,
+    as a list. Material still surfaces Arrived/Used, but as list rows
+    carrying the same dir_* ids the direction-lock handler already owns --
+    so the direction is still locked by a tap, never inferred from speech."""
     handler = _handler(FakeWorkflowInstanceRepository())
     prompt = handler.handle_category_tap(_interactive_message("cat_material"))
     assert prompt is not None
     assert "material" in prompt.text.lower()
-    assert prompt.buttons is not None
-    assert {b.id for b in prompt.buttons} == {"dir_received", "dir_used"}
+    assert prompt.list_rows is not None
+    assert {r.id for r in prompt.list_rows} >= {"dir_received", "dir_used"}
 
 
-def test_other_category_taps_return_plain_text_no_buttons():
+def test_category_tap_offers_every_workflow_in_a_multi_workflow_category():
+    """"Money" is the widest category -- the flat v1 menu exposed only
+    "Expense" from it, leaving transfers, balances, petty cash and
+    reversals undiscoverable despite all four being built."""
+    handler = _handler(FakeWorkflowInstanceRepository())
+    prompt = handler.handle_category_tap(_interactive_message("cat_finance"))
+    assert prompt is not None
+    assert prompt.list_rows is not None
+    ids = {r.id for r in prompt.list_rows}
+    assert {
+        "wf_expense.submit",
+        "wf_finance.transfer",
+        "wf_finance.petty_cash",
+        "wf_finance.reverse",
+        "wf_finance.account_query",
+    } <= ids
+    # WhatsApp rejects a list over 10 rows outright.
+    assert len(prompt.list_rows) <= 10
+
+
+def test_workflow_tap_returns_that_workflows_prompt_and_examples():
+    handler = _handler(FakeWorkflowInstanceRepository())
+    prompt = handler.handle_category_tap(_interactive_message("wf_finance.transfer"))
+    assert prompt is not None
+    assert "transfer" in prompt.text.lower()
+    # The example comes from the registry, so it is the same string the
+    # control panel documents for this workflow.
+    assert "Company Account" in prompt.text
+    assert prompt.list_rows is None
+
+
+def test_legacy_flat_menu_row_id_still_opens_the_right_category():
+    """A menu sent before the tiered rollout can still be sitting in a
+    user's chat. An old "cat_expense" tap must land somewhere useful rather
+    than fall through to the AI pipeline as unrecognized text."""
     handler = _handler(FakeWorkflowInstanceRepository())
     prompt = handler.handle_category_tap(_interactive_message("cat_expense"))
     assert prompt is not None
-    assert "expense" in prompt.text.lower()
-    assert prompt.buttons is None
+    assert prompt.list_rows is not None
+    assert "wf_expense.submit" in {r.id for r in prompt.list_rows}
+
+
+def test_material_direction_ids_fall_through_to_the_direction_handler():
+    """dir_received/dir_used are owned by handle_material_direction_tap,
+    which sets the direction hint as well as replying. handle_category_tap
+    must not answer them first and swallow that."""
+    handler = _handler(FakeWorkflowInstanceRepository())
+    assert handler.handle_category_tap(_interactive_message("dir_received")) is None
+    assert handler.handle_category_tap(_interactive_message("dir_used")) is None
 
 
 def test_material_direction_tap_returns_tailored_prompt():
@@ -367,7 +412,11 @@ def test_greeting_trigger_returns_the_menu_for_a_bare_hi():
     spec = handler.handle_greeting_trigger(_message("hi"))
     assert spec is not None
     assert spec.list_rows is not None
-    assert len(spec.list_rows) == 5
+    # The top tier is one row per category with something built in it, and
+    # WhatsApp rejects a list over 10 rows -- the cap that made the menu
+    # tiered in the first place, with 24 pickable workflows behind it.
+    assert spec.list_rows == CATEGORY_ROWS
+    assert 0 < len(spec.list_rows) <= 10
 
 
 def test_greeting_trigger_is_none_for_a_real_report():

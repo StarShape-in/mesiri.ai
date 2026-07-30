@@ -187,4 +187,20 @@ class SemanticType(str, Enum):
     # existing here does not grant a lower-privileged role the ability to
     # target anyone but themselves.
     AUTOMATION_SETUP = "automation_setup"
+    # Adding an EXISTING org user as a member of an EXISTING project (e.g.
+    # "add Rajesh to Skyline Towers as site engineer") -- never creating a
+    # new user (WhatsApp cannot provision identity/WhatsApp-number auth;
+    # that stays dashboard-only) and never a project/site itself (those are
+    # PROJECT_CREATE/SITE_CREATE). Which project is never a candidate field
+    # here -- resolved by context the same way SITE_CREATE's project scope
+    # is. member_name is a best-effort hint, resolved against the org's
+    # real active users at confirm time (same "hard rejection, never a
+    # silent default" treatment as ACCOUNT_ADMIN's target_name -- see
+    # application/projects/name_resolution.py), not the workforce register
+    # (workflows/worker_promotion) which is a different, non-app-user list.
+    # Same role restriction as PROJECT_CREATE/SITE_CREATE (ADMIN/
+    # PROJECT_MANAGER), enforced independently of Understanding (see
+    # runtime/inbound_journey.py and
+    # application/projects/add_member_validation.py).
+    ADD_PROJECT_MEMBER = "add_project_member"
     UNKNOWN = "unknown"

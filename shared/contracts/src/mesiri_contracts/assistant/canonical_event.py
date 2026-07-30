@@ -101,6 +101,9 @@ class CanonicalEventType(str, Enum):
     # workflows/automation_setup/nodes.py's build_draft, the same way
     # ACCOUNT_ADMIN_REQUESTED carries its `action` field without a split.
     AUTOMATION_SETUP_REQUESTED = "AutomationSetupRequested"
+    # SemanticType.ADD_PROJECT_MEMBER -> an existing user added to the
+    # project resolved by context (see enums.py's docstring on that type).
+    ADD_PROJECT_MEMBER_REQUESTED = "AddProjectMemberRequested"
     CLARIFICATION_REQUIRED = "ClarificationRequired"
     UNRECOGNIZED = "Unrecognized"
 

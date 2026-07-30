@@ -179,6 +179,20 @@ class AutomationSetupCandidate(Candidate):
     # (REMINDER only, the sender's own words).
 
 
+class AddProjectMemberCandidate(Candidate):
+    semantic_type: SemanticType = SemanticType.ADD_PROJECT_MEMBER
+    # Conventional keys: member_name (required to route -- see
+    # canonicalization/mapping.py), role (optional hint, e.g. "site
+    # engineer"/"project manager"; absent defaults to SITE_ENGINEER, same
+    # default project_members.role itself uses). Which project this adds to
+    # is deliberately not a candidate field here -- see
+    # SemanticType.ADD_PROJECT_MEMBER's docstring on why that's resolved by
+    # context, not stated by the user. member_name is a best-effort hint as
+    # stated -- resolved against the org's real active users by
+    # application/projects/name_resolution.py, exactly as account_admin's
+    # target_name/new_name already work.
+
+
 class AccountAdminCandidate(Candidate):
     semantic_type: SemanticType = SemanticType.ACCOUNT_ADMIN
     # Conventional keys: action (create/rename/deactivate, required to
@@ -212,4 +226,5 @@ CANDIDATE_TYPES: dict[SemanticType, type[Candidate]] = {
     SemanticType.SITE_CREATE: SiteCreateCandidate,
     SemanticType.PROJECT_DETAIL_QUERY: ProjectDetailQueryCandidate,
     SemanticType.AUTOMATION_SETUP: AutomationSetupCandidate,
+    SemanticType.ADD_PROJECT_MEMBER: AddProjectMemberCandidate,
 }
