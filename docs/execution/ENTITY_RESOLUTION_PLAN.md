@@ -305,6 +305,56 @@ Worth generalising in Phase 4: **an `Ambiguous` that cannot be declined is not
 a question, it is a trap.** Any entity migrated onto this layer needs its
 picker checked for an escape before its matching is tightened.
 
+### 5.2 Phase 4 — VENDOR shipped, and the entity list corrected
+
+**VENDOR is migrated** (the one entity in Phase 4's list with a live defect).
+`VendorQueryService.exists()` was exact-match only, and
+`application/vendors/resolution.py` creates a brand-new vendor row for any
+`vendor_text` its own exact match misses. So "Sharma Traders" at an org that
+already had "Sharma Trading Co" asked *"add it as a new vendor?"* and, on Yes,
+wrote a **second row for the same business** — §1's Hysam bug with a vendor
+instead of a person, and worse in one respect: it compounds silently, because
+every alternate spelling becomes another row and the org's spend splits across
+them with nothing ever looking wrong.
+
+Now: `resolve()` on the shared vocabulary. `Resolved` rewrites `vendor` to the
+stored spelling (the backend re-matches on exactly that string, so this is what
+prevents the duplicate); `Ambiguous` seeds `vendor_candidates` so
+`resolve_vendor` offers the near-matches *ahead of* "add new" and "skip" —
+which are the escape rows §5.1 says an Ambiguous must always have; `Missing`
+keeps the original offer unchanged.
+
+Vendors use the **person-like** matcher, not materials' SQL substring: a
+business name is a free-hand rendering of something heard, so "Sharma
+Traders"/"Sharma Trading Co" must meet, and substring can never connect them
+(neither contains the other). That made VENDOR the scorer's second caller, so
+`resolve_name_hint`/`NamedCandidate` moved out of `member_resolution.py` into
+`name_matching.py` — nothing about them was ever user-specific.
+
+**The correction: Phase 4's list of five is really two.** Reading the actual
+resolvers rather than their filenames:
+
+| Listed | What it actually is |
+|---|---|
+| **VENDOR** | A real distinct entity, real defect. **Shipped.** |
+| **AUDIENCE** | `automations/name_resolution.py` resolves `audience_names` → **user ids** via `find_by_full_name_active`. This is USER resolution in batch. |
+| **PROJECT** | `projects/name_resolution.py` resolves `member_name` → **user ids** via the same call. Also USER resolution — already fixed assistant-side in Phase 2. Project *selection* is an auth-scoped picker over `actor.projects` with no free-text hint, so it is not a resolution problem at all. |
+| **SITE** | As PROJECT — `_run_site_gate` is an auth-scoped picker, no name hint. |
+| **ACCOUNT** | `_seed_account_candidates` seeds the whole account list and `resolve_account` matches the user's *answer* against it. A picker, not a name→row lookup. Nothing broken. |
+
+So the duplication §2 counted is narrower and sharper than it looked:
+`automations/name_resolution.py`, `projects/name_resolution.py`, and
+`finance/petty_cash_resolution.py` are **one entity (USER) resolved three
+times through the identical exact-match `find_by_full_name_active`** — not
+three entity types. Two of those three still exact-match and hard-reject
+today: an automation audience ("ask Ilan or Hysam") and a petty-cash
+recipient both fail on exactly the transliteration §1 opens with.
+
+**Remaining Phase 4 work, in value order:** AUDIENCE and petty-cash recipient
+(one shared fix — route both through `resolve_name_hint`, as `member_name`
+already is). ACCOUNT, PROJECT, and SITE need no migration; the honest close
+for them is deleting this row from the plan, not writing code to satisfy it.
+
 ---
 
 ## 6. Non-goals

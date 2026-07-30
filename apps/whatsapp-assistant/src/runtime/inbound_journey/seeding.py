@@ -1670,13 +1670,30 @@ async def _seed_vendor_check(
     vendor_query: VendorQueryService | None,
     actor: ActorIdentity | None,
 ) -> None:
-    """Flag a vendor name that doesn't match any existing active vendor
-    before the graph runs (a node must never query a repository itself, same
+    """Resolve a reported vendor name against the org's active vendors before
+    the graph runs (a node must never query a repository itself, same
     principle as _seed_account_candidates above). Only ever runs for
     EXPENSE_SUBMIT, and only when a vendor was actually extracted --
     otherwise there is nothing to confirm and expense_capture's build_draft
     proceeds vendor-less exactly as before. See workflows/expense_capture/
-    nodes.py's `resolve_vendor`."""
+    nodes.py's `resolve_vendor`.
+
+    Phase 4 (ENTITY_RESOLUTION_PLAN.md §5) moved this onto the shared
+    Resolved/Ambiguous/Missing vocabulary. The three outcomes:
+
+    - Resolved: rewrite `vendor` to the matched vendor's *exact stored name*.
+      This is the fix for the duplicate-row bug -- the backend resolver
+      re-matches on exactly this string and creates a row when it misses, so
+      handing it the canonical spelling is what stops "Sharma Traders"
+      becoming a second vendor alongside "Sharma Trading Co".
+    - Ambiguous: hand the near-matches to the node as `vendor_candidates` so
+      it can ask, instead of the old unconditional "add it as new?".
+    - Missing: `vendor_needs_confirmation`, exactly as before.
+
+    Never raises: a lookup failure degrades to the pre-Phase-4 behaviour
+    (ask whether to add it) rather than losing the expense, same posture as
+    every other gate in this module.
+    """
     if vendor_query is None or actor is None or not actor.organization_id:
         return
     if decision.workflow_key is not WorkflowKey.EXPENSE_SUBMIT:
@@ -1684,11 +1701,26 @@ async def _seed_vendor_check(
     vendor_name = event.fields.get("vendor")
     if not vendor_name:
         return
-    matched = await vendor_query.exists(
-        organization_id=actor.organization_id, vendor_name=str(vendor_name)
-    )
-    if not matched:
+
+    from workflows.entities import Ambiguous, Resolved
+
+    try:
+        outcome = await vendor_query.resolve(
+            organization_id=actor.organization_id, vendor_name=str(vendor_name)
+        )
+    except Exception:
+        _log.exception("vendor_gate.lookup_failed correlation_id=%s", event.correlation_id)
         event.fields["vendor_needs_confirmation"] = True
+        return
+
+    if isinstance(outcome, Resolved):
+        event.fields["vendor"] = outcome.display_name
+        return
+    if isinstance(outcome, Ambiguous):
+        event.fields["vendor_candidates"] = [
+            {"value": c.entity_id, "label": c.display_name} for c in outcome.candidates
+        ]
+    event.fields["vendor_needs_confirmation"] = True
 
 
 async def _seed_open_activity(

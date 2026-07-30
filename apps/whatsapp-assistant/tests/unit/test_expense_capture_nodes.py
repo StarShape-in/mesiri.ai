@@ -295,6 +295,89 @@ def test_resolve_vendor_no_answer_drops_vendor_but_does_not_cancel():
     assert "pending_prompt" not in update
 
 
+# --- Phase 4: near-match suggestions (ENTITY_RESOLUTION_PLAN.md §5) ---------
+# _seed_vendor_check now seeds vendor_candidates when the reported name is a
+# near-miss rather than an absence, so the node offers them instead of
+# unconditionally asking "add it as new?" -- which is what produced duplicate
+# vendor rows for every alternate spelling.
+
+
+def _suggested_state(answer: str | None = None) -> dict:
+    fields = {
+        "amount": 250,
+        "vendor": "Sharma Traders",
+        "vendor_needs_confirmation": True,
+        "vendor_candidates": [{"value": "v_1", "label": "Sharma Trading Co"}],
+    }
+    if answer is not None:
+        fields["_slot_answer_text"] = answer
+    state = _base_state(fields)
+    if answer is not None:
+        state["awaiting_slot"] = "vendor_confirm"
+    return state
+
+
+def test_resolve_vendor_offers_near_matches_ahead_of_add_new():
+    update = resolve_vendor(_suggested_state())
+    assert update["awaiting_slot"] == "vendor_confirm"
+    assert update["awaiting_slot_options"] == [
+        {"value": "Sharma Trading Co", "label": "Sharma Trading Co"},
+        {"value": "yes", "label": "Yes, add new vendor"},
+        {"value": "no", "label": "No, skip vendor"},
+    ]
+    assert "Did you mean" in update["pending_prompt"]
+
+
+def test_choosing_a_suggestion_adopts_its_exact_stored_spelling():
+    """The duplicate-row fix: the backend resolver re-matches on this exact
+    string, so it has to be the vendor's real name, not what was typed."""
+    update = resolve_vendor(_suggested_state(answer="Sharma Trading Co"))
+    assert update["collected_fields"]["vendor"] == "Sharma Trading Co"
+    assert update["collected_fields"]["vendor_confirmed"] == "yes"
+    assert update["awaiting_slot"] is None
+
+
+def test_add_new_still_keeps_the_name_as_typed_even_with_suggestions():
+    """The escape hatch: a near-match is a suggestion, never an override --
+    "Sharma Traders" really may be a different business."""
+    update = resolve_vendor(_suggested_state(answer="Yes, add new vendor"))
+    assert update["collected_fields"]["vendor"] == "Sharma Traders"
+    assert update["collected_fields"]["vendor_confirmed"] == "yes"
+
+
+def test_skip_still_drops_the_vendor_even_with_suggestions():
+    update = resolve_vendor(_suggested_state(answer="No, skip vendor"))
+    assert update["collected_fields"]["vendor_confirmed"] == "no"
+    assert "vendor" not in update["collected_fields"]
+
+
+def test_empty_suggestions_fall_back_to_the_plain_yes_no_offer():
+    """A seeded-but-empty list must not produce a picker with only the two
+    control rows and a "did you mean" prompt naming nothing."""
+    state = _base_state(
+        {
+            "amount": 250,
+            "vendor": "New Fuel Co",
+            "vendor_needs_confirmation": True,
+            "vendor_candidates": [],
+        }
+    )
+    update = resolve_vendor(state)
+    assert update["awaiting_slot_options"] == [
+        {"value": "yes", "label": "Yes, add new vendor"},
+        {"value": "no", "label": "No, skip vendor"},
+    ]
+    assert "Add it as a new vendor?" in update["pending_prompt"]
+
+
+def test_vendor_candidates_never_reach_the_draft():
+    """Plumbing, like account_candidates -- it must not show up in the
+    confirmation prompt or travel on to RecordExpenseCommand."""
+    from workflows.expense_capture.nodes import _INTERNAL_FIELD_KEYS
+
+    assert "vendor_candidates" in _INTERNAL_FIELD_KEYS
+
+
 def test_resolve_vendor_unmatched_answer_reasks():
     state = _base_state(
         {

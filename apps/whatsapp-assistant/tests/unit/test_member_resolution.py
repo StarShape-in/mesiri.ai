@@ -1,15 +1,20 @@
-"""Member-name resolution -- unit tests (pure scoring, no DB).
+"""Person-like name resolution -- unit tests (pure scoring, no DB).
 
 Covers the live bug (ENTITY_RESOLUTION_PLAN.md §1: ഹൈസം / "Hysam" against an
 org where the real user is "Hisham") and the false-merge risk
 workforce/matching.py's match_worker explicitly rejects fuzzy matching over
 (Sunil/Sunita, Ramesh/Rakesh) -- proving those pairs land in Ambiguous
 (always asks), never Resolved (never silently merges).
+
+The scorer moved to name_matching.py in Phase 4 when VENDOR became its
+second caller; these tests moved with it (they never touched the member
+wiring, only the scoring). Vendor-specific coverage lives in
+test_vendor_resolution.py.
 """
 
 from __future__ import annotations
 
-from runtime.entity_resolution.member_resolution import (
+from runtime.entity_resolution.name_matching import (
     NamedCandidate,
     resolve_name_hint,
 )

@@ -192,21 +192,74 @@ def check_duplicate(state: WorkflowGraphState) -> dict:
 
 
 _VENDOR_SLOT_NAME = "vendor_confirm"
+_VENDOR_ADD_NEW = "yes"
+_VENDOR_SKIP = "no"
 _VENDOR_CANDIDATES = [
-    SlotCandidate(value="yes", label="Yes, add new vendor"),
-    SlotCandidate(value="no", label="No, skip vendor"),
+    SlotCandidate(value=_VENDOR_ADD_NEW, label="Yes, add new vendor"),
+    SlotCandidate(value=_VENDOR_SKIP, label="No, skip vendor"),
 ]
 
 
-def _vendor_prompt(vendor_name: str) -> str:
+def _vendor_choices(fields: dict) -> list[SlotCandidate]:
+    """The rows to offer for an unmatched vendor.
+
+    With no near-matches this is the original Yes/No pair. With near-matches
+    seeded by _seed_vendor_check (Phase 4), each one leads, followed by the
+    SAME two rows -- "add new" and "skip" are the escape hatches, and Phase
+    3's lesson (ENTITY_RESOLUTION_PLAN.md §5.1) is that an Ambiguous the user
+    cannot decline is a trap, not a question. Here that matters twice over:
+    picking a suggested vendor is not a cosmetic choice, it decides which
+    business this spend is attributed to.
+
+    A candidate's `value` is its display name rather than its id because
+    match_slot_answer matches on the row's label, and the answer is used
+    directly as the vendor name -- the backend re-matches by exact name
+    (application/vendors/resolution.py), so the name is the useful identifier
+    here, not the uuid.
+    """
+    seeded = fields.get("vendor_candidates")
+    if not isinstance(seeded, list) or not seeded:
+        return _VENDOR_CANDIDATES
+    suggestions = [
+        SlotCandidate(value=str(c["label"]), label=str(c["label"]))
+        for c in seeded
+        if isinstance(c, dict) and c.get("label")
+    ]
+    if not suggestions:
+        return _VENDOR_CANDIDATES
+    return [*suggestions, *_VENDOR_CANDIDATES]
+
+
+def _vendor_prompt(vendor_name: str, has_suggestions: bool = False) -> str:
+    if has_suggestions:
+        return (
+            f'I don\'t have "{vendor_name}" as a vendor. Did you mean one of these?'
+        )
     return f'I don\'t have "{vendor_name}" as a vendor yet. Add it as a new vendor?'
 
 
+def _vendor_answer(matched: str, fields: dict) -> dict:
+    """Apply a settled vendor answer. `matched` is either one of the two
+    control values or an existing vendor's exact name."""
+    if matched == _VENDOR_SKIP:
+        resolved = dict(fields)
+        resolved.pop("vendor", None)
+        resolved["vendor_confirmed"] = "no"
+        return {"collected_fields": resolved, "awaiting_slot": None}
+    resolved = dict(fields)
+    if matched != _VENDOR_ADD_NEW:
+        # An existing vendor was chosen -- adopt its exact stored spelling so
+        # the backend resolver matches it instead of creating a duplicate.
+        resolved["vendor"] = matched
+    resolved["vendor_confirmed"] = "yes"
+    return {"collected_fields": resolved, "awaiting_slot": None}
+
+
 def resolve_vendor(state: WorkflowGraphState) -> dict:
-    """Ask "create this vendor?" only when the caller flagged the vendor name
-    as unmatched and it hasn't been answered yet. No flag (vendor omitted, or
-    it matched an existing vendor) or already answered -> no-op, straight
-    through to build_draft."""
+    """Settle an unmatched vendor name before the draft is built -- either by
+    adopting one of the near-matches _seed_vendor_check found, adding it as a
+    new vendor, or dropping it. No flag (vendor omitted, or it resolved
+    exactly) or already answered -> no-op, straight through to build_draft."""
     fields = dict(state.get("collected_fields") or {})
     if fields.get("vendor_confirmed") is not None or not fields.get("vendor_needs_confirmation"):
         return {}
@@ -214,42 +267,36 @@ def resolve_vendor(state: WorkflowGraphState) -> dict:
     vendor_name = str(fields.get("vendor") or "").strip()
     if not vendor_name:
         return {}
-    prompt_title = _vendor_prompt(vendor_name)
+
+    choices = _vendor_choices(fields)
+    prompt_title = _vendor_prompt(vendor_name, has_suggestions=choices is not _VENDOR_CANDIDATES)
 
     is_awaiting_this_slot = state.get("awaiting_slot") == _VENDOR_SLOT_NAME
     if is_awaiting_this_slot:
         answer_text = fields.pop("_slot_answer_text", None)
         if answer_text is not None:
-            matched = match_slot_answer(answer_text, _VENDOR_CANDIDATES)
+            matched = match_slot_answer(answer_text, choices)
             if matched is not None:
-                if matched == "no":
-                    resolved = dict(fields)
-                    resolved.pop("vendor", None)
-                    resolved["vendor_confirmed"] = "no"
-                    return {"collected_fields": resolved, "awaiting_slot": None}
-                return {
-                    "collected_fields": {**fields, "vendor_confirmed": "yes"},
-                    "awaiting_slot": None,
-                }
+                return _vendor_answer(matched, fields)
             resolution = resolve_single_choice_slot(
                 slot_name=_VENDOR_SLOT_NAME,
                 prompt_title=f"Sorry, I didn't catch that. {prompt_title}",
-                candidates=_VENDOR_CANDIDATES,
+                candidates=choices,
             )
             return {
                 "collected_fields": fields,
                 "awaiting_slot": resolution.awaiting_slot,
-                "awaiting_slot_options": slot_options(_VENDOR_CANDIDATES),
+                "awaiting_slot_options": slot_options(choices),
                 "pending_prompt": resolution.slot_prompt,
             }
 
     resolution = resolve_single_choice_slot(
-        slot_name=_VENDOR_SLOT_NAME, prompt_title=prompt_title, candidates=_VENDOR_CANDIDATES
+        slot_name=_VENDOR_SLOT_NAME, prompt_title=prompt_title, candidates=choices
     )
     return {
         "collected_fields": fields,
         "awaiting_slot": resolution.awaiting_slot,
-        "awaiting_slot_options": slot_options(_VENDOR_CANDIDATES),
+        "awaiting_slot_options": slot_options(choices),
         "pending_prompt": resolution.slot_prompt,
     }
 
@@ -261,6 +308,7 @@ _INTERNAL_FIELD_KEYS = frozenset(
         "duplicate_confirmed",
         "vendor_needs_confirmation",
         "vendor_confirmed",
+        "vendor_candidates",
     }
 )
 
