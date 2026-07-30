@@ -94,3 +94,61 @@ def test_build_draft_missing_name_takes_priority_over_missing_number():
     state = _base_state({})
     update = build_draft(state)
     assert "name" in update["pending_prompt"].lower()
+
+
+# ---------------------------------------------------------------------------
+# resolve_whatsapp_number -- the slot-fill node (ENTITY_RESOLUTION_PLAN.md's
+# CREATE_USER -> ADD_PROJECT_MEMBER chain starts this workflow with a name
+# and no number; without a real awaiting_slot, the number reply was lost --
+# confirmed by a live trace, not a hypothetical).
+# ---------------------------------------------------------------------------
+
+from workflows.create_user.nodes import _NUMBER_SLOT_NAME, resolve_whatsapp_number
+
+
+def test_resolve_number_first_pass_with_a_valid_number_resolves_silently():
+    state = _base_state({"full_name": "Rajesh", "whatsapp_number": "919876543210"})
+    update = resolve_whatsapp_number(state)
+    assert update["awaiting_slot"] is None
+    assert update["collected_fields"]["whatsapp_number"] == "919876543210"
+
+
+def test_resolve_number_first_pass_with_no_number_sets_awaiting_slot():
+    state = _base_state({"full_name": "Hysam"})
+    update = resolve_whatsapp_number(state)
+    assert update["awaiting_slot"] == _NUMBER_SLOT_NAME
+    assert "number" in update["pending_prompt"].lower()
+
+
+def test_resolve_number_first_pass_with_an_invalid_number_sets_awaiting_slot():
+    state = _base_state({"full_name": "Hysam", "whatsapp_number": "123"})
+    update = resolve_whatsapp_number(state)
+    assert update["awaiting_slot"] == _NUMBER_SLOT_NAME
+    assert "valid" in update["pending_prompt"].lower()
+
+
+def test_resolve_number_no_name_yet_is_a_no_op_deferring_to_build_draft():
+    """The name field keeps its old single-message-retry behaviour --
+    only the number becomes a real slot."""
+    state = _base_state({"whatsapp_number": "919876543210"})
+    assert resolve_whatsapp_number(state) == {}
+
+
+def test_resolve_number_slot_answer_with_a_valid_number_resolves_and_clears_slot():
+    """Simulates WorkflowRuntime.provide_input's re-invocation: the state
+    carries _slot_answer_text (the user's reply) and the awaiting_slot that
+    was pending."""
+    state = _base_state({"full_name": "Hysam", "_slot_answer_text": "+91 97781 90485"})
+    state["awaiting_slot"] = _NUMBER_SLOT_NAME
+    update = resolve_whatsapp_number(state)
+    assert update["awaiting_slot"] is None
+    assert update["collected_fields"]["whatsapp_number"] == "919778190485"
+    assert "_slot_answer_text" not in update["collected_fields"]
+
+
+def test_resolve_number_slot_answer_with_an_invalid_number_reasks():
+    state = _base_state({"full_name": "Hysam", "_slot_answer_text": "abc"})
+    state["awaiting_slot"] = _NUMBER_SLOT_NAME
+    update = resolve_whatsapp_number(state)
+    assert update["awaiting_slot"] == _NUMBER_SLOT_NAME
+    assert "valid" in update["pending_prompt"].lower()
