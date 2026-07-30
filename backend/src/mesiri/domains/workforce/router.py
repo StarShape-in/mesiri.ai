@@ -723,6 +723,130 @@ async def get_attendance_report(
     return item
 
 
+class DeleteAttendanceReportResponse(BaseModel):
+    """What was actually removed, per table, so the caller can see the blast
+    radius rather than trust a bare 204."""
+
+    report_id: uuid.UUID
+    deleted_lines: int
+    deleted_attachments: int
+    deleted_outbox_events: int
+    #: Reports that pointed at this one via corrects_report_id and had the
+    #: pointer cleared so the delete could proceed. Non-zero means a correction
+    #: chain was broken, which is worth seeing.
+    unlinked_corrections: int
+    #: Always 0. Stated explicitly because deleting a worker is not something
+    #: this endpoint does or ever should -- attendance references the register,
+    #: and a register row outliving its attendance is correct.
+    deleted_workers: int = 0
+
+
+@router.delete("/attendance/{report_id}", response_model=DeleteAttendanceReportResponse)
+async def delete_attendance_report(
+    report_id: uuid.UUID,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Permanently delete one attendance report. Development cleanup only.
+
+    **Disabled unless `MESIRI_ALLOW_LABOUR_DELETE` is set**, and then only for
+    ADMIN. Two gates rather than one because the dashboard a developer clicks
+    this in is the same build customers use, and the role check alone would
+    make it live in production the moment it deployed.
+
+    This deliberately contradicts principle P5 (attendance is immutable) and
+    exists for clearing test data between runs -- never for fixing a mistake.
+    A supervisor who mis-reported re-sends the day and chooses "Replace", which
+    supersedes the old report while keeping it readable for audit. Deleting
+    destroys that trail, which is exactly why it is off by default.
+
+    **Never touches workforce_workers.** Attendance references the register, so
+    a worker outliving their attendance is correct; the reverse would orphan
+    every line pointing at them.
+
+    `corrects_report_id` is a self-reference with no cascade, so any report
+    correcting this one has its pointer cleared first -- otherwise the delete
+    fails with a foreign-key violation. The count is reported back, because
+    breaking a correction chain is worth knowing about.
+    """
+    from mesiri.bootstrap.settings import Settings
+
+    if not Settings().allow_labour_delete:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Deleting attendance is disabled in this environment. "
+                "Set MESIRI_ALLOW_LABOUR_DELETE to enable it (development only)."
+            ),
+        )
+    if str(getattr(auth_context, "role", "")).upper() != "ADMIN":
+        raise HTTPException(status_code=403, detail="Only an admin can delete attendance")
+
+    from sqlalchemy import text
+
+    # Scoped by organization, so one tenant can never delete another's report.
+    owned = (
+        await conn.execute(
+            text(
+                "SELECT project_id, site_id FROM labour_attendance_reports "
+                "WHERE id = :id AND organization_id = :org"
+            ),
+            {"id": report_id, "org": auth_context.organization_id},
+        )
+    ).first()
+    if owned is None:
+        raise HTTPException(status_code=404, detail="Attendance report not found")
+    if _site_filter_denied(auth_context, owned[0], owned[1]):
+        raise HTTPException(status_code=403, detail="Not authorized for this report")
+    _ids, denied = _resolve_project_ids(auth_context, owned[0])
+    if denied:
+        raise HTTPException(status_code=403, detail="Not authorized for this report")
+
+    counts: dict[str, int] = {}
+    for label, sql in (
+        ("deleted_attachments", "DELETE FROM labour_attendance_attachments WHERE report_id = :id"),
+        ("deleted_lines", "DELETE FROM labour_attendance_lines WHERE report_id = :id"),
+    ):
+        counts[label] = (await conn.execute(text(sql), {"id": report_id})).rowcount or 0
+
+    # Break the self-reference before deleting the row it points at.
+    counts["unlinked_corrections"] = (
+        await conn.execute(
+            text(
+                "UPDATE labour_attendance_reports SET corrects_report_id = NULL "
+                "WHERE corrects_report_id = :id"
+            ),
+            {"id": report_id},
+        )
+    ).rowcount or 0
+
+    # No foreign key on the outbox, so nothing would warn about rows left
+    # pointing at a report that no longer exists.
+    counts["deleted_outbox_events"] = (
+        await conn.execute(
+            text(
+                "DELETE FROM outbox_events "
+                "WHERE aggregate_type = 'labour_attendance_report' AND aggregate_id = :id"
+            ),
+            {"id": report_id},
+        )
+    ).rowcount or 0
+
+    await conn.execute(
+        text("DELETE FROM labour_attendance_reports WHERE id = :id"), {"id": report_id}
+    )
+
+    logger.warning(
+        "labour.attendance_deleted report_id=%s org=%s by=%s lines=%d attachments=%d",
+        report_id,
+        auth_context.organization_id,
+        getattr(auth_context, "user_id", "?"),
+        counts["deleted_lines"],
+        counts["deleted_attachments"],
+    )
+    return DeleteAttendanceReportResponse(report_id=report_id, **counts)
+
+
 # ---------------------------------------------------------------------------
 # Report statements
 # ---------------------------------------------------------------------------

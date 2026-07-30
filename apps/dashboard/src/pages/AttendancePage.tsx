@@ -15,8 +15,10 @@ import {
   ChevronLeft,
   ChevronRight,
   AlertTriangle,
+  Trash2,
 } from 'lucide-react'
 import { useScope } from '@/lib/ScopeContext'
+import { useAuth } from '@/lib/AuthContext'
 import { toLocalISODate } from '@/lib/utils'
 import { KpiCard } from '@/components/ui/kpi-card'
 import { Badge } from '@/components/ui/badge'
@@ -39,6 +41,7 @@ import {
 } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
+  deleteAttendanceReportApi,
   fetchAttendanceReportsApi,
   fetchLabourStatementApi,
   type LabourAttendanceSummaryItem,
@@ -51,6 +54,12 @@ type SortOrder = 'asc' | 'desc'
 
 export default function AttendancePage() {
   const { scope } = useScope()
+  // Delete is admin-only in the UI, and the endpoint independently requires
+  // both ADMIN and MESIRI_ALLOW_LABOUR_DELETE -- hiding the button is a
+  // courtesy, not the security boundary.
+  const { me } = useAuth()
+  const isAdmin = String(me?.role || '').toUpperCase() === 'ADMIN'
+  const [deletingId, setDeletingId] = React.useState<string | null>(null)
   const [reports, setReports] = React.useState<LabourAttendanceSummaryItem[]>([])
   const [statement, setStatement] = React.useState<LabourStatement | null>(null)
   const [loading, setLoading] = React.useState(true)
@@ -193,6 +202,47 @@ export default function AttendancePage() {
     setSelectedIds((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
     )
+  }
+
+  const handleDelete = async (reportId: string, occurredDate: string) => {
+    if (
+      !confirm(
+        [
+          `Permanently delete the attendance report for ${occurredDate}?`,
+          '',
+          'This removes the report and its worker lines for good. It cannot be undone.',
+          '',
+          'To correct a mistake instead, re-send that day over WhatsApp and choose',
+          '"Replace" — that supersedes the old report while keeping it auditable.',
+        ].join('\n')
+      )
+    ) {
+      return
+    }
+    setDeletingId(reportId)
+    setError(null)
+    try {
+      const result = await deleteAttendanceReportApi(reportId)
+      // Reload rather than splice locally: the totals above the table come from
+      // the statement endpoint and would otherwise still include this report.
+      await loadReports()
+      if (result.unlinked_corrections > 0) {
+        setError(
+          `Deleted. Note: ${result.unlinked_corrections} report(s) referenced this one as a ` +
+            'correction and no longer do, so that day may now count twice.'
+        )
+      }
+    } catch (err: any) {
+      const status = err?.response?.status
+      setError(
+        status === 403
+          ? err?.response?.data?.detail ||
+            'Deleting attendance is not permitted for your role or this environment.'
+          : 'Could not delete that attendance report.'
+      )
+    } finally {
+      setDeletingId(null)
+    }
   }
 
   // Export CSV
@@ -410,18 +460,24 @@ export default function AttendancePage() {
                 <TableHead className="text-xs font-semibold h-10">Notes / Summary</TableHead>
 
                 <TableHead className="text-xs font-semibold h-10 w-12 text-right">Detail</TableHead>
+
+                {/* Development cleanup. Hidden for non-admins; the endpoint
+                    enforces both ADMIN and the server-side flag regardless. */}
+                {isAdmin && (
+                  <TableHead className="text-xs font-semibold h-10 w-12 text-right">Delete</TableHead>
+                )}
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="h-32 text-center text-xs text-muted-foreground">
+                  <TableCell colSpan={isAdmin ? 9 : 8} className="h-32 text-center text-xs text-muted-foreground">
                     Loading attendance reports...
                   </TableCell>
                 </TableRow>
               ) : paginatedReports.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="h-32 text-center text-xs text-muted-foreground">
+                  <TableCell colSpan={isAdmin ? 9 : 8} className="h-32 text-center text-xs text-muted-foreground">
                     No attendance reports logged for the selected scope & date filter.
                   </TableCell>
                 </TableRow>
@@ -499,6 +555,31 @@ export default function AttendancePage() {
                           <Eye className="size-3.5 text-muted-foreground hover:text-foreground" />
                         </Button>
                       </TableCell>
+
+                      {isAdmin && (
+                        <TableCell className="text-xs py-3 text-right">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-7"
+                            disabled={deletingId === item.id}
+                            title="Delete this attendance report (development only)"
+                            onClick={(e) => {
+                              // The row itself opens the detail sheet.
+                              e.stopPropagation()
+                              handleDelete(item.id, item.occurred_date)
+                            }}
+                          >
+                            <Trash2
+                              className={`size-3.5 ${
+                                deletingId === item.id
+                                  ? 'text-muted-foreground animate-pulse'
+                                  : 'text-muted-foreground hover:text-rose-600'
+                              }`}
+                            />
+                          </Button>
+                        </TableCell>
+                      )}
                     </TableRow>
                   )
                 })

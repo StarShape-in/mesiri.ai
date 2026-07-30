@@ -159,6 +159,20 @@ class Settings(BaseSettings):
     environment: Environment = Environment.LOCAL
     service_name: str = "mesiri-assistant"
 
+    #: Opt-in switch for destructive Labour cleanup (MESIRI_ALLOW_LABOUR_DELETE).
+    #:
+    #: Off by default, which is the whole point: deleting a confirmed attendance
+    #: report contradicts the module's own rule that attendance is immutable
+    #: (plan principle P5), and the dashboard a developer would click it in is
+    #: the same build customers use. Shipping the endpoint disabled means the
+    #: code can deploy everywhere while only answering where someone has
+    #: deliberately turned it on.
+    #:
+    #: Intended for clearing test data between runs, never for correcting a
+    #: mistake -- a supervisor who mis-reported re-sends the day and chooses
+    #: "Replace", which supersedes the old report while keeping it auditable.
+    allow_labour_delete: bool = False
+
     log: LogSettings = Field(default_factory=LogSettings)
     postgres: PostgresSettings = Field(default_factory=PostgresSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)

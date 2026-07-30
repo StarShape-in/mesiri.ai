@@ -1271,6 +1271,26 @@ export async function fetchAttendanceReportsApi(params?: {
   return res.data
 }
 
+export interface DeleteAttendanceResult {
+  report_id: string
+  deleted_lines: number
+  deleted_attachments: number
+  deleted_outbox_events: number
+  unlinked_corrections: number
+  /** Always 0 — deleting attendance never deletes a worker. */
+  deleted_workers: number
+}
+
+/** Development cleanup only. Returns 403 unless MESIRI_ALLOW_LABOUR_DELETE is
+ *  set on the server AND the caller is an ADMIN, so this is inert on any
+ *  environment where it has not been deliberately enabled. */
+export async function deleteAttendanceReportApi(
+  reportId: string
+): Promise<DeleteAttendanceResult> {
+  const res = await api.delete(`/labour/attendance/${reportId}`)
+  return res.data
+}
+
 export async function fetchAttendanceReportDetailApi(
   reportId: string
 ): Promise<LabourAttendanceDetailItem> {
