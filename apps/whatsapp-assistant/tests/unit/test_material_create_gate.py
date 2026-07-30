@@ -29,6 +29,7 @@ from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
 from planner import Planner
 from runtime.inbound_journey import (
     _run_material_unit_gates,
+    resume_pending_report_with_material,
     resume_pending_report_with_material_create,
     resume_pending_report_with_material_unit_choice,
 )
@@ -58,6 +59,15 @@ class _FakeRedis:
 
 def _pending_store() -> PendingReportStore:
     return PendingReportStore(_FakeRedis())
+
+
+class _ActorStub:
+    """Only `role` is read by the "None of these" leg's create check."""
+
+    def __init__(self, role: str) -> None:
+        self.role = role
+        self.user_id = USR
+        self.organization_id = ORG
 
 
 class _FakeOrgSettings:
@@ -419,6 +429,126 @@ async def test_create_failure_reports_instead_of_dropping_the_reply():
     assert reply is not None
     assert "couldn't add" in reply.text.lower()
     assert runtime.started_with is None
+
+
+# ---------------------------------------------------------------------------
+# A lone substring match no longer auto-resolves, and the picker it produces
+# has a way out (ENTITY_RESOLUTION_PLAN.md §5.1). Together these are one
+# change: the picker escape is what makes asking safe instead of cornering.
+# ---------------------------------------------------------------------------
+
+
+async def test_lone_substring_match_asks_rather_than_resolving_silently():
+    """"cement" against a catalog holding only "Cement Paint" used to record
+    Cement Paint silently. It must ask now."""
+    paint_id = str(uuid.uuid4())
+    catalog = _FakeCatalogQuery(
+        find_materials_result=[
+            {"id": paint_id, "name": "Cement Paint", "is_active": True, "default_unit_id": None}
+        ]
+    )
+    event = _event(material_name="cement")
+    store = _pending_store()
+
+    reply = await _run_material_unit_gates(
+        event,
+        catalog_query=catalog,
+        pending_report_store=store,
+        actor_user_id=USR,
+        actor_role="ADMIN",
+        org_settings_query=_FakeOrgSettings(["ADMIN"]),
+    )
+
+    assert reply is not None
+    assert reply.list_rows is not None
+    assert "material_id" not in event.fields, "a substring guess must not be auto-filled"
+    assert [r.id for r in reply.list_rows] == [f"mat_{paint_id}", "mat_none"]
+    assert await store.pop_pending(user_id=USR) is not None
+
+
+async def test_exact_match_still_resolves_without_asking():
+    """The fast path everyone relies on must not regress into a picker."""
+    cement_id = str(uuid.uuid4())
+    catalog = _FakeCatalogQuery(
+        find_materials_result=[
+            {"id": cement_id, "name": "Cement", "is_active": True, "default_unit_id": None}
+        ]
+    )
+    event = _event(material_name="cement")
+
+    reply = await _run_material_unit_gates(
+        event,
+        catalog_query=catalog,
+        pending_report_store=_pending_store(),
+        actor_user_id=USR,
+        actor_role="ADMIN",
+        org_settings_query=_FakeOrgSettings(["ADMIN"]),
+    )
+
+    assert reply is None, "an exact match must sail through the gate"
+    assert event.fields["material_id"] == cement_id
+
+
+async def test_picker_always_offers_a_way_out():
+    from channel.replies import MATERIAL_CANDIDATE_NONE_ROW_ID, render_material_picker
+
+    spec = render_material_picker([(str(uuid.uuid4()), "Cement Paint")])
+    assert spec.list_rows[-1].id == MATERIAL_CANDIDATE_NONE_ROW_ID
+    assert spec.list_rows[-1].title == "None of these"
+
+
+async def test_picker_stays_within_whatsapps_ten_row_cap_with_the_escape():
+    from channel.replies import render_material_picker
+
+    spec = render_material_picker([(str(uuid.uuid4()), f"Material {i}") for i in range(20)])
+    assert len(spec.list_rows) == 10, "9 candidates + the escape row"
+    assert spec.list_rows[-1].id == "mat_none"
+
+
+async def test_none_of_these_offers_to_create_when_the_org_allows_it():
+    catalog = _FakeCatalogQuery()
+    store = _pending_store()
+    await store.set_pending(user_id=USR, event=_event(material_name="Fevicol"))
+
+    reply = await resume_pending_report_with_material(
+        _tap("mat_none"),
+        USR,
+        pending_report_store=store,
+        catalog_query=catalog,
+        planner=Planner(),
+        workflow_runtime=_RecordingWorkflowRuntime(),
+        actor=_ActorStub(role="PROJECT_MANAGER"),
+        org_settings_query=_FakeOrgSettings(["ADMIN", "PROJECT_MANAGER"]),
+    )
+
+    assert reply is not None
+    assert reply.buttons is not None
+    assert [b.id for b in reply.buttons] == ["matnew_yes", "matnew_no"]
+    assert "Fevicol" in reply.text
+    # Re-held so the create tap that follows still has the report.
+    assert await store.pop_pending(user_id=USR) is not None
+
+
+async def test_none_of_these_dead_ends_honestly_when_creation_is_not_allowed():
+    catalog = _FakeCatalogQuery()
+    store = _pending_store()
+    await store.set_pending(user_id=USR, event=_event(material_name="Fevicol"))
+
+    reply = await resume_pending_report_with_material(
+        _tap("mat_none"),
+        USR,
+        pending_report_store=store,
+        catalog_query=catalog,
+        planner=Planner(),
+        workflow_runtime=_RecordingWorkflowRuntime(),
+        actor=_ActorStub(role="SITE_ENGINEER"),
+        org_settings_query=_FakeOrgSettings(["ADMIN"]),
+    )
+
+    assert reply is not None
+    assert reply.buttons is None
+    assert "couldn't find" in reply.text.lower()
+    assert await store.pop_pending(user_id=USR) is None, "the report is dropped, not left dangling"
 
 
 async def test_unrelated_tap_falls_through_without_consuming_the_report():

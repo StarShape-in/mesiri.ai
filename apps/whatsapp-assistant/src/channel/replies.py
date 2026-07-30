@@ -455,14 +455,34 @@ def render_site_picker(sites: list[tuple[str, str]], *, allow_combined: bool) ->
     return ReplySpec(text=text, list_button_label="Choose site", list_rows=tuple(rows))
 
 
+#: The material picker's escape hatch. Shares the "mat_" prefix so the
+#: existing resume-leg prefix check still routes it, then is special-cased
+#: before the id is read as a material_id -- same shape as
+#: MEMBER_CANDIDATE_NONE_ROW_ID. A real material_id is always a UUID, so
+#: this can never collide with one.
+MATERIAL_CANDIDATE_NONE_ROW_ID = "mat_none"
+
+
 def render_material_picker(candidates: list[tuple[str, str]]) -> ReplySpec:
     """Ask which catalog material a report refers to -- either because the
     reported name matched more than one active entry ("cement" -> OPC/PPC
-    Cement) or none at all (falls back to the org's whole active catalog so
-    there's still something to pick from). ``candidates`` is (material_id,
-    name) pairs. Row id is "mat_{material_id}", matched verbatim by
-    resume_pending_report_with_material once one is tapped."""
-    rows = tuple(ListRow(f"mat_{material_id}", name) for material_id, name in candidates[:10])
+    Cement), matched one only by substring (never auto-accepted -- see
+    runtime/entity_resolution/material_resolution.py), or matched none at all
+    (falls back to the org's whole active catalog so there's still something
+    to pick from). ``candidates`` is (material_id, name) pairs. Row id is
+    "mat_{material_id}", matched verbatim by
+    resume_pending_report_with_material once one is tapped.
+
+    The trailing "None of these" row carries MATERIAL_CANDIDATE_NONE_ROW_ID
+    and falls through to the same create-offer/not-found handling a Missing
+    result would show, exactly as render_member_candidate_picker's "Someone
+    else" does. Without it this list is a trap rather than a question: once a
+    lone substring guess stopped auto-resolving, a report of "cement" against
+    a catalog holding only "Cement Paint" would otherwise offer that single
+    wrong row and no way to decline it."""
+    rows = tuple(
+        ListRow(f"mat_{material_id}", name) for material_id, name in candidates[:9]
+    ) + (ListRow(MATERIAL_CANDIDATE_NONE_ROW_ID, "None of these"),)
     return ReplySpec(
         text="Which material do you mean?",
         list_button_label="Choose material",

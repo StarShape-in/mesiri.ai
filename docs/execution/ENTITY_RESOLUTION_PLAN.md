@@ -274,17 +274,36 @@ not apply to materials at all, and the create-offer/resume legs in `resume.py`
 are untouched. **Phase 4 should check this per entity before assuming a
 provider exists.**
 
-**One tension left deliberately unresolved.** A *single* substring match
-auto-resolves silently, which contradicts `find_by_name_fuzzy`'s own docstring
-("candidates for a WhatsApp disambiguation picker, never auto-accepted"). This
-predates Phase 3 and was preserved rather than "fixed" mid-migration: unlike the
-USER case, it is bounded — the resolved material's real name is rendered in the
-confirmation prompt the user must still answer, so a wrong substring hit is
-visible and rejectable before any write, whereas a wrong USER match silently
-grants a stranger access to org data. Pinned by
-`test_material_resolution.py::test_a_single_substring_match_is_auto_accepted`,
-which is written to fail loudly if anyone tightens it, so the change is made
-deliberately rather than by accident.
+**One tension found, then closed (follow-up commit).** The migration surfaced
+that a *single* substring match auto-resolved silently, contradicting
+`find_by_name_fuzzy`'s own docstring ("candidates for a WhatsApp
+disambiguation picker, never auto-accepted"). It was left alone in the
+migration commit itself — a migration should not change behaviour — and pinned
+by a test written to fail loudly the moment anyone tightened it. That pin then
+did its job.
+
+It is now closed: **only an exact name match resolves silently**, decided in
+`classify_material_matches` by comparing the hint against the row's own name
+(via the package's shared `normalize_name`, the same rule `member_resolution`
+uses), because `find_materials` flattens the exact and substring probes into
+one list and by that point a lone exact hit and a lone substring hit are
+indistinguishable by shape.
+
+Closing it required a second change to be safe, and this is the part worth
+remembering: **`render_material_picker` had no escape hatch.** The member
+picker has always offered "Someone else"; the material picker offered only its
+candidate rows. Making a lone substring candidate `Ambiguous` without fixing
+that would have produced a one-row picker whose only tappable option was the
+wrong material — strictly worse than the silent resolve it replaced, since the
+old path at least let the user decline at the confirmation prompt. The picker
+now always appends a "None of these" row
+(`MATERIAL_CANDIDATE_NONE_ROW_ID`), which falls through to the same
+create-offer / not-found handling a `Missing` result would show, gated by the
+same org setting.
+
+Worth generalising in Phase 4: **an `Ambiguous` that cannot be declined is not
+a question, it is a trap.** Any entity migrated onto this layer needs its
+picker checked for an escape before its matching is tightened.
 
 ---
 

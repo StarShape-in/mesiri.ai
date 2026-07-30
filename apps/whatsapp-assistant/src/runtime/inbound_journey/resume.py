@@ -7,11 +7,14 @@ from __future__ import annotations
 from backend.ports import ActorIdentity
 from channel.replies import (
     ALL_SITES_ROW_ID,
+    MATERIAL_CANDIDATE_NONE_ROW_ID,
     MEMBER_CANDIDATE_NONE_ROW_ID,
     ReplySpec,
     render_material_create_declined_reply,
+    render_material_create_offer,
     render_material_create_unit_picker,
     render_material_created_reply,
+    render_material_not_found_reply,
     render_member_create_declined_reply,
     render_member_create_offer,
     render_member_not_found_reply,
@@ -44,6 +47,7 @@ from runtime.inbound_journey.reply import (
 )
 from runtime.inbound_journey.seeding import (
     _actor_may_create_user,
+    _may_create_material,
     _run_material_unit_gates,
     _run_project_gate,
     _run_site_gate,
@@ -51,6 +55,7 @@ from runtime.inbound_journey.seeding import (
 from runtime.inventory_query import MaterialInventoryQueryService
 from runtime.logging_ports import MessageLogger
 from runtime.material_catalog_query import MaterialCatalogQueryService
+from runtime.org_settings_query import OrganizationSettingsQueryService
 from workflows import WorkflowResumeResult, WorkflowResumeStatus, WorkflowRuntime
 from workflows.create_user.nodes import find_mentioned_phone_number
 
@@ -149,15 +154,23 @@ async def resume_pending_report_with_material(
     actor: ActorIdentity | None = None,
     inventory_query: MaterialInventoryQueryService | None = None,
     message_logger: MessageLogger | None = None,
+    org_settings_query: OrganizationSettingsQueryService | None = None,
 ) -> ReplySpec | None:
     """Resume a report held by the material-resolution gate, now that the user
-    tapped which catalog material it refers to.
+    tapped which catalog material it refers to -- or "None of these".
 
     Re-runs the remaining gate chain (unit, then project, then site) rather
     than jumping straight to planner -- material resolving doesn't guarantee
     unit/project/site do too (see _run_material_unit_gates: a resolved
     material_id with no unit_id yet still needs the Stock Unit check to
     run). Mirrors resume_pending_report_with_project's shape otherwise.
+
+    "None of these" falls through to the same Missing handling the gate
+    itself would have shown -- the create offer when the org's settings allow
+    this sender to add a catalog entry, the plain not-found reply when they
+    don't -- exactly as MEMBER_CANDIDATE_NONE_ROW_ID does for users. This is
+    what keeps a one-row picker (a lone substring candidate, which no longer
+    auto-resolves) an honest question rather than a trap.
     """
     if message.modality is not InputModality.INTERACTIVE:
         return None
@@ -170,6 +183,19 @@ async def resume_pending_report_with_material(
         if message_logger:
             await _safe(message_logger.mark_completed(correlation_id=message.correlation_id))
         return ReplySpec(text="That selection expired — please resend your report.")
+
+    if row_id == MATERIAL_CANDIDATE_NONE_ROW_ID:
+        name = str(event.fields.get("material_name") or "")
+        if await _may_create_material(
+            event,
+            actor_role=getattr(actor, "role", None),
+            org_settings_query=org_settings_query,
+        ):
+            await pending_report_store.set_pending(user_id=actor_user_id, event=event)
+            await _complete_resume_leg(message, event, message_logger)
+            return render_material_create_offer(name)
+        await _complete_resume_leg(message, event, message_logger)
+        return ReplySpec(text=render_material_not_found_reply(name))
 
     material_id = row_id.removeprefix(_MATERIAL_ROW_PREFIX)
     event.fields["material_id"] = material_id

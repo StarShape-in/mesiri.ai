@@ -74,7 +74,11 @@ _MAX_CANDIDATES = 5
 
 
 def _normalize(name: str) -> str:
-    return " ".join(name.strip().lower().split())
+    # Delegates to the package-level rule so MATERIAL's exact-match test and
+    # this one cannot drift -- see runtime/entity_resolution/__init__.py.
+    from runtime.entity_resolution import normalize_name
+
+    return normalize_name(name)
 
 
 def _similarity(a: str, b: str) -> float:

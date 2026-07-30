@@ -1016,6 +1016,10 @@ def build_message_handlers(
                 actor=ctx,
                 inventory_query=inventory_query,
                 message_logger=message_logger,
+                # Needed by the "None of these" leg to decide whether this
+                # sender may be offered the create option (STA-139's org
+                # setting), same check the gate itself makes.
+                org_settings_query=org_settings_query,
             )
             timer.lap("resume_material")
             if material_reply is not None:

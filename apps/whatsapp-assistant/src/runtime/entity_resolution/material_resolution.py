@@ -45,6 +45,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from runtime.entity_resolution import normalize_name
 from workflows.entities import Ambiguous, Candidate, Missing, ResolutionOutcome, Resolved
 
 
@@ -55,35 +56,35 @@ def classify_material_matches(
     Resolved/Ambiguous/Missing vocabulary.
 
     Pure -- the query already happened. `matches` is that call's result
-    verbatim, which carries its own contract worth restating: an exact
-    (case-insensitive) match is returned ALONE, so a single row here is
-    either "the one exact hit" or "the one substring candidate".
+    verbatim.
 
-    Those two are deliberately not distinguished, because the caller before
-    this module did not distinguish them either -- one match auto-fills
-    `material_id` and moves on. That is preserved byte-for-byte (Phase 3 is a
-    migration, not a behaviour change), but it is worth naming that it sits in
-    tension with `find_by_name_fuzzy`'s own docstring, which says substring
-    candidates are "never auto-accepted":
+    **Only an exact name match resolves silently.** A lone substring
+    candidate is `Ambiguous`, not `Resolved` -- it is offered as a one-row
+    picker (with the "None of these" escape `render_material_picker` always
+    appends) rather than assumed. This is the rule `find_by_name_fuzzy`'s own
+    docstring always stated ("candidates for a WhatsApp disambiguation
+    picker, never auto-accepted") and that its caller had quietly not
+    honoured: reporting "50 bags of cement" against a catalog whose only
+    *cement*-matching row was "Cement Paint" resolved to Cement Paint in
+    silence, and the confirmation prompt that followed showed a plausible
+    enough line for a busy site engineer to wave through.
 
-      "50 bags of cement" against a catalog holding exactly one row matching
-      *cement* ("OPC Cement 53 Grade") resolves silently rather than asking.
-
-    Unlike the USER case that tension is bounded, which is why it was left
-    alone rather than "fixed" inside a refactor: the resolved material's real
-    name is rendered in the confirmation prompt the user must still answer, so
-    a wrong substring hit is visible and rejectable before anything is
-    written. A wrong USER match, by contrast, silently grants a stranger
-    access to org data -- which is why `member_resolution.py` refuses to
-    auto-accept anything short of an exact match. See ENTITY_RESOLUTION_PLAN
-    .md §7's open question on thresholds if this ever needs revisiting.
+    Exactness is decided here rather than trusted from the query, because
+    `find_materials` flattens both probes into one list -- an exact hit is
+    returned alone, but so is a single substring hit, and by this point the
+    two are indistinguishable by shape. Comparing the hint against the row's
+    own name (via the package's shared `normalize_name`, the same rule
+    `member_resolution` uses) recovers the distinction without widening that
+    service's contract.
     """
     if not matches:
         return Missing(name_hint=name_hint)
 
-    if len(matches) == 1:
-        row = matches[0]
-        return Resolved(entity_id=str(row["id"]), display_name=str(row["name"]))
+    hint = normalize_name(name_hint)
+    if hint:
+        for row in matches:
+            if normalize_name(str(row["name"])) == hint:
+                return Resolved(entity_id=str(row["id"]), display_name=str(row["name"]))
 
     return Ambiguous(
         candidates=tuple(

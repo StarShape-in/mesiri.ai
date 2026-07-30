@@ -35,7 +35,7 @@ def test_no_matches_is_missing_and_carries_the_hint_back():
     assert outcome.name_hint == "Fevicol"
 
 
-def test_one_match_resolves():
+def test_an_exact_name_match_resolves():
     outcome = classify_material_matches("cement", [_row(CEMENT_ID, "Cement")])
     assert isinstance(outcome, Resolved)
     assert outcome.entity_id == CEMENT_ID
@@ -51,19 +51,45 @@ def test_several_matches_are_ambiguous_in_order():
     assert [c.display_name for c in outcome.candidates] == ["OPC Cement", "PPC Cement"]
 
 
-def test_a_single_substring_match_is_auto_accepted():
-    """Documents the tension named in the module docstring rather than
-    hiding it: find_by_name_fuzzy calls substring hits "never auto-accepted",
-    but a lone one has always resolved silently here, and Phase 3 is a
-    migration rather than a behaviour change. Bounded, unlike the USER case:
-    the resolved name is rendered in the confirmation the user still answers.
+def test_a_lone_substring_match_asks_instead_of_auto_accepting():
+    """The behaviour change this module exists to make. "cement" against a
+    catalog whose only matching row is "Cement Paint" used to resolve to
+    Cement Paint silently; find_by_name_fuzzy's own docstring always said
+    substring candidates are "never auto-accepted", and its caller quietly
+    didn't honour that.
 
-    If this is ever tightened to Ambiguous, this test is the one that should
-    fail loudly and be rewritten deliberately.
+    One row, so the picker shows a single option -- which is only safe
+    because render_material_picker always appends "None of these" (see
+    test_replies.py). Without that escape this would be a trap, not a
+    question.
     """
-    outcome = classify_material_matches("cement", [_row(OPC_ID, "OPC Cement 53 Grade")])
+    outcome = classify_material_matches("cement", [_row(OPC_ID, "Cement Paint")])
+    assert isinstance(outcome, Ambiguous)
+    assert [c.display_name for c in outcome.candidates] == ["Cement Paint"]
+
+
+def test_an_exact_match_still_resolves_silently_even_among_others():
+    """Exactness, not row count, is what earns a silent resolve -- so a
+    perfect hit is never demoted to a picker just because the substring probe
+    also dragged in near-misses."""
+    outcome = classify_material_matches(
+        "cement", [_row(OPC_ID, "OPC Cement"), _row(CEMENT_ID, "Cement")]
+    )
     assert isinstance(outcome, Resolved)
-    assert outcome.display_name == "OPC Cement 53 Grade"
+    assert outcome.entity_id == CEMENT_ID
+
+
+def test_exact_match_ignores_case_and_surrounding_whitespace():
+    outcome = classify_material_matches("  CEMENT  ", [_row(CEMENT_ID, "Cement")])
+    assert isinstance(outcome, Resolved)
+    assert outcome.entity_id == CEMENT_ID
+
+
+def test_a_blank_hint_never_resolves_by_accident():
+    """An empty/whitespace hint must not exact-match a row whose name is
+    also blank-ish -- it asks instead, since nothing was actually reported."""
+    outcome = classify_material_matches("   ", [_row(CEMENT_ID, "Cement")])
+    assert isinstance(outcome, Ambiguous)
 
 
 def test_non_string_ids_are_normalized_to_str():
