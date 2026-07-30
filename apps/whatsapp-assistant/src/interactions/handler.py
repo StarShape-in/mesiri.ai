@@ -535,7 +535,11 @@ class InteractionHandler:
         return row_id
 
     def handle_greeting_trigger(
-        self, message: NormalizedMessage, *, timezone: str | None = None
+        self,
+        message: NormalizedMessage,
+        *,
+        timezone: str | None = None,
+        is_first_message: bool = False,
     ) -> ReplySpec | None:
         """A bare "hi"/"menu"/"help"/etc, matched against a deterministic,
         configurable phrase list (greeting_phrases.json) -- never the AI
@@ -551,10 +555,16 @@ class InteractionHandler:
         understanding/pipeline.py's _handle_voice -- deterministic either
         way, just a smaller saving for voice (STT is unavoidable).
 
-        `is_first_message` isn't threaded through here (not wired anywhere
-        yet, see channel/replies.py) -- always renders the returning-user
-        copy. timezone is best-effort: at this point in the journey (before
-        M4 Context resolution) the caller only has the cheaper identity gate,
+        `is_first_message` is resolved by the caller (runtime/message_journey
+        .py, via runtime/first_message_query.py) rather than here -- this
+        method is synchronous and I/O-free by design, and the answer needs a
+        database read. False is the safe default: it renders the shorter
+        returning-user copy, so a failed lookup costs a newcomer one
+        paragraph rather than re-introducing Mesiri to a months-old user on
+        every "hi".
+
+        timezone is best-effort: at this point in the journey (before M4
+        Context resolution) the caller only has the cheaper identity gate,
         which doesn't carry a timezone, so this is usually None and falls
         back to a neutral "Hello" (see channel/replies._greeting).
         """
@@ -562,7 +572,7 @@ class InteractionHandler:
             return None
         if not is_greeting_trigger(message.text):
             return None
-        return render_greeting_menu(timezone=timezone)
+        return render_greeting_menu(timezone=timezone, is_first_message=is_first_message)
 
     def handle_whoami_trigger(self, message: NormalizedMessage, actor: ActorIdentity) -> str | None:
         """A bare "who am i"/"whoami"/"my profile"/etc (see

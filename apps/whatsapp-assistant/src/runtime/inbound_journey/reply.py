@@ -146,6 +146,8 @@ def _render_reply(
     workflow_resume: WorkflowResumeResult | None,
     decision: PlannerDecisionV2 | None,
     resolved: ResolvedContextV2 | None,
+    *,
+    is_first_message: bool = False,
 ) -> ReplySpec | None:
     """The single place that decides what the user hears back.
 
@@ -167,9 +169,16 @@ def _render_reply(
         if decision.decision_type is PlannerDecisionType.CLARIFY:
             return ReplySpec(text=render_clarify_reply(decision))
         if decision.decision_type is PlannerDecisionType.DIRECT_REPLY:
-            # is_first_message detection isn't wired yet (would need a message-
-            # history check) -- defaults to the lighter "returning user" copy.
-            return render_direct_reply(decision, timezone=resolved.timezone if resolved else None)
+            # is_first_message is resolved by the caller, which is async and
+            # can do the inbound_messages lookup this needs (see
+            # runtime/first_message_query.py). False here means either a
+            # returning sender or a failed lookup -- both render the shorter
+            # copy, which is the safe way to be wrong.
+            return render_direct_reply(
+                decision,
+                timezone=resolved.timezone if resolved else None,
+                is_first_message=is_first_message,
+            )
 
     # Context resolution failed, understanding was UNUSABLE, the workflow run
     # FAILED, or the planner said IGNORE. Never fall through to format_reply():

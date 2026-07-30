@@ -560,3 +560,31 @@ async def test_slot_answer_ignores_voice_modality():
         text="1",
     )
     assert await handler.handle_slot_answer(USR, voice_message) is None
+
+
+def test_greeting_trigger_introduces_mesiri_only_on_the_first_message():
+    """The intro copy behind is_first_message existed from the start but
+    nothing ever set the flag, so every first-time user got the
+    returning-user greeting and was never told what Mesiri is. The handler
+    stays synchronous -- the caller does the inbound_messages lookup (see
+    runtime/first_message_query.py) and passes the answer in."""
+    handler = _handler(FakeWorkflowInstanceRepository())
+
+    first = handler.handle_greeting_trigger(_message("hi"), is_first_message=True)
+    returning = handler.handle_greeting_trigger(_message("hi"), is_first_message=False)
+
+    assert first is not None and returning is not None
+    assert "I'm Mesiri" in first.text
+    assert "I'm Mesiri" not in returning.text
+    # Same tappable menu either way -- only the copy above it differs.
+    assert first.list_rows == returning.list_rows == CATEGORY_ROWS
+
+
+def test_greeting_trigger_defaults_to_the_returning_user_copy():
+    """False is the safe default: a failed lookup costs a newcomer one
+    paragraph, where the opposite error re-introduces Mesiri to a
+    months-old user on every "hi"."""
+    handler = _handler(FakeWorkflowInstanceRepository())
+    spec = handler.handle_greeting_trigger(_message("hi"))
+    assert spec is not None
+    assert "I'm Mesiri" not in spec.text

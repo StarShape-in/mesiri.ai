@@ -14,6 +14,9 @@ from channel.replies import (
     render_material_create_offer,
     render_material_not_found_reply,
     render_material_picker,
+    render_member_candidate_picker,
+    render_member_create_offer,
+    render_member_not_found_reply,
     render_no_projects_reply,
     render_project_picker,
     render_site_picker,
@@ -33,6 +36,7 @@ from runtime.activity_query import ActivityQueryService
 from runtime.activity_search_service import ActivitySearchService
 from runtime.dpr_request_query import DprRequestQueryService
 from runtime.duplicate_expense_query import DuplicateExpenseQueryService
+from runtime.entity_resolution.member_resolution import MemberNameResolutionService
 from runtime.expense_query_service import ExpenseQueryService, resolve_date_range
 from runtime.inbound_journey._shared import _log
 from runtime.inbound_journey.reply import _safe
@@ -237,6 +241,95 @@ async def _run_material_unit_gates(
         unit_id=str(stock_unit_id),
         unit_display=stock_unit["display_name"] if stock_unit else "the correct unit",
     )
+
+
+def _actor_may_create_user(actor_role: str | None) -> bool:
+    """Whether this sender's role may create a new user, per CREATE_USER's
+    own `allowed_roles` declaration in the registry (ENTITY_RESOLUTION_PLAN.md
+    ADR-E5). A lookup, not a branch -- if CREATE_USER's allowed_roles changes,
+    or a different workflow ever becomes the USER provider, this needs no
+    edit. Reuses `allowed_roles` for the purpose it was built for (discovery/
+    offer filtering); this is not a promotion of the field to an enforcement
+    gate -- see registry.py's field comment, and
+    ENTITY_RESOLUTION_PLAN.md §8.2's objection to doing that."""
+    if not actor_role:
+        return False
+    from workflows.entities import EntityType
+    from workflows.registry import get_definition, workflow_that_provides
+
+    provider_key = workflow_that_provides(EntityType.USER)
+    if provider_key is None:
+        return False
+    definition = get_definition(provider_key)
+    if definition is None or definition.allowed_roles is None:
+        return True
+    return actor_role.upper() in definition.allowed_roles
+
+
+async def _run_member_name_gate(
+    canonical_event: CanonicalEventV2,
+    *,
+    member_resolver: MemberNameResolutionService,
+    pending_report_store: PendingReportStore,
+    actor_user_id: str,
+    actor_role: str | None,
+) -> ReplySpec | None:
+    """Resolve ADD_PROJECT_MEMBER's member_name against the org's real active
+    users BEFORE a draft is ever built (ENTITY_RESOLUTION_PLAN.md ADR-E1) --
+    today the name is only resolved by the backend Handler at execution time
+    (application/projects/handlers.py), so a user confirms a draft that was
+    never capable of succeeding: "Yes" -> "couldn't find an active user
+    named X." That backend resolver is untouched and stays authoritative at
+    execution (ADR-E2) -- this gate's only job is to catch the two cases
+    that would otherwise dead-end, before confirmation:
+
+    - Resolved: an exact match exists. Falls through with `member_name`
+      untouched -- the backend's own exact-match resolver will find the
+      same row again at execution, so nothing needs to be written here.
+    - Ambiguous: one or more near-matches (e.g. a Malayalam transliteration
+      like "Hysam" against a real "Hisham" -- the live bug this fixes), none
+      certain enough to use silently. Holds the event and offers a tappable
+      picker; see runtime/entity_resolution/member_resolution.py's module
+      docstring for why this uses real near-match scoring where
+      workforce/matching.py's match_worker explicitly does not.
+    - Missing: nothing matched. Offers to create the user inline (chaining
+      into a real CREATE_USER workflow, then resuming this request) when the
+      sender's role allows it (ADR-E5); otherwise a plain "ask your admin"
+      reply, same as the disallowed-role path for material creation.
+
+    Never raises: a lookup failure degrades to "let it through unresolved"
+    (None), same posture as every other gate in this module -- the backend's
+    own resolver still runs at execution and will reject honestly if the
+    name really doesn't exist.
+    """
+    if canonical_event.event_type is not CanonicalEventType.ADD_PROJECT_MEMBER_REQUESTED:
+        return None
+    name_hint = canonical_event.fields.get("member_name")
+    if not name_hint:
+        return None
+
+    from workflows.entities import Ambiguous, Missing, Resolved
+
+    try:
+        outcome = await member_resolver.resolve(
+            organization_id=canonical_event.organization_id, name_hint=str(name_hint)
+        )
+    except Exception:
+        _log.exception(
+            "member_name_gate.lookup_failed correlation_id=%s", canonical_event.correlation_id
+        )
+        return None
+
+    if isinstance(outcome, Resolved):
+        return None
+    if isinstance(outcome, Ambiguous):
+        await pending_report_store.set_pending(user_id=actor_user_id, event=canonical_event)
+        return render_member_candidate_picker(str(name_hint), outcome.candidates)
+    assert isinstance(outcome, Missing)
+    if _actor_may_create_user(actor_role):
+        await pending_report_store.set_pending(user_id=actor_user_id, event=canonical_event)
+        return render_member_create_offer(str(name_hint))
+    return ReplySpec(text=render_member_not_found_reply(str(name_hint)))
 
 
 async def _run_project_gate(
@@ -643,8 +736,9 @@ def _seed_project_create_role(
     """Feed the sender's role into the draft, same reasoning as
     _seed_account_admin_role -- defense-in-depth for
     application/projects/create_validation.py's, create_site_validation.
-    py's, and add_member_validation.py's role checks (PROJECT_CREATE,
-    SITE_CREATE, and ADD_PROJECT_MEMBER all share it, same as the gate
+    py's, add_member_validation.py's, and application/users/
+    create_user_validation.py's role checks (PROJECT_CREATE, SITE_CREATE,
+    ADD_PROJECT_MEMBER, and CREATE_USER all share it, same as the gate
     below). Not the primary gate: the _PROJECT_CREATE_ROLES check below
     (before workflow_runtime.start()) already refuses a disallowed role
     before a draft is ever built."""
@@ -652,6 +746,7 @@ def _seed_project_create_role(
         WorkflowKey.PROJECT_CREATE,
         WorkflowKey.SITE_CREATE,
         WorkflowKey.ADD_PROJECT_MEMBER,
+        WorkflowKey.CREATE_USER,
     ):
         return
     event.fields["created_by_role"] = actor.role

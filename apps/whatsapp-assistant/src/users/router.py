@@ -56,6 +56,7 @@ users_table = sa.Table(
     sa.Column("id", sa.UUID, primary_key=True),
     sa.Column("organization_id", sa.UUID),
     sa.Column("email", sa.String),
+    sa.Column("username", sa.String),
     sa.Column("hashed_password", sa.String),
     sa.Column("full_name", sa.String),
     sa.Column("role", sa.String),
@@ -110,7 +111,8 @@ _DEFAULT_ACCESS_POLICY: dict = {"mode": "custom_projects", "projects": []}
 # ---------------------------------------------------------------------------
 class UserResponse(BaseModel):
     id: uuid.UUID
-    email: str
+    email: str | None = None
+    username: str | None = None
     full_name: str
     role: str
     whatsapp_number: str | None = None
@@ -143,6 +145,7 @@ def _row_to_response(row) -> UserResponse:
     return UserResponse(
         id=row.id,
         email=row.email,
+        username=row.username,
         full_name=row.full_name,
         role=row.role,
         whatsapp_number=row.whatsapp_number,

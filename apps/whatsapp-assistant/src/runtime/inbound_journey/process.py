@@ -37,9 +37,11 @@ from runtime.activity_search_service import ActivitySearchService
 from runtime.capability_help import CapabilityHelpService
 from runtime.dpr_request_query import DprRequestQueryService
 from runtime.duplicate_expense_query import DuplicateExpenseQueryService
+from runtime.entity_resolution.member_resolution import MemberNameResolutionService
 from runtime.escalation_query import EscalationCreateService
 from runtime.expense_category_query import ExpenseCategoryQueryService
 from runtime.expense_query_service import ExpenseQueryService
+from runtime.first_message_query import FirstMessageQueryService
 from runtime.inbound_journey._shared import _log
 from runtime.inbound_journey.reply import JourneyResult, _render_reply, _safe
 from runtime.inbound_journey.seeding import (
@@ -47,6 +49,7 @@ from runtime.inbound_journey.seeding import (
     _build_query_pdf,
     _inject_inventory_context,
     _run_material_unit_gates,
+    _run_member_name_gate,
     _run_project_gate,
     _run_site_gate,
     _run_stock_gate,
@@ -116,11 +119,16 @@ _ACCOUNT_ADMIN_DENIED_REPLY = "⛔ Only an admin or finance user can manage acco
 # add_member_validation.py's role set is the same, mirroring
 # projects/router.py's add_project_member REST endpoint (ADMIN-only there is
 # stricter; this WhatsApp path additionally allows PROJECT_MANAGER, matching
-# PROJECT_CREATE/SITE_CREATE's own precedent).
+# PROJECT_CREATE/SITE_CREATE's own precedent). Also gates
+# WorkflowKey.CREATE_USER -- provisioning a brand new person's WhatsApp
+# access is a bigger blast radius than any of the three above, but the same
+# role set was the explicit call here (not ADMIN-only): see
+# application/identity/create_user_validation.py.
 _PROJECT_CREATE_ROLES = frozenset({"ADMIN", "PROJECT_MANAGER"})
 _PROJECT_CREATE_DENIED_REPLY = "⛔ Only an admin or project manager can create a project."
 _SITE_CREATE_DENIED_REPLY = "⛔ Only an admin or project manager can create a site."
 _ADD_PROJECT_MEMBER_DENIED_REPLY = "⛔ Only an admin or project manager can add a project member."
+_CREATE_USER_DENIED_REPLY = "⛔ Only an admin or project manager can add a new user."
 
 # Matches domains/automations/router.py's _TARGET_OTHERS_ROLES and
 # application/automations/create_validation.py's _TARGET_OTHERS_ROLES
@@ -213,6 +221,8 @@ async def process_inbound_message(
     batch_store: PendingBatchStore | None = None,
     escalation_query: EscalationCreateService | None = None,
     capability_help: CapabilityHelpService | None = None,
+    first_message_query: FirstMessageQueryService | None = None,
+    member_resolver: MemberNameResolutionService | None = None,
 ) -> JourneyResult:
     mlog: MessageLogger = message_logger or NoopMessageLogger()
     tlog: TraceLogger = trace_logger or NoopTraceLogger()
@@ -541,6 +551,27 @@ async def process_inbound_message(
             )
             raise
 
+        # --- Member-name resolution gate ---
+        # ADD_PROJECT_MEMBER's member_name is still free text at this point
+        # -- resolve it against the org's real active users before the
+        # planner or a confirmation prompt ever sees it, so an unmatched or
+        # near-miss name (the live Hysam/Hisham bug, ENTITY_RESOLUTION_PLAN.md
+        # §1) is caught here instead of as a late "couldn't find an active
+        # user" after the user already tapped Yes. See _run_member_name_gate.
+        if (
+            held_reply is None
+            and canonical_event.event_type is CanonicalEventType.ADD_PROJECT_MEMBER_REQUESTED
+            and member_resolver is not None
+            and pending_report_store is not None
+        ):
+            held_reply = await _run_member_name_gate(
+                canonical_event,
+                member_resolver=member_resolver,
+                pending_report_store=pending_report_store,
+                actor_user_id=actor_user_id,
+                actor_role=actor.role if actor is not None else None,
+            )
+
         # --- Material/unit resolution gate ---
         # A material report can be otherwise complete (material_name/quantity/
         # unit all present -> ACTIONABLE) but the reported material/unit text
@@ -826,20 +857,16 @@ async def process_inbound_message(
                     # role checks (fed by _seed_project_create_role above)
                     # are the defense-in-depth backstop if this is ever
                     # bypassed.
-                    if planner_decision.workflow_key in (
-                        WorkflowKey.PROJECT_CREATE,
-                        WorkflowKey.SITE_CREATE,
-                        WorkflowKey.ADD_PROJECT_MEMBER,
-                    ) and str(getattr(actor, "role", None) or "").strip().upper() not in (
-                        _PROJECT_CREATE_ROLES
-                    ):
-                        denied_reply = (
-                            _PROJECT_CREATE_DENIED_REPLY
-                            if planner_decision.workflow_key is WorkflowKey.PROJECT_CREATE
-                            else _SITE_CREATE_DENIED_REPLY
-                            if planner_decision.workflow_key is WorkflowKey.SITE_CREATE
-                            else _ADD_PROJECT_MEMBER_DENIED_REPLY
-                        )
+                    _project_create_denied_replies = {
+                        WorkflowKey.PROJECT_CREATE: _PROJECT_CREATE_DENIED_REPLY,
+                        WorkflowKey.SITE_CREATE: _SITE_CREATE_DENIED_REPLY,
+                        WorkflowKey.ADD_PROJECT_MEMBER: _ADD_PROJECT_MEMBER_DENIED_REPLY,
+                        WorkflowKey.CREATE_USER: _CREATE_USER_DENIED_REPLY,
+                    }
+                    if planner_decision.workflow_key in _project_create_denied_replies and str(
+                        getattr(actor, "role", None) or ""
+                    ).strip().upper() not in _PROJECT_CREATE_ROLES:
+                        denied_reply = _project_create_denied_replies[planner_decision.workflow_key]
                         await send_text(message.sender.wa_id, denied_reply)
                         await _safe(
                             mlog.log_reply(correlation_id=correlation_id, reply=denied_reply)
@@ -990,7 +1017,30 @@ async def process_inbound_message(
     # held_reply, when set, always wins: the report is being held pending a
     # material/unit/project clarification, so nothing from planner/workflow
     # ran this turn.
-    reply = held_reply or _render_reply(workflow_run, workflow_resume, planner_decision, resolved)
+    # Only the UNRECOGNIZED greeting branch changes copy on this, so the
+    # database read is skipped for every other outcome (see
+    # runtime/first_message_query.py, and _render_reply's own branch).
+    is_first_message = False
+    if (
+        first_message_query is not None
+        and held_reply is None
+        and workflow_run is None
+        and workflow_resume is None
+        and planner_decision is not None
+        and planner_decision.decision_type is PlannerDecisionType.DIRECT_REPLY
+        and planner_decision.reason is CanonicalEventType.UNRECOGNIZED
+    ):
+        is_first_message = await first_message_query.is_first_message(
+            sender_wa_id=message.sender.wa_id, correlation_id=correlation_id
+        )
+
+    reply = held_reply or _render_reply(
+        workflow_run,
+        workflow_resume,
+        planner_decision,
+        resolved,
+        is_first_message=is_first_message,
+    )
 
     # Attach the low-confidence caveat (if any) ONLY to a freshly-started
     # confirmation for THIS message (workflow_run.status STARTED). Never on

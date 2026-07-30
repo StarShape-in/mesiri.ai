@@ -207,6 +207,15 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     # and runtime/inbound_journey.py's project-selection gate) -- same
     # redis_client, same never-authoritative principle.
     pending_report_store = PendingReportStore(redis_client)
+    # The shared Plan store (ENTITY_RESOLUTION_PLAN.md / COMPOSITE_REQUEST_
+    # PLAN_LAYER.md) -- one plan per user, same redis_client, same
+    # never-authoritative principle. This layer's only current producer is
+    # start_member_create_plan (the CREATE_USER -> ADD_PROJECT_MEMBER chain);
+    # the composite-request plan layer's Phase 4 is a second producer into
+    # this same store, not a second store.
+    from planning.plan_store import PlanStore
+
+    plan_store = PlanStore(redis_client)
     # Holds a genuinely new image awaiting "what is this photo for?" (see
     # interactions/pending_media.py and interactions/image_purpose.py) --
     # same redis_client, same never-authoritative principle.
@@ -492,6 +501,27 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         AddProjectMemberExecutionDispatcher(add_project_member_handler), "membership"
     )
 
+    # Create user: same in-process capability-boundary wiring as
+    # Project/Site creation above. Wrapped in ProjectingExecutionDispatcher
+    # with entity_type "user" -- same as users/router.py's own REST
+    # create_user endpoint calling project_entity("user", user_id) after its
+    # own insert, so the new person is immediately resolvable by name (e.g.
+    # so "add them to Skyline Towers" right after works without waiting for
+    # the next reconcile tick).
+    from mesiri.application.identity.create_user_dispatcher import CreateUserExecutionDispatcher
+    from mesiri.application.identity.handlers import CreateUserHandler
+    from mesiri.infrastructure.postgres.repositories.create_user_execution import (
+        PostgresCreateUserExecutionRepository,
+    )
+
+    create_user_handler = CreateUserHandler(
+        PostgresCreateUserExecutionRepository(),
+        db=material_db,
+    )
+    create_user_dispatcher = ProjectingExecutionDispatcher(
+        CreateUserExecutionDispatcher(create_user_handler), "user"
+    )
+
     execution_dispatcher = ActionTypeRoutingDispatcher(
         {
             DraftActionType.RECORD_MATERIAL_RECEIPT: material_dispatcher,
@@ -510,6 +540,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
             DraftActionType.CREATE_SITE: create_site_dispatcher,
             DraftActionType.CREATE_AUTOMATION: create_automation_dispatcher,
             DraftActionType.ADD_PROJECT_MEMBER: add_project_member_dispatcher,
+            DraftActionType.CREATE_USER: create_user_dispatcher,
         }
     )
     # Read-only inventory lookups for the material.inventory_query workflow --
@@ -597,6 +628,17 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from runtime.escalation_query import EscalationCreateService
 
     escalation_query = EscalationCreateService(material_db)
+    # Answers "has this number ever messaged us before?", the one thing the
+    # long-dead is_first_message flag needed. See first_message_query.py.
+    from runtime.first_message_query import FirstMessageQueryService
+
+    first_message_query = FirstMessageQueryService(material_db)
+    # Resolves ADD_PROJECT_MEMBER's member_name against the org's real active
+    # users before a draft is ever built (ENTITY_RESOLUTION_PLAN.md ADR-E1).
+    # See runtime/entity_resolution/member_resolution.py.
+    from runtime.entity_resolution.member_resolution import MemberNameResolutionService
+
+    member_resolver = MemberNameResolutionService(material_db)
     # #1 Multi-Activity / #13 Cross-Module Trigger: queues segments AFTER
     # the first in a multi-segment message, started one at a time as each
     # prior segment's confirmation resolves. See workflows/batch_store.py
@@ -777,6 +819,9 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         evidence_query=evidence_query,
         escalation_query=escalation_query,
         capability_help=capability_help,
+        first_message_query=first_message_query,
+        member_resolver=member_resolver,
+        plan_store=plan_store,
         labour_query_service=labour_query_service,
         activity_search_service=activity_search_service,
         dpr_request_query=dpr_request_query,
