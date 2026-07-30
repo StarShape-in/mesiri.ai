@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import uuid
+from decimal import Decimal
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -368,6 +369,78 @@ class PostgresMaterialReadRepository:
             )
         return rows
 
+    async def find_reversal_of(
+        self, organization_id: uuid.UUID, original_id: uuid.UUID
+    ) -> dict | None:
+        """The correcting row already posted against `original_id`, if any.
+
+        A reversal of a receipt is written into material_usage and vice versa,
+        so both tables are checked -- the caller knows which direction it is
+        correcting, but not which table an earlier correction landed in if the
+        data predates that convention.
+        """
+        for table in (_material_receipts, _material_usage):
+            res = await self.conn.execute(
+                sa.select(
+                    table.c.id, table.c.occurred_date, table.c.created_at, table.c.created_by
+                ).where(
+                    table.c.organization_id == organization_id,
+                    table.c.reverses_movement_id == original_id,
+                )
+            )
+            row = res.mappings().first()
+            if row is not None:
+                return dict(row)
+        return None
+
+    async def lock_stock_for_update(
+        self, site_id: uuid.UUID | None, material_id: uuid.UUID
+    ) -> None:
+        """Serialise concurrent stock decisions for one site+material.
+
+        Stock is a SUM over rows that do not exist yet, so there is no row to
+        SELECT ... FOR UPDATE. Without this, two outflows racing against the
+        same balance both read "10 available", both pass the guard, and both
+        insert -- the check is worthless in exactly the case it exists for.
+
+        Transaction-scoped: released on COMMIT or ROLLBACK with no cleanup path
+        to forget. Only writers touching the SAME site+material contend; every
+        other material, site, project and module is unaffected. A single lock
+        with no ordering cannot deadlock.
+        """
+        await self.conn.execute(
+            sa.text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": f"{site_id}:{material_id}"},
+        )
+
+    async def get_available_stock(
+        self,
+        organization_id: uuid.UUID,
+        site_id: uuid.UUID | None,
+        material_id: uuid.UUID,
+    ) -> Decimal:
+        """Current balance for one site+material, from the movement ledger.
+
+        Returns 0 when the material has never moved at this site -- which is
+        the truthful answer, not a missing one: you cannot issue what was never
+        received.
+        """
+        signed_qty = sa.case(
+            (_material_movements.c.movement_type == "RECEIPT", _material_movements.c.quantity),
+            else_=-_material_movements.c.quantity,
+        )
+        where = [
+            _material_movements.c.organization_id == organization_id,
+            _material_movements.c.material_id == material_id,
+        ]
+        where.append(
+            _material_movements.c.site_id.is_(None)
+            if site_id is None
+            else _material_movements.c.site_id == site_id
+        )
+        res = await self.conn.execute(sa.select(sa.func.sum(signed_qty)).where(*where))
+        return res.scalar_one_or_none() or Decimal("0")
+
     async def get_ledger(
         self,
         organization_id: uuid.UUID,
@@ -531,12 +604,26 @@ class PostgresMaterialCatalogRepository:
         row = res.mappings().first()
         return dict(row) if row else None
 
-    async def get_by_name(self, organization_id: uuid.UUID, name: str) -> dict | None:
-        stmt = sa.select(_materials_catalog).where(
+    async def get_by_name(
+        self, organization_id: uuid.UUID, name: str, *, exclude_id: uuid.UUID | None = None
+    ) -> dict | None:
+        """Case- and whitespace-insensitive name lookup within one organization.
+
+        Matches migration 0459's `uq_materials_catalog_org_name_ci`, so the
+        409 raised by create/update fires for exactly the names the database
+        would reject. Exact-match here would let "cement" through when
+        "Cement" exists and then fail on the constraint with a 500.
+
+        `exclude_id` lets the update path ask "does any OTHER material own this
+        name?" without matching the row being renamed.
+        """
+        where = [
             _materials_catalog.c.organization_id == organization_id,
-            _materials_catalog.c.name == name,
-        )
-        res = await self.conn.execute(stmt)
+            sa.func.lower(sa.func.btrim(_materials_catalog.c.name)) == name.strip().lower(),
+        ]
+        if exclude_id is not None:
+            where.append(_materials_catalog.c.id != exclude_id)
+        res = await self.conn.execute(sa.select(_materials_catalog).where(*where))
         row = res.mappings().first()
         return dict(row) if row else None
 

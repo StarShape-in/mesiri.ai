@@ -27,6 +27,11 @@ class MaterialReceiptResponse(BaseModel):
     movement_reason: str
     notes: str | None
     reverses_movement_id: uuid.UUID | None
+    # True when a correction has already been posted against THIS movement, so
+    # the UI can hide "Correct" rather than offer an action that now 409s.
+    # Absent on list endpoints (it needs a per-row lookup); only the detail
+    # endpoints populate it, which is where the button actually lives.
+    already_reversed: bool = False
     created_at: datetime.datetime
     created_by: uuid.UUID
     updated_at: datetime.datetime
@@ -56,6 +61,11 @@ class MaterialUsageResponse(BaseModel):
     movement_reason: str
     notes: str | None
     reverses_movement_id: uuid.UUID | None
+    # True when a correction has already been posted against THIS movement, so
+    # the UI can hide "Correct" rather than offer an action that now 409s.
+    # Absent on list endpoints (it needs a per-row lookup); only the detail
+    # endpoints populate it, which is where the button actually lives.
+    already_reversed: bool = False
     created_at: datetime.datetime
     created_by: uuid.UUID
     updated_at: datetime.datetime

@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import contextlib
 import datetime
 import json
 import uuid
 from decimal import Decimal
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from mesiri.authorization.context import AuthorizationContext
@@ -98,6 +100,64 @@ async def _publish_outbox_event(
             "payload": json.dumps(payload),
             "correlation_id": correlation_id,
         },
+    )
+
+
+async def _claim_idempotency_key(
+    conn: AsyncConnection, key: str, command_type: str
+) -> dict | None:
+    """Claim `key` for this request, or return the completed original's result.
+
+    The REST materials path mints its own row id server-side, so a retried
+    request -- a double tap, or a client timing out and resending on site wifi
+    -- used to create a second, equally real movement that nobody could tell
+    apart from a genuine second delivery. The WhatsApp path has been protected
+    since 0160 via this same table; this brings REST to parity rather than
+    inventing a second mechanism.
+
+    Returns None when the caller won the claim and should proceed. Returns the
+    stored result dict when this key already completed, so the caller replays
+    it instead of writing again. Runs on the request's existing connection, so
+    the claim commits or rolls back with the movement it guards.
+    """
+    row = (
+        await conn.execute(
+            text("SELECT status, result FROM idempotency_keys WHERE key = :key"),
+            {"key": key},
+        )
+    ).mappings().first()
+    if row is not None and row["status"] == "completed" and row["result"] is not None:
+        stored = row["result"]
+        return json.loads(stored) if isinstance(stored, str) else stored
+
+    claimed = (
+        await conn.execute(
+            text(
+                "INSERT INTO idempotency_keys (key, command_type, status) "
+                "VALUES (:key, :command_type, 'in_progress') "
+                "ON CONFLICT (key) DO NOTHING RETURNING key"
+            ),
+            {"key": key, "command_type": command_type},
+        )
+    ).first()
+    if claimed is None:
+        # Another transaction holds this key. Postgres's row lock means we only
+        # get here once that transaction settled, so an in_progress row now is
+        # one that failed and rolled back its work -- retrying is correct.
+        raise HTTPException(
+            status_code=409,
+            detail="A request with this Idempotency-Key is already being processed.",
+        )
+    return None
+
+
+async def _complete_idempotency_key(conn: AsyncConnection, key: str, result: dict) -> None:
+    await conn.execute(
+        text(
+            "UPDATE idempotency_keys SET status = 'completed', "
+            "result = CAST(:result AS jsonb), completed_at = now() WHERE key = :key"
+        ),
+        {"result": json.dumps(result, default=str), "key": key},
     )
 
 
@@ -195,9 +255,16 @@ async def create_material(
         raise HTTPException(status_code=422, detail="default_unit_id is not a valid active unit")
 
     repo = PostgresMaterialCatalogRepository(conn)
+    # Case/whitespace-insensitive, matching migration 0459's unique index --
+    # "cement" and "Cement" are one material, and letting the second through
+    # would split one stockpile across two catalog rows (and make the WhatsApp
+    # resolver, which is already lower()-based, pick between them arbitrarily).
     existing = await repo.get_by_name(auth_context.organization_id, name)
     if existing is not None:
-        raise HTTPException(status_code=409, detail="A Material with this name already exists")
+        raise HTTPException(
+            status_code=409,
+            detail=f"A Material named '{existing['name']}' already exists. Use that one instead.",
+        )
     # Materials Catalog is org-scoped (no project_id/site_id), so it does not
     # fit the Timeline projector's per-project/site aggregate model — creation
     # is audited via the row's own created_at/created_by columns instead of
@@ -241,6 +308,16 @@ async def update_material(
             raise HTTPException(status_code=422, detail="default_unit_id is not a valid active unit")
 
     name = body.name.strip() if body.name else None
+    if name:
+        clash = await repo.get_by_name(
+            auth_context.organization_id, name, exclude_id=material_id
+        )
+        if clash is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Another Material is already named '{clash['name']}'.",
+            )
+
     updated = await repo.update(
         auth_context.organization_id,
         material_id,
@@ -337,6 +414,9 @@ async def get_inflow(
     project_ids, denied = _resolve_project_ids(auth_context, item["project_id"])
     if denied:
         raise HTTPException(status_code=403, detail="Not authorized for this movement")
+    item["already_reversed"] = (
+        await repo.find_reversal_of(auth_context.organization_id, receipt_id)
+    ) is not None
     return item
 
 
@@ -397,6 +477,9 @@ async def get_outflow(
     project_ids, denied = _resolve_project_ids(auth_context, item["project_id"])
     if denied:
         raise HTTPException(status_code=403, detail="Not authorized for this movement")
+    item["already_reversed"] = (
+        await repo.find_reversal_of(auth_context.organization_id, usage_id)
+    ) is not None
     return item
 
 
@@ -423,6 +506,53 @@ async def list_inventory(
         site_id=site_id,
         material_id=material_id,
     )
+
+
+@router.get("/stock-check")
+async def check_available_stock(
+    material_id: uuid.UUID,
+    site_id: uuid.UUID | None = None,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Current balance for one Site + Material, so an entry form can warn
+    before the user submits rather than after.
+
+    Deliberately narrow: `/inventory` can answer this via `?material_id=`, but
+    it returns the full stock row for every site the caller can see, which is a
+    lot of payload for one number a dialog re-fetches on every material change.
+    """
+    if site_id is not None:
+        site_row = (
+            await conn.execute(
+                text("SELECT project_id FROM sites WHERE id = :site_id AND organization_id = :org"),
+                {"site_id": site_id, "org": auth_context.organization_id},
+            )
+        ).first()
+        if site_row is None:
+            raise HTTPException(status_code=404, detail="Site not found")
+        if _site_filter_denied(auth_context, site_row[0], site_id):
+            raise HTTPException(status_code=403, detail="Not authorized for this site")
+        _, denied = _resolve_project_ids(auth_context, site_row[0])
+        if denied:
+            raise HTTPException(status_code=403, detail="Not authorized for this site")
+
+    repo = PostgresMaterialReadRepository(conn)
+    catalog = await PostgresMaterialCatalogRepository(conn).get_by_id(
+        auth_context.organization_id, material_id
+    )
+    if catalog is None:
+        raise HTTPException(status_code=404, detail="Material not found")
+
+    available = await repo.get_available_stock(
+        auth_context.organization_id, site_id, material_id
+    )
+    return {
+        "material_id": material_id,
+        "site_id": site_id,
+        "available": available,
+        "unit": catalog["default_unit"],
+    }
 
 
 @router.get("/ledger/{site_id}/{material_id}", response_model=MaterialLedgerResponse)
@@ -488,6 +618,11 @@ class MaterialOutflowCreate(BaseModel):
     work_item: str | None = None
     notes: str | None = None
     occurred_date: datetime.date
+    # Defaults True so the WhatsApp and mobile write paths are unchanged by
+    # this guard; the dashboard sends False and surfaces the confirmation.
+    # Negative stock is a real situation (deliveries recorded late), so this is
+    # a confirmation, never a prohibition.
+    allow_negative: bool = True
 
 
 async def _resolve_and_validate_material_unit(
@@ -523,10 +658,21 @@ async def _resolve_and_validate_material_unit(
 @router.post("/inflows", status_code=201)
 async def create_inflow(
     body: MaterialInflowCreate,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     auth_context: AuthorizationContext = Depends(get_auth_context),
     conn: AsyncConnection = Depends(get_db_conn),
 ):
-    """Log a material receipt/inflow (web or mobile direct entry)."""
+    """Log a material receipt/inflow (web or mobile direct entry).
+
+    Send an `Idempotency-Key` header to make retries safe: the same key twice
+    returns the first result rather than recording a second delivery. Omitting
+    it keeps the previous behaviour exactly.
+    """
+    if idempotency_key:
+        replayed = await _claim_idempotency_key(conn, idempotency_key, "material_inflow_rest")
+        if replayed is not None:
+            return {**replayed, "status": "replayed"}
+
     if not is_valid_receipt_reason(body.movement_reason):
         raise HTTPException(
             status_code=422, detail=f"Invalid inflow movement_reason: {body.movement_reason}"
@@ -602,16 +748,32 @@ async def create_inflow(
             "occurred_date_source": "reported",
         },
     )
-    return {"id": row_id, "status": "success"}
+    result = {"id": row_id, "status": "success"}
+    if idempotency_key:
+        await _complete_idempotency_key(conn, idempotency_key, result)
+    return result
 
 
 @router.post("/outflows", status_code=201)
 async def create_outflow(
     body: MaterialOutflowCreate,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     auth_context: AuthorizationContext = Depends(get_auth_context),
     conn: AsyncConnection = Depends(get_db_conn),
 ):
-    """Log a material usage/outflow (web or mobile direct entry)."""
+    """Log a material usage/outflow (web or mobile direct entry).
+
+    Send an `Idempotency-Key` header to make retries safe (see create_inflow).
+
+    Set `allow_negative` to record an issue that takes stock below zero. It
+    defaults to True so WhatsApp and mobile keep their current behaviour; the
+    dashboard opts in to the guard and asks the user to confirm instead.
+    """
+    if idempotency_key:
+        replayed = await _claim_idempotency_key(conn, idempotency_key, "material_outflow_rest")
+        if replayed is not None:
+            return {**replayed, "status": "replayed"}
+
     if not is_valid_usage_reason(body.movement_reason):
         raise HTTPException(
             status_code=422, detail=f"Invalid outflow movement_reason: {body.movement_reason}"
@@ -630,6 +792,31 @@ async def create_outflow(
     material, unit = await _resolve_and_validate_material_unit(
         conn, auth_context.organization_id, body.material_id, body.unit_id
     )
+
+    if not body.allow_negative:
+        read_repo = PostgresMaterialReadRepository(conn)
+        # Lock BEFORE reading. Stock is a SUM over rows that do not exist yet,
+        # so there is nothing to SELECT ... FOR UPDATE -- without this, two
+        # concurrent issues of 8 against 10 both read 10, both pass, and both
+        # insert, leaving -6 with each user told the stock was fine.
+        await read_repo.lock_stock_for_update(body.site_id, material["id"])
+        available = await read_repo.get_available_stock(
+            auth_context.organization_id, body.site_id, material["id"]
+        )
+        if body.quantity > available:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": (
+                        f"Only {available} {unit['code']} of {material['name']} "
+                        f"in stock, but {body.quantity} was entered."
+                    ),
+                    "available": str(available),
+                    "requested": str(body.quantity),
+                    "unit": unit["code"],
+                    "material_name": material["name"],
+                },
+            )
 
     row_id = uuid.uuid4()
     await conn.execute(
@@ -687,7 +874,10 @@ async def create_outflow(
             "occurred_date_source": "reported",
         },
     )
-    return {"id": row_id, "status": "success"}
+    result = {"id": row_id, "status": "success"}
+    if idempotency_key:
+        await _complete_idempotency_key(conn, idempotency_key, result)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -696,6 +886,58 @@ async def create_outflow(
 class MaterialReversalCreate(BaseModel):
     reason_note: str | None = None
     occurred_date: datetime.date | None = None
+
+
+@contextlib.contextmanager
+def _reversal_race_as_conflict():
+    """Turn the 0459 uniqueness violation into the same 409 the pre-check gives.
+
+    Two people tapping Correct at the same moment both pass
+    `_assert_not_already_reversed` (each reads before the other writes). The
+    partial unique index is what actually stops the second one -- this makes
+    that loss read as "already corrected" rather than a 500.
+    """
+    try:
+        yield
+    except IntegrityError as exc:  # pragma: no cover - exercised in integration
+        if "reverses_movement_id" in str(exc.orig):
+            raise HTTPException(
+                status_code=409,
+                detail="This movement was already corrected. Refresh to see the correction.",
+            ) from exc
+        raise
+
+
+async def _assert_not_already_reversed(
+    repo: PostgresMaterialReadRepository,
+    organization_id: uuid.UUID,
+    original_id: uuid.UUID,
+) -> None:
+    """One movement, at most one correction.
+
+    Correcting twice does not undo anything twice -- it posts a second
+    offsetting movement, so a 50-bag receipt reversed twice leaves stock 100
+    bags light, permanently, since the ledger is append-only. Nothing checked
+    this before, and 0310's UNIQUE(source_type, source_id, movement_type) does
+    not catch it (each reversal mints a fresh source_id).
+
+    Migration 0459's partial unique index is the real guard -- this check
+    exists so the user gets a sentence explaining what happened instead of an
+    integrity error. Two simultaneous clicks can still both pass here; the
+    index is what stops the second one, and the caller maps that to this same
+    409 (see the IntegrityError handling in each reverse endpoint).
+    """
+    existing = await repo.find_reversal_of(organization_id, original_id)
+    if existing is not None:
+        when = existing.get("occurred_date")
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This movement was already corrected"
+                + (f" on {when}" if when else "")
+                + ". Correcting it again would double the adjustment."
+            ),
+        )
 
 
 @router.post("/inflows/{receipt_id}/reverse", status_code=201)
@@ -718,35 +960,37 @@ async def reverse_inflow(
     if original is None:
         raise HTTPException(status_code=404, detail="Inflow not found")
     _authorize_write(auth_context, original["project_id"], original["site_id"])
+    await _assert_not_already_reversed(repo, auth_context.organization_id, receipt_id)
 
     row_id = uuid.uuid4()
     occurred_date = body.occurred_date or datetime.date.today()
-    await conn.execute(
-        text(
-            "INSERT INTO material_usage "
-            "(id, organization_id, project_id, site_id, material_name, quantity, unit, unit_id, "
-            "work_item, occurred_date, occurred_date_source, source, movement_reason, notes, "
-            "material_id, reverses_movement_id, created_by) "
-            "VALUES (:id, :organization_id, :project_id, :site_id, :material_name, "
-            ":quantity, :unit, :unit_id, NULL, :occurred_date, 'reported', 'web', "
-            "'ADJUSTMENT_OUT', :notes, :material_id, :reverses_movement_id, :created_by)"
-        ),
-        {
-            "id": row_id,
-            "organization_id": auth_context.organization_id,
-            "project_id": original["project_id"],
-            "site_id": original["site_id"],
-            "material_name": original["material_name"],
-            "quantity": original["quantity"],
-            "unit": original["unit"],
-            "unit_id": original["unit_id"],
-            "occurred_date": occurred_date,
-            "notes": body.reason_note,
-            "material_id": original["material_id"],
-            "reverses_movement_id": receipt_id,
-            "created_by": auth_context.user_id,
-        },
-    )
+    with _reversal_race_as_conflict():
+        await conn.execute(
+            text(
+                "INSERT INTO material_usage "
+                "(id, organization_id, project_id, site_id, material_name, quantity, unit, "
+                "unit_id, work_item, occurred_date, occurred_date_source, source, "
+                "movement_reason, notes, material_id, reverses_movement_id, created_by) "
+                "VALUES (:id, :organization_id, :project_id, :site_id, :material_name, "
+                ":quantity, :unit, :unit_id, NULL, :occurred_date, 'reported', 'web', "
+                "'ADJUSTMENT_OUT', :notes, :material_id, :reverses_movement_id, :created_by)"
+            ),
+            {
+                "id": row_id,
+                "organization_id": auth_context.organization_id,
+                "project_id": original["project_id"],
+                "site_id": original["site_id"],
+                "material_name": original["material_name"],
+                "quantity": original["quantity"],
+                "unit": original["unit"],
+                "unit_id": original["unit_id"],
+                "occurred_date": occurred_date,
+                "notes": body.reason_note,
+                "material_id": original["material_id"],
+                "reverses_movement_id": receipt_id,
+                "created_by": auth_context.user_id,
+            },
+        )
     movements_repo = MaterialMovementsRepository(conn)
     original_movement = await movements_repo.get_by_source("material_receipt", receipt_id)
     await post_material_movement(
@@ -790,35 +1034,37 @@ async def reverse_outflow(
     if original is None:
         raise HTTPException(status_code=404, detail="Outflow not found")
     _authorize_write(auth_context, original["project_id"], original["site_id"])
+    await _assert_not_already_reversed(repo, auth_context.organization_id, usage_id)
 
     row_id = uuid.uuid4()
     occurred_date = body.occurred_date or datetime.date.today()
-    await conn.execute(
-        text(
-            "INSERT INTO material_receipts "
-            "(id, organization_id, project_id, site_id, material_name, quantity, unit, unit_id, "
-            "supplier, occurred_date, occurred_date_source, source, movement_reason, notes, "
-            "material_id, reverses_movement_id, created_by) "
-            "VALUES (:id, :organization_id, :project_id, :site_id, :material_name, "
-            ":quantity, :unit, :unit_id, NULL, :occurred_date, 'reported', 'web', "
-            "'ADJUSTMENT_IN', :notes, :material_id, :reverses_movement_id, :created_by)"
-        ),
-        {
-            "id": row_id,
-            "organization_id": auth_context.organization_id,
-            "project_id": original["project_id"],
-            "site_id": original["site_id"],
-            "material_name": original["material_name"],
-            "quantity": original["quantity"],
-            "unit": original["unit"],
-            "unit_id": original["unit_id"],
-            "occurred_date": occurred_date,
-            "notes": body.reason_note,
-            "material_id": original["material_id"],
-            "reverses_movement_id": usage_id,
-            "created_by": auth_context.user_id,
-        },
-    )
+    with _reversal_race_as_conflict():
+        await conn.execute(
+            text(
+                "INSERT INTO material_receipts "
+                "(id, organization_id, project_id, site_id, material_name, quantity, unit, "
+                "unit_id, supplier, occurred_date, occurred_date_source, source, "
+                "movement_reason, notes, material_id, reverses_movement_id, created_by) "
+                "VALUES (:id, :organization_id, :project_id, :site_id, :material_name, "
+                ":quantity, :unit, :unit_id, NULL, :occurred_date, 'reported', 'web', "
+                "'ADJUSTMENT_IN', :notes, :material_id, :reverses_movement_id, :created_by)"
+            ),
+            {
+                "id": row_id,
+                "organization_id": auth_context.organization_id,
+                "project_id": original["project_id"],
+                "site_id": original["site_id"],
+                "material_name": original["material_name"],
+                "quantity": original["quantity"],
+                "unit": original["unit"],
+                "unit_id": original["unit_id"],
+                "occurred_date": occurred_date,
+                "notes": body.reason_note,
+                "material_id": original["material_id"],
+                "reverses_movement_id": usage_id,
+                "created_by": auth_context.user_id,
+            },
+        )
     movements_repo = MaterialMovementsRepository(conn)
     original_movement = await movements_repo.get_by_source("material_usage", usage_id)
     await post_material_movement(
