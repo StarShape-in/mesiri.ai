@@ -521,6 +521,18 @@ def build_message_handlers(
             # send the image. This keeps the reply feeling instant even when
             # the page-pool is cold.
             await sender.send_text(wa_id, handled.reply_text)
+            if handled.next_segment_reply is not None:
+                # #1 Multi-Activity: the batch's next queued segment, as its
+                # own message -- not concatenated above -- so a confirmable
+                # next segment keeps its Yes/No buttons (see workflows/
+                # batch.py's render_started_segment_reply_spec).
+                await send_reply_spec(
+                    handled.next_segment_reply,
+                    wa_id,
+                    send_text=sender.send_text,
+                    send_list=sender.send_list,
+                    send_button=sender.send_button,
+                )
             if handled.receipt_coro is not None:
                 try:
                     image_bytes = await handled.receipt_coro

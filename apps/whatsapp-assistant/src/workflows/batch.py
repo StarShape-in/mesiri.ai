@@ -22,6 +22,7 @@ extended, not worked around.
 
 from __future__ import annotations
 
+from channel.replies import CONFIRM_BUTTONS, ListRow, ReplySpec
 from mesiri_contracts.application.results.execution_result import ExecutionResult, ExecutionStatus
 from mesiri_contracts.assistant.planner_decision import PlannerDecisionType
 from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
@@ -68,6 +69,12 @@ def format_started_segment_reply(result: WorkflowRunResult | None, progress: Bat
         return f"({progress.index} of {progress.total}) I couldn't understand this part well enough to record it."
     if result.status is WorkflowRunStatus.STARTED:
         return format_batch_prefix(progress) + (result.pending_prompt or "")
+    if result.status is WorkflowRunStatus.AWAITING_INPUT:
+        # A queued segment missing a field (e.g. CREATE_USER's phone number)
+        # asks for it, same as an ordinary single-segment message would --
+        # this fell through to the generic "couldn't start this part" line
+        # below until now, discarding the actual question entirely.
+        return format_batch_prefix(progress) + (result.pending_prompt or "")
     if result.status is WorkflowRunStatus.NO_GRAPH:
         return f"({progress.index} of {progress.total}) That part isn't supported yet."
     if result.status is WorkflowRunStatus.COMPLETED:
@@ -81,6 +88,38 @@ def format_started_segment_reply(result: WorkflowRunResult | None, progress: Bat
     # gate, and a queued segment only ever starts after the PRIOR one fully
     # resolved), but both degrade to the same honest line rather than a crash.
     return f"({progress.index} of {progress.total}) Couldn't start this part — please resend it separately."
+
+
+def render_started_segment_reply_spec(
+    result: WorkflowRunResult | None, progress: BatchProgress
+) -> ReplySpec:
+    """ReplySpec counterpart to format_started_segment_reply -- same text,
+    but carries Yes/No buttons (STARTED) or a tappable list (AWAITING_INPUT
+    with slot_options) instead of collapsing to plain text.
+
+    Sent as its own follow-up message (see interactions/handler.py's
+    InteractionHandled.next_segment_reply), never concatenated into the
+    just-resolved segment's reply -- the same "separate message" shape the
+    worker-promotion/team-photo/project-setup follow-ups already use.
+    Concatenating a confirmable next segment's prompt into one string is
+    exactly how it turned into a "Reply YES to confirm or NO to cancel"
+    line with no buttons to tap, the same bug class the CREATE_USER/
+    account-admin/project-setup fixes closed elsewhere."""
+    text = format_started_segment_reply(result, progress)
+    if result is not None and result.status is WorkflowRunStatus.STARTED:
+        return ReplySpec(text=text, buttons=CONFIRM_BUTTONS)
+    if result is not None and result.status is WorkflowRunStatus.AWAITING_INPUT:
+        options = result.slot_options
+        # Same WhatsApp list constraints as runtime/inbound_journey/reply.py's
+        # render_workflow_run_reply_spec -- degrade to plain text (still
+        # answerable by typing) rather than send a request Meta would reject.
+        if options and 1 < len(options) <= 10 and all(len(o.label) <= 24 for o in options):
+            return ReplySpec(
+                text=text,
+                list_button_label="Choose one",
+                list_rows=tuple(ListRow(o.value, o.label) for o in options),
+            )
+    return ReplySpec(text=text)
 
 
 def summarize_batch_outcome(

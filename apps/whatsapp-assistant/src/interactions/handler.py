@@ -58,7 +58,7 @@ from workflows import (
 )
 from workflows.batch import (
     format_batch_summary,
-    format_started_segment_reply,
+    render_started_segment_reply_spec,
     start_segment,
     summarize_batch_outcome,
 )
@@ -116,6 +116,13 @@ class InteractionHandled:
     receipt_coro: Coroutine[Any, Any, bytes | None] | None = field(default=None, repr=False)
     project_id: str | None = None
     site_id: str | None = None
+    # Set only when this resolution advanced a multi-segment batch to its
+    # next queued segment -- sent as a SEPARATE follow-up message (see
+    # workflows/batch.py's render_started_segment_reply_spec) rather than
+    # folded into reply_text, so a confirmable next segment gets real Yes/No
+    # buttons instead of a plain-text "Reply YES/NO" line concatenated onto
+    # the segment that just resolved.
+    next_segment_reply: ReplySpec | None = None
 
 
 class InteractionHandler:
@@ -143,7 +150,13 @@ class InteractionHandler:
 
     async def _resume_and_render(
         self, user_id: str, loaded, resume_action, *, log_prefix: str, actor: ActorIdentity | None = None
-    ) -> tuple[WorkflowResumeResult, str, ExecutionResult | None, Coroutine[Any, Any, bytes | None] | None]:
+    ) -> tuple[
+        WorkflowResumeResult,
+        str,
+        ExecutionResult | None,
+        Coroutine[Any, Any, bytes | None] | None,
+        ReplySpec | None,
+    ]:
         """Resume the workflow and, if it lands on CONFIRMED and a dispatcher is
         wired (M8), execute the domain write synchronously and reflect the real
         outcome in the reply. Shared by the fast and slow paths so a confirm
@@ -257,11 +270,14 @@ class InteractionHandler:
         # #1 Multi-Activity / #13 Cross-Module Trigger: this resolution may
         # be one segment of a multi-segment batch (runtime/inbound_journey.py
         # queued the rest after the first segment started -- see
-        # workflows/batch_store.py). Record this segment's outcome and
-        # either start the next queued one (appending ITS prompt to the same
-        # reply) or, if this was the last, append the whole batch's summary.
-        # A no-op for the overwhelming common case: has_pending is False for
-        # every ordinary single-segment message.
+        # workflows/batch_store.py). Record this segment's outcome and either
+        # start the next queued one (its own follow-up ReplySpec -- SEE
+        # next_segment_reply below, not concatenated into reply_text, so a
+        # confirmable next segment keeps its Yes/No buttons) or, if this was
+        # the last, append the whole batch's summary. A no-op for the
+        # overwhelming common case: has_pending is False for every ordinary
+        # single-segment message.
+        next_segment_reply: ReplySpec | None = None
         if self._batch_store is not None and self._planner is not None:
             has_batch = await self._batch_store.has_pending(user_id=user_id)
             if has_batch:
@@ -275,13 +291,13 @@ class InteractionHandler:
                     next_run = await start_segment(
                         next_event, planner=self._planner, workflow_runtime=self._runtime
                     )
-                    reply_text = f"{reply_text}\n\n{format_started_segment_reply(next_run, progress)}"
+                    next_segment_reply = render_started_segment_reply_spec(next_run, progress)
                 else:
                     outcomes = await self._batch_store.get_outcomes(user_id=user_id)
                     reply_text = reply_text + format_batch_summary(outcomes)
                     await self._batch_store.clear(user_id=user_id)
 
-        return result, reply_text, execution_result, receipt_coro
+        return result, reply_text, execution_result, receipt_coro, next_segment_reply
 
     async def handle_fast_path(
         self, user_id: str, message: NormalizedMessage, actor: ActorIdentity | None = None
@@ -312,7 +328,7 @@ class InteractionHandler:
             )
             return None
 
-        result, reply_text, execution_result, receipt_coro = await self._resume_and_render(
+        result, reply_text, execution_result, receipt_coro, next_segment_reply = await self._resume_and_render(
             user_id, loaded, decision.resume_action, log_prefix="interaction", actor=actor
         )
         return InteractionHandled(
@@ -320,6 +336,7 @@ class InteractionHandler:
             reply_text=reply_text,
             execution_result=execution_result,
             receipt_coro=receipt_coro,
+            next_segment_reply=next_segment_reply,
             project_id=str(loaded.state.project_id) if loaded.state.project_id else None,
             site_id=str(loaded.state.site_id) if loaded.state.site_id else None,
         )
@@ -641,6 +658,7 @@ class InteractionHandler:
         execution_result: ExecutionResult | None = None
         reply_text: str | None = None
         receipt_coro: Coroutine[Any, Any, bytes | None] | None = None
+        next_segment_reply: ReplySpec | None = None
 
         for segment in spec.segments:
             if segment.intent == InteractionIntent.UNRELATED:
@@ -680,12 +698,14 @@ class InteractionHandler:
                 continue
 
             if handled_result is None:
-                result, reply_text, execution_result, receipt_coro = await self._resume_and_render(
-                    user_id,
-                    loaded,
-                    decision.resume_action,
-                    log_prefix="interaction.slow_path",
-                    actor=actor,
+                result, reply_text, execution_result, receipt_coro, next_segment_reply = (
+                    await self._resume_and_render(
+                        user_id,
+                        loaded,
+                        decision.resume_action,
+                        log_prefix="interaction.slow_path",
+                        actor=actor,
+                    )
                 )
                 handled_result = result
             continue
@@ -699,6 +719,7 @@ class InteractionHandler:
                 execution_result=execution_result,
                 unrelated_text=unrelated_text,
                 receipt_coro=receipt_coro,
+                next_segment_reply=next_segment_reply,
                 project_id=str(loaded.state.project_id) if loaded.state.project_id else None,
                 site_id=str(loaded.state.site_id) if loaded.state.site_id else None,
             )

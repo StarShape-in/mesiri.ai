@@ -17,11 +17,13 @@ from workflows.batch import (
     format_batch_prefix,
     format_batch_summary,
     format_started_segment_reply,
+    render_started_segment_reply_spec,
     start_segment,
     summarize_batch_outcome,
 )
 from workflows.batch_store import BatchProgress
 from workflows.runtime import (
+    SlotCandidate,
     WorkflowResumeResult,
     WorkflowResumeStatus,
     WorkflowRunResult,
@@ -161,6 +163,19 @@ def test_format_started_segment_reply_when_planner_declined():
     assert "couldn't understand" in reply.lower()
 
 
+def test_format_started_segment_reply_asks_the_question_on_awaiting_input():
+    awaiting = WorkflowRunResult.awaiting_input(
+        workflow_key=WorkflowKey.ACTIVITY_CONTINUATION,
+        correlation_id="cor_1",
+        workflow_instance_id="wf_3",
+        pending_prompt="What's their WhatsApp number?",
+    )
+    reply = format_started_segment_reply(awaiting, BatchProgress(index=1, total=2, outcomes=()))
+    # Previously fell through to the generic "couldn't start this part"
+    # fallback, discarding the actual question the workflow was asking.
+    assert reply == "(1 of 2) What's their WhatsApp number?"
+
+
 def test_format_started_segment_reply_no_graph():
     result = WorkflowRunResult.no_graph(workflow_key=WorkflowKey.ACTIVITY_CONTINUATION, correlation_id="cor_1")
     reply = format_started_segment_reply(result, BatchProgress(index=2, total=2, outcomes=()))
@@ -261,3 +276,70 @@ def test_format_batch_summary_lists_every_outcome_in_order():
 
 def test_format_batch_summary_empty_outcomes_is_empty_string():
     assert format_batch_summary(()) == ""
+
+
+# --- render_started_segment_reply_spec ---------------------------------------
+# The bug this closes: the batch continuation used to concatenate
+# format_started_segment_reply's plain string onto the JUST-RESOLVED segment's
+# reply, so a next segment that started a real confirmable draft (STARTED)
+# rendered "Reply YES to confirm or NO to cancel" with no tappable buttons --
+# same bug class as the CREATE_USER/account-admin/project-setup fixes.
+
+
+def test_started_segment_reply_spec_carries_yes_no_buttons():
+    from mesiri_contracts.assistant.draft_action import DraftActionType
+    from mesiri_contracts.assistant.v2.draft_action import DraftActionV2
+
+    draft = DraftActionV2(
+        draft_id="draft_2",
+        correlation_id="cor_1",
+        workflow_instance_id="wf_2",
+        action_type=DraftActionType.ADD_PROGRESS_UPDATE,
+        organization_id=ORG,
+        user_id=USR,
+        fields={},
+    )
+    started = WorkflowRunResult.started(
+        workflow_key=WorkflowKey.ACTIVITY_CONTINUATION,
+        correlation_id="cor_1",
+        workflow_instance_id="wf_2",
+        draft_action=draft,
+        pending_prompt="Confirm this update?",
+    )
+    spec = render_started_segment_reply_spec(started, BatchProgress(index=2, total=3, outcomes=()))
+    assert spec.text == "(2 of 3) Confirm this update?"
+    assert spec.buttons is not None
+    assert {b.title for b in spec.buttons} == {"Yes", "No"}
+
+
+def test_started_segment_reply_spec_carries_a_tappable_list_for_slot_options():
+    awaiting = WorkflowRunResult.awaiting_input(
+        workflow_key=WorkflowKey.ACTIVITY_CONTINUATION,
+        correlation_id="cor_1",
+        workflow_instance_id="wf_3",
+        pending_prompt="Which account?",
+        slot_options=(
+            SlotCandidate(value="acc_1", label="Site Cash"),
+            SlotCandidate(value="acc_2", label="Petty Cash"),
+        ),
+    )
+    spec = render_started_segment_reply_spec(awaiting, BatchProgress(index=1, total=2, outcomes=()))
+    assert spec.text == "(1 of 2) Which account?"
+    assert spec.list_rows is not None
+    assert {row.title for row in spec.list_rows} == {"Site Cash", "Petty Cash"}
+    assert spec.buttons is None
+
+
+def test_started_segment_reply_spec_plain_text_when_planner_declined():
+    spec = render_started_segment_reply_spec(None, BatchProgress(index=3, total=3, outcomes=()))
+    assert spec.buttons is None
+    assert spec.list_rows is None
+    assert "couldn't understand" in spec.text.lower()
+
+
+def test_started_segment_reply_spec_plain_text_on_no_graph():
+    result = WorkflowRunResult.no_graph(workflow_key=WorkflowKey.ACTIVITY_CONTINUATION, correlation_id="cor_1")
+    spec = render_started_segment_reply_spec(result, BatchProgress(index=2, total=2, outcomes=()))
+    assert spec.buttons is None
+    assert spec.list_rows is None
+    assert "supported" in spec.text.lower()
