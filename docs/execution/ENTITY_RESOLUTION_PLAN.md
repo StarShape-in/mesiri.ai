@@ -121,7 +121,7 @@ workflow today provides at most one entity — a workflow that creates a user
 disruptive than starting wide.
 
 These two fields are shared with the Composite Request Plan layer, which reads
-the same table forwards while this layer reads it backwards (see §9).
+the same table forwards while this layer reads it backwards (see §8).
 
 Then *"a USER is missing — what now?"* is a **lookup**, not a branch:
 
@@ -152,13 +152,20 @@ for:
   → …and Hysam is added to the hospital project as PM. Done.
 ```
 
-**The substrate already exists.** `PendingReportStore` holds one
-`CanonicalEventV2` per user (pop-once, 10-minute TTL), and `_plan_and_run` is
-already shared by all seven resume functions. The generalisation is small:
-hold the event *plus* which entity is missing and which field to patch, then
-re-run `_plan_and_run` after the provider workflow succeeds. That is exactly
-what `resume_pending_report_with_material_create` does today, minus the
-hard-coding of "material".
+**Most of the substrate already exists.** `PendingReportStore` proves the
+pattern (hold a `CanonicalEventV2` per user, pop-once, 10-minute TTL) and
+`_plan_and_run` is already shared by all seven resume functions — so the resume
+path is not new work, only the storage is.
+
+The storage is a `Plan` of size 1 in the shared `PlanStore`, **not** a
+generalised `PendingReportStore`: a single-slot store cannot express the
+multi-step case, and building one would force a second orchestrator. See §8.1,
+which settles this with the composite-request layer. A missing entity *inserts a
+step*; it does not invent its own suspend mechanism.
+
+Behaviourally this reproduces `resume_pending_report_with_material_create`
+exactly, minus the hard-coding of "material" — which is what Phase 3 exists to
+verify.
 
 ---
 
@@ -178,11 +185,23 @@ assistant gate in front of it. They stop being the *primary* mechanism for chat,
 and their rejection messages stop being user-facing copy — but a command that
 reaches a Handler unresolved must still be rejected, not silently defaulted.
 
-**ADR-E3 — Depth 1 only in V1.**
-`PendingReportStore` holds exactly one pending event per user. A chain where
-creating a user itself requires creating something else would need a stack. V1
-resolves one missing entity per request; a second missing prerequisite inside
+**ADR-E3 — Depth 1 is a policy limit, not a storage shape.** *(revised — see §8.1)*
+V1 resolves one missing entity per request; a second missing prerequisite inside
 the provider workflow is a plain error. Revisit only with a real case.
+
+The first draft of this ADR made that limit *structural*, by generalising
+`PendingReportStore` (one held event per user). That was wrong.
+`COMPOSITE_REQUEST_PLAN_LAYER.md` §4.4 correctly points out that a depth-1 pause
+is a plan of size 1, but a plan of size N is **not** reducible to a depth-1
+pause — so building this layer on a single-slot store would force that layer
+onto a second store, producing exactly the two orchestrators both documents
+exist to prevent.
+
+**Resolved:** this layer's continuation is a `Plan` of size 1, stored in the
+shared `PlanStore` (that doc's §6). A missing entity **inserts a step** into the
+plan rather than suspending it through a separate mechanism. Depth 1 survives as
+a constraint on *what this layer may insert*, enforced in code, not as a
+property baked into storage.
 
 **ADR-E4 — `Missing` always offers, never auto-creates.**
 The offer is tappable Yes/Skip, never implicit. Creating a user, a vendor, or a
@@ -213,7 +232,7 @@ A strangler, not a big-bang rewrite. Each phase leaves the system working.
 | Phase | Work | Proves |
 |---|---|---|
 | **0** | This document; Module Placement Log row | Shape agreed before code |
-| **1** | `EntityType`, resolution outcome, registry `provides`/`requires`, one generic continuation | The mechanism exists |
+| **1** | `EntityType`, resolution outcome, registry `provides`/`requires`, and the shared **N-capable `PlanStore`** (see §8.1) | The mechanism exists, and there is only one of it |
 | **2** | Migrate **USER** onto it (the live Hysam bug), including `Ambiguous` fuzzy matching | End-to-end on a real failure |
 | **3** | Migrate **MATERIAL** | The strongest correctness check — the generic path must reproduce `resume_pending_report_with_material_create` exactly. If it can't, the design is wrong |
 | **4** | Migrate ACCOUNT, VENDOR, AUDIENCE, PROJECT, SITE; delete each bespoke resolver as it moves | The ~10 duplicates collapse |
@@ -244,9 +263,9 @@ rather than forced.
 2. **Cross-script matching.** Does the near-match run on the Malayalam original,
    the transliteration, or both? Extraction gives us the translated text; the
    original script may be the better signal for a person's name.
-3. **Does `EntityType` belong in `shared/contracts`?** It is registry-local
-   metadata today (`WorkflowCategory` is deliberately *not* in contracts). If the
-   backend resolvers ever key off it, that changes.
+3. ~~**Does `EntityType` belong in `shared/contracts`?**~~ **Closed** — see
+   §8.3. Registry-local, following `WorkflowCategory`'s precedent. Revisit only
+   if a backend resolver ever keys off it directly.
 4. **Idempotency across the resume.** The original event carries an idempotency
    key generated before the pause. Confirm it survives the create-and-resume trip
    without either replaying or duplicating.
@@ -284,10 +303,71 @@ machinery that already exists. Building it the other way round would mean
 constructing plan sequencing on top of the ten independent resolvers this plan
 is collapsing.
 
-One consequence to carry into Phase 1: ADR-E3 (depth 1) is a constraint on
-*this* layer's suspend-and-resume, not on plan length. A composite plan of five
-steps is not "depth 5" — it is one plan with five steps, each of which may
-suspend once.
+### 8.1 §4.4 settled — one store, built here
+
+That document asks for one item to be settled in writing here before either side
+writes code. **Agreed, as proposed, with one amendment.**
+
+*Agreed:* this layer does not generalise `PendingReportStore`. It uses the
+shared `Plan`/`PlanStep`/`PlanStore` contracts (that doc's §6) with a plan of
+size 1. A missing entity is a step insertion. ADR-E3 above is revised
+accordingly.
+
+*Amendment — who builds it:* that doc's own build-order finding is that this
+layer's continuation **is** its executor, so this layer goes first. It follows
+that **Phase 1 here builds `PlanStore` N-capable from the start**, rather than
+waiting on that layer's Phase 1 or shipping a size-1-only store to be widened
+later. Retrofitting N onto a single-slot store is precisely the drift both
+documents are written against.
+
+So: this layer builds the store and is its first consumer, only ever inserting
+plans of size 1. Composite decomposition becomes a **second producer** into
+machinery that already exists and is already proven by Phases 2–3.
+
+Net effect on this plan: Phase 1 grows (design `PlanStore` for N, not just
+generalise a Redis key). Phases 2–4 are unchanged. The Hysam fix still lands in
+Phase 2.
+
+### 8.2 Objection — `allowed_roles` must not become load-bearing
+
+That doc's §4.3 and ADR-C5 propose promoting `allowed_roles` from advisory to a
+hard, plan-wide permission check. **This layer objects, and the objection is
+about safety rather than scope.**
+
+The field was added on 2026-07-30 as *discovery metadata only*, and its comment
+in `registry.py` states the property that makes it safe to keep as a mirror:
+
+> If it drifts, a menu row is wrong; nothing becomes permitted that was not
+> already permitted.
+
+It mirrors gate constants that `process.py:96` documents as **deliberately kept
+as independent literals per entry point**. A mirror is safe *because* it is
+advisory. Promote it to enforcing and that property inverts: a drifted mirror
+becomes a privilege bug, and the real gates and the mirror must now be kept in
+lockstep forever — with nothing in the type system to enforce it.
+
+The underlying need is legitimate: a five-step plan must not stop halfway
+through something the user already approved. **The fix is to check the plan
+against the real gates, not against the mirror** — call the actual gate
+predicates (`process.py`'s `_ACCOUNT_ADMIN_ROLES` / `_PROJECT_CREATE_ROLES`
+checks and their `application/*/validation.py` counterparts) for each step
+before the preview. Same user-visible behaviour, no new governance surface, and
+the mirror stays advisory.
+
+If plan-wide gating genuinely needs one callable predicate, the right move is to
+extract one from the existing gates and have *both* the gates and the plan check
+call it — not to elevate a field whose stated contract is that it is never
+load-bearing.
+
+### 8.3 Accepted from that document
+
+- **`EntityType` location** (open question 3, now closed): registry-local, not
+  `shared/contracts` — consistent with `WorkflowCategory`'s own precedent.
+  `workflows/entities.py` if the enum outgrows `registry.py`.
+- **`provides`/`requires` as `frozenset`** — already adopted in §3.2.
+- **ADR-C2 (just-in-time canonicalization)** applies to any step this layer
+  inserts, for the same reason: a newly created user's id cannot exist in a
+  `CanonicalEventV2` built before the creating step ran.
 
 ---
 
