@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from interactions.completion_photo_hint import CompletionPhotoHintStore
     from interactions.pending_media import PendingMediaStore
     from interactions.pending_report import PendingReportStore
+    from interactions.project_setup_offer import ProjectSetupOfferStore
     from interactions.team_photo_hint import TeamPhotoHintStore
     from memory.context_loader import ConversationMemoryLoader
     from memory.coordinator import ConversationMemoryCoordinator
@@ -64,6 +65,7 @@ if TYPE_CHECKING:
     from planner import Planner
     from runtime.activity_query import ActivityQueryService
     from runtime.activity_search_service import ActivitySearchService
+    from runtime.capability_help import CapabilityHelpService
     from runtime.dependencies import Settings
     from runtime.dpr_request_query import DprRequestQueryService
     from runtime.duplicate_expense_query import DuplicateExpenseQueryService
@@ -125,6 +127,7 @@ def build_message_handlers(
     activity_query: ActivityQueryService,
     evidence_query: EvidenceAttachService,
     escalation_query: EscalationCreateService,
+    capability_help: CapabilityHelpService,
     labour_query_service: LabourQueryService,
     activity_search_service: ActivitySearchService,
     dpr_request_query: DprRequestQueryService,
@@ -136,6 +139,7 @@ def build_message_handlers(
     category_hint_store: CategoryHintStore,
     completion_photo_hint_store: CompletionPhotoHintStore,
     team_photo_hint_store: TeamPhotoHintStore,
+    project_setup_offer_store: ProjectSetupOfferStore,
     batch_store: PendingBatchStore,
     memory_loader: ConversationMemoryLoader,
     memory_coordinator: ConversationMemoryCoordinator,
@@ -431,6 +435,60 @@ def build_message_handlers(
             await message_logger.mark_completed(correlation_id=message.correlation_id)
             return
 
+        # A tap on the chained project/site setup offer (see
+        # _offer_project_setup / start_project_setup_followup in
+        # runtime/inbound_journey/seeding.py). Handled before everything
+        # else for the same reason as the team-photo tap above: "Skip" must
+        # not fall through to the confirmation classifier.
+        setup_tap = str((message.metadata or {}).get("interactive_reply_id") or "")
+        if setup_tap in (
+            "setup_add_site",
+            "setup_skip_site",
+            "setup_add_member",
+            "setup_skip_member",
+        ):
+            from channel.replies import (
+                render_setup_offer_expired_reply,
+                render_setup_offer_skipped_reply,
+            )
+            from runtime.inbound_journey import start_project_setup_followup
+
+            if setup_tap in ("setup_skip_site", "setup_skip_member"):
+                try:
+                    await project_setup_offer_store.clear(user_id=ctx.user_id)
+                except Exception:  # noqa: BLE001
+                    _log.warning("project_setup.clear_failed user=%s", ctx.user_id)
+                reply_text = render_setup_offer_skipped_reply()
+            else:
+                expected_stage = "site" if setup_tap == "setup_add_site" else "member"
+                try:
+                    offer = await project_setup_offer_store.pop_offer(user_id=ctx.user_id)
+                except Exception:  # noqa: BLE001
+                    _log.warning("project_setup.pop_failed user=%s", ctx.user_id)
+                    offer = None
+                if offer is None or offer.stage != expected_stage:
+                    reply_text = render_setup_offer_expired_reply()
+                else:
+                    try:
+                        prompt = await start_project_setup_followup(
+                            stage=offer.stage,
+                            project_id=offer.project_id,
+                            actor=ctx,
+                            workflow_runtime=workflow_runtime,
+                        )
+                    except Exception:  # noqa: BLE001 — a tap must always get some reply
+                        _log.exception("project_setup.followup_failed user=%s", ctx.user_id)
+                        prompt = None
+                    reply_text = prompt or (
+                        "Sorry, I couldn't start that — please try again."
+                    )
+            await sender.send_text(wa_id, reply_text)
+            await message_logger.log_reply(
+                correlation_id=message.correlation_id, reply=reply_text
+            )
+            await message_logger.mark_completed(correlation_id=message.correlation_id)
+            return
+
         # M7: if the user has a workflow awaiting confirmation and this message
         # is a confirmation reply, resume it and stop — the AI pipeline (and its
         # token cost) is never touched. A plain "yes" ends here.
@@ -464,6 +522,7 @@ def build_message_handlers(
             # strictly a second-step offer that never delays either.
             from runtime.inbound_journey import (
                 _maybe_trigger_worker_promotion,
+                _offer_project_setup,
                 _offer_team_photo,
                 _recorded_attendance_report_id,
             )
@@ -499,6 +558,17 @@ def build_message_handlers(
                 await _offer_team_photo(
                     report_id, ctx, wa_id, team_photo_hint_store, _send_spec
                 )
+            # Chained project/site setup offer: independent of the two
+            # attendance-only follow-ups above (mutually exclusive triggers
+            # -- this only fires for CREATE_PROJECT/CREATE_SITE, those only
+            # for RECORD_LABOUR_ATTENDANCE), so it always runs regardless of
+            # what happened above. See _offer_project_setup's docstring.
+            try:
+                await _offer_project_setup(
+                    handled, project_setup_offer_store, ctx, wa_id, _send_spec
+                )
+            except Exception:  # noqa: BLE001 — offer never disturbs the saved project/site
+                _log.exception("project_setup.offer_failed user=%s", ctx.user_id)
             # Phase 8 perf: user reply is already sent above. These 4 writes
             # are order-independent audit rows -- run them concurrently.
             await asyncio.gather(
@@ -783,6 +853,7 @@ def build_message_handlers(
                 memory_coordinator=memory_coordinator,
                 batch_store=batch_store,
                 escalation_query=escalation_query,
+                capability_help=capability_help,
             )
             timer.lap("process_inbound_message_held_media")
             if len(held_batch) > 1:
@@ -1202,6 +1273,7 @@ def build_message_handlers(
             memory_coordinator=memory_coordinator,
             batch_store=batch_store,
             escalation_query=escalation_query,
+            capability_help=capability_help,
         )
         timer.lap("process_inbound_message")
 

@@ -617,6 +617,13 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from interactions.team_photo_hint import TeamPhotoHintStore
 
     team_photo_hint_store = TeamPhotoHintStore(redis_client)
+
+    # Chained project/site setup offer: remembers which project a tap on
+    # "Add a Site now" / "Add a Teammate now" is about, between the offer
+    # message and the button tap. See interactions/project_setup_offer.py.
+    from interactions.project_setup_offer import ProjectSetupOfferStore
+
+    project_setup_offer_store = ProjectSetupOfferStore(redis_client)
     # M19 conversation memory -- current project/site (existing
     # RedisActiveContextStore), current activity/date (new), and a capped
     # recent-turns history, composed behind one loader/coordinator pair. See
@@ -684,6 +691,14 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
 
     ai_resolver = DynamicAIProviderResolver(material_db, redis_client, _backend_settings)
     interaction_classifier = AdapterInteractionClassifier(ai_resolver, trace_logger=trace_logger)
+    # Matches a "how do I ...?" question against the workflow registry so the
+    # answer lists real capabilities instead of one hardcoded sentence. Same
+    # resolver as above -- generate_json already always routes to Gemini (see
+    # resolver.py), so this needs no new provider config. Only ever consulted
+    # for GENERAL_QUESTION_ASKED, which is a small share of traffic.
+    from runtime.capability_help import CapabilityHelpService
+
+    capability_help = CapabilityHelpService(ai_resolver, trace_logger=trace_logger)
     # Resolves a picker reply the deterministic matcher (workflows/slots.py's
     # match_slot_answer) couldn't -- e.g. "New cause it's 3rd floor" instead
     # of a bare number or "This is new work". Same resolver as above:
@@ -761,6 +776,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         activity_query=activity_query,
         evidence_query=evidence_query,
         escalation_query=escalation_query,
+        capability_help=capability_help,
         labour_query_service=labour_query_service,
         activity_search_service=activity_search_service,
         dpr_request_query=dpr_request_query,
@@ -772,6 +788,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         category_hint_store=category_hint_store,
         completion_photo_hint_store=completion_photo_hint_store,
         team_photo_hint_store=team_photo_hint_store,
+        project_setup_offer_store=project_setup_offer_store,
         batch_store=batch_store,
         memory_loader=memory_loader,
         memory_coordinator=memory_coordinator,

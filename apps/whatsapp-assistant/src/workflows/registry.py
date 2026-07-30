@@ -111,6 +111,24 @@ class WorkflowDefinition:
     # so a tap from the tiered menu locks direction exactly as the old
     # two-step material tap did.
     menu_row_id_override: str | None = None
+    # Roles this workflow is worth *showing* to, or None for everyone.
+    #
+    # Discovery metadata only -- this is NOT the enforcement gate and must
+    # never be mistaken for one. The real gates live at each entry point
+    # (runtime/inbound_journey/process.py's _ACCOUNT_ADMIN_ROLES and
+    # _PROJECT_CREATE_ROLES, projects/router.py's _CREATE_ROLES,
+    # application/*/validation.py) and are deliberately kept as independent
+    # literals per module -- see process.py:96, which explains why those
+    # entry points do not share one constant. This field mirrors them for
+    # one purpose: not teaching a site engineer a workflow that will refuse
+    # them. If it drifts, a menu row is wrong; nothing becomes permitted
+    # that was not already permitted.
+    #
+    # AUTOMATION_SETUP is deliberately open despite having a role gate: the
+    # gate is conditional (a reminder aimed at yourself is open to anyone,
+    # only targeting *others* is restricted), so hiding it entirely would
+    # deny everyone the half they are allowed.
+    allowed_roles: frozenset[str] | None = None
     # Only answers a question; never produces a draft_action. Exempt from the
     # single-active pending-confirmation gate and completes without
     # AWAITING_CONFIRMATION. See workflows/runtime.py.
@@ -163,6 +181,7 @@ def _define(
     semantic_hint: str | None = None,
     user_initiable: bool = True,
     menu_row_id_override: str | None = None,
+    allowed_roles: frozenset[str] | None = None,
     is_informational: bool = False,
     allows_completion_without_draft: bool = False,
 ) -> tuple[WorkflowKey, WorkflowDefinition]:
@@ -183,6 +202,7 @@ def _define(
         semantic_hint=semantic_hint,
         user_initiable=user_initiable,
         menu_row_id_override=menu_row_id_override,
+        allowed_roles=allowed_roles,
         is_informational=is_informational,
         # Informational implies it; spelled out here so the table stays flat.
         allows_completion_without_draft=allows_completion_without_draft or is_informational,
@@ -252,6 +272,8 @@ _DEFINITIONS: dict[WorkflowKey, WorkflowDefinition] = dict(
             one_liner="Create or rename a cash or bank account",
             examples=("Rename Main HDFC Account to Office Cash",),
             semantic_hint="account_admin",
+            # Mirrors process.py's _ACCOUNT_ADMIN_ROLES.
+            allowed_roles=frozenset({"ADMIN", "FINANCE"}),
             allows_completion_without_draft=True,
         ),
         _define(
@@ -413,6 +435,8 @@ _DEFINITIONS: dict[WorkflowKey, WorkflowDefinition] = dict(
             one_liner="Set up a new project",
             examples=("Create a new project called Skyline Towers",),
             semantic_hint="project_create",
+            # Mirrors process.py's _PROJECT_CREATE_ROLES.
+            allowed_roles=frozenset({"ADMIN", "PROJECT_MANAGER"}),
             allows_completion_without_draft=True,
         ),
         _define(
@@ -423,6 +447,8 @@ _DEFINITIONS: dict[WorkflowKey, WorkflowDefinition] = dict(
             one_liner="Add a site under an existing project",
             examples=("Create a new site called Block A",),
             semantic_hint="site_create",
+            # Mirrors process.py's _PROJECT_CREATE_ROLES (same set gates both).
+            allowed_roles=frozenset({"ADMIN", "PROJECT_MANAGER"}),
             allows_completion_without_draft=True,
         ),
         _define(
@@ -443,6 +469,8 @@ _DEFINITIONS: dict[WorkflowKey, WorkflowDefinition] = dict(
             one_liner="Give an existing teammate access to a project",
             examples=("Add Rajesh to Skyline Towers as site engineer",),
             semantic_hint="add_project_member",
+            # Mirrors process.py's _PROJECT_CREATE_ROLES (same set gates all three).
+            allowed_roles=frozenset({"ADMIN", "PROJECT_MANAGER"}),
             allows_completion_without_draft=True,
         ),
         _define(
@@ -518,7 +546,23 @@ class MenuCategory:
     one_liner: str
 
 
-def _menu_categories() -> tuple[MenuCategory, ...]:
+def _visible_to(definition: WorkflowDefinition, role: str | None) -> bool:
+    """Whether ``role`` should be *shown* this workflow.
+
+    ``role=None`` means "don't filter" -- used by the control panel and by
+    any caller that has no actor in hand. An unknown role string is treated
+    as restricted for gated workflows: showing too little degrades to a menu
+    that is merely incomplete, showing too much degrades to teaching someone
+    a workflow that will refuse them.
+    """
+    if not definition.user_initiable:
+        return False
+    if role is None or definition.allowed_roles is None:
+        return True
+    return role.upper() in definition.allowed_roles
+
+
+def _menu_categories(role: str | None = None) -> tuple[MenuCategory, ...]:
     """Categories that have at least one workflow a user can actually pick.
 
     Derived, not hand-listed: a category whose workflows are all unbuilt or
@@ -535,34 +579,50 @@ def _menu_categories() -> tuple[MenuCategory, ...]:
             one_liner=one_liner,
         )
         for category, title, one_liner in _CATEGORY_DISPLAY
-        if any(d.category is category and d.user_initiable for d in _DEFINITIONS.values())
+        if any(d.category is category and _visible_to(d, role) for d in _DEFINITIONS.values())
     )
 
 
-def iter_menu_categories() -> tuple[MenuCategory, ...]:
-    """The top level of the tiered menu, in display order."""
-    return _menu_categories()
+def iter_menu_categories(role: str | None = None) -> tuple[MenuCategory, ...]:
+    """The top level of the tiered menu, in display order.
+
+    A category with nothing ``role`` may pick simply doesn't appear -- so a
+    SITE_ENGINEER never taps "Projects & Team" only to find it empty.
+    """
+    return _menu_categories(role)
 
 
 def menu_category_by_row_id(row_id: str) -> MenuCategory | None:
-    """Resolve a tapped top-level row id, or None if it isn't one."""
+    """Resolve a tapped top-level row id, or None if it isn't one.
+
+    Deliberately unfiltered: this only says which category a row id names.
+    Whether the tapper may see anything inside it is decided by
+    user_initiable_in(), which takes the role.
+    """
     return next((c for c in _menu_categories() if c.row_id == row_id), None)
 
 
-def user_initiable_in(category: WorkflowCategory) -> tuple[WorkflowDefinition, ...]:
-    """Every workflow a user can pick within ``category``, registration order."""
+def user_initiable_in(
+    category: WorkflowCategory, role: str | None = None
+) -> tuple[WorkflowDefinition, ...]:
+    """Every workflow ``role`` can pick within ``category``, registration order."""
     return tuple(
-        d for d in _DEFINITIONS.values() if d.category is category and d.user_initiable
+        d for d in _DEFINITIONS.values() if d.category is category and _visible_to(d, role)
     )
 
 
-def iter_user_initiable() -> tuple[WorkflowDefinition, ...]:
-    """Every workflow a user can pick, across all categories."""
-    return tuple(d for d in _DEFINITIONS.values() if d.user_initiable)
+def iter_user_initiable(role: str | None = None) -> tuple[WorkflowDefinition, ...]:
+    """Every workflow ``role`` can pick, across all categories."""
+    return tuple(d for d in _DEFINITIONS.values() if _visible_to(d, role))
 
 
 def definition_by_menu_row_id(row_id: str) -> WorkflowDefinition | None:
-    """Resolve a tapped workflow row id, or None if it isn't one."""
+    """Resolve a tapped workflow row id, or None if it isn't one.
+
+    Unfiltered by role for the same reason menu_category_by_row_id is: this
+    resolves an id to a definition. Role decides what gets *offered*; the
+    real gate at the entry point decides what gets *run* (see allowed_roles).
+    """
     return next(
         (d for d in _DEFINITIONS.values() if d.user_initiable and d.menu_row_id == row_id),
         None,

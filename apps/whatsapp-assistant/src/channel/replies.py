@@ -72,9 +72,6 @@ CONFIRM_BUTTONS: tuple[ListRow, ...] = (
 )
 
 
-# The v1 domain modules (Material · Equipment & Machinery · Labour ·
-# Expense · Site Issue). Row ids are matched verbatim in
-# runtime/dependencies.py's category-tap fast path -- keep the two in sync.
 def _category_rows() -> tuple[ListRow, ...]:
     """The top level of the tiered menu, derived from workflows/registry.py.
 
@@ -253,20 +250,66 @@ def render_completion_photo_followup() -> str:
     return "📷 Want to attach a completion photo?"
 
 
-def render_project_created_followup() -> str:
-    """Appended to the confirmation reply once a new Project is created via
-    WhatsApp. A brand-new project always starts with zero sites, and only
-    sometimes gets its creator auto-added as a member (project_execution.py's
-    persist_success only inserts a project_members row when the creator's
-    role isn't org-wide) -- either way nobody can log site work against it
-    yet. Static and unconditional rather than a DB-backed checklist: querying
-    membership/site counts here would race the write this reply is
-    describing, and every fresh project needs at least a site regardless."""
-    return (
-        "To start using this project, it still needs:\n"
-        "☐ A site — reply e.g. \"create a site called Block A at this project\"\n"
-        "☐ Team members — reply e.g. \"add Rajesh to this project as site engineer\""
+#: Buttons on the post-project-create setup offer. Tapping "Add a Site"
+#: starts SITE_CREATE directly (project pre-known, see runtime/
+#: inbound_journey/seeding.py's start_project_setup_followup) rather than
+#: this button itself carrying the site name -- WhatsApp buttons have no
+#: free-text input, so the tap only settles *which* project, and the site's
+#: own name is asked as the workflow's normal first question.
+PROJECT_SITE_OFFER_BUTTONS: tuple[ListRow, ...] = (
+    ListRow("setup_add_site", "Add a Site"),
+    ListRow("setup_skip_site", "Skip"),
+)
+
+#: Buttons on the post-site-create setup offer -- same reasoning as
+#: PROJECT_SITE_OFFER_BUTTONS, one step later in the chain.
+PROJECT_MEMBER_OFFER_BUTTONS: tuple[ListRow, ...] = (
+    ListRow("setup_add_member", "Add a Teammate"),
+    ListRow("setup_skip_member", "Skip"),
+)
+
+
+def render_project_site_offer(project_name: str | None) -> ReplySpec:
+    """Offered once a new Project is confirmed and saved. A brand-new
+    project always starts with zero sites -- nobody can log site work
+    against it yet -- but the project is already saved by the time this is
+    sent, so ignoring the offer costs nothing (same "recommended, never
+    required" stance as render_team_photo_offer)."""
+    label = f"*{project_name}*" if project_name else "This project"
+    return ReplySpec(
+        text=(
+            f"🏗️ {label} needs at least one site before anyone can log work "
+            "against it.\n\nWant to add one now?"
+        ),
+        buttons=PROJECT_SITE_OFFER_BUTTONS,
     )
+
+
+def render_project_member_offer() -> ReplySpec:
+    """Offered once a new Site is confirmed and saved -- the next gap in the
+    same chain render_project_site_offer starts: a project with a site but
+    no team still can't have anything logged against it by anyone but its
+    creator (project_execution.py's persist_success only auto-adds the
+    creator, and only when their role isn't org-wide)."""
+    return ReplySpec(
+        text="👤 This project doesn't have a team yet.\n\nWant to add a teammate now?",
+        buttons=PROJECT_MEMBER_OFFER_BUTTONS,
+    )
+
+
+def render_setup_offer_skipped_reply() -> str:
+    """Deliberately closes the loop rather than going silent -- otherwise a
+    tap on Skip looks identical to a message that failed to send, same
+    reasoning as render_team_photo_skipped_reply."""
+    return "👍 No problem — you can always do this later."
+
+
+def render_setup_offer_expired_reply() -> str:
+    """The offer's hint (ProjectSetupOfferStore) expired or was already
+    consumed -- e.g. a double-tap, or answered more than 10 minutes ago.
+    Never silently reopens the offer or guesses which project it was about;
+    just says so and waits for whatever the user sends next."""
+    return "That offer isn't open any more — just tell me what you'd like to do."
 
 
 def render_evidence_attached_reply(*, count: int, activity_summary: str | None) -> str:
@@ -598,19 +641,115 @@ def render_direct_reply(
     """Reply when there is no workflow to start: a greeting, a question, or
     something the assistant could not place.
 
-    Only the UNRECOGNIZED case ever carries a list menu -- greetings and
-    unparseable text are exactly where a worker who doesn't know what to
-    type benefits from tappable categories. A question that's already
-    understood as a question doesn't need one.
+    Both cases can carry a list menu. Greetings and unparseable text get the
+    category menu -- that is exactly where a worker who doesn't know what to
+    type benefits from tappable categories. A question gets whichever
+    capabilities runtime/capability_help.py matched to it, falling back to
+    the same category menu when nothing matched.
     """
     if decision.reason is CanonicalEventType.GENERAL_QUESTION_ASKED:
-        return ReplySpec(
-            text=f"I can record what arrives on site and what gets used. For example:\n{_EXAMPLES}"
+        return render_capability_answer(
+            decision.metadata.get("capability_matches"),
+            role=decision.metadata.get("actor_role"),
+            timezone=timezone,
         )
     # UNRECOGNIZED — greetings land here (when they slip past the
     # deterministic fast path, e.g. text/handle_greeting_trigger didn't cover
     # every phrasing), as does anything genuinely unparseable.
     return render_greeting_menu(timezone=timezone, is_first_message=is_first_message)
+
+
+def render_capability_answer(
+    matched_keys: object,
+    *,
+    role: str | None = None,
+    timezone: str | None = None,
+) -> ReplySpec:
+    """Answer a "how do I ...?" question with the capabilities that match it.
+
+    ``matched_keys`` is whatever runtime/capability_help.py put on the
+    decision metadata -- a list of WorkflowKey *values* (plain strings, since
+    it has been through a Pydantic model). Anything else, including None and
+    the empty list, is treated as "nothing matched" and answered with the
+    full menu, which is a genuinely good answer to "what can you do?" rather
+    than a failure state. This function stays pure: the matching already
+    happened upstream, the same way WHO_AM_I's profile is injected before
+    its node ever runs.
+
+    Rows carry the same wf_* ids the tiered menu uses, so tapping a
+    suggestion runs the existing tap handler -- prompt, examples, and
+    extraction hint -- with no separate plumbing for help.
+    """
+    from mesiri_contracts.assistant.planner_decision import WorkflowKey
+    from workflows.registry import get_definition
+
+    definitions = []
+    if isinstance(matched_keys, (list, tuple)):
+        for raw in matched_keys:
+            try:
+                definition = get_definition(WorkflowKey(raw))
+            except ValueError:
+                continue
+            if definition is not None and definition.user_initiable:
+                definitions.append(definition)
+
+    if not definitions:
+        # No match, or a broad "what can you do?" -- the menu answers both.
+        # Deliberately not render_greeting_menu(): its copy opens with
+        # "Hello. What are you reporting today?", which answers a question
+        # with a greeting and reads as though the question was ignored.
+        return _render_capability_overview(role)
+
+    if len(definitions) == 1:
+        # One confident match reads better as the answer itself than as a
+        # one-row list the user still has to tap.
+        return ReplySpec(text=f"Yes — {_render_workflow_prompt(definitions[0])}")
+
+    rows = tuple(
+        ListRow(d.menu_row_id, d.title, d.one_liner)
+        for d in definitions
+        if _visible_to_role(d, role)
+    )
+    if not rows:
+        return _render_capability_overview(role)
+    return ReplySpec(
+        text="Sounds like one of these — tap the one you mean:",
+        list_button_label="Choose one",
+        list_rows=rows,
+    )
+
+
+def _render_capability_overview(role: str | None) -> ReplySpec:
+    """The answer to "what can you do?" -- an actual answer, then the menu.
+
+    Role-filtered, so an engineer is told what *they* can do rather than
+    what the product can do for somebody else.
+    """
+    from workflows.registry import iter_menu_categories
+
+    return ReplySpec(
+        text=(
+            "I record work from WhatsApp and answer questions about it — "
+            "materials, labour, money, site progress, and daily reports.\n\n"
+            "Pick a category to see what you can send:"
+        ),
+        list_button_label="Choose one",
+        list_rows=tuple(
+            ListRow(c.row_id, c.title, c.one_liner) for c in iter_menu_categories(role)
+        ),
+    )
+
+
+def _visible_to_role(definition: WorkflowDefinition, role: str | None) -> bool:
+    """Second role check, after capability_help.py's own filtered catalogue.
+
+    Belt and braces on purpose: the matches travel through decision metadata,
+    which is a plain dict that anything could have written, and the cost of
+    re-checking is one set lookup against the registry.
+    """
+    if role is None or definition.allowed_roles is None:
+        return True
+    return role.upper() in definition.allowed_roles
 
 
 def render_category_prompt(row_id: str) -> ReplySpec | None:

@@ -62,7 +62,9 @@ from runtime.inbound_journey.seeding import (
     _inject_inventory_context,
     _may_create_material,
     _maybe_trigger_worker_promotion,
+    _offer_project_setup,
     _offer_team_photo,
+    _project_setup_offer_target,
     _promotion_just_finished,
     _recorded_attendance_report_id,
     _run_material_unit_gates,
@@ -87,6 +89,7 @@ from runtime.inbound_journey.seeding import (
     _seed_site_issue_close_target,
     _seed_vendor_check,
     _seed_worker_candidates,
+    start_project_setup_followup,
 )
 
 __all__ = [
@@ -118,8 +121,10 @@ __all__ = [
     "_log",
     "_maybe_trigger_worker_promotion",
     "_may_create_material",
+    "_offer_project_setup",
     "_offer_team_photo",
     "_plan_and_run",
+    "_project_setup_offer_target",
     "_promotion_just_finished",
     "_recorded_attendance_report_id",
     "_render_reply",
@@ -155,4 +160,5 @@ __all__ = [
     "resume_pending_report_with_site",
     "resume_pending_report_with_stock_choice",
     "resume_pending_report_with_unit",
+    "start_project_setup_followup",
 ]

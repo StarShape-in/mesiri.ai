@@ -34,6 +34,7 @@ from planner import Planner, log_planner_decision
 from planner.ambiguity import AmbiguityAction, caveat_text, decide_ambiguity
 from runtime.activity_query import ActivityQueryService
 from runtime.activity_search_service import ActivitySearchService
+from runtime.capability_help import CapabilityHelpService
 from runtime.dpr_request_query import DprRequestQueryService
 from runtime.duplicate_expense_query import DuplicateExpenseQueryService
 from runtime.escalation_query import EscalationCreateService
@@ -211,6 +212,7 @@ async def process_inbound_message(
     memory_coordinator: ConversationMemoryCoordinator | None = None,
     batch_store: PendingBatchStore | None = None,
     escalation_query: EscalationCreateService | None = None,
+    capability_help: CapabilityHelpService | None = None,
 ) -> JourneyResult:
     mlog: MessageLogger = message_logger or NoopMessageLogger()
     tlog: TraceLogger = trace_logger or NoopTraceLogger()
@@ -643,6 +645,30 @@ async def process_inbound_message(
                     mlog.mark_failed(correlation_id=correlation_id, error_code=type(exc).__name__)
                 )
                 raise
+
+            # --- Capability help ---
+            # A "how do I ...?" question reaches the planner as a
+            # DIRECT_REPLY on GENERAL_QUESTION_ASKED, which until now
+            # answered every one of them with a single hardcoded sentence
+            # ("I can record what arrives on site and what gets used").
+            # Match the question against the registry and hand the result to
+            # the renderer on decision metadata -- the same injection shape
+            # WHO_AM_I's actor_profile uses, and for the same reason: the
+            # renderer is pure and the planner is deterministic, so neither
+            # may make this call itself.
+            if (
+                capability_help is not None
+                and planner_decision.reason is CanonicalEventType.GENERAL_QUESTION_ASKED
+            ):
+                question = understanding.translated_text or understanding.normalized_text
+                matches = await capability_help.match(
+                    question,
+                    role=actor.role if actor is not None else None,
+                    correlation_id=correlation_id,
+                )
+                planner_decision.metadata["capability_matches"] = [k.value for k in matches]
+                if actor is not None and actor.role:
+                    planner_decision.metadata["actor_role"] = actor.role
 
             if planner_decision.decision_type is PlannerDecisionType.START_WORKFLOW:
                 # --- Workflow stage ---

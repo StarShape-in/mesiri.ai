@@ -1262,6 +1262,175 @@ async def _offer_team_photo(
     await _safe(send_reply(render_team_photo_offer(), wa_id))
 
 
+def _project_setup_offer_target(
+    handled: InteractionHandled,
+) -> tuple[str, str, str | None] | None:
+    """Which setup offer (if any) follows this confirmed action, as
+    ``(stage, project_id, project_name)`` -- or None if this confirmation
+    isn't one the chain reacts to.
+
+    CREATE_PROJECT -> offer stage "site": the new project's id comes off the
+    execution result (material_row_id is the shared "id of the thing just
+    created" field, same as _recorded_attendance_report_id reads it for
+    labour), since draft_action.project_id is None for a project that didn't
+    exist until this execution. project_name comes off the draft's own
+    fields (it was in the confirmation the user just approved).
+
+    CREATE_SITE -> offer stage "member": unlike CREATE_PROJECT, the site's
+    draft already carries project_id directly (workflows/site_create/
+    nodes.py resolves it from context before the draft is ever built), so no
+    execution-result lookup is needed here. No project_name is threaded
+    through -- render_project_member_offer doesn't use one.
+    """
+    from mesiri_contracts.application.results.execution_result import ExecutionStatus
+
+    result = handled.result
+    if not isinstance(result, WorkflowResumeResult):
+        return None
+    if result.status is not WorkflowResumeStatus.CONFIRMED:
+        return None
+    confirmed = result.confirmed_action
+    if confirmed is None:
+        return None
+    execution = handled.execution_result
+    if execution is None or execution.status is not ExecutionStatus.SUCCEEDED:
+        return None
+    action_type = confirmed.draft_action.action_type
+    if action_type is DraftActionType.CREATE_PROJECT:
+        if not execution.material_row_id:
+            return None
+        name = confirmed.draft_action.fields.get("name")
+        return ("site", execution.material_row_id, str(name) if name else None)
+    if action_type is DraftActionType.CREATE_SITE:
+        project_id = confirmed.draft_action.project_id
+        if not project_id:
+            return None
+        return ("member", str(project_id), None)
+    return None
+
+
+async def _offer_project_setup(
+    handled: InteractionHandled,
+    project_setup_offer_store: Any,
+    actor: Any,
+    wa_id: str,
+    send_reply: Callable[..., Awaitable[Any]],
+) -> bool:
+    """After a confirmed CREATE_PROJECT or CREATE_SITE execution, send the
+    chained setup offer (tappable "Add a Site now?" / "Add a Teammate
+    now?") -- see channel/replies.py's render_project_site_offer/
+    render_project_member_offer and interactions/project_setup_offer.py's
+    ProjectSetupOfferStore docstring for the full chain.
+
+    Returns True when an offer was actually put on screen, same contract as
+    _maybe_trigger_worker_promotion, though nothing here currently reads the
+    return value the way the team-photo sequencing does -- kept for
+    parity/testability.
+    """
+    target = _project_setup_offer_target(handled)
+    if target is None:
+        return False
+    stage, project_id, project_name = target
+    user_id = str(getattr(actor, "user_id", None) or "")
+    if not user_id:
+        return False
+    try:
+        await project_setup_offer_store.set_offer(
+            user_id=user_id, stage=stage, project_id=project_id
+        )
+    except Exception:  # noqa: BLE001 -- an offer is never worth failing a reply over
+        _log.warning("project_setup.offer_store_failed user=%s stage=%s", user_id, stage)
+        return False
+    from channel.replies import render_project_member_offer, render_project_site_offer
+
+    spec = (
+        render_project_site_offer(project_name)
+        if stage == "site"
+        else render_project_member_offer()
+    )
+    _log.info("project_setup.offered user=%s stage=%s project=%s", user_id, stage, project_id)
+    await _safe(send_reply(spec, wa_id))
+    return True
+
+
+async def start_project_setup_followup(
+    *,
+    stage: str,
+    project_id: str,
+    actor: Any,
+    workflow_runtime: WorkflowRuntime,
+) -> str | None:
+    """Start SITE_CREATE (stage "site") or ADD_PROJECT_MEMBER (stage
+    "member") directly, with `project_id` already known -- called when the
+    user taps "Add a Site now" / "Add a Teammate now" on the offer built by
+    _offer_project_setup (see runtime/message_journey.py's tap handler).
+
+    Mirrors _maybe_trigger_worker_promotion's "hand-build a PlannerDecisionV2
+    + CanonicalEventV2, then call the same workflow_runtime.start() the
+    normal Planner path uses" pattern -- there is no lower-level shortcut.
+    `fields={}` leaves the new workflow's own build_draft to ask for
+    whatever it still needs (the site's name, or who to add) exactly as it
+    would for an ordinary message, except the project question is already
+    answered. `created_by_role` is seeded the same way runtime/
+    inbound_journey/seeding.py's _seed_project_create_role does for the
+    ordinary path, since the tapper already passed that same role gate to
+    create the project/site this offer follows -- skipping it here would
+    make create_site_validation.py's/add_member_validation.py's role check
+    reject the eventual confirm with no created_by_role to check.
+
+    Returns the new workflow's pending_prompt (the question it's now
+    asking), or None if nothing could be started -- the caller falls back to
+    a generic "please try again" reply.
+    """
+    workflow_key = WorkflowKey.SITE_CREATE if stage == "site" else WorkflowKey.ADD_PROJECT_MEMBER
+    reason = (
+        CanonicalEventType.SITE_CREATE_REQUESTED
+        if stage == "site"
+        else CanonicalEventType.ADD_PROJECT_MEMBER_REQUESTED
+    )
+    org_id = str(getattr(actor, "organization_id", None) or "")
+    user_id = str(getattr(actor, "user_id", None) or "")
+    if not org_id or not user_id:
+        return None
+
+    corr_id = _new_id("setup")
+    decision = PlannerDecisionV2(
+        correlation_id=corr_id,
+        source_message_id=corr_id,
+        decision_type=PlannerDecisionType.START_WORKFLOW,
+        workflow_key=workflow_key,
+        reason=reason,
+        organization_id=org_id,
+        user_id=user_id,
+        project_id=project_id,
+    )
+    event = CanonicalEventV2(
+        event_id=corr_id,
+        correlation_id=corr_id,
+        source_message_id=corr_id,
+        event_type=reason,
+        completeness=_IntentCompleteness.ACTIONABLE,
+        organization_id=org_id,
+        user_id=user_id,
+        project_id=project_id,
+        fields={"created_by_role": getattr(actor, "role", None)},
+    )
+
+    await _safe(workflow_runtime.abandon_optional_question(user_id))
+
+    try:
+        run = await workflow_runtime.start(decision, event)
+    except Exception:  # noqa: BLE001 -- never raise into the tap handler
+        _log.exception("project_setup.start_failed org=%s stage=%s", org_id, stage)
+        return None
+    if not run.pending_prompt:
+        _log.error(
+            "project_setup.no_prompt org=%s stage=%s status=%s", org_id, stage, run.status.value
+        )
+        return None
+    return run.pending_prompt
+
+
 async def _create_promoted_workers(
     result: WorkflowRunResult | WorkflowResumeResult,
     workforce_query: WorkforceQueryService | None,

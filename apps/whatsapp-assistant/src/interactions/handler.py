@@ -30,13 +30,14 @@ from channel.replies import (
     CATEGORY_ROWS,
     IMAGE_PURPOSE_ROWS,
     IMAGE_PURPOSE_SEMANTIC_HINT,
+    PROJECT_MEMBER_OFFER_BUTTONS,
+    PROJECT_SITE_OFFER_BUTTONS,
     TEAM_PHOTO_BUTTONS,
     ReplySpec,
     render_category_prompt,
     render_completion_photo_followup,
     render_greeting_menu,
     render_material_direction_followup,
-    render_project_created_followup,
 )
 from context.live_identity import whoami_reply
 from memory.coordinator import ConversationMemoryCoordinator
@@ -81,7 +82,14 @@ logger = logging.getLogger(__name__)
 #: question. Derived from the row definitions rather than written out, so a
 #: new row cannot be added to a picker without also being protected here.
 _FOREIGN_PICKER_IDS: frozenset[str] = frozenset(
-    row.id for row in (*IMAGE_PURPOSE_ROWS, *CATEGORY_ROWS, *TEAM_PHOTO_BUTTONS)
+    row.id
+    for row in (
+        *IMAGE_PURPOSE_ROWS,
+        *CATEGORY_ROWS,
+        *TEAM_PHOTO_BUTTONS,
+        *PROJECT_SITE_OFFER_BUTTONS,
+        *PROJECT_MEMBER_OFFER_BUTTONS,
+    )
 )
 
 
@@ -228,16 +236,14 @@ class InteractionHandler:
                     )
                 )
                 reply_text = f"{reply_text}\n\n{render_completion_photo_followup()}"
-            if (
-                execution_result.status is ExecutionStatus.SUCCEEDED
-                and result.confirmed_action.draft_action.action_type
-                is DraftActionType.CREATE_PROJECT
-            ):
-                # Post-creation readiness nudge: a freshly created project has
-                # no site and (usually) no team yet -- see
-                # render_project_created_followup's docstring. Never a reason
-                # to fail the reply, so this only appends text, no I/O.
-                reply_text = f"{reply_text}\n\n{render_project_created_followup()}"
+            # The project/site setup offer (tappable buttons: "Add a Site
+            # now?" / "Add a Teammate now?") is sent as a SEPARATE follow-up
+            # message from runtime/message_journey.py, not appended here --
+            # it belongs there for the same reason the worker-promotion
+            # offer does (see that module's docstring on this exact split):
+            # it needs workflow_runtime to actually start the next workflow
+            # on a Yes tap, which this pure-reply-rendering method has no
+            # access to.
             if self._receipt_builder is not None:
                 # Return the coroutine without awaiting it — the caller sends
                 # reply_text first so the user sees confirmation immediately,

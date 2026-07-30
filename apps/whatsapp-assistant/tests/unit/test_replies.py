@@ -12,6 +12,7 @@ from channel.replies import (
     IMAGE_PURPOSE_ROWS,
     IMAGE_PURPOSE_SEMANTIC_HINT,
     render_batch_overflow_reply,
+    render_capability_answer,
     render_category_prompt,
     render_clarify_reply,
     render_direct_reply,
@@ -145,13 +146,22 @@ def test_first_message_gets_introduced_returning_user_does_not():
 
 
 def test_question_gets_capability_answer_not_a_greeting():
+    """An unmatched question ("what can you do?") gets an actual answer, and
+    then the menu.
+
+    The menu is deliberate, reversing the earlier "a question that's already
+    understood as a question doesn't need one" rule. That rule assumed the
+    reply already told the user everything -- true when there was one
+    hardcoded sentence to tell, false now that there are 24 workflows behind
+    seven categories. Withholding the menu here just makes the user type
+    "menu" as their next message.
+    """
     reply = render_direct_reply(
         _decision(PlannerDecisionType.DIRECT_REPLY, CanonicalEventType.GENERAL_QUESTION_ASKED)
     )
     assert "record" in reply.text
     assert not reply.text.startswith(("Hello", "Good "))
-    # A question that's already understood as a question doesn't need a menu.
-    assert reply.list_rows is None
+    assert reply.list_rows == CATEGORY_ROWS
 
 
 def test_category_prompt_is_deterministic_per_row_and_distinct():
@@ -226,3 +236,62 @@ def test_batch_overflow_reply_names_the_remaining_count():
     reply = render_batch_overflow_reply(held_count=4, remaining_count=3)
     assert "4 photos" in reply
     assert "3 photos" in reply
+
+
+# ---------------------------------------------------------------------------
+# Capability help (see runtime/capability_help.py for the matching side)
+# ---------------------------------------------------------------------------
+
+
+def test_one_confident_match_is_answered_directly_not_as_a_one_row_list():
+    """Making someone tap a single-row list to learn one thing is a wasted
+    round trip -- the answer is short enough to just be the answer."""
+    reply = render_capability_answer(["finance.transfer"])
+    assert "Transfer Money" in reply.text
+    # The registry's example, so help teaches the phrasing that actually works.
+    assert "Company Account" in reply.text
+    assert reply.list_rows is None
+
+
+def test_several_matches_become_a_tappable_picker():
+    reply = render_capability_answer(["finance.transfer", "finance.petty_cash"])
+    assert reply.list_rows is not None
+    assert [r.id for r in reply.list_rows] == ["wf_finance.transfer", "wf_finance.petty_cash"]
+
+
+def test_suggestion_rows_reuse_the_menu_tap_ids():
+    """The whole reason help needs no plumbing of its own: a suggested row is
+    a menu row, so tapping it runs render_category_prompt exactly as a tap
+    from the category menu would."""
+    reply = render_capability_answer(["finance.transfer", "expense.submit"])
+    assert reply.list_rows is not None
+    for row in reply.list_rows:
+        assert render_category_prompt(row.id) is not None
+
+
+def test_no_matches_falls_back_to_the_capability_overview():
+    for empty in (None, [], "garbage", {}):
+        reply = render_capability_answer(empty)
+        assert "record" in reply.text
+        assert reply.list_rows == CATEGORY_ROWS
+
+
+def test_an_unrecognized_key_is_ignored_rather_than_crashing():
+    """Metadata is a plain dict that survived a round trip through Pydantic --
+    it is not a trusted source of WorkflowKey values."""
+    reply = render_capability_answer(["finance.teleport", "finance.transfer"])
+    assert "Transfer Money" in reply.text
+
+
+def test_a_system_only_workflow_is_never_suggested():
+    assert render_capability_answer(["labour.worker_promotion"]).list_rows == CATEGORY_ROWS
+
+
+def test_a_restricted_match_is_dropped_for_a_role_that_cannot_use_it():
+    """Second line of defence -- capability_help.py already filters its
+    catalogue by role, but these keys arrive via decision metadata."""
+    reply = render_capability_answer(
+        ["project.add_member", "project.detail_query"], role="SITE_ENGINEER"
+    )
+    assert reply.list_rows is not None
+    assert [r.id for r in reply.list_rows] == ["wf_project.detail_query"]
