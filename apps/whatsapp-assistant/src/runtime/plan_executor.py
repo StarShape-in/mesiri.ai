@@ -232,23 +232,43 @@ async def _start_next_runnable(
     return ReplySpec(text=format_plan_summary(plan))
 
 
+async def begin_plan(
+    *,
+    user_id: str,
+    plan_store: PlanStore,
+    workflow_runtime: WorkflowRuntime,
+) -> ReplySpec | None:
+    """Start executing a Plan that is ALREADY persisted on ``plan_store``,
+    with every step still PENDING -- the public name for
+    _start_next_runnable, exposed for the one caller outside this module
+    that needs to begin a plan without also persisting one:
+    resume_pending_plan_confirmation (docs/execution/
+    COMPOSITE_REQUEST_PLAN_LAYER.md §8), the Yes tap on the whole-plan
+    preview. The preview itself persists the plan (all-PENDING, so it is
+    inert and skipped by every advance_plan call until this runs) well
+    before the user answers Yes/No -- see planning/preview.py and
+    channel/replies.py's render_plan_preview_reply.
+    """
+    return await _start_next_runnable(
+        user_id=user_id, plan_store=plan_store, workflow_runtime=workflow_runtime
+    )
+
+
 async def start_plan(
     plan: Plan,
     *,
     plan_store: PlanStore,
     workflow_runtime: WorkflowRuntime,
 ) -> ReplySpec | None:
-    """Persist a freshly-built Plan (docs/execution/
-    COMPOSITE_REQUEST_PLAN_LAYER.md §9's decomposer, or any future producer)
-    and start its first runnable step.
-
-    Reuses _start_next_runnable rather than open-coding a "start step one"
-    special case -- starting a brand-new plan and advancing one already in
-    progress are the same operation (§4.2's one-plan-one-executor
-    invariant): both mean "given whatever is runnable right now, start it."
+    """Persist a freshly-built Plan and immediately start its first runnable
+    step -- used by producers that skip the preview (today: the
+    entity-resolution layer's 2-step member-create chain, which is already a
+    direct continuation of a confirmation the user just answered, not a
+    fresh multi-intent message that needs its own preview). The decomposer
+    (§9) uses begin_plan above instead, via the preview's Yes tap.
     """
     await plan_store.start_plan(plan=plan)
-    return await _start_next_runnable(
+    return await begin_plan(
         user_id=plan.user_id, plan_store=plan_store, workflow_runtime=workflow_runtime
     )
 

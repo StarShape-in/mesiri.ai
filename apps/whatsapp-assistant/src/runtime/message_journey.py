@@ -38,6 +38,7 @@ from mesiri_contracts.assistant.enums import InputModality
 from runtime.account_admin_journey import try_handle_account_admin_command
 from runtime.inbound_journey import (
     process_inbound_message,
+    resume_pending_plan_confirmation,
     resume_pending_report_with_material,
     resume_pending_report_with_material_create,
     resume_pending_report_with_material_unit_choice,
@@ -1128,6 +1129,32 @@ def build_message_handlers(
                 )
                 await message_logger.log_reply(
                     correlation_id=message.correlation_id, reply=member_create_reply.text
+                )
+                return
+
+            # A Yes/No tap on the whole-plan preview (docs/execution/
+            # COMPOSITE_REQUEST_PLAN_LAYER.md §8) -- decomposed_plan.py's
+            # try_start_decomposed_plan persisted an all-PENDING Plan and sent
+            # this preview; nothing runs until Yes. Distinct row-id pair from
+            # every other resume above, dispatched independently.
+            plan_confirm_reply = await resume_pending_plan_confirmation(
+                message,
+                ctx.user_id,
+                plan_store=plan_store,
+                workflow_runtime=workflow_runtime,
+                message_logger=message_logger,
+            )
+            timer.lap("resume_plan_confirmation")
+            if plan_confirm_reply is not None:
+                await send_reply_spec(
+                    plan_confirm_reply,
+                    wa_id,
+                    send_text=sender.send_text,
+                    send_list=sender.send_list,
+                    send_button=sender.send_button,
+                )
+                await message_logger.log_reply(
+                    correlation_id=message.correlation_id, reply=plan_confirm_reply.text
                 )
                 return
 

@@ -21,7 +21,7 @@ either.
 from __future__ import annotations
 
 from canonicalization import build_canonical_event
-from channel.replies import ReplySpec
+from channel.replies import ReplySpec, render_plan_preview_reply
 from mesiri_ai.ports.decomposition import DecompositionProvider
 from mesiri_contracts.assistant.enums import InputModality
 from mesiri_contracts.assistant.understanding_result import UnderstandingResult
@@ -30,10 +30,9 @@ from mesiri_contracts.assistant.v2.resolved_context import ResolvedContextV2
 from mesiri_contracts.common.ids import new_id
 from planning.decomposition import build_plan_from_segments
 from planning.plan_store import PlanStore
+from planning.preview import render_plan_preview
 from runtime.inbound_journey._shared import _log
-from runtime.plan_executor import start_plan
 from understanding.pipeline import UnderstandingPipeline
-from workflows import WorkflowRuntime
 
 #: Decomposition only makes sense where there is text to split.
 #: IMAGE/DOCUMENT go through vision first and their "text" is a rendering of
@@ -50,17 +49,23 @@ async def try_start_decomposed_plan(
     resolved: ResolvedContextV2,
     pipeline: UnderstandingPipeline,
     decomposition: DecompositionProvider | None,
-    workflow_runtime: WorkflowRuntime,
     plan_store: PlanStore | None,
     expense_categories: list[str] | None,
     correlation_id: str,
 ) -> ReplySpec | None:
     """Attempt to turn an UNKNOWN-classified message into a multi-step Plan.
 
-    Returns the first step's confirmation prompt (or, in the rare case every
-    segment resolves without asking anything, the closing summary) -- or
-    None for the caller to fall through to today's behaviour unchanged.
-    Never raises.
+    Persists the plan (every step PENDING -- see planning/preview.py's
+    docstring on why an all-PENDING plan is inert to every other advance
+    call) and returns the whole-plan preview (§8, P3) with its own Yes/No --
+    nothing is started yet. The Yes tap is handled by
+    resume_pending_plan_confirmation, which calls
+    runtime/plan_executor.py's begin_plan once the user actually confirms.
+    No WorkflowRuntime is needed here for exactly that reason: this function
+    never starts a workflow, only persists and describes one.
+
+    Returns None for the caller to fall through to today's behaviour
+    unchanged. Never raises.
     """
     if decomposition is None or plan_store is None:
         return None
@@ -115,8 +120,9 @@ async def try_start_decomposed_plan(
         return None
 
     try:
-        return await start_plan(result.plan, plan_store=plan_store, workflow_runtime=workflow_runtime)
+        await plan_store.start_plan(plan=result.plan)
+        return render_plan_preview_reply(render_plan_preview(result.plan))
     except Exception:  # noqa: BLE001 -- see module docstring: never let a
-        # plan-start failure take down the message.
-        _log.exception("plan.start_failed correlation_id=%s", correlation_id)
+        # plan-persist failure take down the message.
+        _log.exception("plan.persist_failed correlation_id=%s", correlation_id)
         return None

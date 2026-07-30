@@ -631,6 +631,54 @@ def render_member_candidate_picker(
     )
 
 
+#: The petty-cash recipient picker's escape hatch. Distinct prefix from
+#: MEMBER_CANDIDATE_NONE_ROW_ID's "member_" so the two resume legs never
+#: catch each other's taps -- both resolve a person, but one continues an
+#: ADD_PROJECT_MEMBER and the other an issuance of cash.
+PETTY_CASH_RECIPIENT_NONE_ROW_ID = "pcr_none"
+
+
+def render_petty_cash_recipient_picker(
+    name_hint: str, candidates: tuple[Candidate, ...]
+) -> ReplySpec:
+    """Ask which active user a petty-cash recipient name refers to -- the
+    reported name matched nobody exactly but scored close to one or more real
+    people (name_matching.resolve_name_hint's Ambiguous case).
+
+    Same shape as render_member_candidate_picker, deliberately with sharper
+    copy: this one decides *who receives money*, so the question names the
+    amount's destination rather than reading as a generic disambiguation.
+    Row id "pcr_{entity_id}", matched verbatim by
+    resume_pending_report_with_petty_cash_recipient; the trailing "None of
+    these" row carries PETTY_CASH_RECIPIENT_NONE_ROW_ID and stops the
+    issuance rather than guessing.
+
+    Never auto-picks even a single high-scoring candidate -- see
+    workflows/entities.py's Ambiguous docstring, and note the stakes here are
+    higher than a project membership: a wrong pick moves cash onto the wrong
+    person's advance account."""
+    rows = tuple(ListRow(f"pcr_{c.entity_id}", c.display_name) for c in candidates[:9]) + (
+        ListRow(PETTY_CASH_RECIPIENT_NONE_ROW_ID, "None of these"),
+    )
+    return ReplySpec(
+        text=f'I couldn\'t find an exact match for "{name_hint}" — who is this for?',
+        list_button_label="Choose one",
+        list_rows=rows,
+    )
+
+
+def render_petty_cash_recipient_not_found_reply(name_hint: str) -> str:
+    """Nothing close enough to offer. Stops before a draft is built rather
+    than after the user confirms one -- the pre-Phase-4 behaviour left
+    recipient_account_id unset, built the draft anyway, and let
+    transfer_validation reject it once the user had already tapped Yes
+    (ADR-E1: resolution belongs before the draft, not after)."""
+    return (
+        f'I couldn\'t find an active user called "{name_hint}" to issue cash to.\n\n'
+        "Check the spelling, or ask an admin to add them first."
+    )
+
+
 def render_member_create_offer(name_hint: str) -> ReplySpec:
     """No active user matched at all, and the sender's role is allowed to
     create one (WorkflowKey.CREATE_USER's allowed_roles, checked by the
@@ -646,6 +694,42 @@ def render_member_create_offer(name_hint: str) -> ReplySpec:
         ),
         buttons=(ListRow("membernew_yes", "Yes, create"), ListRow("membernew_no", "No")),
     )
+
+
+#: Row ids for the whole-plan preview's Yes/No (docs/execution/
+#: COMPOSITE_REQUEST_PLAN_LAYER.md §8) -- matched verbatim by
+#: resume_pending_plan_confirmation. Distinct from CONFIRM_BUTTONS'
+#: "confirm_yes"/"confirm_no": those are for a single workflow's own draft
+#: confirmation; a plan preview confirms the WHOLE plan before any single
+#: step's workflow has even started, so it needs its own ids even though
+#: both buttons' titles read "Yes"/"No" the same way.
+PLAN_CONFIRM_YES_ROW_ID = "plan_confirm_yes"
+PLAN_CONFIRM_NO_ROW_ID = "plan_confirm_no"
+
+
+def render_plan_preview_reply(plan_text: str) -> ReplySpec:
+    """The whole-plan preview (§8) -- one numbered line per step (already
+    rendered by planning/preview.py's render_plan_preview, kept out of this
+    module since it needs Plan/PlanStep, which channel/ must not depend on),
+    plus the single Yes/No that starts the whole thing or discards it."""
+    return ReplySpec(
+        text=plan_text,
+        buttons=(
+            ListRow(PLAN_CONFIRM_YES_ROW_ID, "Yes"),
+            ListRow(PLAN_CONFIRM_NO_ROW_ID, "No"),
+        ),
+    )
+
+
+def render_plan_cancelled_reply() -> str:
+    return "Okay, I won't do any of that."
+
+
+def render_plan_confirmation_expired_reply() -> str:
+    """The plan's TTL (PlanStore, 30 minutes) lapsed before the sender
+    answered Yes/No -- mirrors render_setup_offer_expired_reply's honest
+    "this offer is gone" wording rather than pretending to still hold it."""
+    return "That request has expired — please resend it."
 
 
 def render_member_create_declined_reply(name_hint: str) -> str:

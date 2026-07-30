@@ -16,6 +16,7 @@ else in the repo needs to change.
 from __future__ import annotations
 
 from runtime.inbound_journey._shared import _log
+from runtime.inbound_journey.plan_confirmation import resume_pending_plan_confirmation
 from runtime.inbound_journey.process import (
     _ACCOUNT_ADMIN_DENIED_REPLY,
     _ACCOUNT_ADMIN_ROLES,
@@ -160,6 +161,7 @@ __all__ = [
     "_seed_worker_candidates",
     "process_inbound_message",
     "render_workflow_run_reply_spec",
+    "resume_pending_plan_confirmation",
     "resume_pending_report_with_material",
     "resume_pending_report_with_material_create",
     "resume_pending_report_with_material_unit_choice",

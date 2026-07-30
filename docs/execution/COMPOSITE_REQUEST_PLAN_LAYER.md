@@ -1,6 +1,6 @@
 # Composite Request Plan Layer — Design Doc
 
-**Status:** Phase 1 done and §11.1's two gaps closed (2026-07-30). `PlanStep`/`Plan` now carry everything a step needs to rebuild a complete `CanonicalEventV2`, and `planning/binding.py` does it just-in-time. **Next is Phase 4 (decomposition) — unblocked.**
+**Status:** Phases 1–4 done (2026-07-30). Decomposition, entity-linking, the generic executor, wiring into `process_inbound_message`, the member-create swap, and the §8 preview are all live. **The Paraclette/Starship message works end to end**, gated behind its own Yes/No before anything executes. Remaining: Phase 5 (migrate the other entity types), Phase 6 (whole-plan permission pre-check, separate security review), and the known §9 gap (a segment missing a required field is silently dropped — now the preview's job to surface, not yet done).
 **Owner:** Ilan Usman
 **Started:** 2026-07-30
 **Last updated:** 2026-07-30
@@ -382,10 +382,43 @@ I'll do 5 things:
 YES to do all  ·  EDIT  ·  NO
 ```
 
-`EDIT` scope is an open question (§12). One YES executes the whole plan —
-including, in this example, creating a user and granting them
-project-manager rights, which is the largest blast radius in the list. That
-is the deliberate trade for P3's preview.
+`EDIT` scope is an open question (§12), **not built** — only Yes/No exist
+today. One YES executes the whole plan — including, in this example,
+creating a user and granting them project-manager rights, which is the
+largest blast radius in the list. That is the deliberate trade for P3's
+preview.
+
+**Built 2026-07-30**, matching the mockup above closely but not
+exactly — `planning/preview.py`'s `render_plan_preview` renders one line per
+step (`describe_step`, bespoke phrasing for the five workflow keys the
+entity-linking rule connects, a `registry.title`-based fallback for
+anything else), `channel/replies.py`'s `render_plan_preview_reply` attaches
+the Yes/No (`PLAN_CONFIRM_YES_ROW_ID`/`PLAN_CONFIRM_NO_ROW_ID`, distinct
+from `CONFIRM_BUTTONS`' `confirm_yes`/`confirm_no` on purpose — see that
+constant's own new comment on why a plan-level Yes needs its own row ids
+even though both buttons read "Yes"/"No").
+
+The sequencing this forced: `try_start_decomposed_plan`
+(`runtime/inbound_journey/decomposed_plan.py`) no longer starts the plan —
+it persists it all-`PENDING` and returns the preview. A new
+`resume_pending_plan_confirmation` (`runtime/inbound_journey/
+plan_confirmation.py`), dispatched from `message_journey.py`'s row-id chain
+exactly like every other `resume_pending_report_with_*`, handles the tap:
+No clears the plan (`render_plan_cancelled_reply`); Yes calls
+`plan_executor.py`'s new `begin_plan` — the same `_start_next_runnable` loop
+`start_plan` already used, now exposed separately so a plan can be
+persisted-and-previewed first and begun-later, on a **different** message
+(the Yes tap), rather than in one call. `start_plan` itself is kept for the
+one producer that still wants persist-and-begin together: the
+entity-resolution layer's 2-step member-create chain, which is already a
+direct continuation of a confirmation the user just answered and doesn't
+need a fresh preview of its own.
+
+An all-`PENDING` plan is provably inert to every other confirmation in the
+system while it waits: `plan_executor.advance_plan`'s `_running_step_for`
+only ever matches a step whose status is `RUNNING`, and a freshly-persisted
+preview plan has none — so nothing anywhere can accidentally advance it
+before the user answers Yes.
 
 ---
 
@@ -476,6 +509,16 @@ the user instead of only logged. Test:
 `test_decomposed_plan.py` names this gap explicitly so it isn't
 rediscovered as a bug.
 
+**Still open once the preview landed (2026-07-30): the preview does not yet
+do this surfacing.** `render_plan_preview` describes the `Plan` it is
+given, which by construction only ever contains the segments that survived
+`build_plan_from_segments` — a dropped segment is simply absent from what
+the user sees, with no line saying "and I couldn't include X". Closing this
+means passing `DecomposedPlanResult.skipped` (already collected, already
+carries index/text/reason) through to the preview renderer, appended as a
+plain-language note below the numbered list. Not done in this pass; the
+preview mechanism it depends on did not exist until this pass.
+
 ---
 
 ## 10. Phases
@@ -487,10 +530,10 @@ Phase 0 (doc + Module Placement Log row) is done — both docs now exist.
 |---|---|---|---|
 | **0** | §4.4 confirmed in writing in his doc: his continuation is built on `Plan`/`PlanStep`/`PlanStore` (§6, this doc), not a standalone `PendingReportStore` generalization. | Joint — his doc, this ask | **Done** — accepted in his §8.1, commit `0074fae`. |
 | **1** | `EntityType`, `Resolved`/`Ambiguous`/`Missing`, registry `provides`/`requires`, `Plan`/`PlanStep`/`PlanStore` primitives built together (not sequentially) so his continuation is the first real consumer. | His doc, jointly-designed store | **Done** — commit `ee3cd7b`. Shipped N-capable, with §11.1's two gaps. |
-| **2** | Migrate USER (his live bug) — a `Plan` of size 2 (create_user → add_member). | His doc | **Done** — `ee3cd7b`, plus `1ba6462` (stale-plan hijack fix). Not yet verified on a live send. |
-| **3** | Migrate MATERIAL — must reproduce `resume_pending_report_with_material_create` exactly via the shared store. | His doc | Not started. The honest falsification test of the shared abstraction. |
-| **4** | Decomposition (§9) + plan preview (§8). Ordering (§7.1), just-in-time canonicalization (§7.2, `planning/binding.py`) and dependency-aware cancellation (§7.4) are already built and tested. | This doc | **Unblocked** — §11.1 closed. The decomposer is the remaining piece; see §9, now settled by real trace evidence. |
-| **5** | Migrate ACCOUNT/VENDOR/AUDIENCE/PROJECT/SITE, deleting each bespoke resolver. | His doc | Not started. |
+| **2** | Migrate USER (his live bug) — a `Plan` of size 2 (create_user → add_member). | His doc | **Done** — `ee3cd7b`, `1ba6462` (stale-plan hijack fix), and `4ae4a67` (swapped onto the generic executor, `plan_executor.advance_plan`/`begin_plan` — the hand-written `advance_member_plan_after_user_created` is deleted outright). Verified against a *real* `WorkflowRuntime` + compiled LangGraph graphs, not just fakes (`test_member_create_plan_real_runtime.py`) — not yet against a live WhatsApp send. |
+| **3** | Migrate MATERIAL — must reproduce `resume_pending_report_with_material_create` exactly via the shared store. | His doc | **Done** — `fe1c257`. |
+| **4** | Decomposition (§9) + plan preview (§8). Ordering (§7.1), just-in-time canonicalization (§7.2, `planning/binding.py`) and dependency-aware cancellation (§7.4) were already built and tested. | This doc | **Done** — `9078fdd` (decomposition wired into `process_inbound_message`), `4ae4a67` (executor swap, prerequisite for one-plan-one-executor), and the preview (`planning/preview.py`, `runtime/inbound_journey/plan_confirmation.py`, this commit). The Paraclette/Starship message works end to end, gated behind Yes/No. |
+| **5** | Migrate ACCOUNT/VENDOR/AUDIENCE/PROJECT/SITE, deleting each bespoke resolver. | His doc | In progress — `ba1d3ed` migrated VENDOR. |
 | **6** | Whole-plan permission pre-check (§7.3) — via the real gates or one extracted predicate, **not** by promoting `allowed_roles` (ADR-C5 withdrawn, see his §8.2). Separate security review. | This doc | Not started. |
 
 Phase 1 was the one place both docs' timelines actually merged — building the

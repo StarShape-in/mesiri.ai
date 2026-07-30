@@ -53,6 +53,7 @@ from runtime.inbound_journey.seeding import (
     _inject_inventory_context,
     _run_material_unit_gates,
     _run_member_name_gate,
+    _run_petty_cash_recipient_gate,
     _run_project_gate,
     _run_site_gate,
     _run_stock_gate,
@@ -570,7 +571,9 @@ async def process_inbound_message(
         # outage, nothing plannable) -- this is set as `held_reply` the same
         # way every other gate below is, so the planner/workflow stage is
         # skipped exactly when a gate already produced the full reply, with
-        # no new branch of its own.
+        # no new branch of its own. Persists the plan and returns the §8
+        # preview only -- nothing starts until the user taps Yes (see
+        # resume_pending_plan_confirmation), so no WorkflowRuntime is passed.
         if held_reply is None and canonical_event.event_type is CanonicalEventType.UNRECOGNIZED:
             held_reply = await try_start_decomposed_plan(
                 message_modality=message.modality,
@@ -578,7 +581,6 @@ async def process_inbound_message(
                 resolved=resolved,
                 pipeline=pipeline,
                 decomposition=decomposition,
-                workflow_runtime=workflow_runtime,
                 plan_store=plan_store,
                 expense_categories=expense_categories,
                 correlation_id=correlation_id,
@@ -603,6 +605,23 @@ async def process_inbound_message(
                 pending_report_store=pending_report_store,
                 actor_user_id=actor_user_id,
                 actor_role=actor.role if actor is not None else None,
+            )
+
+        # --- Petty-cash recipient gate ---
+        # Same ADR-E1 move as the member gate above, for the one workflow
+        # where the doomed confirmation moves money: an unmatched recipient
+        # used to leave recipient_account_id unset, build the draft anyway,
+        # and let transfer_validation reject it after the user tapped Yes.
+        if (
+            held_reply is None
+            and member_resolver is not None
+            and pending_report_store is not None
+        ):
+            held_reply = await _run_petty_cash_recipient_gate(
+                canonical_event,
+                member_resolver=member_resolver,
+                pending_report_store=pending_report_store,
+                actor_user_id=actor_user_id,
             )
 
         # --- Material/unit resolution gate ---
