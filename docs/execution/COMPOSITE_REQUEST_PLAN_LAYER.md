@@ -1,18 +1,18 @@
 # Composite Request Plan Layer — Design Doc
 
-**Status:** Design only — no code written. **Blocked on reconciliation with
-the Entity Resolution & Continuation design doc (see §4), which must land
-first.**
+**Status:** Phase 1 done (shared spine + `planning/`, built jointly with the
+entity-resolution layer — see §11). Phases 2–3 absorbed into it. **Next is
+Phase 4 (decomposition), blocked on §11.1's two known gaps.**
 **Owner:** Ilan Usman
 **Started:** 2026-07-30
 **Last updated:** 2026-07-30
 **Linear:** _(epic to be created — see §11)_
 
-> **Resuming in a new session?** Read §4 first. This layer does not stand
-> alone: it shares its central data structure with the entity-resolution
-> layer, and building it before that reconciliation is agreed will produce
-> two competing orchestrators. Then read §2 (what already exists) and §3
-> (the binding principles).
+> **Resuming in a new session?** Read §11 first — it says what is built, what
+> is next, and the two Phase-1 gaps that Phase 4 will hit. Then §4 (how this
+> layer and the entity-resolution layer interlock — they share one store and
+> one executor, and splitting them would produce two competing
+> orchestrators), §2 (what already exists) and §3 (the binding principles).
 
 > **Purpose of this document.** Durable memory for this layer. If a future
 > session — human or AI — loses all conversational context, this file alone
@@ -417,48 +417,96 @@ construction.
 Numbered to slot alongside his phases (his §5), not to duplicate them. His
 Phase 0 (doc + Module Placement Log row) is done — both docs now exist.
 
-| Phase | Content | Owner | Gate |
+| Phase | Content | Owner | Status |
 |---|---|---|---|
-| **0** | §4.4 confirmed in writing in his doc: his continuation is built on `Plan`/`PlanStep`/`PlanStore` (§6, this doc), not a standalone `PendingReportStore` generalization. | Joint — his doc, this ask | **Blocking. Nothing below starts without this.** |
-| **1** | `EntityType`, `Resolved`/`Ambiguous`/`Missing`, registry `provides`/`requires`, `Plan`/`PlanStep`/`PlanStore` primitives built together (not sequentially) so his continuation is the first real consumer. | His doc, jointly-designed store | The mechanism exists |
-| **2** | Migrate USER (his live bug) — a `Plan` of size 1, one step inserted on `Missing`. | His doc | End-to-end on the real Hysam failure |
-| **3** | Migrate MATERIAL — must reproduce `resume_pending_report_with_material_create` exactly via the shared store. | His doc | Honest test of the shared abstraction |
-| **4** | Decomposition (§9) + topological ordering (§7.1) + just-in-time canonicalization (§7.2) + plan preview (§8) + dependency-aware cancellation (§7.4). The Paraclette message works end to end — a `Plan` of size 5, some steps inserted by decomposition, one possibly inserted by entity resolution if a name doesn't match. | This doc | Scenario test from a real WhatsApp message |
-| **5** | Migrate ACCOUNT/VENDOR/AUDIENCE/PROJECT/SITE, deleting each bespoke resolver. | His doc | The ~10 duplicates collapse |
-| **6** | Promote role gates to registry data for whole-plan pre-check (§7.3) — **separate security review**, not bundled into Phase 4. | This doc | Security review |
+| **0** | §4.4 confirmed in writing in his doc: his continuation is built on `Plan`/`PlanStep`/`PlanStore` (§6, this doc), not a standalone `PendingReportStore` generalization. | Joint — his doc, this ask | **Done** — accepted in his §8.1, commit `0074fae`. |
+| **1** | `EntityType`, `Resolved`/`Ambiguous`/`Missing`, registry `provides`/`requires`, `Plan`/`PlanStep`/`PlanStore` primitives built together (not sequentially) so his continuation is the first real consumer. | His doc, jointly-designed store | **Done** — commit `ee3cd7b`. Shipped N-capable, with §11.1's two gaps. |
+| **2** | Migrate USER (his live bug) — a `Plan` of size 2 (create_user → add_member). | His doc | **Done** — `ee3cd7b`, plus `1ba6462` (stale-plan hijack fix). Not yet verified on a live send. |
+| **3** | Migrate MATERIAL — must reproduce `resume_pending_report_with_material_create` exactly via the shared store. | His doc | Not started. The honest falsification test of the shared abstraction. |
+| **4** | Decomposition (§9) + topological ordering (§7.1) + just-in-time canonicalization (§7.2) + plan preview (§8) + dependency-aware cancellation (§7.4). The Paraclette message works end to end — a `Plan` of size 5, some steps inserted by decomposition, one possibly inserted by entity resolution if a name doesn't match. | This doc | Not started. **Blocked on §11.1.** |
+| **5** | Migrate ACCOUNT/VENDOR/AUDIENCE/PROJECT/SITE, deleting each bespoke resolver. | His doc | Not started. |
+| **6** | Whole-plan permission pre-check (§7.3) — via the real gates or one extracted predicate, **not** by promoting `allowed_roles` (ADR-C5 withdrawn, see his §8.2). Separate security review. | This doc | Not started. |
 
-Phase 1 is the one place both docs' timelines actually merge — building the
-store once, together, is what makes §4.4 true rather than aspirational.
-Phases 2–3 (his) then land with zero change to this layer's later work,
-and Phase 4 (this doc) inherits a store already proven against two real
-entity types before it ever has to handle five ordered steps at once.
+Phase 1 was the one place both docs' timelines actually merged — building the
+store once, together, is what made §4.4 true rather than aspirational, and
+it worked: the entity-resolution layer's continuation is `PlanStore`'s first
+real consumer, so there is one executor to extend rather than two to
+reconcile. Phase 4 inherits a store already exercised by a real chain, which
+is also how §11.1's two gaps were found before they cost anything.
 
 ---
 
 ## 11. Where work stopped / what to do next
 
-Design only for both layers, written 2026-07-30. Both documents now exist;
-reconciliation is done except for one open item.
+**Phase 1 is done and committed** (2026-07-30, jointly with the
+entity-resolution layer — see its §8.1). Landed: `EntityType`, registry
+`provides`/`requires` + `workflow_that_provides`,
+`Plan`/`PlanStep`/`StepRef`/`PlanStore`/`topological_order` under
+`planning/`. §4.4 was accepted, so there is **one store and one executor** —
+that layer's continuation is built on `PlanStore`, not a parallel mechanism.
 
-**Next action — the single blocking ask, to put back to him:**
+Phases 2–3 of this doc are effectively absorbed: `PlanStore` shipped
+N-capable from the start rather than as a size-1 store to widen later, and
+its first real consumer is that layer's `start_member_create_plan` /
+`advance_member_plan_after_user_created`.
 
-> Build Phase 1's "one generic continuation" on the `Plan`/`PlanStep`/
-> `PlanStore` shape (§6 of this doc) instead of generalizing
-> `PendingReportStore` on its own. Concretely: the paused
-> `CanonicalEventV2` + missing-entity bookkeping his §3.3 describes becomes a
-> `Plan` with exactly one `PlanStep`; a `Missing` result inserts a step ahead
-> of it; resume is `PlanStore`'s pop-and-advance. His ADR-E3 depth-1 limit
-> stays exactly as scoped — it becomes a rule about what the
-> entity-resolution layer is allowed to insert, not a property of the
-> storage shape. Nothing else in his design changes.
+**Next action is Phase 4** (decomposition + ordering + preview). Before it
+starts, §11.1 must be closed — Phase 1 shipped with two known gaps that Phase
+4, and nothing before it, will hit.
 
 Resolved already, no further action needed:
 
 1. ~~Field names~~ — `provides`/`requires`, matched independently, adopted (§4.1).
 2. ~~`EntityType` location~~ — `workflows/registry.py` / new `workflows/entities.py`, not `shared/contracts` (§4.2).
-3. ~~`allowed_roles` reuse~~ — his offer-filtering use and this layer's hard
-   plan-wide gate are different consumers of the same field; documented
-   side by side so the identical name doesn't get conflated later (§4.3).
+3. ~~`allowed_roles` reuse~~ — see §4.3, and his §8.2 objection, which this
+   doc now concedes: ADR-C5 is **withdrawn as written**. Promoting an
+   advisory field to load-bearing inverts its safety property (drift becomes
+   a privilege bug rather than a wrong menu row). Phase 6 instead checks
+   plans against the real gates, or extracts one predicate both call.
+4. ~~Shared store~~ — §4.4 accepted and built (his §8.1).
+
+### 11.1 Phase 1's two known gaps — blocking for Phase 4 only
+
+Both are **latent, not live**: the entity-resolution layer routes around each
+by hand for the one fixed-shape chain it builds, which is legitimate at that
+scale. Its own `_resolve_step_field` says so — *"deliberately narrow, not the
+generic recursive resolution the composite-request plan layer's Phase 4 will
+need."* Phase 4 is where they stop being avoidable. Recorded here so they are
+not rediscovered as bugs.
+
+**(a) `PlanStep` cannot reconstruct a `CanonicalEventV2`.**
+`workflow_runtime.start()` requires a real event, and `PlanStep` stores only
+`workflow_key` + `fields`. That is lossy twice over:
+
+- `workflow_key` → `event_type` is **many-to-one and therefore not
+  invertible**: `SITE_UPDATE` ← 2 event types, `SITE_ISSUE_CLOSE` ← 3,
+  `PETTY_CASH` ← 2, `REVERSE` ← 2 (`planner/routing.py`).
+- `permissions`, `organization_id`, `conversation_id`, `source_message_id`,
+  `causation_id`, `completeness`, `missing_fields` are all dropped. `Plan`
+  carries `user_id` but not org.
+
+Today the resolution layer hand-builds a fresh `CanonicalEventV2` at start
+time, which works because it knows exactly which two workflows it is
+chaining. A decomposer emitting arbitrary steps cannot.
+
+Note `PendingBatchStore` — the existing multi-segment machinery — stores full
+`CanonicalEventV2` objects per segment and does not have this problem. The
+likely shape: `PlanStep` carries a full event when the step is canonicalizable,
+and an unbound spec only while refs are still open.
+
+**(b) `StepRef` has no destination, and the implied default is wrong.**
+`site_create/nodes.py` reads `state["project_id"]` and its docstring is
+explicit — the project comes from context resolution, *"never from
+`collected_fields`."* A `StepRef` sitting in `PlanStep.fields` lands in
+`CanonicalEventV2.fields`, the wrong place; `CanonicalEventV2` is
+`extra="forbid"`, so scope cannot be smuggled through either. The resolution
+layer works around this today with an explicit
+`resolved_fields.pop("project_id")` before building the event.
+
+Phase 4 needs the fields-vs-scope split to be explicit in the data structure —
+roughly `field_refs` (→ `CanonicalEventV2.fields`) vs `scope_refs` (→
+`project_id` / `site_id`) — rather than every consumer remembering to
+re-route by hand. This is the actual hard part of ADR-C2.
 
 ---
 
@@ -498,12 +546,14 @@ Resolved already, no further action needed:
 
 | Risk | Mitigation |
 |---|---|
-| **Two orchestrators** (§4.2) | Phase 0 is blocking. This is the one that produces unfixable architecture. |
+| ~~**Two orchestrators** (§4.2)~~ | **Closed.** §4.4 accepted; one `PlanStore`, one executor, built once in Phase 1. |
 | Bad decomposition silently creates five wrong records | P3 — preview before any write. Decomposition ships last (Phase 4). |
 | One YES grants project-manager rights | Accepted, with the full preview as the control. Revisit if it proves too loose in practice. |
-| Role gates promoted to registry data weaken enforcement | Phase 5 is separately reviewed; Phase 3 keeps the existing `process.py` gates. |
-| Scope collision with the entity-resolution layer's `resume.py` collapse | §4.3 lists what this doc defers. Do not touch `resume.py` from this layer. |
+| ~~Role gates promoted to registry data weaken enforcement~~ | **Closed by withdrawing ADR-C5** (his §8.2). Phase 6 uses the real gates or one extracted predicate; `allowed_roles` stays advisory. |
+| Scope collision with the entity-resolution layer's `resume.py` collapse | §4.5 lists what this doc defers. Do not touch `resume.py` from this layer. |
+| **A plan outlives its turn and attaches to the wrong workflow** | Realized once already (`1ba6462`): an abandoned plan hijacked a later unrelated `CREATE_USER`. Every advance/clear decision must match on `PlanStep.workflow_instance_id`, never on `workflow_key` alone. Phase 4 has N steps and so N times the exposure. |
+| Phase 1's two known gaps are rediscovered as bugs in Phase 4 | §11.1 records both with their evidence. Read it before starting Phase 4. |
 
 ---
 
-*Last updated: 2026-07-30 (initial draft — Phase 0 not started)*
+*Last updated: 2026-07-30 (Phases 0–2 done; Phase 4 next, blocked on §11.1)*

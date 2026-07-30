@@ -260,6 +260,36 @@ rather than forced.
 1. **Fuzzy threshold.** How close is "did you mean"? Too loose suggests
    strangers; too tight and ഹൈസം never finds Hisham. Needs real org data —
    `match_worker`'s existing threshold is the starting point, not the answer.
+
+   **Measured against the shipped `_ASK_THRESHOLD = 0.6`** (difflib ratio on
+   normalized names), using §1's own list of plausible readings of ഹൈസം:
+
+   | Pair | Ratio | At 0.6 |
+   |---|---|---|
+   | Hysam / Hisham | 0.727 | offered ✅ (the live bug) |
+   | Hysam / Haisam | 0.727 | offered |
+   | Hysam / Hysamm | 0.909 | offered |
+   | **Hysam / Haitham** | **0.500** | **missed ❌** |
+   | Sunil / Sunita | 0.727 | offered (correctly asks) |
+   | Ramesh / Rakesh | 0.833 | offered (correctly asks) |
+
+   The bug that motivated this plan is fixed, but **§1's own example set
+   already contains a miss**: if the real person is stored as "Haitham", the
+   near-match does not reach them.
+
+   The consequence is asymmetric and worth stating plainly. A *false
+   positive* is cheap — it becomes one extra row in a picker a human is
+   already reading, which is exactly the safety argument in
+   `member_resolution.py`'s docstring. A *false negative* is not: it does
+   not degrade to "not found", it degrades to `Missing` → "create a new
+   user?" → **a duplicate person with their own WhatsApp access**, while the
+   original account still exists. So the tuning pressure runs toward loose,
+   not tight, and the two directions must not be traded off as if
+   symmetric.
+
+   This is also the strongest argument for open question 2 below: 0.500 is
+   a Latin-transliteration artifact, and the Malayalam original may score
+   these pairs far better.
 2. **Cross-script matching.** Does the near-match run on the Malayalam original,
    the transliteration, or both? Extraction gives us the translated text; the
    original script may be the better signal for a person's name.
