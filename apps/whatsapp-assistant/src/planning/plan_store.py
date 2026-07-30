@@ -20,6 +20,7 @@ until that migrates, plan-layer doc §10 Phase 2/3 regression anchor).
 from __future__ import annotations
 
 import dataclasses
+import logging
 from typing import Any, Protocol
 
 from .plan import Plan, PlanOrigin, PlanStep, StepStatus
@@ -30,6 +31,8 @@ from .plan import Plan, PlanOrigin, PlanStep, StepStatus
 #: question in the plan-layer doc §12 -- a five-step plan may legitimately
 #: outlive 30 minutes; revisit with real usage data before raising it blind.
 _DEFAULT_TTL_SECONDS = 1800
+
+_log = logging.getLogger(__name__)
 
 
 class _RedisLike(Protocol):
@@ -86,7 +89,18 @@ class PlanStore:
         raw = await self._redis.get_json(self._key(user_id))
         if not raw or not raw.get("steps"):
             return None
-        return Plan.from_dict(raw)
+        try:
+            return Plan.from_dict(raw)
+        except Exception:  # noqa: BLE001 -- see below
+            # A plan Redis still holds but this build can no longer read --
+            # in practice one written before a shape change, still inside its
+            # 30-minute TTL across a deploy. Treated as absent rather than
+            # raised: the alternative is every message from that user failing
+            # for half an hour over a follow-up offer, when the underlying
+            # record (the project/user they created) was already saved and
+            # the worst real consequence is one un-offered next step.
+            _log.warning("plan_store.unreadable_plan user=%s", user_id, exc_info=True)
+            return None
 
     async def has_pending(self, *, user_id: str) -> bool:
         return await self.get_plan(user_id=user_id) is not None
@@ -218,13 +232,11 @@ class PlanStore:
         new_origin = (
             plan.origin if plan.origin is PlanOrigin.RESOLUTION else PlanOrigin.MIXED
         )
-        new_plan = Plan(
-            plan_id=plan.plan_id,
-            correlation_id=plan.correlation_id,
-            user_id=plan.user_id,
-            origin=new_origin,
-            steps=ordered,
-        )
+        # dataclasses.replace, for the same reason with_steps and the status
+        # mutations use it: a field-by-field rebuild drops whatever was added
+        # to Plan since it was written -- which is exactly how this line lost
+        # organization_id/permissions the moment identity moved onto the plan.
+        new_plan = dataclasses.replace(plan, origin=new_origin, steps=ordered)
         await self._redis.set_json(
             self._key(user_id), new_plan.to_dict(), ttl_seconds=_DEFAULT_TTL_SECONDS
         )
