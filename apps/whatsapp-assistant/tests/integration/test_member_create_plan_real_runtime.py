@@ -1,0 +1,169 @@
+"""End-to-end reproduction of the live trace: does advance_member_plan_after_
+user_created actually fire after the *real* WorkflowRuntime (not a fake that
+just replays canned results) drives CREATE_USER through start -> pause on
+missing number -> slot answer -> confirm?
+
+test_member_create_plan.py's own WorkflowRuntime fake only ever replayed
+pre-built WorkflowRunResults, so it could never have caught a bug in how
+workflow_instance_id actually flows through start()/provide_input()/resume()
+-- this file exists specifically to close that gap, using the real
+WorkflowRuntime, a real FakeWorkflowInstanceRepository (the same one
+workflows/runtime.py's own test suite trusts), and the real compiled
+create_user/add_project_member graphs.
+
+Skipped automatically when ``langgraph`` isn't installed.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+pytest.importorskip("langgraph")
+
+from typing import Any  # noqa: E402
+
+from mesiri_contracts.application.results.execution_result import (  # noqa: E402
+    ExecutionResult,
+    ExecutionStatus,
+)
+from mesiri_contracts.assistant.canonical_event import CanonicalEventType  # noqa: E402
+from mesiri_contracts.assistant.canonical_event import (  # noqa: E402
+    IntentCompleteness as _IntentCompleteness,
+)
+from mesiri_contracts.assistant.planner_decision import (  # noqa: E402
+    WorkflowKey,
+)
+from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2  # noqa: E402
+from planning.plan_store import PlanStore  # noqa: E402
+from runtime.inbound_journey.resume import (  # noqa: E402
+    advance_member_plan_after_user_created,
+    start_member_create_plan,
+)
+from workflows.add_project_member.graph import build_add_project_member_graph  # noqa: E402
+from workflows.create_user.graph import build_create_user_graph  # noqa: E402
+from workflows.fakes import FakeWorkflowInstanceRepository, FakeWorkflowRegistry  # noqa: E402
+from workflows.runtime import ResumeAction, WorkflowRuntime  # noqa: E402
+
+ORG = "11111111-1111-4111-8111-111111111111"
+USR = "22222222-2222-4222-8222-222222222222"
+PRJ = "33333333-3333-4333-8333-333333333333"
+
+
+class _FakeRedis:
+    def __init__(self) -> None:
+        self._store: dict[str, Any] = {}
+
+    def namespaced(self, *parts: str) -> str:
+        return ":".join(parts)
+
+    async def set_json(self, key: str, value: Any, *, ttl_seconds: int | None = None) -> None:
+        self._store[key] = value
+
+    async def get_json(self, key: str) -> Any | None:
+        return self._store.get(key)
+
+
+class _Actor:
+    def __init__(self):
+        self.user_id = USR
+        self.organization_id = ORG
+        self.role = "PROJECT_MANAGER"
+
+
+def _original_add_member_event() -> CanonicalEventV2:
+    return CanonicalEventV2(
+        event_id="evt_orig",
+        correlation_id="cor_orig",
+        source_message_id="msg_orig",
+        event_type=CanonicalEventType.ADD_PROJECT_MEMBER_REQUESTED,
+        completeness=_IntentCompleteness.ACTIONABLE,
+        organization_id=ORG,
+        user_id=USR,
+        project_id=PRJ,
+        fields={
+            "member_name": "Hysam",
+            "role": "PROJECT_MANAGER",
+            "created_by_role": "PROJECT_MANAGER",
+        },
+    )
+
+
+def _mock_handled(result, execution=None):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(result=result, execution_result=execution, reply_text="", project_id=None, site_id=None)
+
+
+async def test_the_exact_live_sequence_reaches_the_confirmation_prompt():
+    """Reproduces: create Hysam -> Yes, create -> (asks for number) ->
+    +91 97781 90485 -> (asks to confirm) -> Yes -> should offer to add Hysam
+    to the project, not stop at "user created"."""
+    repo = FakeWorkflowInstanceRepository()
+    runtime = WorkflowRuntime(
+        registry=FakeWorkflowRegistry(
+            {
+                WorkflowKey.CREATE_USER: build_create_user_graph(),
+                WorkflowKey.ADD_PROJECT_MEMBER: build_add_project_member_graph(),
+            }
+        ),
+        repo=repo,
+    )
+    plan_store = PlanStore(_FakeRedis())
+    actor = _Actor()
+
+    # Step 1: "Yes, create" -- starts CREATE_USER with just a name.
+    prompt1 = await start_member_create_plan(
+        name_hint="Hysam",
+        original_event=_original_add_member_event(),
+        actor=actor,
+        plan_store=plan_store,
+        workflow_runtime=runtime,
+    )
+    assert prompt1 is not None and "number" in prompt1.lower(), prompt1
+
+    # Step 2: the phone number reply. handle_slot_answer's own logic, done
+    # directly here to isolate WorkflowRuntime/PlanStore from the interaction
+    # layer around it.
+    loaded = await runtime.get_awaiting_input(USR)
+    assert loaded is not None, "no COLLECTING_FIELDS instance was persisted for the number question"
+    run2 = await runtime.provide_input(loaded, "+91 97781 90485")
+    assert run2.status.value == "started", run2.status
+    assert run2.workflow_instance_id == loaded.state.workflow_instance_id, (
+        "provide_input returned a DIFFERENT workflow_instance_id than the one "
+        "it was resuming -- this alone would break the plan's instance match"
+    )
+
+    # Step 3: "Yes" -- confirms the CREATE_USER draft.
+    loaded2 = await runtime.get_awaiting_confirmation(USR)
+    assert loaded2 is not None, "no AWAITING_CONFIRMATION instance found after provide_input"
+    assert loaded2.state.workflow_instance_id == run2.workflow_instance_id, (
+        "get_awaiting_confirmation found a DIFFERENT instance than provide_input just produced"
+    )
+    resume_result = await runtime.resume(loaded2, ResumeAction.CONFIRM)
+    assert resume_result.status.value == "confirmed", resume_result.status
+    assert resume_result.workflow_instance_id == loaded.state.workflow_instance_id, (
+        "the CONFIRMED result's workflow_instance_id does not match the "
+        "original instance start_member_create_plan recorded on the plan -- "
+        "THIS is what would make _is_our_instance() reject a legitimate match"
+    )
+
+    # Step 4: simulate the execution succeeding (a real Handler would build
+    # this from the confirmed draft; hand-built here since no DB is
+    # available from this environment).
+    execution = ExecutionResult(
+        status=ExecutionStatus.SUCCEEDED,
+        idempotency_key=resume_result.workflow_instance_id,
+        material_row_id="44444444-4444-4444-8444-444444444444",
+    )
+    handled = _mock_handled(resume_result, execution)
+
+    prompt_final = await advance_member_plan_after_user_created(
+        handled, plan_store=plan_store, workflow_runtime=runtime, actor=actor
+    )
+
+    assert prompt_final is not None, (
+        "advance_member_plan_after_user_created returned None -- the chain "
+        "stopped at 'user created' exactly like the live trace showed, "
+        "instead of continuing to ADD_PROJECT_MEMBER"
+    )
+    assert "confirm" in prompt_final.lower()

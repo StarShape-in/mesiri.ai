@@ -596,6 +596,14 @@ def build_message_handlers(
                     await sender.send_text(wa_id, member_resume_prompt)
             except Exception:  # noqa: BLE001 — the user was still created either way
                 _log.exception("member_plan.advance_failed user=%s", ctx.user_id)
+            # Was missing until now: every other fast-path step laps the
+            # timer, but this one (and its three siblings above) didn't --
+            # so the "prepipeline" trace a user pastes back for debugging
+            # could never show whether this hook ran at all, only that
+            # *something* between handle_fast_path and the final gather()
+            # took some amount of time. Diagnosing a live "chain stopped at
+            # user created" report needed this and didn't have it.
+            timer.lap("member_plan_advance")
             # Phase 8 perf: user reply is already sent above. These 4 writes
             # are order-independent audit rows -- run them concurrently.
             await asyncio.gather(

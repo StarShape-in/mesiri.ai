@@ -989,15 +989,37 @@ async def advance_member_plan_after_user_created(
 
     plan = await plan_store.get_plan(user_id=user_id)
     if plan is None:
+        # The overwhelmingly common case -- an ordinary CREATE_USER with no
+        # plan waiting on it. Silent on purpose: logging here would mean a
+        # WARNING on every single confirmed user creation in the org.
         return None
     create_step = plan.step(_CREATE_USER_STEP_ID)
     if create_step is None or create_step.status is not StepStatus.RUNNING:
+        _log.info(
+            "member_plan.step_not_running user=%s plan_id=%s step_status=%s",
+            user_id,
+            plan.plan_id,
+            create_step.status.value if create_step else None,
+        )
         return None
     if not _is_our_instance(create_step):
         # Someone else's CREATE_USER (or a plan from before this field
         # existed). Left untouched rather than cleared -- this confirmation
         # is not ours to draw conclusions from, and clearing here would let
         # an unrelated workflow silently cancel a legitimately waiting plan.
+        # Logged at WARNING, unlike the two branches above: a plan existing
+        # and RUNNING but pointing at a *different* instance than the one
+        # just confirmed is the one state genuinely worth knowing about --
+        # it means either the hijack guard is doing its job (a stale plan
+        # correctly ignored an unrelated confirmation) or something is wrong
+        # with instance tracking, and only the log line can tell those apart.
+        _log.warning(
+            "member_plan.instance_mismatch user=%s plan_id=%s plan_instance=%s confirmed_instance=%s",
+            user_id,
+            plan.plan_id,
+            create_step.workflow_instance_id,
+            result.workflow_instance_id,
+        )
         return None
 
     full_name = confirmed.draft_action.fields.get("full_name")
