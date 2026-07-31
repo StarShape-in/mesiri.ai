@@ -33,6 +33,8 @@ WORKFLOW_KEY_BY_EVENT: dict[CanonicalEventType, WorkflowKey] = {
     CanonicalEventType.SITE_ISSUE_ACKNOWLEDGE_REQUESTED: WorkflowKey.SITE_ISSUE_CLOSE,
     CanonicalEventType.SITE_ISSUE_RESOLVE_REQUESTED: WorkflowKey.SITE_ISSUE_CLOSE,
     CanonicalEventType.SITE_ISSUE_WONT_FIX_REQUESTED: WorkflowKey.SITE_ISSUE_CLOSE,
+    CanonicalEventType.SITE_ISSUE_CANCEL_REQUESTED: WorkflowKey.SITE_ISSUE_CLOSE,
+    CanonicalEventType.SITE_ISSUE_REOPEN_REQUESTED: WorkflowKey.SITE_ISSUE_CLOSE,
     CanonicalEventType.IDENTITY_LOOKUP_REQUESTED: WorkflowKey.WHO_AM_I,
     CanonicalEventType.INVENTORY_QUERY_ASKED: WorkflowKey.MATERIAL_INVENTORY_QUERY,
     CanonicalEventType.LABOUR_QUERY_ASKED: WorkflowKey.LABOUR_QUERY,
@@ -53,4 +55,5 @@ WORKFLOW_KEY_BY_EVENT: dict[CanonicalEventType, WorkflowKey] = {
     CanonicalEventType.EXPENSE_REVERSAL_REQUESTED: WorkflowKey.REVERSE,
     CanonicalEventType.TRANSFER_REVERSAL_REQUESTED: WorkflowKey.REVERSE,
     CanonicalEventType.ACTIVITY_REVERSAL_REQUESTED: WorkflowKey.REVERSE,
+    CanonicalEventType.PETTY_CASH_REVERSAL_REQUESTED: WorkflowKey.REVERSE,
 }

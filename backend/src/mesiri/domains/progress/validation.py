@@ -116,7 +116,13 @@ def validate_report_site_issue(cmd: ReportSiteIssueCommand) -> list[str]:
     return reasons
 
 
-_VALID_CLOSE_ACTIONS = frozenset({"acknowledge", "resolve", "wont_fix"})
+#: `cancel` (withdraw a mistaken report) and `reopen` (undo a premature
+#: close) are close-out actions like the other three -- they differ only in
+#: which CURRENT status they may target, which is a DB-backed question and
+#: so lives in progress_execution.py, not here.
+_VALID_CLOSE_ACTIONS = frozenset(
+    {"acknowledge", "resolve", "wont_fix", "cancel", "reopen"}
+)
 
 
 def validate_close_site_issue(cmd: CloseSiteIssueCommand) -> list[str]:

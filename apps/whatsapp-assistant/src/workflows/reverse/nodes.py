@@ -39,6 +39,7 @@ _INTERNAL_FIELD_KEYS: frozenset[str] = frozenset()
 _NOTHING_TO_REVERSE = {
     "expense": "You have no confirmed expenses to reverse.",
     "transfer": "You have no transfers to reverse.",
+    "petty_cash": "You have no petty cash issues or returns to reverse.",
     # ADR-D15: same-session only -- this is the honest reply both when
     # nothing was ever logged this conversation AND when it was logged too
     # long ago to still be "the thing I just sent" (see runtime/
@@ -92,6 +93,24 @@ def request_confirmation(state: WorkflowGraphState) -> dict:
             "",
             "↩️ Remove activity",
             f"   • {summary} ({occurred_date})",
+            "",
+            "Reply YES to confirm or NO to cancel.",
+        ]
+    elif target_kind == "petty_cash":
+        # Same underlying row as the transfer branch below, deliberately
+        # phrased around the person instead of the two accounts: nobody
+        # thinks of "₹20,000 to Alan" as "Company Account → Alan Usman —
+        # Petty Cash", and a confirmation the user cannot recognise is not
+        # a confirmation (principle P2).
+        holder = all_fields.get("reversal_petty_cash_holder") or "that person"
+        direction = str(all_fields.get("reversal_petty_cash_direction", "")).strip().lower()
+        movement = f"returned by {holder}" if direction == "return" else f"issued to {holder}"
+        lines = [
+            "*Confirm this reversal?*",
+            "",
+            "↩️ Reverse petty cash",
+            f"   • Amount: {amount}",
+            f"   • {movement}",
             "",
             "Reply YES to confirm or NO to cancel.",
         ]

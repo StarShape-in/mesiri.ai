@@ -33,11 +33,15 @@ class _Actor:
 
 
 class _FakeReversalQuery:
-    def __init__(self, *, either_kind_result=None, transfer=None, expense=None):
+    def __init__(
+        self, *, either_kind_result=None, transfer=None, expense=None, petty_cash=None
+    ):
         self._either_kind_result = either_kind_result
         self._transfer = transfer
         self._expense = expense
+        self._petty_cash = petty_cash
         self.either_kind_calls = 0
+        self.petty_cash_calls = 0
 
     async def find_latest_of_either_kind(self, *, organization_id, project_id, site_id):
         self.either_kind_calls += 1
@@ -45,6 +49,10 @@ class _FakeReversalQuery:
 
     async def find_latest_transfer(self, *, organization_id):
         return self._transfer
+
+    async def find_latest_petty_cash(self, *, organization_id):
+        self.petty_cash_calls += 1
+        return self._petty_cash
 
     async def find_latest_expense(self, *, organization_id, project_id, site_id):
         return self._expense
@@ -154,3 +162,96 @@ async def test_explicit_target_kind_skips_the_either_kind_lookup_entirely():
     assert query.either_kind_calls == 0
     assert event.fields["expense_id"] == "exp-explicit"
     assert "money_transaction_id" not in event.fields
+
+
+# --- Petty cash ------------------------------------------------------------
+#
+# A petty cash movement IS a `transfer` row (see
+# find_latest_reversible_petty_cash) -- these protect the part that decides
+# what to CALL it, which is what the user actually sees.
+
+
+def _advance_transfer(**overrides):
+    """A transfer whose destination is someone's advance account."""
+    return {
+        "money_transaction_id": "txn-pc",
+        "amount": "20000",
+        "from_account_name": "Company Account",
+        "to_account_name": "Alan Usman — Petty Cash",
+        "from_account_type": "bank",
+        "to_account_type": "employee_advance",
+        **overrides,
+    }
+
+
+async def test_explicit_petty_cash_kind_uses_the_petty_cash_finder():
+    query = _FakeReversalQuery(petty_cash=_advance_transfer())
+    event = _event({"target_kind": "petty_cash"})
+    await _seed_reversal_target(event, _decision(), query, _Actor())
+
+    assert query.petty_cash_calls == 1
+    assert event.fields["money_transaction_id"] == "txn-pc"
+    assert event.fields["reversal_petty_cash_direction"] == "issue"
+    assert event.fields["reversal_petty_cash_holder"] == "Alan Usman"
+
+
+async def test_transfer_landing_on_an_advance_is_relabelled_petty_cash():
+    """"Reverse my last transfer" about a petty cash issuance is imprecise,
+    not wrong -- the record decides what it was, so the confirmation names a
+    person instead of "Company Account -> Alan Usman — Petty Cash"."""
+    query = _FakeReversalQuery(transfer=_advance_transfer())
+    event = _event({"target_kind": "transfer"})
+    await _seed_reversal_target(event, _decision(), query, _Actor())
+
+    assert event.fields["target_kind"] == "petty_cash"
+    assert event.fields["reversal_petty_cash_holder"] == "Alan Usman"
+
+
+async def test_a_plain_transfer_is_not_relabelled():
+    query = _FakeReversalQuery(
+        transfer=_advance_transfer(
+            to_account_name="Site Bank", to_account_type="bank"
+        )
+    )
+    event = _event({"target_kind": "transfer"})
+    await _seed_reversal_target(event, _decision(), query, _Actor())
+
+    assert event.fields["target_kind"] == "transfer"
+    assert "reversal_petty_cash_holder" not in event.fields
+
+
+async def test_money_leaving_an_advance_reads_as_a_return():
+    query = _FakeReversalQuery(
+        petty_cash=_advance_transfer(
+            from_account_name="Alan Usman — Petty Cash",
+            from_account_type="employee_advance",
+            to_account_name="Company Account",
+            to_account_type="bank",
+        )
+    )
+    event = _event({"target_kind": "petty_cash"})
+    await _seed_reversal_target(event, _decision(), query, _Actor())
+
+    assert event.fields["reversal_petty_cash_direction"] == "return"
+    assert event.fields["reversal_petty_cash_holder"] == "Alan Usman"
+
+
+async def test_an_advance_named_unconventionally_falls_back_to_the_account_name():
+    """The " — Petty Cash" strip is coupled to petty_cash_resolution.py's
+    naming by convention only, so it must degrade to something correct."""
+    query = _FakeReversalQuery(
+        petty_cash=_advance_transfer(to_account_name="Old Imported Advance")
+    )
+    event = _event({"target_kind": "petty_cash"})
+    await _seed_reversal_target(event, _decision(), query, _Actor())
+
+    assert event.fields["reversal_petty_cash_holder"] == "Old Imported Advance"
+
+
+async def test_bare_undo_resolving_to_an_advance_transfer_is_also_relabelled():
+    query = _FakeReversalQuery(either_kind_result=("transfer", _advance_transfer()))
+    event = _event({})
+    await _seed_reversal_target(event, _decision(), query, _Actor())
+
+    assert event.fields["target_kind"] == "petty_cash"
+    assert event.fields["reversal_petty_cash_holder"] == "Alan Usman"

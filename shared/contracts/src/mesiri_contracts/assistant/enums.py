@@ -49,14 +49,17 @@ class SemanticType(str, Enum):
     # distinct from FINANCE_QUERY: this reports a problem, GENERAL_SITE_UPDATE
     # reports work done or in progress -- never confuse the two.
     SITE_ISSUE = "site_issue"
-    # Acknowledge, resolve, or mark won't-fix an existing Site Issue --
-    # always targets the single most recently reported issue in the right
-    # status (resolved by seeding, never stated by the user), the same
-    # "most recent record of a kind" pattern REVERSAL uses. Splits into
-    # three CanonicalEventTypes by the extracted `action` field
-    # ("acknowledge"|"resolve"|"wont_fix"), the same way REVERSAL splits by
-    # `target_kind` (see canonicalization/mapping.py). Never creates a new
-    # site_issues row -- SITE_ISSUE (above) is the only report/create path.
+    # Acknowledge, resolve, mark won't-fix, cancel, or reopen an existing
+    # Site Issue -- always targets the single most recently reported issue
+    # in the right status (resolved by seeding, never stated by the user),
+    # the same "most recent record of a kind" pattern REVERSAL uses. Splits
+    # into five CanonicalEventTypes by the extracted `action` field
+    # ("acknowledge"|"resolve"|"wont_fix"|"cancel"|"reopen"), the same way
+    # REVERSAL splits by `target_kind` (see canonicalization/mapping.py).
+    # `cancel` and `reopen` are the two repair directions: cancel withdraws
+    # a mistaken report, reopen undoes a premature close. Never creates a
+    # new site_issues row -- SITE_ISSUE (above) is the only report/create
+    # path, and cancel is a status transition, never a delete (P1).
     SITE_ISSUE_UPDATE = "site_issue_update"
     GENERAL_QUESTION = "general_question"
     # A deterministically recognized "who am i"/"my profile"/etc (see

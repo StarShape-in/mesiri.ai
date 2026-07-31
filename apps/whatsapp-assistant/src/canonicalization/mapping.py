@@ -78,21 +78,32 @@ _PETTY_CASH_DIRECTION_EVENT_TYPE: dict[str, CanonicalEventType] = {
 # REVERSAL is the fourth semantic type that splits by a candidate field --
 # `target_kind` ("expense" -> void an expense + reverse its payment,
 # "transfer" -> reverse a transfer's ledger row directly, "activity" ->
-# undo a just-created Activity/Progress Update, ADR-D15), same pattern as
-# MATERIAL_UPDATE/direction above.
+# undo a just-created Activity/Progress Update, ADR-D15, "petty_cash" ->
+# reverse an advance issued to or returned by a person), same pattern as
+# MATERIAL_UPDATE/direction above. petty_cash and transfer reverse the SAME
+# kind of row by the same code -- they are separate kinds only so the right
+# row is found and the right words are used (see PETTY_CASH_REVERSAL_
+# REQUESTED in the contract).
 _REVERSAL_TARGET_EVENT_TYPE: dict[str, CanonicalEventType] = {
     "expense": CanonicalEventType.EXPENSE_REVERSAL_REQUESTED,
     "transfer": CanonicalEventType.TRANSFER_REVERSAL_REQUESTED,
     "activity": CanonicalEventType.ACTIVITY_REVERSAL_REQUESTED,
+    "petty_cash": CanonicalEventType.PETTY_CASH_REVERSAL_REQUESTED,
 }
 
 # SITE_ISSUE_UPDATE splits by the candidate's `action` field -- same pattern
-# as REVERSAL/target_kind above, all three routing to the single
-# WorkflowKey.SITE_ISSUE_CLOSE (see planner/routing.py).
+# as REVERSAL/target_kind above, all five routing to the single
+# WorkflowKey.SITE_ISSUE_CLOSE (see planner/routing.py). `cancel` and
+# `reopen` are the two repair directions: cancel withdraws a report that
+# should never have existed (the Site Issue analogue of a REVERSAL, modelled
+# as a status transition because an issue's lifecycle already lives in
+# `status`), reopen retracts a premature close.
 _SITE_ISSUE_ACTION_EVENT_TYPE: dict[str, CanonicalEventType] = {
     "acknowledge": CanonicalEventType.SITE_ISSUE_ACKNOWLEDGE_REQUESTED,
     "resolve": CanonicalEventType.SITE_ISSUE_RESOLVE_REQUESTED,
     "wont_fix": CanonicalEventType.SITE_ISSUE_WONT_FIX_REQUESTED,
+    "cancel": CanonicalEventType.SITE_ISSUE_CANCEL_REQUESTED,
+    "reopen": CanonicalEventType.SITE_ISSUE_REOPEN_REQUESTED,
 }
 
 # GENERAL_SITE_UPDATE used to split by `update_kind` here (PROGRESS/PAUSED/
@@ -154,6 +165,7 @@ REQUIRED_FIELDS: dict[CanonicalEventType, tuple[str, ...]] = {
     CanonicalEventType.EXPENSE_REVERSAL_REQUESTED: (),
     CanonicalEventType.TRANSFER_REVERSAL_REQUESTED: (),
     CanonicalEventType.ACTIVITY_REVERSAL_REQUESTED: (),
+    CanonicalEventType.PETTY_CASH_REVERSAL_REQUESTED: (),
     # Only `action` -- the action-specific fields (name / target_name+
     # new_name / target_name) can't be expressed here since one
     # CanonicalEventType covers all three actions (see resolve_event_type's

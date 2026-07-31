@@ -219,12 +219,20 @@ _EXTRACTION_PROMPT = (
     '("any open issues?" is activity_query, asking; "ran out of cement, work stopped" is '
     "site_issue, reporting).\n"
     "- site_issue_update: action, resolution_notes. Use this type when the user wants to "
-    "acknowledge, resolve, or mark won't-fix their most recently reported site issue "
-    '(e.g. "acknowledge that issue", "that\'s fixed now, mark it resolved", "we can\'t fix '
-    'that, mark it as won\'t fix", "close that blocker"). action MUST be exactly '
-    '"acknowledge", "resolve", or "wont_fix" -- never any other word; infer it from what '
-    "the user says. resolution_notes is optional freeform text explaining how it was "
-    'resolved or why it won\'t be fixed (e.g. "pump replaced", "not worth fixing, site '
+    "acknowledge, resolve, mark won't-fix, withdraw, or reopen their most recently "
+    'reported site issue (e.g. "acknowledge that issue", "that\'s fixed now, mark it '
+    'resolved", "we can\'t fix that, mark it as won\'t fix", "close that blocker"). '
+    'action MUST be exactly "acknowledge", "resolve", "wont_fix", "cancel", or "reopen" '
+    "-- never any other word; infer it from what the user says. Use \"cancel\" when the "
+    "user says the issue should never have been reported at all -- a mistake, the wrong "
+    'site, or a false alarm (e.g. "ignore that issue, wrong site", "cancel that, I was '
+    'wrong", "that was a mistake, remove it"). Use "reopen" when the user says a '
+    'previously closed issue is not actually settled (e.g. "that\'s not fixed, reopen '
+    'it", "the leak is back", "we closed that too early"). Do NOT use "cancel" for a '
+    'problem that was real and then went away -- that is "resolve". '
+    "resolution_notes is optional freeform text explaining how it was "
+    'resolved, why it won\'t be fixed, why it was withdrawn, or why it is being '
+    'reopened (e.g. "pump replaced", "not worth fixing, site '
     'closing next week") -- omit if not stated. This ALWAYS targets the single most '
     "recently reported issue in the right status -- never extract an issue type, "
     "severity, or narrative to identify which one; that resolution happens elsewhere. "
@@ -318,15 +326,18 @@ _EXTRACTION_PROMPT = (
     "to a colleague).\n"
     "- reversal: target_kind. Use this type when the user wants to undo, "
     "reverse, cancel, or void their most recently recorded expense, "
-    "transfer, or site activity/progress report "
+    "transfer, petty cash movement, or site activity/progress report "
     '(e.g. "reverse my last expense", "cancel that transfer", '
     '"undo the diesel expense I just added", "void my last transaction", '
     '"delete that site update", "undo my last activity report", '
-    '"remove the update I just sent"). '
-    'target_kind MUST be exactly "expense", "transfer", or "activity" -- '
+    '"remove the update I just sent", "reverse the petty cash I gave Alan", '
+    '"cancel that advance"). '
+    'target_kind MUST be exactly "expense", "transfer", "petty_cash", or '
+    '"activity" -- '
     "never any other word; infer it from what the user refers to -- "
     '"site update"/"activity"/"progress report"/"the work I just logged" '
-    'means "activity"; defaulting to "expense" if genuinely ambiguous '
+    'means "activity"; "petty cash"/"advance"/"the cash I gave <person>" '
+    'means "petty_cash"; defaulting to "expense" if genuinely ambiguous '
     "between expense and transfer, since that is the more common case. This "
     "always targets the single most recent record of that kind -- never "
     "extract an amount, date, or description for it.\n"

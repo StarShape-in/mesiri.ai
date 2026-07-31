@@ -107,3 +107,55 @@ def test_request_confirmation_without_notes_omits_notes_line():
     state.update(build_draft(state))
     prompt = request_confirmation(state)["pending_prompt"]
     assert "Notes:" not in prompt
+
+
+def test_build_draft_nothing_to_cancel_uses_cancel_specific_message():
+    state = _base_state({"action": "cancel"})
+    update = build_draft(state)
+    assert "draft_action" not in update
+    assert update["pending_prompt"] == "You have no open site issues to withdraw."
+
+
+def test_build_draft_nothing_to_reopen_points_at_re_reporting():
+    """A withdrawn issue is not reopenable, and that is the case a user is
+    most likely to hit here -- the reply has to say what to do instead."""
+    state = _base_state({"action": "reopen"})
+    update = build_draft(state)
+    assert "draft_action" not in update
+    assert "no closed site issues to reopen" in update["pending_prompt"]
+    assert "report it again" in update["pending_prompt"]
+
+
+def test_request_confirmation_for_cancel_reads_as_withdrawal_not_resolution():
+    """A withdrawal must never borrow the close-out vocabulary: "cancelled"
+    reading as "dealt with" is the whole failure this action exists to fix."""
+    state = _base_state(
+        {
+            "action": "cancel",
+            "site_issue_id": ISSUE_ID,
+            "site_issue_type": "MATERIAL_SHORTAGE",
+            "resolution_notes": "Wrong site",
+        }
+    )
+    state.update(build_draft(state))
+    prompt = request_confirmation(state)["pending_prompt"]
+    assert "Withdraw Issue" in prompt
+    assert "Reason: Wrong site" in prompt
+    assert "Resolve" not in prompt
+
+
+def test_request_confirmation_for_reopen_labels_notes_as_a_reason():
+    state = _base_state(
+        {
+            "action": "reopen",
+            "site_issue_id": ISSUE_ID,
+            "site_issue_type": "EQUIPMENT_BREAKDOWN",
+            "resolution_notes": "Still leaking",
+        }
+    )
+    state.update(build_draft(state))
+    prompt = request_confirmation(state)["pending_prompt"]
+    assert "Reopen Issue" in prompt
+    # "Notes: Still leaking" under a Reopen heading reads as a resolution.
+    assert "Reason: Still leaking" in prompt
+    assert "Notes:" not in prompt

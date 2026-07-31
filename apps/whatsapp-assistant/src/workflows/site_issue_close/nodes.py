@@ -36,12 +36,25 @@ _ACTION_LABEL: dict[str, str] = {
     "acknowledge": "👀 Acknowledge Issue",
     "resolve": "✅ Resolve Issue",
     "wont_fix": "🚫 Mark Won't Fix",
+    # Withdrawing says nothing about the work, only about the record, so the
+    # label deliberately avoids the tick/cross vocabulary the close-out
+    # actions use -- "cancelled" must not read as "dealt with" in a receipt.
+    "cancel": "↩️ Withdraw Issue",
+    "reopen": "🔄 Reopen Issue",
 }
 
 _NOTHING_TO_CLOSE: dict[str, str] = {
     "acknowledge": "You have no open site issues to acknowledge.",
     "resolve": "You have no open or acknowledged site issues to resolve.",
     "wont_fix": "You have no open or acknowledged site issues to mark won't fix.",
+    "cancel": "You have no open site issues to withdraw.",
+    # Names the one case a user will actually hit and be confused by: they
+    # closed something, want it back, and a withdrawn report will not come
+    # back this way (see _CLOSE_TARGET_STATUSES in seeding.py).
+    "reopen": (
+        "You have no closed site issues to reopen. If you withdrew the issue "
+        "as reported by mistake, report it again instead."
+    ),
 }
 
 
@@ -85,7 +98,11 @@ def request_confirmation(state: WorkflowGraphState) -> dict:
     if narrative:
         lines.append(f"   • {narrative}")
     if notes:
-        lines.append(f"   • Notes: {notes}")
+        # The same field carries a different claim per action: on resolve it
+        # is how the work was done, on reopen it is why the close was wrong.
+        # "Notes: still leaking" under a Reopen heading reads as a resolution.
+        notes_label = "Reason" if action in ("cancel", "reopen") else "Notes"
+        lines.append(f"   • {notes_label}: {notes}")
     lines.append("")
     lines.append("Reply YES to confirm or NO to cancel.")
     return {"pending_prompt": "\n".join(lines)}

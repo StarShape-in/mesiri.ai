@@ -48,6 +48,15 @@ function getSeverityBadge(severity: string) {
   }
 }
 
+// A status nobody is waiting on any more. CANCELLED means the report was
+// withdrawn as a mistake, which is deliberately NOT the same as RESOLVED --
+// see migration 0460 -- but it is equally not an open blocker.
+const CLOSED_ISSUE_STATUSES = ['RESOLVED', 'WONT_FIX', 'CANCELLED']
+
+function isClosed(status: string) {
+  return CLOSED_ISSUE_STATUSES.includes(status.toUpperCase())
+}
+
 function getStatusBadge(status: string) {
   switch (status.toUpperCase()) {
     case 'RESOLVED':
@@ -56,6 +65,10 @@ function getStatusBadge(status: string) {
       return <Badge variant="outline" className="border-sky-500/40 text-sky-600 dark:text-sky-400 font-bold text-[10px] uppercase">ACKNOWLEDGED</Badge>
     case 'WONT_FIX':
       return <Badge variant="secondary" className="font-bold text-[10px] uppercase">WON'T FIX</Badge>
+    // Muted rather than coloured: a withdrawn report is not an outcome, and
+    // giving it the emerald "done" treatment would read as work completed.
+    case 'CANCELLED':
+      return <Badge variant="secondary" className="font-bold text-[10px] uppercase opacity-60">WITHDRAWN</Badge>
     default:
       return <Badge variant="outline" className="border-amber-500/40 text-amber-600 dark:text-amber-400 font-bold text-[10px] uppercase">OPEN</Badge>
   }
@@ -154,7 +167,10 @@ export default function OperationsIssuesPage() {
   // real trend and is not one -- it shows the same shape on a site with one
   // blocker and a site with fifty, which is worse than showing nothing.
   const stats = React.useMemo(() => {
-    const openCount = issues.filter((i) => i.status.toUpperCase() !== 'RESOLVED').length
+    // Every non-closed status, not just "not RESOLVED": WONT_FIX and
+    // CANCELLED are settled too, and counting them as open overstates how
+    // many blockers the site actually has.
+    const openCount = issues.filter((i) => !isClosed(i.status)).length
     const criticalCount = issues.filter((i) => i.severity.toUpperCase() === 'CRITICAL' || i.severity.toUpperCase() === 'HIGH').length
     const totalMinsLost = issues.reduce((acc, i) => acc + (i.delay_duration_minutes || 0), 0)
 
@@ -395,6 +411,7 @@ export default function OperationsIssuesPage() {
               <SelectItem value="ACKNOWLEDGED">ACKNOWLEDGED</SelectItem>
               <SelectItem value="RESOLVED">RESOLVED</SelectItem>
               <SelectItem value="WONT_FIX">WON'T FIX</SelectItem>
+              <SelectItem value="CANCELLED">WITHDRAWN</SelectItem>
             </SelectContent>
           </Select>
 
@@ -505,7 +522,7 @@ export default function OperationsIssuesPage() {
                           Acknowledge
                         </Button>
                       )}
-                      {!['RESOLVED', 'WONT_FIX'].includes(item.status.toUpperCase()) && (
+                      {!isClosed(item.status) && (
                         <Button
                           variant="outline"
                           size="sm"
@@ -519,7 +536,7 @@ export default function OperationsIssuesPage() {
                           Resolve
                         </Button>
                       )}
-                      {!['RESOLVED', 'WONT_FIX'].includes(item.status.toUpperCase()) && (
+                      {!isClosed(item.status) && (
                         <Button
                           variant="ghost"
                           size="sm"
@@ -568,7 +585,7 @@ export default function OperationsIssuesPage() {
                       Acknowledge
                     </Button>
                   )}
-                  {!['RESOLVED', 'WONT_FIX'].includes(item.status.toUpperCase()) && (
+                  {!isClosed(item.status) && (
                     <Button
                       variant="outline"
                       size="sm"

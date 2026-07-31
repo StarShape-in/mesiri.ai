@@ -427,7 +427,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         repo=progress_execution_repo,
     )
     report_site_issue_dispatcher = ReportSiteIssueExecutionDispatcher(report_site_issue_handler)
-    # Site Issue Close-out (acknowledge/resolve/wont_fix): same repo as the
+    # Site Issue Close-out (acknowledge/resolve/wont_fix/cancel/reopen): same repo as the
     # three Progress handlers above -- no resolver here either (the
     # CURRENT-status re-check is inlined in persist_close_site_issue_success
     # itself, since it's a single self-contained row check, not a

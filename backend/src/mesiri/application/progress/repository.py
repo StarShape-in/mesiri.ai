@@ -87,7 +87,8 @@ class ProgressExecutionRepository(ABC):
         self, conn: AsyncConnection, cmd: CloseSiteIssueCommand
     ) -> ExecutionResult:
         """Claim the idempotency key, transition the existing site_issues
-        row's status (acknowledge/resolve/wont_fix) + outbox event, cache
+        row's status (acknowledge/resolve/wont_fix/cancel/reopen) -- see
+        CloseSiteIssueCommand for the full transition table -- + outbox event, cache
         SUCCEEDED, and transition the workflow to COMPLETED. Re-verifies the
         row's CURRENT status still allows the requested action inside the
         same claimed transaction immediately before the UPDATE (time can

@@ -277,6 +277,7 @@ class PostgresProgressReadRepository:
         project_id: uuid.UUID | None,
         site_id: uuid.UUID | None,
         statuses: tuple[str, ...],
+        by_transition_time: bool = False,
     ) -> dict[str, Any] | None:
         """The most recently CREATED site issue in one of `statuses` --
         WhatsApp's "acknowledge/resolve/wont-fix my last issue" close-out
@@ -287,7 +288,17 @@ class PostgresProgressReadRepository:
         recently reported, matching the precedent
         PostgresExpenseRepository.find_latest_confirmed /
         PostgresMoneyTransactionRepository.find_latest_reversible_transfer
-        already set for Reversal's identical "most recent record" need."""
+        already set for Reversal's identical "most recent record" need.
+
+        `by_transition_time` flips that to "the issue whose status most
+        recently CHANGED," which is what the `reopen` action means: "that's
+        not actually fixed" points at the issue the user just closed, not at
+        whichever issue happens to have been reported last. With A reported
+        Monday, B reported Tuesday and acknowledged, and A resolved
+        Wednesday, created_at DESC would hand back B -- an issue nobody was
+        talking about. Ordered by COALESCE(resolved_at, updated_at) because
+        an ACKNOWLEDGED row has no resolved_at but did have its updated_at
+        moved by the acknowledgement."""
         where = ["organization_id = :organization_id", "status = ANY(:statuses)"]
         params: dict[str, Any] = {"organization_id": organization_id, "statuses": list(statuses)}
         if project_id is not None:
@@ -297,6 +308,9 @@ class PostgresProgressReadRepository:
             where.append("site_id = :site_id")
             params["site_id"] = site_id
         where_clause = " AND ".join(where)
+        order_by = (
+            "COALESCE(resolved_at, updated_at) DESC" if by_transition_time else "created_at DESC"
+        )
 
         row = (
             (
@@ -304,7 +318,7 @@ class PostgresProgressReadRepository:
                     text(
                         f"SELECT id, issue_type, severity, narrative, status "
                         f"FROM site_issues WHERE {where_clause} "
-                        f"ORDER BY created_at DESC LIMIT 1"
+                        f"ORDER BY {order_by} LIMIT 1"
                     ),
                     params,
                 )
@@ -421,9 +435,12 @@ class PostgresProgressReadRepository:
     async def wont_fix_issue(
         self, organization_id: uuid.UUID, issue_id: uuid.UUID, notes: str | None
     ) -> bool:
-        """OPEN/ACKNOWLEDGED -> WONT_FIX. Terminal, like RESOLVED — a
-        WONT_FIX issue is not later resolved or reopened; if the underlying
-        problem turns out to matter after all, that's a new site issue."""
+        """OPEN/ACKNOWLEDGED -> WONT_FIX. Terminal in the sense that no
+        forward action follows it. It is no longer true that it "is not
+        later reopened": the WhatsApp `reopen` close-out action can return a
+        WONT_FIX issue to OPEN (see progress_execution.py's
+        _ALLOWED_CURRENT_STATUS_BY_ACTION). This REST path simply does not
+        offer that transition -- the dashboard has no reopen button."""
         now = datetime.datetime.now(datetime.UTC)
         query = """
             UPDATE site_issues

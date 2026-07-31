@@ -251,14 +251,26 @@ class ReportSiteIssueCommand(BaseModel):
 
 
 class CloseSiteIssueCommand(BaseModel):
-    """Acknowledge / resolve / mark won't-fix an EXISTING Site Issue --
-    always targets "the most recently reported issue in the right status"
-    (resolved by seeding, never stated by the user), mirroring how
-    application/finance/reverse_commands.py's ReverseTransactionCommand
+    """Acknowledge / resolve / mark won't-fix / cancel / reopen an EXISTING
+    Site Issue -- always targets "the most recently reported issue in the
+    right status" (resolved by seeding, never stated by the user), mirroring
+    how application/finance/reverse_commands.py's ReverseTransactionCommand
     targets "the most recent record of a kind." Unlike
     ReportSiteIssueCommand, this never creates a new row -- only
-    transitions an existing one's status (OPEN -> ACKNOWLEDGED,
-    OPEN/ACKNOWLEDGED -> RESOLVED or WONT_FIX)."""
+    transitions an existing one's status:
+
+        OPEN                        -> ACKNOWLEDGED   (acknowledge)
+        OPEN/ACKNOWLEDGED           -> RESOLVED       (resolve)
+        OPEN/ACKNOWLEDGED           -> WONT_FIX       (wont_fix)
+        OPEN/ACKNOWLEDGED           -> CANCELLED      (cancel)
+        ACKNOWLEDGED/RESOLVED/WONT_FIX -> OPEN        (reopen)
+
+    `cancel` is the withdrawal path for a report that should never have
+    existed, and is deliberately a transition rather than a delete (P1).
+    `reopen` is the only backwards transition, and deliberately cannot
+    revive a CANCELLED issue: "that was never real" and "that isn't fixed
+    after all" are different claims, and re-reporting is the honest route
+    back from the first."""
 
     version: str = CONTRACT_VERSION
 
@@ -269,7 +281,7 @@ class CloseSiteIssueCommand(BaseModel):
     organization_id: CanonicalUuid
     site_issue_id: CanonicalUuid
 
-    #: "acknowledge" | "resolve" | "wont_fix"
+    #: "acknowledge" | "resolve" | "wont_fix" | "cancel" | "reopen"
     action: str
     resolution_notes: str | None = None
 

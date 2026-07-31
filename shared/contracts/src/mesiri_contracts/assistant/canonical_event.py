@@ -55,11 +55,20 @@ class CanonicalEventType(str, Enum):
     SITE_ISSUE_REPORTED = "SiteIssueReported"
     # SemanticType.SITE_ISSUE_UPDATE split by the extracted `action` field --
     # same pattern EXPENSE_REVERSAL_REQUESTED/TRANSFER_REVERSAL_REQUESTED
-    # use for `target_kind` below. All three route to the single
+    # use for `target_kind` below. All five route to the single
     # WorkflowKey.SITE_ISSUE_CLOSE (see planner/routing.py).
     SITE_ISSUE_ACKNOWLEDGE_REQUESTED = "SiteIssueAcknowledgeRequested"
     SITE_ISSUE_RESOLVE_REQUESTED = "SiteIssueResolveRequested"
     SITE_ISSUE_WONT_FIX_REQUESTED = "SiteIssueWontFixRequested"
+    # The two repair directions, added after the close-out set shipped
+    # one-way. CANCEL withdraws a report that should never have existed
+    # ("wrong site, ignore that") -- the Site Issue equivalent of REVERSAL,
+    # expressed as a status transition rather than a target_kind because an
+    # issue's whole lifecycle already lives in `status` (migration 0460).
+    # REOPEN undoes a premature close ("that's not actually fixed"), moving
+    # a RESOLVED/WONT_FIX/ACKNOWLEDGED issue back to OPEN.
+    SITE_ISSUE_CANCEL_REQUESTED = "SiteIssueCancelRequested"
+    SITE_ISSUE_REOPEN_REQUESTED = "SiteIssueReopenRequested"
     GENERAL_QUESTION_ASKED = "GeneralQuestionAsked"
     IDENTITY_LOOKUP_REQUESTED = "IdentityLookupRequested"
     INVENTORY_QUERY_ASKED = "InventoryQueryAsked"
@@ -73,6 +82,15 @@ class CanonicalEventType(str, Enum):
     PETTY_CASH_RETURN_REQUESTED = "PettyCashReturnRequested"
     EXPENSE_REVERSAL_REQUESTED = "ExpenseReversalRequested"
     TRANSFER_REVERSAL_REQUESTED = "TransferReversalRequested"
+    # Petty cash has no transaction type of its own -- an advance writes the
+    # same `transfer` row a plain transfer does, distinguished only by an
+    # `employee_advance` leg. So this is not a different execution path (the
+    # reversal executes identically); it exists so "reverse my last petty
+    # cash" resolves to the right ROW, and so the confirmation names a
+    # person rather than an account pair. Seeding also promotes a
+    # TRANSFER_REVERSAL that turns out to have landed on an advance into
+    # this kind -- the record decides what it is, not the user's wording.
+    PETTY_CASH_REVERSAL_REQUESTED = "PettyCashReversalRequested"
     # ADR-D15 (docs/execution/DAILY_REPORTING_PLAN.md): undoing an Activity
     # the reporter just created, same-session only -- see
     # runtime/reversal_query.py's find_latest_activity and

@@ -38,5 +38,5 @@ def test_rejects_unknown_action():
 
 
 def test_accepts_every_real_action():
-    for action in ("acknowledge", "resolve", "wont_fix"):
+    for action in ("acknowledge", "resolve", "wont_fix", "cancel", "reopen"):
         assert validate_close_site_issue(_command(action=action)) == []

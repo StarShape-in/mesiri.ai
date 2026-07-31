@@ -214,6 +214,8 @@ EVENT_SUMMARY_BUILDERS: dict[str, Callable[[dict[str, Any]], str]] = {
     "SiteIssueAcknowledged": lambda p: "Site issue acknowledged",
     "SiteIssueResolved": lambda p: "Site issue resolved",
     "SiteIssueWontFix": lambda p: "Site issue marked as won't fix",
+    "SiteIssueCancelled": lambda p: "Site issue withdrawn (reported in error)",
+    "SiteIssueReopened": lambda p: "Site issue reopened",
     "ExpenseRecorded": lambda p: (
         f"{p.get('currency', 'INR')} {p.get('amount')} expense recorded"
         + (f" ({p['category_text']})" if p.get("category_text") else "")

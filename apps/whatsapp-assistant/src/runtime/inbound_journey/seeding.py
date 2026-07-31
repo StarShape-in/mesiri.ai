@@ -57,7 +57,12 @@ from runtime.money_account_query import MoneyAccountQueryService
 from runtime.org_settings_query import OrganizationSettingsQueryService
 from runtime.petty_cash_query import PettyCashRecipientQueryService
 from runtime.project_detail_query import ProjectDetailQueryService
-from runtime.reversal_query import ReversalTargetQueryService
+from runtime.reversal_query import (
+    ADVANCE_ACCOUNT_TYPE,
+    ReversalTargetQueryService,
+    ReversalTransferTarget,
+    advance_holder_name,
+)
 from runtime.site_issue_query import SiteIssueTargetQueryService
 from runtime.vendor_query import VendorQueryService
 from runtime.workforce_query import WorkforceQueryService
@@ -766,6 +771,40 @@ async def _seed_petty_cash_recipient(
         event.fields["recipient_account_name"] = account.name
 
 
+def _apply_transfer_target(event: CanonicalEventV2, target: ReversalTransferTarget) -> None:
+    """Seed a resolved `transfer` row onto the event, letting the ROW decide
+    whether it was really a petty cash movement.
+
+    Petty cash writes the same `transfer` row a plain transfer does (see
+    find_latest_reversible_petty_cash), so "reverse my last transfer" can
+    legitimately land on an advance. Rather than treat that as the user's
+    mistake, the target_kind is corrected to match what was actually found,
+    which is what stops the confirmation reading "Reverse transfer •
+    Company Account -> Alan Usman — Petty Cash" for something the user
+    thinks of as "the ₹20,000 I gave Alan".
+
+    Direction is derived rather than stored: money moving INTO an advance
+    account is an issuance, out of it a return."""
+    event.fields["money_transaction_id"] = target["money_transaction_id"]
+    event.fields["reversal_amount"] = target["amount"]
+    event.fields["reversal_from_account_name"] = target["from_account_name"]
+    event.fields["reversal_to_account_name"] = target["to_account_name"]
+
+    to_is_advance = target.get("to_account_type") == ADVANCE_ACCOUNT_TYPE
+    from_is_advance = target.get("from_account_type") == ADVANCE_ACCOUNT_TYPE
+    if not (to_is_advance or from_is_advance):
+        return
+
+    event.fields["target_kind"] = "petty_cash"
+    # An advance-to-advance row has no meaningful direction; treating it as
+    # an issuance to the receiving side is the reading that names the person
+    # who ended up holding the money.
+    event.fields["reversal_petty_cash_direction"] = "issue" if to_is_advance else "return"
+    event.fields["reversal_petty_cash_holder"] = advance_holder_name(
+        target["to_account_name"] if to_is_advance else target["from_account_name"]
+    )
+
+
 async def _seed_reversal_target(
     event: CanonicalEventV2,
     decision: PlannerDecisionV2,
@@ -835,10 +874,8 @@ async def _seed_reversal_target(
         target_kind, target = found
         event.fields["target_kind"] = target_kind
         if target_kind == "transfer":
-            event.fields["money_transaction_id"] = target["money_transaction_id"]
-            event.fields["reversal_amount"] = target["amount"]
-            event.fields["reversal_from_account_name"] = target["from_account_name"]
-            event.fields["reversal_to_account_name"] = target["to_account_name"]
+            # May re-label itself petty_cash -- see _apply_transfer_target.
+            _apply_transfer_target(event, target)
         else:
             event.fields["expense_id"] = target["expense_id"]
             event.fields["reversal_amount"] = target["amount"]
@@ -846,13 +883,14 @@ async def _seed_reversal_target(
             event.fields["reversal_occurred_date"] = target["occurred_date"]
         return
 
-    if target_kind == "transfer":
-        transfer = await reversal_query.find_latest_transfer(organization_id=actor.organization_id)
+    if target_kind in ("transfer", "petty_cash"):
+        transfer = (
+            await reversal_query.find_latest_petty_cash(organization_id=actor.organization_id)
+            if target_kind == "petty_cash"
+            else await reversal_query.find_latest_transfer(organization_id=actor.organization_id)
+        )
         if transfer is not None:
-            event.fields["money_transaction_id"] = transfer["money_transaction_id"]
-            event.fields["reversal_amount"] = transfer["amount"]
-            event.fields["reversal_from_account_name"] = transfer["from_account_name"]
-            event.fields["reversal_to_account_name"] = transfer["to_account_name"]
+            _apply_transfer_target(event, transfer)
         return
 
     expense = await reversal_query.find_latest_expense(
@@ -865,6 +903,30 @@ async def _seed_reversal_target(
         event.fields["reversal_occurred_date"] = expense["occurred_date"]
 
 
+#: An issue that has not yet reached a terminal state.
+_LIVE_STATUSES = ("OPEN", "ACKNOWLEDGED")
+
+#: Which statuses each close-out action may target when looking for "the
+#: issue the user means." Must stay in step with progress_execution.py's
+#: _ALLOWED_CURRENT_STATUS_BY_ACTION, which re-checks the same rule against
+#: the row's CURRENT status at confirm time -- this one decides which issue
+#: to *offer*, that one decides whether the transition is still legal once
+#: the user replies YES. They are deliberately separate literals in separate
+#: layers (a read service must not import the executor), so a drift between
+#: them shows up as "nothing to reopen" rather than as a bad write.
+_CLOSE_TARGET_STATUSES: dict[str, tuple[str, ...]] = {
+    # Mirrors progress.py's acknowledge_issue WHERE clause.
+    "acknowledge": ("OPEN",),
+    "resolve": _LIVE_STATUSES,
+    "wont_fix": _LIVE_STATUSES,
+    "cancel": _LIVE_STATUSES,
+    # The only action that looks at closed issues -- and the only one that
+    # can pick up an ACKNOWLEDGED one from the other direction. CANCELLED is
+    # excluded: a withdrawn report is not reopenable, it is re-reportable.
+    "reopen": ("ACKNOWLEDGED", "RESOLVED", "WONT_FIX"),
+}
+
+
 async def _seed_site_issue_close_target(
     event: CanonicalEventV2,
     decision: PlannerDecisionV2,
@@ -873,8 +935,9 @@ async def _seed_site_issue_close_target(
 ) -> None:
     """Resolve "my last reported issue" into a concrete site_issue_id --
     same "most recent record of a kind" pattern as _seed_reversal_target
-    above, just with one kind (no target_kind-style split needed: `action`
-    already says what to do, not what to find). Only ever runs for
+    above, with `action` playing the role target_kind plays there: it picks
+    both which statuses are eligible (_CLOSE_TARGET_STATUSES) and, for
+    `reopen`, what "most recent" even means. Only ever runs for
     SITE_ISSUE_CLOSE; finding nothing simply leaves site_issue_id unset --
     workflows/site_issue_close/nodes.py's build_draft then completes with a
     "nothing to close" reply instead of a draft (see that module's
@@ -886,16 +949,15 @@ async def _seed_site_issue_close_target(
         return
 
     action = str(event.fields.get("action", "")).strip().lower()
-    # Acknowledge only ever targets a strictly OPEN issue (mirrors
-    # infrastructure/postgres/repositories/progress.py's acknowledge_issue
-    # WHERE clause); resolve/wont_fix may also target one already
-    # ACKNOWLEDGED (mirrors resolve_issue/wont_fix_issue).
-    statuses = ("OPEN",) if action == "acknowledge" else ("OPEN", "ACKNOWLEDGED")
+    statuses = _CLOSE_TARGET_STATUSES.get(action, _LIVE_STATUSES)
     target = await site_issue_query.find_latest(
         organization_id=actor.organization_id,
         project_id=event.project_id,
         site_id=event.site_id,
         statuses=statuses,
+        # "Reopen that" means the issue most recently closed, not the one
+        # most recently reported -- see find_latest_by_status.
+        by_transition_time=action == "reopen",
     )
     if target is None:
         return
