@@ -10,11 +10,12 @@ turns out to be Missing. There is exactly one store and one resume path so
 "what happens when a planned step hits a missing entity" has one answer
 instead of two.
 
-Mirrors workflows/batch_store.py's PendingBatchStore shape (Redis-is-a-hint
-posture, pop/advance discipline, per-user key) -- this store supersedes it
-for anything with real dependency structure; PendingBatchStore itself is
-untouched here (still used by the existing material->activity batch path
-until that migrates, plan-layer doc §10 Phase 2/3 regression anchor).
+Mirrored workflows/batch_store.py's PendingBatchStore shape (Redis-is-a-hint
+posture, pop/advance discipline, per-user key) when this was written --
+PendingBatchStore was the material->activity batch path's own store at the
+time (plan-layer doc §10 Phase 2/3 regression anchor), since superseded and
+deleted (docs/execution/UNIFIED_UNDERSTANDING_PIPELINE.md Phase A2 repointed
+that path onto this store; Phase A6 deleted the now-dead original).
 """
 
 from __future__ import annotations
@@ -25,10 +26,10 @@ from typing import Any, Protocol
 
 from .plan import Plan, PlanOrigin, PlanStep, StepStatus
 
-#: Same reasoning as PendingBatchStore's TTL: long enough for a multi-step
-#: plan with a disambiguation round, short enough that a user who vanished
-#: mid-plan doesn't leave a stale one alive forever. Flagged as an open
-#: question in the plan-layer doc §12 -- a five-step plan may legitimately
+#: Long enough for a multi-step plan with a disambiguation round, short
+#: enough that a user who vanished mid-plan doesn't leave a stale one alive
+#: forever. Flagged as an open question in the plan-layer doc §12 -- a
+#: five-step plan may legitimately
 #: outlive 30 minutes; revisit with real usage data before raising it blind.
 _DEFAULT_TTL_SECONDS = 1800
 
@@ -319,5 +320,6 @@ class PlanStore:
 
     async def clear(self, *, user_id: str) -> None:
         # No delete primitive on the M1 client/fake -- overwrite with an
-        # immediately-expired marker, same trick as batch_store.py's clear.
+        # immediately-expired marker, same trick as active_context.py's
+        # clear_active_context.
         await self._redis.set_json(self._key(user_id), {}, ttl_seconds=1)

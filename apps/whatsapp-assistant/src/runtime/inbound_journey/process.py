@@ -104,7 +104,6 @@ from workflows import (
     WorkflowRuntime,
     log_workflow_run,
 )
-from workflows.batch_store import PendingBatchStore
 
 # Matches runtime/account_admin_journey.py's _ACCOUNT_ADMIN_ROLES exactly --
 # that module gates the deterministic-parser fast path; this gates the
@@ -227,7 +226,6 @@ async def process_inbound_message(
     category_hint_store: CategoryHintStore | None = None,
     memory_loader: ConversationMemoryLoader | None = None,
     memory_coordinator: ConversationMemoryCoordinator | None = None,
-    batch_store: PendingBatchStore | None = None,
     escalation_query: EscalationCreateService | None = None,
     capability_help: CapabilityHelpService | None = None,
     first_message_query: FirstMessageQueryService | None = None,
@@ -1004,8 +1002,9 @@ async def process_inbound_message(
                     # n=1 is the common case of this same path now, not a
                     # separate one). Every started message becomes a Plan:
                     # size 1 for an ordinary message (Phase A4), size >1 when
-                    # there ARE extra segments (Phase A2 -- repoints that off
-                    # workflows/batch.py's flat PendingBatchStore queue).
+                    # there ARE extra segments (Phase A2 -- repointed off
+                    # workflows/batch.py's flat PendingBatchStore queue,
+                    # deleted in Phase A6 once this repoint made it dead).
                     # segment_events[0]'s PlanStep always gets step_id "s1"
                     # (assigned before ordering, by build_plan_from_segments'
                     # own contract) and is marked RUNNING against the

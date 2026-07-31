@@ -106,7 +106,6 @@ if TYPE_CHECKING:
     from runtime.workforce_query import WorkforceQueryService
     from understanding.pipeline import UnderstandingPipeline
     from workflows import WorkflowRuntime
-    from workflows.batch_store import PendingBatchStore
 
 _log = logging.getLogger("mesiri.context")
 
@@ -165,7 +164,6 @@ def build_message_handlers(
     completion_photo_hint_store: CompletionPhotoHintStore,
     team_photo_hint_store: TeamPhotoHintStore,
     project_setup_offer_store: ProjectSetupOfferStore,
-    batch_store: PendingBatchStore,
     memory_loader: ConversationMemoryLoader,
     memory_coordinator: ConversationMemoryCoordinator,
 ) -> tuple[Any, Any]:
@@ -953,7 +951,6 @@ def build_message_handlers(
                 pending_decomposition_store=pending_decomposition_store,
                 memory_loader=memory_loader,
                 memory_coordinator=memory_coordinator,
-                batch_store=batch_store,
                 escalation_query=escalation_query,
                 capability_help=capability_help,
                 first_message_query=first_message_query,
@@ -1730,7 +1727,6 @@ def build_message_handlers(
             pending_decomposition_store=pending_decomposition_store,
             memory_loader=memory_loader,
             memory_coordinator=memory_coordinator,
-            batch_store=batch_store,
             escalation_query=escalation_query,
             capability_help=capability_help,
             first_message_query=first_message_query,

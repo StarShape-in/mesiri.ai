@@ -771,6 +771,34 @@ its own edits are wrong before checking for this.
 Full monorepo suite: 1687 passed (whatsapp-assistant alone), 16 skipped
 (pre-existing), 26 deselected.
 
+#### A6 — done 2026-07-31.
+
+Deleted `workflows/batch.py` and `workflows/batch_store.py` outright, plus
+their dedicated test files (`test_batch_workflow.py`, `test_batch_store.py`
+— 24 tests removed with them). Both had been provably dead since A2/A3
+repointed their one real caller (the material→activity kickoff in
+`process.py`) onto `PlanStore`, and A3 deleted the dead advance-branch in
+`interactions/handler.py` that read from them — this step is pure removal
+of code nothing calls anymore, confirmed by grep before deleting, not a new
+behavior change.
+
+Removed the now-dead `batch_store` parameter and its `PendingBatchStore`
+import from every file that still threaded it through even though nothing
+read it: `runtime/dependencies.py` (stopped constructing it), `runtime/
+inbound_journey/process.py` (dropped the unused parameter), and `runtime/
+message_journey.py` (dropped the parameter from `build_message_handlers`
+and the two `process_inbound_message(...)` call sites). Updated four
+comments/docstrings that referenced the now-deleted files as if they were
+still current (`planning/plan_store.py` ×2, `canonicalization/builder.py`)
+to describe what actually exists today; left comments that already spoke in
+the past tense about the retirement (`interactions/handler.py`,
+`interactions/builder.py`, both written during A3) unchanged, since they
+were already historically accurate.
+
+Full monorepo suite: 2665 passed (24 fewer than before A6, exactly the
+deleted tests — no other count changed), 16 skipped (pre-existing), 230
+deselected.
+
 ### Phase B — Intents-plural extraction
 
 | # | Step | Verification |

@@ -657,13 +657,6 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     from runtime.entity_resolution.member_resolution import MemberNameResolutionService
 
     member_resolver = MemberNameResolutionService(material_db)
-    # #1 Multi-Activity / #13 Cross-Module Trigger: queues segments AFTER
-    # the first in a multi-segment message, started one at a time as each
-    # prior segment's confirmation resolves. See workflows/batch_store.py
-    # and workflows/batch.py.
-    from workflows.batch_store import PendingBatchStore
-
-    batch_store = PendingBatchStore(redis_client)
     # #25 AI Follow-up: remembers which Activity a proactive "want to
     # attach a completion photo?" offer was about, so the next photo skips
     # the normal purpose picker. See interactions/completion_photo_hint.py.
@@ -863,7 +856,6 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         completion_photo_hint_store=completion_photo_hint_store,
         team_photo_hint_store=team_photo_hint_store,
         project_setup_offer_store=project_setup_offer_store,
-        batch_store=batch_store,
         memory_loader=memory_loader,
         memory_coordinator=memory_coordinator,
     )

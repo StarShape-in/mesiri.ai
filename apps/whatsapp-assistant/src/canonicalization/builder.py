@@ -498,8 +498,10 @@ def build_canonical_events(
     that needs either an extraction-prompt change (cross-review, not
     something to tune blind) or a dedicated deterministic clause-splitter,
     neither of which this pass attempts. The sequencing machinery this
-    function feeds (workflows/batch.py, workflows/batch_store.py) is
-    general-purpose and ready for that source once it exists.
+    function feeds (planning/decomposition.py's build_plan_from_segments,
+    via runtime/inbound_journey/process.py -- see docs/execution/
+    UNIFIED_UNDERSTANDING_PIPELINE.md Phase A2) is general-purpose and ready
+    for that source once it exists.
     """
     primary = build_canonical_event(
         understanding,
