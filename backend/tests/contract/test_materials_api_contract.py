@@ -1092,3 +1092,140 @@ async def test_allow_negative_default_leaves_other_write_paths_unchanged(client,
     )
     assert resp.status_code == 201
     assert await _stock(client, admin_ctx, material_id) == Decimal("-5")
+
+
+# ---------------------------------------------------------------------------
+# Phase B -- purchase cost capture
+# ---------------------------------------------------------------------------
+async def test_purchase_cost_is_stored_and_returned(client, admin_ctx):
+    """Until this phase the inflow API silently dropped any price sent to it,
+    so Purchase History's cost column could never fill."""
+    bags_id = await _bags_unit_id(client, admin_ctx["token"])
+    material_id = await _make_material(client, admin_ctx["token"], "Cement COST", bags_id)
+
+    created = await client.post(
+        "/materials/inflows",
+        json={
+            "project_id": str(admin_ctx["project_id"]),
+            "site_id": str(admin_ctx["site_id"]),
+            "material_id": material_id,
+            "unit_id": bags_id,
+            "quantity": "200",
+            "movement_reason": "RECEIVED",
+            "occurred_date": str(datetime.date.today()),
+            "unit_cost": "312.50",
+        },
+        headers=_auth(admin_ctx["token"]),
+    )
+    assert created.status_code == 201
+
+    detail = await client.get(
+        f"/materials/inflows/{created.json()['id']}", headers=_auth(admin_ctx["token"])
+    )
+    body = detail.json()
+    assert Decimal(body["unit_cost"]) == Decimal("312.50")
+    assert Decimal(body["total_cost"]) == Decimal("62500.00")
+
+
+async def test_a_purchase_without_a_price_stores_null_not_zero(client, admin_ctx):
+    """Zero would claim the delivery was free and drag every total downward."""
+    bags_id = await _bags_unit_id(client, admin_ctx["token"])
+    material_id = await _make_material(client, admin_ctx["token"], "Cement NOCOST", bags_id)
+    receipt_id = await _receive(client, admin_ctx, material_id, bags_id, 10)
+
+    body = (
+        await client.get(f"/materials/inflows/{receipt_id}", headers=_auth(admin_ctx["token"]))
+    ).json()
+    assert body["unit_cost"] is None
+    assert body["total_cost"] is None
+
+
+async def test_last_purchase_reports_the_most_recent_recorded_rate(client, admin_ctx):
+    bags_id = await _bags_unit_id(client, admin_ctx["token"])
+    material_id = await _make_material(client, admin_ctx["token"], "Cement LAST", bags_id)
+
+    for rate in ("300", "325"):
+        await client.post(
+            "/materials/inflows",
+            json={
+                "project_id": str(admin_ctx["project_id"]),
+                "site_id": str(admin_ctx["site_id"]),
+                "material_id": material_id,
+                "unit_id": bags_id,
+                "quantity": "10",
+                "movement_reason": "RECEIVED",
+                "occurred_date": str(datetime.date.today()),
+                "unit_cost": rate,
+            },
+            headers=_auth(admin_ctx["token"]),
+        )
+
+    resp = await client.get(
+        "/materials/last-purchase",
+        params={"material_id": material_id},
+        headers=_auth(admin_ctx["token"]),
+    )
+    assert resp.status_code == 200
+    assert Decimal(resp.json()["unit_cost"]) == Decimal("325")
+
+
+async def test_last_purchase_is_empty_not_404_when_never_priced(client, admin_ctx):
+    """The entry form treats this as a hint; a missing hint is not an error."""
+    bags_id = await _bags_unit_id(client, admin_ctx["token"])
+    material_id = await _make_material(client, admin_ctx["token"], "Cement UNPRICED", bags_id)
+
+    resp = await client.get(
+        "/materials/last-purchase",
+        params={"material_id": material_id},
+        headers=_auth(admin_ctx["token"]),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["unit_cost"] is None
+
+
+async def test_a_corrected_purchase_is_flagged_so_spend_totals_can_exclude_it(
+    client, admin_ctx
+):
+    """A reversed purchase was not money spent. Counting its cost would
+    overstate what the company actually paid."""
+    bags_id = await _bags_unit_id(client, admin_ctx["token"])
+    material_id = await _make_material(client, admin_ctx["token"], "Cement REVCOST", bags_id)
+    created = await client.post(
+        "/materials/inflows",
+        json={
+            "project_id": str(admin_ctx["project_id"]),
+            "site_id": str(admin_ctx["site_id"]),
+            "material_id": material_id,
+            "unit_id": bags_id,
+            "quantity": "100",
+            "movement_reason": "RECEIVED",
+            "occurred_date": str(datetime.date.today()),
+            "unit_cost": "312.50",
+        },
+        headers=_auth(admin_ctx["token"]),
+    )
+    receipt_id = created.json()["id"]
+
+    listed = await client.get(
+        "/materials/inflows",
+        params={"project_id": str(admin_ctx["project_id"]), "material_id": material_id},
+        headers=_auth(admin_ctx["token"]),
+    )
+    assert listed.json()["items"][0]["is_reversed"] is False
+
+    await client.post(
+        f"/materials/inflows/{receipt_id}/reverse",
+        json={"reason_note": "wrong delivery"},
+        headers=_auth(admin_ctx["token"]),
+    )
+
+    listed = await client.get(
+        "/materials/inflows",
+        params={"project_id": str(admin_ctx["project_id"]), "material_id": material_id},
+        headers=_auth(admin_ctx["token"]),
+    )
+    original = next(i for i in listed.json()["items"] if i["id"] == receipt_id)
+    assert original["is_reversed"] is True
+    # The cost stays on the row -- the purchase did happen. It is the spend
+    # total that must leave it out, which is what the flag enables.
+    assert Decimal(original["total_cost"]) == Decimal("62500.00")
