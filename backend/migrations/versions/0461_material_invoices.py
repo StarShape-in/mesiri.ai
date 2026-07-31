@@ -34,8 +34,8 @@ its lines: tax and freight are not extracted (V1 scope), so those two figures
 legitimately differ and treating the gap as an error would flag nearly every
 real invoice.
 
-Revision ID: 0460
-Revises: 0459
+Revision ID: 0461
+Revises: 0460
 Create Date: 2026-07-31
 """
 
@@ -44,8 +44,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0460"
-down_revision = "0459"
+revision = "0461"
+down_revision = "0460"
 branch_labels = None
 depends_on = None
 
