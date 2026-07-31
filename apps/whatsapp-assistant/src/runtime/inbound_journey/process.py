@@ -35,6 +35,7 @@ from mesiri_contracts.common.storage import ObjectStoragePort
 from planner import Planner, log_planner_decision
 from planner.ambiguity import AmbiguityAction, caveat_text, decide_ambiguity
 from planning.decomposition import build_plan_from_segments
+from planning.plan import PlanOrigin
 from planning.plan_store import PlanStore
 from runtime.activity_query import ActivityQueryService
 from runtime.activity_search_service import ActivitySearchService
@@ -994,25 +995,35 @@ async def process_inbound_message(
                     # #1 Multi-Activity / #13 Cross-Module Trigger: the
                     # primary segment started normally above -- the
                     # single-active invariant is untouched, exactly as if
-                    # this were an ordinary one-segment message. If there ARE
-                    # extra segments, the whole set (primary + extras)
-                    # becomes a Plan (Phase A2 of docs/execution/
-                    # UNIFIED_UNDERSTANDING_PIPELINE.md -- repoints this off
+                    # this were an ordinary one-segment message (because,
+                    # per Phase A4 of docs/execution/
+                    # UNIFIED_UNDERSTANDING_PIPELINE.md, it usually IS one --
+                    # n=1 is the common case of this same path now, not a
+                    # separate one). Every started message becomes a Plan:
+                    # size 1 for an ordinary message (Phase A4), size >1 when
+                    # there ARE extra segments (Phase A2 -- repoints that off
                     # workflows/batch.py's flat PendingBatchStore queue).
                     # segment_events[0]'s PlanStep always gets step_id "s1"
                     # (assigned before ordering, by build_plan_from_segments'
                     # own contract) and is marked RUNNING against the
                     # WorkflowInstance already started above -- never started
-                    # a second time. The rest run one at a time as each prior
-                    # step's confirmation resolves (plan_executor.advance_plan).
-                    if (
-                        extra_segments
-                        and workflow_run.status is WorkflowRunStatus.STARTED
-                        and plan_store is not None
-                    ):
+                    # a second time. The rest, if any, run one at a time as
+                    # each prior step's confirmation resolves
+                    # (plan_executor.advance_plan). origin=SINGLE_MESSAGE
+                    # (only for the size-1 case) is what lets
+                    # plan_executor.py suppress the closing summary once this
+                    # one step resolves -- a size-1 plan here never showed an
+                    # upfront preview, so its own confirmation reply is the
+                    # whole story, exactly as it is today; _progress_prefix
+                    # already returns "" for a size-1 plan regardless of
+                    # origin, so the STARTING prompt is untouched either way.
+                    if workflow_run.status is WorkflowRunStatus.STARTED and plan_store is not None:
                         try:
+                            plan_origin = (
+                                PlanOrigin.DECOMPOSITION if extra_segments else PlanOrigin.SINGLE_MESSAGE
+                            )
                             plan_result = build_plan_from_segments(
-                                canonical_events, plan_id=new_id("plan")
+                                canonical_events, plan_id=new_id("plan"), origin=plan_origin
                             )
                             if plan_result.plan is not None:
                                 await plan_store.start_plan(plan=plan_result.plan)

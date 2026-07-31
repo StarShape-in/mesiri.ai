@@ -637,6 +637,66 @@ starting.
 Full monorepo suite after these changes: 2641 passed, 16 skipped
 (pre-existing), 213 deselected.
 
+#### A4 — done 2026-07-31.
+
+**The subtlety this step actually turned on, found before writing any
+code:** the initial confirmation prompt was never the hard part —
+`_progress_prefix` already returns `""` for a size-1 plan regardless of
+origin, so the starting side of A4 falls out for free the moment
+`process.py`'s existing plan-building block (from A2) runs unconditionally
+instead of only `if extra_segments`. The **closing** side is where a naive
+version of A4 would have shipped a real, user-visible regression:
+`_start_next_runnable`'s "nothing left to run" branch already sends
+`format_plan_summary(plan)` for *any* plan reaching terminal status,
+including size 1 — proven by two already-existing, already-passing
+`test_plan_executor.py` tests
+(`test_the_last_step_completing_clears_the_plan_and_returns_a_summary`,
+`test_start_plan_with_no_runnable_step_reports_the_summary_immediately`)
+that build size-1 plans and assert the summary DOES appear. Making every
+single-intent message a plan without a further decision would mean every
+ordinary confirmed report gets a **second, redundant** `"*Here's what I
+did:*\n1. …: Recorded."` message on top of the one `interactions/handler.py`
+already sends — exactly the regression A4's own verification bar
+(docs table above) rules out.
+
+**Why step count alone can't be the suppression key.** A decomposed message
+can legitimately produce a size-1 plan too — §9 of the prior doc's "deferred
+required field" example (`test_decomposed_plan.py`'s
+`test_a_deferred_required_field_drops_the_segment_from_the_plan`): 2 segments
+decomposed, 1 dropped as unroutable, leaving a real 1-step `Plan`. That
+user DID see an upfront "I'll do this: 1. Create project Starship" preview,
+so a closing summary once it resolves is consistent, expected UX for them —
+suppressing by step count would have silently changed that scenario's
+behavior too, which A4 has no business touching.
+
+**Resolution:** a new `PlanOrigin.SINGLE_MESSAGE` value, set only by
+`process.py`'s kickoff when there are no extra segments (`extra_segments`
+empty ⇒ `SINGLE_MESSAGE`; otherwise still `DECOMPOSITION`, unchanged).
+`_start_next_runnable` suppresses the closing summary (`return None`)
+specifically for `origin is PlanOrigin.SINGLE_MESSAGE` — never by
+`len(plan.steps)`. This leaves every existing size-1 `DECOMPOSITION`-origin
+case (the deferred-field scenario above, and the two `test_plan_executor.py`
+tests, which build plans with an explicit non-`SINGLE_MESSAGE` origin)
+completely untouched.
+
+**Verified, not assumed — the gap the design table itself named.** Neither
+existing size-1 `test_plan_executor.py` test exercises the real
+`process_inbound_message` → `interaction_handler.handle_fast_path` →
+`advance_plan` sequence a live "Yes" reply actually goes through; both build
+their `Plan` by hand. Added `test_process_single_message_plan.py`, mirroring
+A2/A3's own real-chain pattern:
+`test_ordinary_single_message_starts_with_no_plan_prefix_and_becomes_a_size_one_plan`
+(the starting-side guarantee — asserts the reply has no `"(1 of 1) "` prefix
+and the persisted plan is `origin=SINGLE_MESSAGE`) and
+`test_confirming_the_single_step_produces_no_extra_closing_message` (the
+closing-side guarantee this whole step exists for — asserts `advance_plan`
+returns `None`, not a second `ReplySpec`, after the one real step resolves).
+
+Full monorepo suite: 2649 passed, 16 skipped (pre-existing), 217
+deselected (the extra deselected count is the other concurrently-developed
+site-issue-cancel feature's new `provider`/`integration`-marked tests, not
+this change).
+
 ### Phase B — Intents-plural extraction
 
 | # | Step | Verification |
