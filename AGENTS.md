@@ -6,7 +6,7 @@
 > ## ⚠️ Read [CLAUDE.md](CLAUDE.md) first — it governs *process* on every task
 >
 > [CLAUDE.md](CLAUDE.md) is the **Mesiri Development Protocol**: the mandatory
-> investigate → plan → **wait for approval** → implement → test → branch/commit/push → report →
+> investigate → plan → **wait for approval** → implement → test → commit/push **to `main`** → report →
 > update Linear → **stop** cycle that every feature, bug fix and enhancement must follow.
 >
 > This file (`AGENTS.md`) governs **code style, the 3 R's, and the Module Placement Log**.

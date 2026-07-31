@@ -78,29 +78,56 @@ performance, and error handling.
 
 ### Phase 5 — Git Workflow
 
-**Every phase gets its own Git cycle. Never combine phases into one branch.**
+> **THE MAIN RULE (set by Alan, 2026-07-31):**
+> **Work on the local files → check for lint errors → pull → combine → push.**
+> That is the whole cycle. No feature branches, ever.
 
-Before starting a phase:
+**Work directly on `main`. Never create a feature branch.**
+
+`main` is what deploys to the VPS. Work parked on a branch reaches nothing and
+nobody — it is invisible to the running system no matter how finished it is.
+
+Before starting:
 
 ```bash
 git checkout main
 git pull origin main
-git checkout -b feature/<phase-name>
 ```
 
-Resolve conflicts before writing code. Never develop on an outdated branch.
+Resolve conflicts before writing code. Never develop on an outdated `main`.
 
 During implementation: logical commits, not giant ones.
 
-After the phase is complete — test, verify, then:
+**Because there is no branch to catch mistakes, verification before every push is
+the safety net.** Never push without all of it passing:
 
 ```bash
-git add .
-git commit -m "Phase X: <feature name>"
-git push origin feature/<phase-name>
+# backend
+cd backend && python -m pytest tests/ --ignore=tests/integration -q
+python -m ruff check backend/src backend/tests backend/migrations
+
+# dashboard
+cd apps/dashboard && npx tsc -b --noEmit && npx oxlint src/ && npx vite build
 ```
 
-**Never continue to the next phase without pushing.**
+Then **pull, combine, push** — in that order, every time. Other people push
+constantly, so the pull is never optional and the combine is never automatic:
+read the merge result before pushing rather than assuming it merged correctly.
+
+```bash
+git pull origin main      # pull
+                          # combine: resolve conflicts by hand, preserving BOTH sides
+git push origin main      # push
+```
+
+If the pull brought changes, **re-run the verification above before pushing** —
+someone else's commit can break your work just as easily as your own.
+
+**Extra care applies to migrations**, which run automatically on deploy
+(`.github/workflows/deploy.yml` → `alembic upgrade head`). Check the head number
+right before writing one, and confirm the chain has no fork before pushing.
+
+**Never leave finished work unpushed.**
 
 ---
 
@@ -114,7 +141,8 @@ notice.
 **Technical Summary** — files created · files modified · APIs added · APIs modified · database
 changes · tests executed · performance improvements · remaining risks.
 
-**Git Summary** — branch name · commit hash(es) · commit messages · push confirmation.
+**Git Summary** — commit hash(es) · commit messages · push confirmation (verified against
+the remote SHA, not just local tracking).
 
 ---
 
@@ -133,12 +161,13 @@ development.
 
 ---
 
-## Pull Request Discipline
+## Review Discipline
 
-Every completed phase should be review-ready. Summarise: what changed · why it changed · risks ·
-testing · rollback strategy.
+There are no pull requests — work lands on `main`. Review happens on the reported summary
+*after* the push, so that summary carries the whole burden: what changed · why it changed ·
+risks · testing · rollback strategy. Anything not stated there is invisible.
 
-**Do not merge automatically. Wait for approval.**
+Say plainly what was **not** verified. A test that could not run locally is a gap, not a pass.
 
 ---
 

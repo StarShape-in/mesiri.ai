@@ -18,7 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Skeleton } from '@/components/ui/skeleton'
 import { KpiCard } from '@/components/ui/kpi-card'
-import { fetchInflows, INFLOW_REASONS, type MaterialReceipt } from '@/lib/materials'
+import { fetchInflows, formatMoney, INFLOW_REASONS, type MaterialReceipt } from '@/lib/materials'
 import { fetchProjects, fetchSites } from '@/lib/projects'
 import { toLocalISODate } from '@/lib/utils'
 import { PurchaseDetailsSheet } from './purchase-details-sheet'
@@ -118,6 +118,8 @@ export function PurchaseHistoryView({ projectId, siteId }: PurchaseHistoryViewPr
     let purchasesToday = 0
     let purchasesThisMonth = 0
     let totalCostSum = 0
+    let pricedCount = 0
+    let costableCount = 0
     const supplierSet = new Set<string>()
 
     for (const item of items) {
@@ -130,9 +132,14 @@ export function PurchaseHistoryView({ projectId, siteId }: PurchaseHistoryViewPr
       if (item.supplier?.trim()) {
         supplierSet.add(item.supplier.trim())
       }
-      const cost = parseFloat(item.total_cost ?? '0')
+      // A corrected purchase was not money spent -- counting it would overstate
+      // what the company actually paid.
+      if (item.is_reversed) continue
+      costableCount += 1
+      const cost = item.total_cost === null ? NaN : parseFloat(item.total_cost ?? '')
       if (!isNaN(cost)) {
         totalCostSum += cost
+        pricedCount += 1
       }
     }
 
@@ -141,6 +148,11 @@ export function PurchaseHistoryView({ projectId, siteId }: PurchaseHistoryViewPr
       purchasesThisMonth,
       suppliersUsed: supplierSet.size,
       totalCostSum,
+      // How much of the total is actually backed by recorded prices. Shown so
+      // a figure covering 12 of 60 purchases can never read as the full spend
+      // -- the same reason the DPR refuses to report material cost at all.
+      pricedCount,
+      costableCount,
     }
   }, [items])
 
@@ -167,7 +179,20 @@ export function PurchaseHistoryView({ projectId, siteId }: PurchaseHistoryViewPr
           />
           <KpiCard
             title="Total Purchase Value"
-            value={summary.totalCostSum > 0 ? `₹${summary.totalCostSum.toLocaleString()}` : '—'}
+            value={
+              summary.pricedCount > 0
+                ? `₹${summary.totalCostSum.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`
+                : 'Not recorded'
+            }
+            // Never present a partial figure as the whole spend. If only some
+            // purchases carry a price, say so outright. Uses KpiCard's existing
+            // `description` prop -- that component is shared with the Labour
+            // pages and must not be modified from here.
+            description={
+              summary.pricedCount > 0 && summary.pricedCount < summary.costableCount
+                ? `from ${summary.pricedCount} of ${summary.costableCount} purchases`
+                : undefined
+            }
             icon={<DollarSign />}
             trend="neutral"
           />
@@ -296,7 +321,14 @@ export function PurchaseHistoryView({ projectId, siteId }: PurchaseHistoryViewPr
                         </TableCell>
                       )}
                       <TableCell className="text-right font-mono tabular-nums font-semibold">
-                        {row.total_cost ? `₹${row.total_cost}` : '—'}
+                        <span className={row.total_cost ? '' : 'text-muted-foreground font-normal'}>
+                          {formatMoney(row.total_cost)}
+                        </span>
+                        {row.is_reversed && (
+                          <span className="ml-1.5 text-[10px] font-normal text-amber-700 dark:text-amber-400">
+                            corrected
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell>
                         <Badge variant="outline" className="text-[10px]">

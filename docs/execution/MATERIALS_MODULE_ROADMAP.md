@@ -610,31 +610,35 @@ code; all suites pass; Labour untouched.
 
 ## Git workflow — applies to every phase, without exception
 
+**Work directly on `main` — no feature branches.** `main` is what deploys to the VPS, so work
+parked on a branch reaches nothing. The trade-off is that there is no branch acting as a safety
+net, which makes the verification step below non-negotiable rather than a formality.
+
 **At phase start**
 1. `git pull` on `main`; resolve conflicts; verify the build and full test suite pass **before
    any new work** — so a pre-existing failure is never mistaken for one I introduced.
 2. Check the current Alembic head and **claim the migration number explicitly** (see Standing
-   Risks).
-3. `git checkout -b feat/materials-phase-N-<slug>`.
+   Risks). Migrations run automatically on deploy, so a wrong number breaks production, not a
+   branch.
 
 **During**
-4. Implement only the approved scope. Anything else discovered is logged, not built.
-5. Clean, logical commits — one concern each, present-tense messages explaining *why*, matching
+3. Implement only the approved scope. Anything else discovered is logged, not built.
+4. Clean, logical commits — one concern each, present-tense messages explaining *why*, matching
    the existing repo style (`feat(materials):` / `fix(materials):`).
 
-**At phase end**
-6. Full automated suite: backend, WhatsApp, dashboard build + typecheck + lint.
-7. Manual verification per that phase's testing plan.
-8. **Labour isolation check:** `git diff --stat main...HEAD` must show zero files under
-   `workforce/`, `labour`, `attendance`, `payroll`, or `components/ui/` — plus a Labour suite
-   run, reported.
-9. Commit, push the branch.
-10. Report: branch name, commit hashes, commit messages, files changed, test results, Labour
-    verification, remaining risks.
-11. **Stop. Wait for review.** No merge, no next phase.
+**At phase end — all of it, before pushing**
+5. Full automated suite: backend, WhatsApp, dashboard build + typecheck + lint.
+6. Manual verification per that phase's testing plan.
+7. **Labour isolation check:** the diff must show zero files under `workforce/`, `labour`,
+   `attendance`, `payroll`, or `components/ui/` — plus a Labour suite run, reported.
+8. `git pull` again (others push constantly); re-verify if it brought changes.
+9. Commit and push to `main`. Confirm the remote SHA matches local — tracking info can lie.
+10. Report: commit hashes, commit messages, files changed, test results, Labour verification,
+    **what could not be verified**, remaining risks.
+11. **Stop. Wait for approval before the next phase.**
 
-**Never:** two phases on one branch; a merge without approval; a push with failing tests;
-`--no-verify`.
+**Never:** a push with failing tests; `--no-verify`; a migration whose head was not re-checked
+immediately before pushing; silence about a check that could not be run.
 
 ---
 
@@ -645,7 +649,7 @@ code; all suites pass; Labour untouched.
 **Technical Summary** — files modified, files created, APIs changed, database changes, tests
 executed with results, performance improvements, security improvements, remaining risks.
 
-**Git Summary** — branch name, commit hashes and messages, push confirmation.
+**Git Summary** — commit hashes and messages, push confirmation verified against the remote SHA.
 
 **Founder Summary** — what users will notice, what improved, why this phase mattered, what
 comes next. No jargon.

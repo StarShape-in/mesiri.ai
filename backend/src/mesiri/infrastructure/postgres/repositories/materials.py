@@ -227,8 +227,19 @@ class PostgresMaterialReadRepository:
         )
         total = (await self.conn.execute(count_stmt)).scalar_one()
 
+        # A reversed purchase was not actually spent, so any cost total that
+        # counted it would overstate what the company paid. Surfaced per row
+        # rather than filtered out, because the purchase still happened and
+        # still belongs in the history -- it is the money that has to net off.
+        # Cheap: 0459's partial unique index covers reverses_movement_id.
+        is_reversed = sa.exists(
+            sa.select(sa.literal(1))
+            .select_from(_material_usage)
+            .where(_material_usage.c.reverses_movement_id == _material_receipts.c.id)
+        ).label("is_reversed")
+
         stmt = (
-            sa.select(_material_receipts)
+            sa.select(_material_receipts, is_reversed)
             .where(*where_clauses)
             .order_by(
                 _material_receipts.c.occurred_date.desc(), _material_receipts.c.created_at.desc()
@@ -368,6 +379,43 @@ class PostgresMaterialReadRepository:
                 "NEGATIVE_STOCK" if stock < 0 else "OUT_OF_STOCK" if stock == 0 else "AVAILABLE"
             )
         return rows
+
+    async def get_last_purchase_price(
+        self, organization_id: uuid.UUID, material_id: uuid.UUID
+    ) -> dict | None:
+        """The most recent recorded rate for a material, org-wide.
+
+        Shown while recording a delivery so a rate that has jumped is noticed
+        at the moment it can still be questioned, rather than in a report three
+        weeks later. Org-wide rather than per-site on purpose: the price a
+        supplier charges is a commercial fact about the company, not about one
+        site, and per-site would return nothing for a site's first delivery --
+        exactly when the check is most useful.
+
+        Rows with no recorded cost are skipped rather than treated as zero.
+        """
+        stmt = (
+            sa.select(
+                _material_receipts.c.unit_cost,
+                _material_receipts.c.total_cost,
+                _material_receipts.c.occurred_date,
+                _material_receipts.c.supplier,
+                _material_receipts.c.unit,
+            )
+            .where(
+                _material_receipts.c.organization_id == organization_id,
+                _material_receipts.c.material_id == material_id,
+                _material_receipts.c.unit_cost.isnot(None),
+            )
+            .order_by(
+                _material_receipts.c.occurred_date.desc(),
+                _material_receipts.c.created_at.desc(),
+            )
+            .limit(1)
+        )
+        res = await self.conn.execute(stmt)
+        row = res.mappings().first()
+        return dict(row) if row else None
 
     async def find_reversal_of(
         self, organization_id: uuid.UUID, original_id: uuid.UUID

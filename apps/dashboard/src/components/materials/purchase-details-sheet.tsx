@@ -20,7 +20,7 @@ import {
   Hash,
   ChevronDown,
 } from 'lucide-react'
-import { fetchInflow } from '@/lib/materials'
+import { fetchInflow, formatMoney } from '@/lib/materials'
 import { fetchProjects, fetchSites } from '@/lib/projects'
 
 interface PurchaseDetailsSheetProps {
@@ -199,7 +199,7 @@ export function PurchaseDetailsSheet({ id, open, onOpenChange }: PurchaseDetails
                     Unit Cost
                   </span>
                   <span className="font-medium text-foreground">
-                    {item.unit_cost ? `₹${item.unit_cost}` : 'Not Specified'}
+                    {formatMoney(item.unit_cost)}
                   </span>
                 </div>
                 <div>
@@ -207,7 +207,7 @@ export function PurchaseDetailsSheet({ id, open, onOpenChange }: PurchaseDetails
                     Total Cost
                   </span>
                   <span className="font-medium text-foreground font-mono font-bold">
-                    {item.total_cost ? `₹${item.total_cost}` : 'Not Specified'}
+                    {formatMoney(item.total_cost)}
                   </span>
                 </div>
               </div>

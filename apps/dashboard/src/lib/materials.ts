@@ -50,6 +50,9 @@ export interface MaterialReceipt {
   unit_cost: string | null
   total_cost: string | null
   supplier: string | null
+  // A correction was posted against this purchase — its cost must be left out
+  // of spend totals, because that money was netted off.
+  is_reversed?: boolean
   occurred_date: string
   occurred_time: string | null
   correlation_id: string | null
@@ -249,6 +252,37 @@ export interface CreateInflowPayload {
   supplier?: string
   notes?: string
   occurred_date: string
+  // Both optional. Leave them out when the price genuinely wasn't recorded —
+  // the backend stores NULL, never 0, so "not recorded" can never masquerade
+  // as "free" in a spend total.
+  unit_cost?: string | number
+  total_cost?: string | number
+}
+
+export interface LastPurchase {
+  material_id: string
+  unit_cost: string | null
+  unit?: string
+  occurred_date?: string
+  supplier?: string | null
+}
+
+// The last rate paid for this material, org-wide — shown while recording so a
+// price that has jumped gets noticed while it can still be questioned.
+export async function fetchLastPurchase(materialId: string): Promise<LastPurchase> {
+  const res = await api.get<LastPurchase>('/materials/last-purchase', {
+    params: { material_id: materialId },
+  })
+  return res.data
+}
+
+// Money that was never recorded is not zero. Rendering it as ₹0 would claim
+// the delivery was free and quietly drag every total downward.
+export function formatMoney(value: string | null | undefined): string {
+  if (value === null || value === undefined || value === '') return 'Not recorded'
+  const n = Number(value)
+  if (Number.isNaN(n)) return 'Not recorded'
+  return `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
 }
 
 // A retried request must not become a second delivery. The key is generated

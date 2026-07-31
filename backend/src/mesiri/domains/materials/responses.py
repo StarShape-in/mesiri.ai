@@ -18,6 +18,9 @@ class MaterialReceiptResponse(BaseModel):
     unit_cost: Decimal | None
     total_cost: Decimal | None
     supplier: str | None
+    # A correction has been posted against this purchase, so its cost must not
+    # be counted toward spend totals -- the money was netted off.
+    is_reversed: bool = False
     occurred_date: datetime.date
     occurred_time: datetime.time | None
     correlation_id: str | None

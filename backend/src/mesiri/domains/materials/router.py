@@ -555,6 +555,30 @@ async def check_available_stock(
     }
 
 
+@router.get("/last-purchase")
+async def get_last_purchase_price(
+    material_id: uuid.UUID,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """The last rate paid for a material, or nulls when none was ever recorded.
+
+    Returns 200 with empty fields rather than 404 for "never priced": the
+    entry form treats it as a hint, and a missing hint is not an error.
+    """
+    repo = PostgresMaterialReadRepository(conn)
+    last = await repo.get_last_purchase_price(auth_context.organization_id, material_id)
+    if last is None:
+        return {"material_id": material_id, "unit_cost": None}
+    return {
+        "material_id": material_id,
+        "unit_cost": last["unit_cost"],
+        "unit": last["unit"],
+        "occurred_date": last["occurred_date"],
+        "supplier": last["supplier"],
+    }
+
+
 @router.get("/ledger/{site_id}/{material_id}", response_model=MaterialLedgerResponse)
 async def get_material_ledger(
     site_id: uuid.UUID,
@@ -606,6 +630,14 @@ class MaterialInflowCreate(BaseModel):
     supplier: str | None = None
     notes: str | None = None
     occurred_date: datetime.date
+    # Rate per stock unit as printed on the supplier's document. Both stay
+    # None when the price genuinely was not recorded -- see _resolve_costs for
+    # why an unrecorded price must never be stored as zero.
+    unit_cost: Decimal | None = None
+    # Defaults to quantity x unit_cost, but is accepted as given when sent, so
+    # a real invoice's discount, rounding or delivery charge survives instead
+    # of being overwritten by arithmetic.
+    total_cost: Decimal | None = None
 
 
 class MaterialOutflowCreate(BaseModel):
@@ -623,6 +655,37 @@ class MaterialOutflowCreate(BaseModel):
     # Negative stock is a real situation (deliveries recorded late), so this is
     # a confirmation, never a prohibition.
     allow_negative: bool = True
+
+
+def _resolve_costs(
+    quantity: Decimal, unit_cost: Decimal | None, total_cost: Decimal | None
+) -> tuple[Decimal | None, Decimal | None]:
+    """Work out what to store for a purchase's rate and line total.
+
+    Cost is optional throughout: plenty of real movements have no price
+    (transfers between sites, returns, stock corrections), and a delivery whose
+    invoice has not arrived yet is a normal state, not an error.
+
+    The rule that matters is that "not recorded" is stored as NULL and never as
+    zero. Zero is a claim -- it says the cement was free -- and it silently
+    drags any average or total toward nonsense. `application/dpr/assembly.py`
+    already refuses to report material cost for exactly this reason, noting
+    that a partial figure "would read as complete and mislead".
+
+    Both directions are supported because both happen: a storekeeper reads the
+    rate off the invoice and the total follows; or the invoice shows only a
+    line total after a discount and the effective rate follows from it.
+    """
+    if unit_cost is not None and unit_cost < 0:
+        raise HTTPException(status_code=422, detail="unit_cost cannot be negative")
+    if total_cost is not None and total_cost < 0:
+        raise HTTPException(status_code=422, detail="total_cost cannot be negative")
+
+    if unit_cost is not None and total_cost is None:
+        total_cost = (unit_cost * quantity).quantize(Decimal("0.01"))
+    elif total_cost is not None and unit_cost is None and quantity > 0:
+        unit_cost = (total_cost / quantity).quantize(Decimal("0.01"))
+    return unit_cost, total_cost
 
 
 async def _resolve_and_validate_material_unit(
@@ -691,6 +754,7 @@ async def create_inflow(
     material, unit = await _resolve_and_validate_material_unit(
         conn, auth_context.organization_id, body.material_id, body.unit_id
     )
+    unit_cost, total_cost = _resolve_costs(body.quantity, body.unit_cost, body.total_cost)
 
     row_id = uuid.uuid4()
     await conn.execute(
@@ -698,10 +762,10 @@ async def create_inflow(
             "INSERT INTO material_receipts "
             "(id, organization_id, project_id, site_id, material_name, quantity, unit, unit_id, "
             "supplier, occurred_date, occurred_date_source, source, movement_reason, notes, "
-            "material_id, created_by) "
+            "material_id, unit_cost, total_cost, created_by) "
             "VALUES (:id, :organization_id, :project_id, :site_id, :material_name, "
             ":quantity, :unit, :unit_id, :supplier, :occurred_date, 'reported', 'web', "
-            ":movement_reason, :notes, :material_id, :created_by)"
+            ":movement_reason, :notes, :material_id, :unit_cost, :total_cost, :created_by)"
         ),
         {
             "id": row_id,
@@ -717,6 +781,8 @@ async def create_inflow(
             "movement_reason": body.movement_reason,
             "notes": body.notes.strip() if body.notes else None,
             "material_id": material["id"],
+            "unit_cost": unit_cost,
+            "total_cost": total_cost,
             "created_by": auth_context.user_id,
         },
     )

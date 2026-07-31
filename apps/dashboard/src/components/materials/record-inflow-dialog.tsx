@@ -17,6 +17,8 @@ import { fetchProjects, fetchSites } from '@/lib/projects'
 import {
   fetchMaterials,
   createInflow,
+  fetchLastPurchase,
+  formatMoney,
   newIdempotencyKey,
   INFLOW_REASONS,
   ADJUSTMENT_REASONS,
@@ -49,6 +51,12 @@ export function RecordInflowDialog({ open, onOpenChange, scope }: RecordInflowDi
   const [reason, setReason] = React.useState<InflowReason>('RECEIVED')
   const [occurredDate, setOccurredDate] = React.useState(todayIso())
   const [supplier, setSupplier] = React.useState('')
+  const [unitCost, setUnitCost] = React.useState('')
+  // Tracked separately from unitCost so an edited total is not overwritten by
+  // the quantity x rate calculation -- real invoices carry discounts, freight
+  // and rounding that arithmetic would silently erase.
+  const [totalCost, setTotalCost] = React.useState('')
+  const [totalCostEdited, setTotalCostEdited] = React.useState(false)
   const [notes, setNotes] = React.useState('')
   const [error, setError] = React.useState('')
   const [success, setSuccess] = React.useState(false)
@@ -68,6 +76,9 @@ export function RecordInflowDialog({ open, onOpenChange, scope }: RecordInflowDi
       setReason('RECEIVED')
       setOccurredDate(todayIso())
       setSupplier('')
+      setUnitCost('')
+      setTotalCost('')
+      setTotalCostEdited(false)
       setNotes('')
       setError('')
       setSuccess(false)
@@ -106,6 +117,40 @@ export function RecordInflowDialog({ open, onOpenChange, scope }: RecordInflowDi
     }))
   }, [catalog])
 
+  // Keep the total in step with quantity x rate until the user takes it over.
+  React.useEffect(() => {
+    if (totalCostEdited) return
+    const q = Number(quantity)
+    const r = Number(unitCost)
+    if (!quantity || !unitCost || Number.isNaN(q) || Number.isNaN(r)) {
+      setTotalCost('')
+      return
+    }
+    setTotalCost((q * r).toFixed(2))
+  }, [quantity, unitCost, totalCostEdited])
+
+  // What this material last cost, so a jump is visible while it can still be
+  // questioned rather than in a report weeks later.
+  const { data: lastPurchase } = useQuery({
+    queryKey: ['materials', 'last-purchase', materialId],
+    queryFn: () => fetchLastPurchase(materialId),
+    enabled: open && !!materialId,
+    staleTime: 60_000,
+  })
+
+  const priceJump = React.useMemo(() => {
+    const previous = Number(lastPurchase?.unit_cost)
+    const current = Number(unitCost)
+    if (!lastPurchase?.unit_cost || !unitCost || Number.isNaN(previous) || Number.isNaN(current)) {
+      return null
+    }
+    if (previous <= 0) return null
+    const change = ((current - previous) / previous) * 100
+    // Below 10% is ordinary market movement; flagging it would train people to
+    // ignore the warning that matters.
+    return Math.abs(change) >= 10 ? change : null
+  }, [lastPurchase, unitCost])
+
   const mutation = useMutation({
     mutationFn: () =>
       createInflow(
@@ -117,6 +162,10 @@ export function RecordInflowDialog({ open, onOpenChange, scope }: RecordInflowDi
           quantity,
           movement_reason: reason,
           supplier: supplier.trim() || undefined,
+          // Omitted entirely when blank, so the backend stores NULL rather
+          // than a zero that would read as "this delivery was free".
+          unit_cost: unitCost.trim() || undefined,
+          total_cost: totalCost.trim() || undefined,
           notes: notes.trim() || undefined,
           occurred_date: occurredDate,
         },
@@ -284,6 +333,68 @@ export function RecordInflowDialog({ open, onOpenChange, scope }: RecordInflowDi
             <Label htmlFor="supplier">Supplier / Vendor</Label>
             <Input id="supplier" value={supplier} onChange={(e) => setSupplier(e.target.value)} placeholder="Optional" />
           </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-1.5">
+              <div className="flex items-baseline justify-between gap-2">
+                <Label htmlFor="unitCost">
+                  Rate {selectedMaterial ? `per ${selectedMaterial.default_unit}` : ''}
+                </Label>
+                {lastPurchase?.unit_cost && (
+                  <span className="text-[11px] text-muted-foreground tabular-nums">
+                    last {formatMoney(lastPurchase.unit_cost)}
+                  </span>
+                )}
+              </div>
+              <Input
+                id="unitCost"
+                type="number"
+                min="0"
+                step="any"
+                value={unitCost}
+                onChange={(e) => setUnitCost(e.target.value)}
+                placeholder="Optional"
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <div className="flex items-baseline justify-between gap-2">
+                <Label htmlFor="totalCost">Line Total</Label>
+                {totalCostEdited && (
+                  <button
+                    type="button"
+                    className="text-[11px] text-primary font-semibold"
+                    onClick={() => setTotalCostEdited(false)}
+                  >
+                    recalculate
+                  </button>
+                )}
+              </div>
+              <Input
+                id="totalCost"
+                type="number"
+                min="0"
+                step="any"
+                value={totalCost}
+                onChange={(e) => {
+                  // Any manual edit wins: discounts and freight are real, and
+                  // quantity x rate would quietly overwrite them.
+                  setTotalCostEdited(true)
+                  setTotalCost(e.target.value)
+                }}
+                placeholder="Optional"
+              />
+            </div>
+          </div>
+
+          {priceJump !== null && (
+            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-400">
+              This rate is {Math.abs(priceJump).toFixed(0)}%{' '}
+              {priceJump > 0 ? 'higher' : 'lower'} than the last recorded price
+              {lastPurchase?.occurred_date ? ` (${lastPurchase.occurred_date}` : ''}
+              {lastPurchase?.supplier ? `, ${lastPurchase.supplier})` : lastPurchase?.occurred_date ? ')' : ''}
+              . Worth a check before recording.
+            </div>
+          )}
 
           <div className="grid gap-1.5">
             <Label htmlFor="notes">Notes</Label>
