@@ -30,9 +30,11 @@ from mesiri_contracts.assistant.planner_decision import PlannerDecisionType, Wor
 from mesiri_contracts.assistant.v2.canonical_event import CanonicalEventV2
 from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
 from mesiri_contracts.assistant.v2.resolved_context import ResolvedContextV2
+from mesiri_contracts.common.ids import new_id
 from mesiri_contracts.common.storage import ObjectStoragePort
 from planner import Planner, log_planner_decision
 from planner.ambiguity import AmbiguityAction, caveat_text, decide_ambiguity
+from planning.decomposition import build_plan_from_segments
 from planning.plan_store import PlanStore
 from runtime.activity_query import ActivityQueryService
 from runtime.activity_search_service import ActivitySearchService
@@ -86,6 +88,7 @@ from runtime.money_account_query import MoneyAccountQueryService
 from runtime.noop_loggers import NoopMessageLogger, NoopTraceLogger
 from runtime.org_settings_query import OrganizationSettingsQueryService
 from runtime.petty_cash_query import PettyCashRecipientQueryService
+from runtime.plan_executor import _progress_prefix
 from runtime.project_detail_query import ProjectDetailQueryService
 from runtime.reply_dispatch import send_reply_spec
 from runtime.reversal_query import ReversalTargetQueryService
@@ -100,8 +103,7 @@ from workflows import (
     WorkflowRuntime,
     log_workflow_run,
 )
-from workflows.batch import format_batch_prefix
-from workflows.batch_store import BatchProgress, PendingBatchStore
+from workflows.batch_store import PendingBatchStore
 
 # Matches runtime/account_admin_journey.py's _ACCOUNT_ADMIN_ROLES exactly --
 # that module gates the deterministic-parser fast path; this gates the
@@ -476,9 +478,11 @@ async def process_inbound_message(
             # (see canonicalization/builder.py's docstring for exactly which
             # cases, and which it does not yet cover). canonical_event stays
             # bound to events[0] for every line below, completely unchanged
-            # from before this existed -- extra_segments (queued after the
-            # primary workflow starts, see the workflow stage below) is the
-            # only new state this introduces into the first-pass journey.
+            # from before this existed -- extra_segments (planned as part of
+            # a Plan once the primary workflow starts, see the workflow stage
+            # below -- Phase A2 of docs/execution/
+            # UNIFIED_UNDERSTANDING_PIPELINE.md) is the only new state this
+            # introduces into the first-pass journey.
             canonical_events = build_canonical_events(
                 understanding,
                 resolved,
@@ -990,27 +994,48 @@ async def process_inbound_message(
                     # #1 Multi-Activity / #13 Cross-Module Trigger: the
                     # primary segment started normally above -- the
                     # single-active invariant is untouched, exactly as if
-                    # this were an ordinary one-segment message. If there
-                    # ARE extra segments, queue them and caption this
-                    # prompt with its batch position; the rest run one at a
-                    # time as each prior segment's confirmation resolves
-                    # (interactions/handler.py -> workflows/batch.py).
+                    # this were an ordinary one-segment message. If there ARE
+                    # extra segments, the whole set (primary + extras)
+                    # becomes a Plan (Phase A2 of docs/execution/
+                    # UNIFIED_UNDERSTANDING_PIPELINE.md -- repoints this off
+                    # workflows/batch.py's flat PendingBatchStore queue).
+                    # segment_events[0]'s PlanStep always gets step_id "s1"
+                    # (assigned before ordering, by build_plan_from_segments'
+                    # own contract) and is marked RUNNING against the
+                    # WorkflowInstance already started above -- never started
+                    # a second time. The rest run one at a time as each prior
+                    # step's confirmation resolves (plan_executor.advance_plan).
                     if (
                         extra_segments
                         and workflow_run.status is WorkflowRunStatus.STARTED
-                        and batch_store is not None
+                        and plan_store is not None
                     ):
-                        total = 1 + len(extra_segments)
-                        await batch_store.start_batch(
-                            user_id=actor_user_id, remaining=extra_segments, total=total
-                        )
-                        workflow_run = dataclasses.replace(
-                            workflow_run,
-                            pending_prompt=format_batch_prefix(
-                                BatchProgress(index=1, total=total, outcomes=())
+                        try:
+                            plan_result = build_plan_from_segments(
+                                canonical_events, plan_id=new_id("plan")
                             )
-                            + (workflow_run.pending_prompt or ""),
-                        )
+                            if plan_result.plan is not None:
+                                await plan_store.start_plan(plan=plan_result.plan)
+                                await plan_store.mark_step_running(
+                                    user_id=actor_user_id,
+                                    step_id="s1",
+                                    workflow_instance_id=workflow_run.workflow_instance_id,
+                                )
+                                running_plan = await plan_store.get_plan(user_id=actor_user_id)
+                                prefix = _progress_prefix(running_plan) if running_plan else ""
+                                if prefix:
+                                    workflow_run = dataclasses.replace(
+                                        workflow_run,
+                                        pending_prompt=prefix + (workflow_run.pending_prompt or ""),
+                                    )
+                        except Exception:  # noqa: BLE001 -- a plan-persist failure here
+                            # must not take down the primary segment, which already
+                            # started successfully above and is the whole message as
+                            # far as the user is concerned if this fails.
+                            _log.exception(
+                                "plan.multi_segment_persist_failed correlation_id=%s",
+                                correlation_id,
+                            )
 
                     if context_debug:
                         log_workflow_run(workflow_run)

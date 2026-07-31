@@ -540,6 +540,54 @@ wording change for the one live user-facing case (material→activity), made
 because "one plan, one wording" (U3) is the point of this whole doc — not
 an oversight discovered later.
 
+#### A2 — done 2026-07-31.
+
+`process.py`'s kickoff now branches on `extra_segments`: the primary
+segment (`canonical_events[0]`) still runs through the exact same inline
+code as every ordinary single-segment message (unchanged gates,
+`workflow_runtime.start`, mlog/tlog calls) — `n = 1` still fully unchanged,
+as A2 was scoped to leave for A4. When there ARE extra segments, the whole
+`canonical_events` list (not just the extras) goes through
+`build_plan_from_segments`, persisted via `plan_store.start_plan`, with the
+already-started primary step (`step_id` is always `"s1"`, assigned before
+`topological_order` can reorder the tuple — verified against
+`planning/decomposition.py`'s own contract) marked `RUNNING` against the
+`WorkflowInstance` that already exists, never started a second time. The
+prompt gets the same `"(1 of N) "` prefix as before, computed by reusing
+`runtime.plan_executor._progress_prefix` directly (a cross-module
+underscore import, matching this codebase's existing convention for
+`runtime.inbound_journey._shared._log`) rather than reimplementing it.
+
+**The regression anchor this doc named did not exist.** Before this pass,
+no test drove a work_item-linked material report through
+`process_inbound_message` end-to-end — `test_multi_segment_canonicalization.py`
+only tests `build_canonical_events` in isolation, and `test_batch_workflow.py`
+only tests `workflows/batch.py`'s own functions in isolation, never wired
+together through the real journey. Written as
+`test_process_multi_segment_plan.py` in this pass, exercising the real chain
+(real `ContextResolver` against `context/seed`'s fixtures, real `Planner`,
+real `WorkflowRuntime` against a fake compiled graph, real
+`build_plan_from_segments`).
+
+**That new test caught a real bug in the first draft of this change**, not a
+pre-existing one: `plan_store.mark_step_running(user_id=actor_user_id, ...)`
+raised `PlanNotFoundError` because the test itself passed the wrong value
+for `actor_user_id` — a raw fixture label (`seed.USER_ENGINEER`,
+`"user_engineer"`) instead of the deterministic UUID
+`context_resolver.resolve()` actually assigns
+(`context.identity_bridge.deterministic_canonical_uuid`), which is what
+real production wiring passes (`message_journey.py`'s
+`actor_user_id=ctx.user_id`). Once fixed, the test passes and confirms the
+production code path (`process.py`'s new branch) was correct as written —
+the bug was in the test's setup, not the source change, but it is recorded
+here because it demonstrates exactly why writing the missing anchor
+mattered: without it, a user_id mismatch of this shape would have shipped
+undetected (both `PlanStore.start_plan` and `mark_step_running` degrade to a
+logged exception, per the module's "never take down the primary segment"
+posture — see the `try/except` around the whole block in `process.py` — so
+in production this class of bug would silently mean the second segment
+never gets planned, not a visible crash).
+
 ### Phase B — Intents-plural extraction
 
 | # | Step | Verification |
