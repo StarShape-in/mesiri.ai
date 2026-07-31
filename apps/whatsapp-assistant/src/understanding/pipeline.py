@@ -40,6 +40,10 @@ _REQUIRED_FIELDS: dict[SemanticType, tuple[str, ...]] = {
     SemanticType.EXPENSE: ("amount",),
     SemanticType.EQUIPMENT_USAGE: ("equipment_name", "duration_hours"),
     SemanticType.MATERIAL_UPDATE: ("material_name",),
+    # An invoice with no readable lines is a photo we failed to read, not a
+    # purchase -- scoring it on `line_items` is what makes that show up as low
+    # confidence instead of an empty record the user is asked to confirm.
+    SemanticType.MATERIAL_INVOICE: ("line_items",),
     # Confidence is judged on the provider's own output, before
     # canonicalization folds the shapes together -- so this names what the
     # extraction prompt actually asks for (`workers`). A provider that falls

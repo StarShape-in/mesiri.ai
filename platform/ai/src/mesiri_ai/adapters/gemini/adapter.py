@@ -66,7 +66,25 @@ _VISION_PROMPT = (
     '- TRADES: translate into the English trade word for "trade" '
     '(കൊത്തുപണിക്കാരന് -> "mason", '
     'मजदूर -> "helper"), using the trade list above.\n'
-    "Numerals in any script become plain digits."
+    "Numerals in any script become plain digits.\n\n"
+    "If the image is a supplier invoice, bill, cash memo or delivery challan "
+    "for materials (classify it as invoice), then \"fields\" MUST contain a "
+    '"line_items" array with one entry per material line, each with: '
+    '"material_name" (as printed), '
+    '"quantity" (plain number), '
+    '"unit" (bags, kg, tons, cum, nos, ... as printed), '
+    '"unit_cost" (rate per unit, only if a rate is printed), '
+    '"line_total" (only if a line amount is printed). '
+    'Also include "supplier_name", "invoice_number", "invoice_date" '
+    '(YYYY-MM-DD) and "invoice_total" when they are legible.\n'
+    "Transcribe EVERY material row, in the order printed. Do not summarise and "
+    "do not total. Skip rows that are not materials (freight, loading charges, "
+    "round-off, tax lines) -- those belong to the invoice total, not to stock.\n"
+    "Do NOT extract GST/HSN codes, tax breakdowns, bank details, IFSC, vehicle "
+    "or LR numbers, payment terms, or amount-in-words. They are not needed and "
+    "guessing them wastes accuracy that the material lines need.\n"
+    "Never compute a missing number. If a rate or an amount is not printed, "
+    "omit that key -- a value that was never on the paper must not be invented."
 )
 
 _EXTRACTION_PROMPT = (
@@ -75,7 +93,7 @@ _EXTRACTION_PROMPT = (
     'structured construction data from the text. Return strict JSON with keys: '
     '"detected_language" (the source language\'s common English name, e.g. '
     '"Malayalam", "English"), '
-    '"semantic_type" (expense|equipment_usage|material_update|labour_update|'
+    '"semantic_type" (expense|equipment_usage|material_update|material_invoice|labour_update|'
     "general_site_update|activity_correction|site_issue|site_issue_update|general_question|whoami_question|inventory_query|"
     "labour_query|activity_query|dpr_request|finance_query|transfer|petty_cash|reversal|"
     "account_admin|project_create|site_create|project_detail_query|"
@@ -118,6 +136,17 @@ _EXTRACTION_PROMPT = (
     "work_item is only for used material: the activity or task it was used for "
     '(e.g. "slabing the footing area", "column casting"). Omit work_item entirely '
     "for received material.\n"
+    "- material_invoice: supplier_name, invoice_number, invoice_date, "
+    "invoice_total, line_items (array), project_name. Use this type ONLY when "
+    "the input is a supplier invoice, bill, cash memo or delivery challan "
+    "listing materials with quantities -- a document, not a sentence. "
+    'One person saying "50 bags of cement arrived" is material_update; a '
+    "printed document listing several materials is material_invoice. "
+    "Each line_items entry has: material_name, quantity, unit, and "
+    "unit_cost/line_total when a price is printed. Copy the array through "
+    "unchanged if it is already present in the input -- do not re-derive, "
+    "re-order or total it. Never invent a price that was not printed, and "
+    "never extract GST/HSN, tax breakdowns, bank details or payment terms.\n"
     "- labour_update: workers (array), contractor, hours, project_name, occurred_on. "
     "Each item in workers is ONE line of the attendance report, with keys: "
     '"name" (the person\'s name -- omit entirely for an unnamed group), '

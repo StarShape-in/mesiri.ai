@@ -205,16 +205,34 @@ def test_no_projects_reply_is_distinct_from_the_picker():
     assert render_no_projects_reply() != render_project_picker([]).text
 
 
-def test_image_purpose_picker_offers_expense_attendance_and_site_update():
+def test_image_purpose_picker_offers_every_kind_of_photo_a_site_sends():
     reply = render_image_purpose_picker()
     assert reply.list_rows == IMAGE_PURPOSE_ROWS
     row_ids = [row.id for row in reply.list_rows]
-    assert row_ids == ["img_expense", "img_attendance", "img_site_update"]
+    # Material Delivery leads: a supplier's invoice is the most common piece of
+    # paper photographed on a site, and before it existed such a photo could
+    # only be filed as an Expense -- recording the money while stock never moved.
+    assert row_ids == [
+        "img_material_invoice",
+        "img_expense",
+        "img_attendance",
+        "img_site_update",
+    ]
+
+
+def test_expense_and_material_rows_are_told_apart_by_their_descriptions():
+    """Both are pieces of paper from a supplier, so the titles alone cannot
+    separate them. Getting this wrong double-counts spend."""
+    rows = {row.id: row for row in IMAGE_PURPOSE_ROWS}
+
+    assert "invoice" in rows["img_material_invoice"].description.lower()
+    assert "paid" in rows["img_expense"].description.lower()
 
 
 def test_image_purpose_semantic_hint_covers_every_row():
     row_ids = {row.id for row in IMAGE_PURPOSE_ROWS}
     assert set(IMAGE_PURPOSE_SEMANTIC_HINT.keys()) == row_ids
+    assert IMAGE_PURPOSE_SEMANTIC_HINT["img_material_invoice"] == "material_invoice"
     assert IMAGE_PURPOSE_SEMANTIC_HINT["img_expense"] == "expense"
     assert IMAGE_PURPOSE_SEMANTIC_HINT["img_attendance"] == "labour_update"
     assert IMAGE_PURPOSE_SEMANTIC_HINT["img_site_update"] == "general_site_update"
