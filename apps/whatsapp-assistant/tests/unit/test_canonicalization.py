@@ -340,6 +340,29 @@ def test_site_issue_update_wont_fix_maps_to_wont_fix_requested():
     assert event.event_type is CanonicalEventType.SITE_ISSUE_WONT_FIX_REQUESTED
 
 
+def test_site_issue_update_cancel_maps_to_cancel_requested():
+    understanding = _understanding(
+        semantic_type=SemanticType.SITE_ISSUE_UPDATE,
+        candidates=[
+            SiteIssueUpdateCandidate(
+                fields={"action": "cancel", "resolution_notes": "Wrong site"}
+            )
+        ],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.SITE_ISSUE_CANCEL_REQUESTED
+    assert event.fields["resolution_notes"] == "Wrong site"
+
+
+def test_site_issue_update_reopen_maps_to_reopen_requested():
+    understanding = _understanding(
+        semantic_type=SemanticType.SITE_ISSUE_UPDATE,
+        candidates=[SiteIssueUpdateCandidate(fields={"action": "reopen"})],
+    )
+    event = build_canonical_event(understanding, _context())
+    assert event.event_type is CanonicalEventType.SITE_ISSUE_REOPEN_REQUESTED
+
+
 def test_site_issue_update_unrecognized_action_falls_back_to_unrecognized():
     understanding = _understanding(
         semantic_type=SemanticType.SITE_ISSUE_UPDATE,

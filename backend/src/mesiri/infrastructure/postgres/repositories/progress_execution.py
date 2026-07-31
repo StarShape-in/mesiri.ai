@@ -547,10 +547,22 @@ class PostgresProgressExecutionRepository(ProgressExecutionRepository):
     #: acknowledge_issue (OPEN only) / resolve_issue / wont_fix_issue
     #: (OPEN/ACKNOWLEDGED) WHERE clauses, re-checked here instead of trusted
     #: from draft-build time since time can pass before the user replies YES.
+    #: `cancel` matches resolve/wont_fix: an issue is withdrawable while it
+    #: is still live, and once it is terminal the honest record is whatever
+    #: terminal state it already reached.
+    #:
+    #: `reopen` is the only backwards transition. It deliberately excludes
+    #: CANCELLED -- reviving a report that was withdrawn as never-real would
+    #: erase the distinction migration 0460 exists to keep; re-reporting is
+    #: the route back from a cancellation. It includes ACKNOWLEDGED so
+    #: "actually that's still open, nobody is on it" is expressible without
+    #: first having to resolve the issue.
     _ALLOWED_CURRENT_STATUS_BY_ACTION = {
         "acknowledge": {"OPEN"},
         "resolve": {"OPEN", "ACKNOWLEDGED"},
         "wont_fix": {"OPEN", "ACKNOWLEDGED"},
+        "cancel": {"OPEN", "ACKNOWLEDGED"},
+        "reopen": {"ACKNOWLEDGED", "RESOLVED", "WONT_FIX"},
     }
 
     async def persist_close_site_issue_success(
@@ -627,6 +639,41 @@ class PostgresProgressExecutionRepository(ProgressExecutionRepository):
             )
             event_type = "SiteIssueWontFix"
             payload = {"resolution_notes": cmd.resolution_notes}
+        elif cmd.action == "cancel":
+            # resolved_at is set even though nothing was resolved: the column
+            # means "when this issue stopped being live," which is exactly
+            # what a withdrawal is. Leaving it NULL would make a cancelled
+            # issue read as still-open to every query that tests it, and
+            # `status` already carries the distinction.
+            await conn.execute(
+                text(
+                    "UPDATE site_issues SET status = 'CANCELLED', resolved_at = :now, "
+                    "resolution_notes = :notes, updated_at = :now "
+                    "WHERE organization_id = :org_id AND id = :id"
+                ),
+                {"org_id": organization_id, "id": issue_id, "now": now, "notes": cmd.resolution_notes},
+            )
+            event_type = "SiteIssueCancelled"
+            payload = {"resolution_notes": cmd.resolution_notes}
+        elif cmd.action == "reopen":
+            # resolved_at and resolution_notes are cleared, not kept: they
+            # describe a close-out that is being retracted, and leaving them
+            # behind would leave the row asserting it was resolved at a time
+            # it demonstrably was not. The retraction itself stays visible in
+            # the outbox/timeline, so nothing about the history is lost.
+            await conn.execute(
+                text(
+                    "UPDATE site_issues SET status = 'OPEN', resolved_at = NULL, "
+                    "resolution_notes = NULL, updated_at = :now "
+                    "WHERE organization_id = :org_id AND id = :id"
+                ),
+                {"org_id": organization_id, "id": issue_id, "now": now},
+            )
+            event_type = "SiteIssueReopened"
+            # The reason for reopening, when the user gave one -- carried on
+            # the event rather than the row, which is now back to describing
+            # a live issue with no close-out to annotate.
+            payload = {"reopen_notes": cmd.resolution_notes}
         else:  # resolve
             await conn.execute(
                 text(

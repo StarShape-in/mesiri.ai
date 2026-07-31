@@ -13,11 +13,18 @@ application/finance/reverse_execution.py.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Awaitable, Callable
 from decimal import Decimal
-from typing import TYPE_CHECKING, Literal, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
 if TYPE_CHECKING:
     from mesiri.infrastructure.postgres.database import PostgresDatabase
+
+#: Picks one reversible `transfer` row -- see _transfer_target. Typed loosely
+#: on the repository because importing PostgresMoneyTransactionRepository at
+#: module scope would pull the backend in at import time, which this wiring
+#: layer deliberately defers to call time (see the module docstring).
+_TransferSelector = Callable[[Any, uuid.UUID], Awaitable[Any]]
 
 
 class ReversalExpenseTarget(TypedDict):
@@ -27,11 +34,36 @@ class ReversalExpenseTarget(TypedDict):
     occurred_date: str
 
 
+#: The account type that makes a `transfer` row a petty cash movement --
+#: mirrors petty_cash_resolution.py's _ADVANCE_ACCOUNT_TYPE.
+ADVANCE_ACCOUNT_TYPE = "employee_advance"
+
+#: Suffix petty_cash_resolution.py gives an auto-created advance account
+#: ("Alan Usman — Petty Cash"). Stripped for display so a confirmation reads
+#: "issued to Alan Usman" rather than naming the account. Coupled to that
+#: module's f-string by nothing stronger than this constant, so the strip is
+#: best-effort: an account named any other way falls back to its full name,
+#: which is always correct, just less natural.
+_ADVANCE_ACCOUNT_NAME_SUFFIX = " — Petty Cash"
+
+
+def advance_holder_name(account_name: str) -> str:
+    """The person an advance account belongs to, for display."""
+    if account_name.endswith(_ADVANCE_ACCOUNT_NAME_SUFFIX):
+        return account_name[: -len(_ADVANCE_ACCOUNT_NAME_SUFFIX)].strip() or account_name
+    return account_name
+
+
 class ReversalTransferTarget(TypedDict):
     money_transaction_id: str
     amount: str
     from_account_name: str
     to_account_name: str
+    # Carried so the seeding layer can tell a petty cash movement from a
+    # plain transfer without a second lookup -- both legs are already
+    # fetched to get the names, so the type comes along for free.
+    from_account_type: str | None
+    to_account_type: str | None
 
 
 class ReversalActivityTarget(TypedDict):
@@ -66,16 +98,24 @@ class ReversalTargetQueryService:
             occurred_date=expense.occurred_date.isoformat(),
         )
 
-    async def find_latest_transfer(self, *, organization_id: str) -> ReversalTransferTarget | None:
+    async def _transfer_target(
+        self, org_id: uuid.UUID, select: _TransferSelector
+    ) -> ReversalTransferTarget | None:
+        """Run one of PostgresMoneyTransactionRepository's reversible-transfer
+        finders and dress the row with both account names and types.
+
+        Shared by find_latest_transfer and find_latest_petty_cash because
+        the two differ only in which row they select -- the row itself is
+        the same `transfer` shape, and so is everything the reverse workflow
+        needs from it."""
         from mesiri.infrastructure.postgres.repositories.finance import (
             PostgresMoneyAccountRepository,
             PostgresMoneyTransactionRepository,
         )
 
-        org_id = uuid.UUID(organization_id)
         async with self._db.transaction() as conn:
             transactions = PostgresMoneyTransactionRepository(conn)
-            transaction = await transactions.find_latest_reversible_transfer(org_id)
+            transaction = await select(transactions, org_id)
             if transaction is None:
                 return None
             accounts = PostgresMoneyAccountRepository(conn)
@@ -94,6 +134,26 @@ class ReversalTargetQueryService:
             amount=str(Decimal(transaction.amount)),
             from_account_name=from_account.name if from_account else "unknown account",
             to_account_name=to_account.name if to_account else "unknown account",
+            from_account_type=from_account.account_type if from_account else None,
+            to_account_type=to_account.account_type if to_account else None,
+        )
+
+    async def find_latest_transfer(self, *, organization_id: str) -> ReversalTransferTarget | None:
+        """The most recent reversible transfer of ANY kind, petty cash
+        included -- see find_latest_reversible_petty_cash on why the two are
+        deliberately not mutually exclusive."""
+        return await self._transfer_target(
+            uuid.UUID(organization_id),
+            lambda repo, oid: repo.find_latest_reversible_transfer(oid),
+        )
+
+    async def find_latest_petty_cash(
+        self, *, organization_id: str
+    ) -> ReversalTransferTarget | None:
+        """The most recent reversible petty cash movement specifically."""
+        return await self._transfer_target(
+            uuid.UUID(organization_id),
+            lambda repo, oid: repo.find_latest_reversible_petty_cash(oid),
         )
 
     async def find_latest_activity(

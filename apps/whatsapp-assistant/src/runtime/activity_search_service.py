@@ -47,7 +47,16 @@ _ACTIVITY_STATUS_TYPE = PG_ENUM(
     "PLANNED", "IN_PROGRESS", "COMPLETED", "STOPPED", name="activity_status", create_type=False
 )
 _SITE_ISSUE_STATUS_TYPE = PG_ENUM(
-    "OPEN", "ACKNOWLEDGED", "RESOLVED", "WONT_FIX", name="site_issue_status", create_type=False
+    "OPEN",
+    "ACKNOWLEDGED",
+    "RESOLVED",
+    "WONT_FIX",
+    # Added by migration 0460 -- a withdrawn report. This mirror must list
+    # every value the database type has, or a comparison against a CANCELLED
+    # row binds as an unknown label.
+    "CANCELLED",
+    name="site_issue_status",
+    create_type=False,
 )
 
 

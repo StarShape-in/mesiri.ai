@@ -163,3 +163,56 @@ def test_request_confirmation_activity_phrasing():
     assert "plastering — 2nd floor" in prompt
     assert "2026-07-28" in prompt
     assert "YES" in prompt
+
+
+def _petty_cash_state(**overrides):
+    return _base_state(
+        {
+            "target_kind": "petty_cash",
+            "money_transaction_id": TRANSACTION_ID,
+            "created_by_role": "FINANCE",
+            "reversal_amount": "20000.00",
+            "reversal_from_account_name": "Company Account",
+            "reversal_to_account_name": "Alan Usman — Petty Cash",
+            "reversal_petty_cash_direction": "issue",
+            "reversal_petty_cash_holder": "Alan Usman",
+            **overrides,
+        }
+    )
+
+
+def test_petty_cash_target_builds_a_draft():
+    state = _petty_cash_state()
+    draft = build_draft(state)["draft_action"]
+    assert draft.action_type is DraftActionType.REVERSE_TRANSACTION
+    # Same row, same execution path as a transfer -- only the labelling
+    # differs (see find_latest_reversible_petty_cash).
+    assert draft.fields["money_transaction_id"] == TRANSACTION_ID
+    assert draft.fields["target_kind"] == "petty_cash"
+
+
+def test_no_petty_cash_found_completes_without_a_draft():
+    state = _base_state({"target_kind": "petty_cash", "created_by_role": "FINANCE"})
+    update = build_draft(state)
+    assert "draft_action" not in update
+    assert "no petty cash issues or returns to reverse" in update["pending_prompt"]
+
+
+def test_request_confirmation_petty_cash_names_the_person_not_the_accounts():
+    """A confirmation the user cannot recognise is not a confirmation (P2):
+    nobody thinks of "₹20,000 to Alan" as an account pair."""
+    state = _petty_cash_state()
+    state.update(build_draft(state))
+    prompt = request_confirmation(state)["pending_prompt"]
+    assert "Reverse petty cash" in prompt
+    assert "issued to Alan Usman" in prompt
+    assert "20000.00" in prompt
+    assert "Alan Usman — Petty Cash" not in prompt
+    assert "YES" in prompt
+
+
+def test_request_confirmation_petty_cash_return_phrasing():
+    state = _petty_cash_state(reversal_petty_cash_direction="return")
+    state.update(build_draft(state))
+    prompt = request_confirmation(state)["pending_prompt"]
+    assert "returned by Alan Usman" in prompt

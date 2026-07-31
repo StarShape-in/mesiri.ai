@@ -36,7 +36,12 @@ class SiteIssueTargetQueryService:
         project_id: str | None,
         site_id: str | None,
         statuses: tuple[str, ...],
+        by_transition_time: bool = False,
     ) -> SiteIssueCloseTarget | None:
+        """`by_transition_time` picks the issue whose status changed most
+        recently rather than the one reported most recently -- see
+        find_latest_by_status. Set only by the `reopen` action, whose "that's
+        not actually fixed" points at the issue just closed."""
         from mesiri.infrastructure.postgres.repositories.progress import (
             PostgresProgressReadRepository,
         )
@@ -48,6 +53,7 @@ class SiteIssueTargetQueryService:
                 uuid.UUID(project_id) if project_id else None,
                 uuid.UUID(site_id) if site_id else None,
                 statuses,
+                by_transition_time=by_transition_time,
             )
         if row is None:
             return None

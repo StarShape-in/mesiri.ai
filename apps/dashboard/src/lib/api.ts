@@ -311,7 +311,7 @@ export interface SiteIssueItem {
   delay_duration_minutes?: number | null
   occurred_at: string
   resolved_at?: string | null
-  status: 'OPEN' | 'ACKNOWLEDGED' | 'RESOLVED' | 'WONT_FIX' | string
+  status: 'OPEN' | 'ACKNOWLEDGED' | 'RESOLVED' | 'WONT_FIX' | 'CANCELLED' | string
   resolution_notes?: string | null
   assigned_user_id?: string | null
   reported_by_user_id?: string | null

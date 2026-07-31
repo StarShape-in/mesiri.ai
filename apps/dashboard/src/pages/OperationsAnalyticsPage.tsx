@@ -168,7 +168,12 @@ export default function OperationsAnalyticsPage() {
     const overallProgressPct = totalActivities > 0 ? Math.round((completedActivities / totalActivities) * 100) : 0
 
     const totalIssues = issues.length
-    const openIssues = issues.filter((i) => (i.status || '').toUpperCase() !== 'RESOLVED').length
+    // Every settled status, not just RESOLVED. WONT_FIX is a decision and
+    // CANCELLED (migration 0460) is a withdrawn report -- neither is a
+    // blocker anyone is still waiting on, and counting them here inflated
+    // the open-issue figure this KPI exists to report.
+    const CLOSED = ['RESOLVED', 'WONT_FIX', 'CANCELLED']
+    const openIssues = issues.filter((i) => !CLOSED.includes((i.status || '').toUpperCase())).length
     const totalDelayMins = issues.reduce((acc, i) => acc + (i.delay_duration_minutes || 0), 0)
 
     return { totalActivities, completedActivities, overallProgressPct, totalIssues, openIssues, totalDelayMins }

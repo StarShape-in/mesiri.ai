@@ -10,10 +10,17 @@ transaction via PostgresDatabase and also drives the workflow_instances
 phase transition (see application/progress/handlers.py's docstring on why
 CloseSiteIssue's re-check lives inline rather than as a separate resolver).
 
-Covers: acknowledge/resolve/wont_fix each moving site_issues.status and
-emitting the matching outbox_events row, the current-status re-check
-rejecting a stale action (workflow_instances moves to EXECUTION_REJECTED,
-not COMPLETED), and idempotent replay not double-applying.
+Covers: acknowledge/resolve/wont_fix/cancel/reopen each moving
+site_issues.status and emitting the matching outbox_events row, the
+current-status re-check rejecting a stale action (workflow_instances moves
+to EXECUTION_REJECTED, not COMPLETED), and idempotent replay not
+double-applying.
+
+The two repair directions get extra attention because they are the ones
+that can quietly corrupt the record rather than merely fail: a cancel that
+folds into WONT_FIX overstates the site's real blocker count, and a reopen
+that leaves resolved_at behind leaves the row asserting a resolution that
+was retracted.
 """
 
 from __future__ import annotations
@@ -401,3 +408,153 @@ async def test_replayed_confirmation_does_not_double_transition_status(
         ).scalar_one()
     assert status == "RESOLVED"
     assert outbox_count == 1
+
+
+async def test_confirmed_cancel_withdraws_the_issue_without_claiming_resolution(
+    engine: AsyncEngine, db: PostgresDatabase, scenario: dict
+):
+    """Withdrawing a mistaken report must land on its own terminal status,
+    not fold into WONT_FIX -- "we chose not to fix this" and "this was never
+    a real issue" are different facts about the site, and a DPR that merges
+    them overstates how many genuine blockers the site had."""
+    workflow_instance_id = await _seed_workflow_instance(
+        engine, scenario, action="cancel", resolution_notes="Wrong site"
+    )
+
+    handler = _handler(db)
+    result = await handler.handle(
+        _confirmed_action(workflow_instance_id, scenario, action="cancel", resolution_notes="Wrong site")
+    )
+
+    assert result.status == ExecutionStatus.SUCCEEDED
+    async with engine.connect() as conn:
+        row = (
+            await conn.execute(
+                sa.text(
+                    "SELECT status, resolution_notes, resolved_at FROM site_issues WHERE id = :id"
+                ),
+                {"id": scenario["issue_id"]},
+            )
+        ).mappings().one()
+        event_type = (
+            await conn.execute(
+                sa.text(
+                    "SELECT event_type FROM outbox_events "
+                    "WHERE aggregate_type = 'site_issue' AND aggregate_id = :id"
+                ),
+                {"id": scenario["issue_id"]},
+            )
+        ).scalar_one()
+    assert row["status"] == "CANCELLED"
+    assert row["resolution_notes"] == "Wrong site"
+    # Set even though nothing was resolved: the column means "when this
+    # stopped being live," and a NULL would read as still-open.
+    assert row["resolved_at"] is not None
+    assert event_type == "SiteIssueCancelled"
+
+
+async def test_confirmed_reopen_returns_a_resolved_issue_to_open_and_clears_the_closeout(
+    engine: AsyncEngine, db: PostgresDatabase, scenario: dict
+):
+    """resolved_at/resolution_notes describe a close-out that is being
+    retracted -- leaving them behind would leave the row asserting it was
+    resolved at a time it demonstrably was not."""
+    async with engine.begin() as conn:
+        await conn.execute(
+            sa.text(
+                "UPDATE site_issues SET status = 'RESOLVED', resolved_at = now(), "
+                "resolution_notes = 'Pump replaced' WHERE id = :id"
+            ),
+            {"id": scenario["issue_id"]},
+        )
+
+    workflow_instance_id = await _seed_workflow_instance(
+        engine, scenario, action="reopen", resolution_notes="Still leaking"
+    )
+
+    handler = _handler(db)
+    result = await handler.handle(
+        _confirmed_action(workflow_instance_id, scenario, action="reopen", resolution_notes="Still leaking")
+    )
+
+    assert result.status == ExecutionStatus.SUCCEEDED
+    async with engine.connect() as conn:
+        row = (
+            await conn.execute(
+                sa.text(
+                    "SELECT status, resolution_notes, resolved_at FROM site_issues WHERE id = :id"
+                ),
+                {"id": scenario["issue_id"]},
+            )
+        ).mappings().one()
+        event_row = (
+            await conn.execute(
+                sa.text(
+                    "SELECT event_type, payload FROM outbox_events "
+                    "WHERE aggregate_type = 'site_issue' AND aggregate_id = :id"
+                ),
+                {"id": scenario["issue_id"]},
+            )
+        ).mappings().one()
+    assert row["status"] == "OPEN"
+    assert row["resolution_notes"] is None
+    assert row["resolved_at"] is None
+    assert event_row["event_type"] == "SiteIssueReopened"
+    # The reason rides the event, not the row -- the row is back to
+    # describing a live issue with no close-out to annotate.
+    assert event_row["payload"]["reopen_notes"] == "Still leaking"
+
+
+async def test_reopening_a_cancelled_issue_is_rejected(
+    engine: AsyncEngine, db: PostgresDatabase, scenario: dict
+):
+    """A withdrawn report is not reopenable, it is re-reportable. Reviving
+    one would erase the very distinction CANCELLED exists to record."""
+    async with engine.begin() as conn:
+        await conn.execute(
+            sa.text("UPDATE site_issues SET status = 'CANCELLED' WHERE id = :id"),
+            {"id": scenario["issue_id"]},
+        )
+
+    workflow_instance_id = await _seed_workflow_instance(engine, scenario, action="reopen")
+
+    handler = _handler(db)
+    result = await handler.handle(_confirmed_action(workflow_instance_id, scenario, action="reopen"))
+
+    assert result.status == ExecutionStatus.REJECTED
+    assert "already cancelled" in result.rejection_reasons[0]
+
+    async with engine.connect() as conn:
+        status = (
+            await conn.execute(
+                sa.text("SELECT status FROM site_issues WHERE id = :id"), {"id": scenario["issue_id"]}
+            )
+        ).scalar_one()
+        workflow_row = (
+            await conn.execute(
+                sa.text("SELECT phase, status FROM workflow_instances WHERE id = :id"),
+                {"id": uuid.UUID(workflow_instance_id)},
+            )
+        ).mappings().one()
+    assert status == "CANCELLED"  # untouched
+    assert workflow_row["phase"] == "execution_rejected"
+
+
+async def test_cancelling_an_already_resolved_issue_is_rejected(
+    engine: AsyncEngine, db: PostgresDatabase, scenario: dict
+):
+    """Once an issue reached a terminal state the honest record is the one
+    it already reached -- withdrawal is only for issues still live."""
+    async with engine.begin() as conn:
+        await conn.execute(
+            sa.text("UPDATE site_issues SET status = 'RESOLVED' WHERE id = :id"),
+            {"id": scenario["issue_id"]},
+        )
+
+    workflow_instance_id = await _seed_workflow_instance(engine, scenario, action="cancel")
+
+    handler = _handler(db)
+    result = await handler.handle(_confirmed_action(workflow_instance_id, scenario, action="cancel"))
+
+    assert result.status == ExecutionStatus.REJECTED
+    assert "already resolved" in result.rejection_reasons[0]

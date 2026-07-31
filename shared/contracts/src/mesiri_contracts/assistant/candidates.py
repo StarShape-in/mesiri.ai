@@ -93,10 +93,12 @@ class SiteIssueCandidate(Candidate):
 class SiteIssueUpdateCandidate(Candidate):
     semantic_type: SemanticType = SemanticType.SITE_ISSUE_UPDATE
     # Conventional keys: action (required to route -- see
-    # canonicalization/mapping.py; one of acknowledge/resolve/wont_fix),
-    # resolution_notes. Always targets the most recently reported issue in
-    # the right status, resolved by seeding -- never a new report (that's
-    # site_issue).
+    # canonicalization/mapping.py; one of acknowledge/resolve/wont_fix/
+    # cancel/reopen), resolution_notes. Always targets the most recently
+    # reported issue in the right status, resolved by seeding -- never a new
+    # report (that's site_issue). `cancel` withdraws a mistaken report and
+    # `reopen` undoes a premature close; which statuses each may target
+    # differs, so seeding picks the status filter per action.
 
 
 class GeneralQuestionCandidate(Candidate):

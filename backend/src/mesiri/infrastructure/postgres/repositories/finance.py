@@ -360,6 +360,66 @@ class PostgresMoneyTransactionRepository:
         row = (await self.conn.execute(stmt)).mappings().first()
         return _row_to_transaction(row) if row else None
 
+    #: The account type that makes a `transfer` row a petty cash movement --
+    #: mirrors application/finance/petty_cash_resolution.py's
+    #: _ADVANCE_ACCOUNT_TYPE, which is what creates these accounts.
+    _ADVANCE_ACCOUNT_TYPE = "employee_advance"
+
+    async def find_latest_reversible_petty_cash(
+        self, organization_id: uuid.UUID
+    ) -> MoneyTransaction | None:
+        """The most recent un-reversed petty cash movement -- "reverse my
+        last petty cash".
+
+        Petty cash has no transaction_type of its own: issuing an advance
+        writes exactly the same `transfer` row a plain account-to-account
+        transfer does (see application/finance/transfer_handler.py, which
+        both paths share). The ONLY thing that distinguishes it is that one
+        leg is an `employee_advance` account, so that is what this filters
+        on -- an EXISTS against either leg rather than a join, so a
+        (pathological) advance-to-advance row still matches once, not twice.
+
+        Same un-reversed left join as find_latest_reversible_transfer above;
+        deliberately NOT mutually exclusive with it, since a user who says
+        "reverse my last transfer" about a petty cash issuance is not wrong,
+        merely imprecise -- the seeding layer re-labels the record it found
+        rather than letting the user's word decide what it was."""
+        reversals = _money_transactions.alias("reversals")
+        advance = _money_accounts.alias("advance")
+        stmt = (
+            sa.select(_money_transactions)
+            .select_from(
+                _money_transactions.outerjoin(
+                    reversals,
+                    sa.and_(
+                        reversals.c.transaction_type == "reversal",
+                        reversals.c.source_type == "money_transaction",
+                        reversals.c.source_id == _money_transactions.c.id,
+                    ),
+                )
+            )
+            .where(
+                _money_transactions.c.organization_id == organization_id,
+                _money_transactions.c.transaction_type == "transfer",
+                reversals.c.id.is_(None),
+                sa.exists(
+                    sa.select(advance.c.id).where(
+                        advance.c.account_type == self._ADVANCE_ACCOUNT_TYPE,
+                        advance.c.id.in_(
+                            [
+                                _money_transactions.c.from_account_id,
+                                _money_transactions.c.to_account_id,
+                            ]
+                        ),
+                    )
+                ),
+            )
+            .order_by(_money_transactions.c.created_at.desc())
+            .limit(1)
+        )
+        row = (await self.conn.execute(stmt)).mappings().first()
+        return _row_to_transaction(row) if row else None
+
     async def list_by_account(
         self, organization_id: uuid.UUID, account_id: uuid.UUID, limit: int = 50
     ) -> list[MoneyTransaction]:

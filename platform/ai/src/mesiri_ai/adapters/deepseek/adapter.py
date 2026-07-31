@@ -150,10 +150,15 @@ _EXTRACTION_PROMPT = (
     "or slows down work -- never for a plain progress report (general_site_update) and "
     'never for a QUESTION about existing issues ("any open issues?" is activity_query).\n'
     "- site_issue_update: action, resolution_notes. Use this type when the user wants to "
-    "acknowledge, resolve, or mark won't-fix their most recently reported site issue "
-    '(e.g. "acknowledge that issue", "that\'s fixed now, mark it resolved", "we can\'t fix '
-    'that, mark it as won\'t fix"). action MUST be exactly "acknowledge", "resolve", or '
-    '"wont_fix". resolution_notes is optional freeform text -- omit if not stated. This '
+    "acknowledge, resolve, mark won't-fix, withdraw, or reopen their most recently "
+    'reported site issue (e.g. "acknowledge that issue", "that\'s fixed now, mark it '
+    'resolved", "we can\'t fix that, mark it as won\'t fix"). action MUST be exactly '
+    '"acknowledge", "resolve", "wont_fix", "cancel", or "reopen". Use "cancel" when the '
+    "issue should never have been reported at all -- a mistake, the wrong site, or a "
+    'false alarm (e.g. "ignore that, wrong site", "cancel that, I was wrong"); a real '
+    'problem that went away is "resolve", not "cancel". Use "reopen" when a previously '
+    'closed issue is not actually settled (e.g. "that\'s not fixed, reopen it", "the '
+    'leak is back"). resolution_notes is optional freeform text -- omit if not stated. This '
     "ALWAYS targets the single most recently reported issue in the right status -- never "
     "extract an issue type, severity, or narrative to identify which one. Never confuse "
     "with site_issue (which reports a brand NEW problem).\n"
@@ -235,15 +240,17 @@ _EXTRACTION_PROMPT = (
     "to a colleague).\n"
     "- reversal: target_kind. Use this type when the user wants to undo, "
     "reverse, cancel, or void their most recently recorded expense, "
-    "transfer, or site activity/progress report "
+    "transfer, petty cash movement, or site activity/progress report "
     '(e.g. "reverse my last expense", "cancel that transfer", '
     '"undo the diesel expense I just added", "void my last transaction", '
     '"delete that site update", "undo my last activity report", '
-    '"remove the update I just sent"). '
-    'target_kind MUST be exactly "expense", "transfer", or "activity" -- '
+    '"remove the update I just sent", "reverse the petty cash I gave Alan"). '
+    'target_kind MUST be exactly "expense", "transfer", "petty_cash", or '
+    '"activity" -- '
     "never any other word; infer it from what the user refers to -- "
     '"site update"/"activity"/"progress report"/"the work I just logged" '
-    'means "activity"; defaulting to "expense" if genuinely ambiguous '
+    'means "activity"; "petty cash"/"advance"/"the cash I gave <person>" '
+    'means "petty_cash"; defaulting to "expense" if genuinely ambiguous '
     "between expense and transfer, since that is the more common case. This "
     "always targets the single most recent record of that kind -- never "
     "extract an amount, date, or description for it.\n"

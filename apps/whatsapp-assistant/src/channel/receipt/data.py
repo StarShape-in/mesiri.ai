@@ -281,6 +281,27 @@ def build_receipt_data(
                 ]
             ]
             template_variant = "activity"
+        elif target_kind == "petty_cash":
+            # Named for the person, not the account pair -- same reasoning
+            # as reverse/nodes.py's petty cash confirmation branch.
+            holder = str(fields.get("reversal_petty_cash_holder") or "—")
+            direction = str(fields.get("reversal_petty_cash_direction", "")).strip().lower()
+            subtitle = "Petty cash reversed"
+            sections = [
+                [
+                    ReceiptField("user", "Returned by" if direction == "return" else "Issued to", holder),
+                    ReceiptField(
+                        "building",
+                        "Account",
+                        str(
+                            fields.get("reversal_from_account_name")
+                            if direction == "return"
+                            else fields.get("reversal_to_account_name")
+                        )
+                        or "—",
+                    ),
+                ]
+            ]
         elif target_kind == "transfer":
             from_name = str(fields.get("reversal_from_account_name") or "—")
             to_name = str(fields.get("reversal_to_account_name") or "—")
