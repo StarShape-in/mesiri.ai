@@ -48,7 +48,6 @@ from mesiri_contracts.assistant.enums import InputModality
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage
 from mesiri_contracts.assistant.planner_decision import WorkflowKey
 from mesiri_contracts.assistant.v2.interaction_spec import FieldCorrection, InteractionIntent
-from planner import Planner
 from workflows import (
     WorkflowResumeResult,
     WorkflowResumeStatus,
@@ -56,13 +55,6 @@ from workflows import (
     WorkflowRunStatus,
     WorkflowRuntime,
 )
-from workflows.batch import (
-    format_batch_summary,
-    render_started_segment_reply_spec,
-    start_segment,
-    summarize_batch_outcome,
-)
-from workflows.batch_store import PendingBatchStore
 from workflows.ports import LoadedWorkflowInstance
 from workflows.who_am_i import is_whoami_trigger
 
@@ -116,12 +108,15 @@ class InteractionHandled:
     receipt_coro: Coroutine[Any, Any, bytes | None] | None = field(default=None, repr=False)
     project_id: str | None = None
     site_id: str | None = None
-    # Set only when this resolution advanced a multi-segment batch to its
-    # next queued segment -- sent as a SEPARATE follow-up message (see
-    # workflows/batch.py's render_started_segment_reply_spec) rather than
-    # folded into reply_text, so a confirmable next segment gets real Yes/No
-    # buttons instead of a plain-text "Reply YES/NO" line concatenated onto
-    # the segment that just resolved.
+    # Always None as of Phase A3 (docs/execution/
+    # UNIFIED_UNDERSTANDING_PIPELINE.md) -- this used to carry a
+    # multi-segment batch's next queued segment (workflows/batch.py's
+    # render_started_segment_reply_spec). A multi-event message is now a
+    # Plan (Phase A2), advanced by runtime/plan_executor.py's advance_plan
+    # (already called unconditionally after every resolved confirmation in
+    # message_journey.py) rather than from inside this handler. Kept on the
+    # dataclass rather than removed here -- message_journey.py still reads
+    # it -- to be deleted together in A6 once workflows/batch.py itself goes.
     next_segment_reply: ReplySpec | None = None
 
 
@@ -133,8 +128,6 @@ class InteractionHandler:
         dispatcher: ExecutionDispatcher | None = None,
         receipt_builder: ReceiptBuilder | None = None,
         memory_coordinator: ConversationMemoryCoordinator | None = None,
-        planner: Planner | None = None,
-        batch_store: PendingBatchStore | None = None,
         completion_photo_hint_store: CompletionPhotoHintStore | None = None,
         slot_answer_classifier: SlotAnswerClassifierPort | None = None,
     ) -> None:
@@ -144,8 +137,6 @@ class InteractionHandler:
         self._dispatcher = dispatcher
         self._receipt_builder = receipt_builder
         self._memory_coordinator = memory_coordinator
-        self._planner = planner
-        self._batch_store = batch_store
         self._completion_photo_hint_store = completion_photo_hint_store
 
     async def _resume_and_render(
@@ -267,37 +258,16 @@ class InteractionHandler:
         else:
             reply_text = render_resume_reply(result)
 
-        # #1 Multi-Activity / #13 Cross-Module Trigger: this resolution may
-        # be one segment of a multi-segment batch (runtime/inbound_journey.py
-        # queued the rest after the first segment started -- see
-        # workflows/batch_store.py). Record this segment's outcome and either
-        # start the next queued one (its own follow-up ReplySpec -- SEE
-        # next_segment_reply below, not concatenated into reply_text, so a
-        # confirmable next segment keeps its Yes/No buttons) or, if this was
-        # the last, append the whole batch's summary. A no-op for the
-        # overwhelming common case: has_pending is False for every ordinary
-        # single-segment message.
-        next_segment_reply: ReplySpec | None = None
-        if self._batch_store is not None and self._planner is not None:
-            has_batch = await self._batch_store.has_pending(user_id=user_id)
-            if has_batch:
-                await self._batch_store.record_outcome(
-                    user_id=user_id,
-                    outcome=summarize_batch_outcome(result, execution_result),
-                )
-                next_item = await self._batch_store.pop_next(user_id=user_id)
-                if next_item is not None:
-                    next_event, progress = next_item
-                    next_run = await start_segment(
-                        next_event, planner=self._planner, workflow_runtime=self._runtime
-                    )
-                    next_segment_reply = render_started_segment_reply_spec(next_run, progress)
-                else:
-                    outcomes = await self._batch_store.get_outcomes(user_id=user_id)
-                    reply_text = reply_text + format_batch_summary(outcomes)
-                    await self._batch_store.clear(user_id=user_id)
-
-        return result, reply_text, execution_result, receipt_coro, next_segment_reply
+        # A multi-event message's remaining steps used to be advanced from
+        # here (workflows/batch.py, PendingBatchStore) -- Phase A2 (docs/
+        # execution/UNIFIED_UNDERSTANDING_PIPELINE.md) repointed that whole
+        # mechanism onto a Plan instead, advanced generically by
+        # runtime/plan_executor.py's advance_plan, already called
+        # unconditionally after every resolved confirmation in
+        # message_journey.py -- so there is nothing left for this handler to
+        # do here. next_segment_reply is always None as of Phase A3; see its
+        # field docstring on InteractionHandled.
+        return result, reply_text, execution_result, receipt_coro, None
 
     async def handle_fast_path(
         self, user_id: str, message: NormalizedMessage, actor: ActorIdentity | None = None

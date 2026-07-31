@@ -588,6 +588,55 @@ posture — see the `try/except` around the whole block in `process.py` — so
 in production this class of bug would silently mean the second segment
 never gets planned, not a visible crash).
 
+#### A3 — done 2026-07-31.
+
+**Finding, before any deletion happened:** the batch-advance branch in
+`interactions/handler.py`'s `_resume_and_render` (checking
+`self._batch_store.has_pending(...)`) was **already dead** the moment A2
+landed — A2 stopped calling `batch_store.start_batch(...)` from
+`process.py`, so nothing populates `PendingBatchStore` for any NEW message
+after that commit. `has_pending` is provably always `False` going forward by
+code inspection alone (the two systems share no state), not something that
+needed a dynamic test to discover. A3's actual work was therefore deletion
+and confirmation, not a functional fix:
+
+- Removed the whole `if self._batch_store is not None and self._planner is
+  not None:` block from `_resume_and_render`; `next_segment_reply` is now
+  always the literal `None` it computed anyway.
+- Removed the now-unused `planner`/`batch_store` constructor parameters and
+  the `workflows.batch`/`workflows.batch_store` imports from
+  `interactions/handler.py`, `interactions/builder.py`, and the
+  `build_interaction_handler(...)` call site in `dependencies.py`. `Planner`
+  had no other use in `handler.py` — confirmed by grep before removing the
+  import.
+- `InteractionHandled.next_segment_reply` itself is **kept** (not deleted) —
+  `message_journey.py` still reads it (`if handled.next_segment_reply is not
+  None: ...`), and removing the field is bundled into A6, when
+  `workflows/batch.py` itself (and the reply-shape it produced) goes away
+  entirely rather than leaving an orphaned import in the meantime.
+
+**Verified, not assumed:** extended
+`test_process_multi_segment_plan.py` with
+`test_confirming_the_primary_segment_advances_to_the_linked_activity`,
+which drives the exact call sequence `message_journey.py` makes —
+`interaction_handler.handle_fast_path(...)` (the real handler, unmodified
+call site) followed by `plan_executor.advance_plan(...)` — against a shared
+`WorkflowRuntime`/repo so the confirmation resolves the same
+`WorkflowInstance` the initial message started. Asserts both halves of A3's
+claim: `handled.next_segment_reply is None` (the dead branch produces
+nothing) and the second step (`SITE_UPDATE`) reaches `RUNNING` with the
+right `"(2 of 2) "`-prefixed prompt (the generic `plan_executor` mechanism,
+already proven abstractly by `test_plan_executor.py`, now proven for this
+concrete origin/workflow-key pair too). Needed a fake `ExecutionDispatcher`
+(mirroring `test_completion_photo_followup_trigger.py`'s own) since M8's
+real dispatcher isn't reachable from this environment (no DB) — without one,
+`execution_result` stays `None` and `advance_plan` would mark the step
+`FAILED` rather than `DONE`, silently preventing the second step from ever
+starting.
+
+Full monorepo suite after these changes: 2641 passed, 16 skipped
+(pre-existing), 213 deselected.
+
 ### Phase B — Intents-plural extraction
 
 | # | Step | Verification |

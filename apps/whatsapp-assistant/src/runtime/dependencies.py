@@ -788,8 +788,6 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         dispatcher=execution_dispatcher,
         receipt_builder=record_receipt_builder,
         memory_coordinator=memory_coordinator,
-        planner=planner,
-        batch_store=batch_store,
         completion_photo_hint_store=completion_photo_hint_store,
         slot_answer_classifier=slot_answer_classifier,
     )
