@@ -76,7 +76,7 @@ export function CreateAccountDialog({
     const custodianName = selectedUser ? selectedUser.full_name || selectedUser.email : undefined
 
     try {
-      await createAccountApi({
+      const created = await createAccountApi({
         name,
         account_type: accountType,
         currency: 'INR',
@@ -87,36 +87,52 @@ export function CreateAccountDialog({
         project_id: scope.mode !== 'portfolio' ? scope.projectId : undefined,
         site_id: scope.mode === 'site' ? scope.siteId : undefined,
       })
-    } catch (err) {
-      console.warn('Backend endpoint unavailable, falling back to instant UI state update:', err)
-    } finally {
+
+      // Read back from MoneyAccountResponse rather than echoing the form:
+      // the server owns the id, the status and the balances, and the row in
+      // the table has to be the row in the database. This previously built
+      // an `acc_${Date.now()}` entry in a `finally`, so a rejected create
+      // (a duplicate name, a bad account_type, any 500) still showed a new
+      // account that vanished on the next refresh.
+      // account_number is deliberately still local -- the response does not
+      // carry it back, and masking is a display concern.
       const newEntry = {
-        id: `acc_${Date.now()}`,
-        name,
-        account_type: accountType,
-        currency: 'INR',
-        opening_balance: balance,
-        current_balance: balance,
+        id: String(created?.id ?? ''),
+        name: created?.name ?? name,
+        account_type: created?.account_type ?? accountType,
+        currency: created?.currency ?? 'INR',
+        opening_balance: Number(created?.opening_balance ?? balance),
+        current_balance: Number(created?.current_balance ?? balance),
         account_number_masked: accountNumber ? `•••• ${accountNumber.slice(-4)}` : undefined,
-        custodian_name: custodianName || 'Finance Admin',
-        owner_user_id: selectedUserId || undefined,
-        project_id: scope.mode !== 'portfolio' ? scope.projectId : undefined,
+        custodian_name: created?.custodian_name ?? custodianName ?? 'Finance Admin',
+        owner_user_id: created?.owner_user_id ?? selectedUserId ?? undefined,
+        project_id: created?.project_id ?? (scope.mode !== 'portfolio' ? scope.projectId : undefined),
         project_name: scope.mode === 'portfolio' ? 'Org Wide' : scope.projectName,
-        site_id: scope.mode === 'site' ? scope.siteId : undefined,
+        site_id: created?.site_id ?? (scope.mode === 'site' ? scope.siteId : undefined),
         site_name: scope.mode === 'site' ? scope.siteName : undefined,
         scope_level: scope.mode,
-        status: 'active' as const,
+        // AccountsPage narrows to 'active' | 'inactive'; anything else the
+        // server reports is shown as inactive rather than widening the type.
+        status: created?.status === 'inactive' ? ('inactive' as const) : ('active' as const),
         created_at: toLocalISODate(),
       }
 
       onAccountCreated?.(newEntry)
-      toast.success(`Account "${name}" created`, 'Money account registered')
-      setSubmitting(false)
+      toast.success(`Account "${newEntry.name}" created`, 'Money account registered')
       onOpenChange(false)
       setName('')
       setOpeningBalance('')
       setSelectedUserId('')
       setAccountNumber('')
+    } catch (err: any) {
+      // No row is added and the dialog stays open with the values intact, so
+      // the user can fix whatever the server rejected and resubmit.
+      toast.error(
+        'Could not create the account',
+        err?.response?.data?.detail || err?.message || 'Nothing was saved. Please try again.'
+      )
+    } finally {
+      setSubmitting(false)
     }
   }
 

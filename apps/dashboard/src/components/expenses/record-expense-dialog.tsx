@@ -73,34 +73,48 @@ export function RecordExpenseDialog({
   }, [open])
 
   const submitExpense = async (vendorId: string | undefined) => {
+    // An expense must belong to a project -- POST /expenses builds a
+    // RecordExpenseCommand whose project_id is not optional. Portfolio scope
+    // has no project to send, so it cannot record one. This used to be an
+    // `if (scope.mode !== 'portfolio')` around the call, which skipped the
+    // request entirely and then reported success anyway: every expense
+    // entered from the portfolio view was silently discarded.
+    if (scope.mode === 'portfolio') {
+      toast.error(
+        'Choose a project first',
+        'An expense has to belong to a project. Switch out of the portfolio view, then record it.'
+      )
+      return
+    }
+
     setSubmitting(true)
     const selectedCat = categories.find((c) => c.id === category)
     const idempotencyKey = `exp-web-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
 
     try {
-      if (scope.mode !== 'portfolio') {
-        const pId = scope.projectId
-        const sId = scope.mode === 'site' ? scope.siteId : undefined
-        await recordExpenseApi(
-          {
-            project_id: pId,
-            site_id: sId,
-            category_id: category,
-            vendor_id: vendorId,
-            amount: parseFloat(amount),
-            occurred_date: occurredDate,
-            description: description || selectedCat?.name,
-            source: 'web',
-          },
-          idempotencyKey
-        )
-      }
-    } catch (err) {
-      console.warn('Backend endpoint unavailable, falling back to instant UI state update:', err)
-    } finally {
+      const created = await recordExpenseApi(
+        {
+          project_id: scope.projectId,
+          site_id: scope.mode === 'site' ? scope.siteId : undefined,
+          category_id: category,
+          vendor_id: vendorId,
+          amount: parseFloat(amount),
+          occurred_date: occurredDate,
+          description: description || selectedCat?.name,
+          source: 'web',
+        },
+        idempotencyKey
+      )
+
+      // Built from the id the server actually returned, never a fabricated
+      // `exp_${Date.now()}`. The row the user sees has to be the row that
+      // exists -- otherwise it looks saved, survives until the next refresh,
+      // and disappears. expense_number mirrors ExpensesPage's own derivation
+      // so an optimistic row and a refetched one read identically.
+      const realId = String(created?.id ?? '')
       const newEntry = {
-        id: `exp_${Date.now()}`,
-        expense_number: `EXP-${Math.floor(1000 + Math.random() * 9000)}`,
+        id: realId,
+        expense_number: `EXP-${realId.slice(0, 4).toUpperCase()}`,
         amount: parseFloat(amount),
         currency: 'INR',
         category_name: selectedCat?.name || 'General Expense',
@@ -111,19 +125,29 @@ export function RecordExpenseDialog({
         payment_status: paymentStatus,
         workflow_status: 'confirmed',
         source: 'web',
-        project_name: scope.mode === 'portfolio' ? 'General Org' : scope.projectName,
+        project_name: scope.projectName,
         site_name: scope.mode === 'site' ? scope.siteName : 'All Sites',
         payment_method: paymentStatus === 'paid' ? paymentMethod : undefined,
       }
 
       onExpenseCreated?.(newEntry)
       toast.success('Expense recorded successfully', `Logged ₹${parseFloat(amount).toLocaleString('en-IN')}`)
-      setSubmitting(false)
       setPendingVendorName(null)
       onOpenChange(false)
       setAmount('')
       setDescription('')
       setVendor('')
+    } catch (err: any) {
+      // Nothing is added to the table and the dialog stays open with the
+      // values still in it, so the user can correct and retry. Reporting
+      // success here is what made a failed save indistinguishable from a
+      // real one.
+      toast.error(
+        'Could not record the expense',
+        err?.response?.data?.detail || err?.message || 'Nothing was saved. Please try again.'
+      )
+    } finally {
+      setSubmitting(false)
     }
   }
 

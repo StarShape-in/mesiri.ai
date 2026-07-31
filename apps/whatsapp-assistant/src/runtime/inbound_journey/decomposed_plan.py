@@ -24,10 +24,46 @@ held in PendingDecompositionStore while a picker asks -- mirroring
 _run_project_gate/_run_site_gate's own "hold + ask" shape, generalized from
 one CanonicalEventV2 to N segment texts.
 
-Deliberately NOT covering the material-unit/stock gates (an ambiguous
-catalog name, an over-stock usage report) -- those are genuinely
-per-segment, not a whole-decomposition property, and are a narrower slice
-of real traffic. Still named, still open, in the design doc's risk table.
+## Material-unit/stock gates (added 2026-07-31, Phase A5)
+
+The other half of §14's gap, closed by
+docs/execution/UNIFIED_UNDERSTANDING_PIPELINE.md's Phase A5: unlike
+project/site, an ambiguous catalog name or an over-stock usage report is
+genuinely PER-SEGMENT (it depends on that one segment's own material_name/
+quantity, never the sender as a whole), so it cannot be resolved once up
+front the way project/site is. _process_remaining_segments below builds
+each segment's CanonicalEventV2 one at a time, in order, and runs the same
+single-message gates (seeding.py's _run_material_unit_gates/_run_stock_gate,
+completely unmodified) on it before moving to the next. When a segment's own
+gate needs to pause, EVERYTHING needed to continue -- every earlier
+segment's already-fully-resolved event (`built_events`), the one segment
+paused mid-gate (`pending_event`), and every segment text not yet even
+touched (`segments`) -- is held in the same PendingDecompositionStore the
+project/site gate already uses, and one of five new resume legs
+(resume_pending_decomposition_with_material/_material_create/
+_material_unit_choice/_unit/_stock_choice) answers it, mirroring
+resume.py's own five single-message legs almost exactly -- the difference
+is always "then continue the decomposition loop" where resume.py says
+"then call _plan_and_run".
+
+_run_segment_gates reuses seeding.py's gate functions completely
+unmodified, via `_NullPendingReportStore`: those functions were written to
+pause by writing into interactions/pending_report.py's PendingReportStore
+(one CanonicalEventV2, no notion of "N more segments still to come"), which
+is the wrong store for a decomposition segment's pause -- so a throwaway
+stub swallows that write, and THIS module persists the real pause state
+(built_events/pending_event/segments) itself. No gate function in
+seeding.py was changed to make this work.
+
+Deliberately NOT touching interactions/handler.py, runtime/plan_executor.py,
+or any already-STARTED workflow's own gates -- this closes the gap only for
+segments still being turned into a Plan, before anything has started. A
+Plan's later steps (once the whole-plan preview is confirmed) run through
+plan_executor.py exactly as before; project/site is already trivially
+satisfied there since every segment's event already carries a resolved
+project_id/site_id (either from this module's own resolution, or a StepRef
+for one created earlier in the same message) by the time _build_and_preview_
+plan calls build_plan_from_segments.
 
 Every failure mode here degrades to `None` -- "not applicable, fall through
 to today's unrecognized-message reply unchanged" -- never an exception that
@@ -44,12 +80,17 @@ from backend.ports import ActorIdentity
 from canonicalization import build_canonical_event
 from channel.replies import (
     ReplySpec,
+    render_material_create_declined_reply,
+    render_material_create_offer,
+    render_material_create_unit_picker,
+    render_material_created_reply,
     render_no_projects_reply,
     render_plan_preview_reply,
     render_project_picker,
     render_site_picker,
 )
 from mesiri_ai.ports.decomposition import DecompositionProvider
+from mesiri_contracts.assistant.canonical_event import CanonicalEventType
 from mesiri_contracts.assistant.enums import InputModality
 from mesiri_contracts.assistant.normalized_message import NormalizedMessage
 from mesiri_contracts.assistant.understanding_result import UnderstandingResult
@@ -64,6 +105,14 @@ from runtime.inbound_journey.pending_decomposition import (
     PendingDecomposition,
     PendingDecompositionStore,
 )
+from runtime.inbound_journey.seeding import (
+    _inject_inventory_context,
+    _run_material_unit_gates,
+    _run_stock_gate,
+)
+from runtime.inventory_query import MaterialInventoryQueryService
+from runtime.material_catalog_query import MaterialCatalogQueryService
+from runtime.org_settings_query import OrganizationSettingsQueryService
 from understanding.pipeline import UnderstandingPipeline
 
 #: Decomposition only makes sense where there is text to split.
@@ -83,6 +132,226 @@ _DECOMPOSABLE_MODALITIES = (InputModality.TEXT, InputModality.INTERACTIVE, Input
 #: resume function safely no-ops (its own pop_pending returns None first).
 _PROJECT_ROW_PREFIX = "proj_"
 _SITE_ROW_PREFIX = "site_"
+
+#: Same reasoning as _PROJECT_ROW_PREFIX/_SITE_ROW_PREFIX above -- these are
+#: the SAME row ids resume.py's own material/unit/stock resume legs answer
+#: (render_material_picker/render_material_create_offer/
+#: render_material_create_unit_picker/render_unit_mismatch_reply/
+#: render_usage_exceeds_stock_reply all bake these in), re-declared as
+#: literals rather than imported from runtime.inbound_journey.resume: that
+#: module imports runtime.inbound_journey.process, which imports THIS
+#: module (try_start_decomposed_plan) -- importing resume.py here would
+#: close that into a circular import.
+_MATERIAL_ROW_PREFIX = "mat_"
+_MATERIAL_CREATE_YES_ROW_ID = "matnew_yes"
+_MATERIAL_CREATE_NO_ROW_ID = "matnew_no"
+_MATERIAL_CREATE_UNIT_PREFIX = "matunit_"
+_UNIT_YES_ROW_PREFIX = "unit_yes_"
+_UNIT_NO_ROW_ID = "unit_no"
+_STOCK_CAP_ROW_ID = "stock_cap"
+_STOCK_ARRIVAL_ROW_ID = "stock_arrival"
+_STOCK_CANCEL_ROW_ID = "stock_cancel"
+
+
+class _NullPendingReportStore:
+    """Stands in for interactions/pending_report.py's PendingReportStore
+    when seeding.py's gate functions run over a DECOMPOSITION segment rather
+    than a single message. Those functions pause by calling
+    ``pending_report_store.set_pending(...)`` -- meant for a single
+    CanonicalEventV2 with no notion of "N more segments still to come" --
+    so that write is simply discarded here; THIS module persists the real
+    pause state (built_events/pending_event/segments) via
+    PendingDecompositionStore instead. The gate functions are otherwise
+    unmodified: they still mutate the event in place and still return a
+    ReplySpec to signal "pause here", which is all this module reads."""
+
+    async def set_pending(self, *, user_id: str, event: CanonicalEventV2) -> None:
+        return None
+
+
+async def _run_segment_gates(
+    event: CanonicalEventV2,
+    *,
+    actor: ActorIdentity | None,
+    actor_user_id: str,
+    catalog_query: MaterialCatalogQueryService | None,
+    inventory_query: MaterialInventoryQueryService | None,
+    org_settings_query: OrganizationSettingsQueryService | None,
+) -> ReplySpec | None:
+    """Run every remaining single-message gate against one segment's own
+    CanonicalEventV2, mutating it in place exactly as the single-message
+    path (runtime/inbound_journey/process.py, resume.py) does before
+    starting a workflow. Returns the first pause reply, or None once every
+    gate has passed.
+
+    Deliberately does NOT re-run _run_project_gate/_run_site_gate here --
+    _resolve_project_and_site already settled project/site for the whole
+    decomposition (see module docstring), and calling those two gates again
+    would reintroduce a failure mode that resolution deliberately avoids:
+    _run_project_gate fails CLOSED (asks, or says "no projects") the moment
+    project_id is None regardless of WHY -- including `actor is None`, which
+    _resolve_project_and_site treats as "no gate applicable, fall through
+    unresolved" on purpose (its own docstring: "the same degrade every other
+    optional dependency in this layer uses, not a new failure mode"). A
+    real regression, caught by this module's own pre-existing tests, which
+    is why this note exists."""
+    null_store = _NullPendingReportStore()
+
+    if catalog_query is not None:
+        reply = await _run_material_unit_gates(
+            event,
+            catalog_query=catalog_query,
+            pending_report_store=null_store,
+            actor_user_id=actor_user_id,
+            actor_role=getattr(actor, "role", None),
+            org_settings_query=org_settings_query,
+        )
+        if reply is not None:
+            return reply
+
+    await _inject_inventory_context(event, inventory_query)
+    reply = await _run_stock_gate(event, pending_report_store=null_store, actor_user_id=actor_user_id)
+    if reply is not None:
+        return reply
+    return None
+
+
+async def _may_create_material_for_segment(
+    event: CanonicalEventV2,
+    *,
+    actor: ActorIdentity | None,
+    org_settings_query: OrganizationSettingsQueryService | None,
+) -> bool:
+    from runtime.inbound_journey.seeding import _may_create_material
+
+    return await _may_create_material(
+        event, actor_role=getattr(actor, "role", None), org_settings_query=org_settings_query
+    )
+
+
+async def _create_material_for_segment(
+    event: CanonicalEventV2,
+    *,
+    unit_id: str,
+    unit_display: str,
+    actor_user_id: str,
+    catalog_query: MaterialCatalogQueryService,
+) -> str | None:
+    """Create the catalog entry a decomposition segment's material-create
+    offer was accepted for, mutating `event` with the new material_id/
+    unit_id exactly as resume.py's own _create_material_and_resume does.
+    Returns the confirmation text to prepend once the plan preview is sent,
+    or None if creation failed (the segment is left as-is; its own material/
+    unit gate will simply ask again on the way through, same degrade as a
+    lookup failure elsewhere in this layer)."""
+    name = str(event.fields.get("material_name") or "")
+    try:
+        created = await catalog_query.create_material(
+            organization_id=event.organization_id,
+            name=name,
+            unit_id=unit_id,
+            created_by=actor_user_id,
+        )
+    except Exception:  # noqa: BLE001 -- never let a catalog write failure
+        # take down a whole decomposition; the segment just stays unresolved.
+        _log.exception("plan.material_create_failed correlation_id=%s", event.correlation_id)
+        return None
+    if created is None:
+        return None
+    event.fields["material_id"] = str(created["id"])
+    event.fields["unit_id"] = str(created["default_unit_id"] or unit_id)
+    event.fields["unit"] = unit_display
+    return render_material_created_reply(created["name"], unit_display)
+
+
+async def _process_remaining_segments(
+    *,
+    segment_texts: tuple[str, ...],
+    built_events: list[CanonicalEventV2],
+    resolved: ResolvedContextV2,
+    pipeline: UnderstandingPipeline,
+    expense_categories: list[str] | None,
+    correlation_id: str,
+    source_message_id: str,
+    actor: ActorIdentity | None,
+    actor_user_id: str,
+    catalog_query: MaterialCatalogQueryService | None,
+    inventory_query: MaterialInventoryQueryService | None,
+    org_settings_query: OrganizationSettingsQueryService | None,
+    pending_decomposition_store: PendingDecompositionStore | None,
+) -> list[CanonicalEventV2] | ReplySpec:
+    """Build and gate every segment in `segment_texts`, in order, appending
+    each to `built_events` once it fully passes. Returns the complete event
+    list once every segment is done (or was skipped -- see the try/except
+    below), or a ReplySpec the moment any segment's own gate needs to pause
+    -- with the pause state (built_events so far, this segment's own
+    partially-resolved event, and every segment text after it) already
+    persisted, so a resume leg has everything it needs."""
+    for index, segment_text in enumerate(segment_texts):
+        try:
+            segment_understanding = await pipeline.understand_text_segment(
+                segment_text,
+                source_message_id=source_message_id,
+                correlation_id=correlation_id,
+                expense_categories=expense_categories,
+            )
+            event = build_canonical_event(segment_understanding, resolved)
+        except Exception:  # noqa: BLE001 -- one bad segment must not sink the
+            # rest -- same degrade try_start_decomposed_plan's docstring
+            # already documents for this exact loop.
+            _log.warning(
+                "plan.segment_understand_failed correlation_id=%s segment=%r",
+                correlation_id,
+                segment_text,
+                exc_info=True,
+            )
+            continue
+
+        gate_reply = await _run_segment_gates(
+            event,
+            actor=actor,
+            actor_user_id=actor_user_id,
+            catalog_query=catalog_query,
+            inventory_query=inventory_query,
+            org_settings_query=org_settings_query,
+        )
+        if gate_reply is not None:
+            if pending_decomposition_store is not None:
+                await pending_decomposition_store.set_pending(
+                    user_id=actor_user_id,
+                    pending=PendingDecomposition(
+                        segments=tuple(segment_texts[index + 1 :]),
+                        resolved=resolved,
+                        expense_categories=tuple(expense_categories) if expense_categories else None,
+                        built_events=tuple(built_events),
+                        pending_event=event,
+                    ),
+                )
+            return gate_reply
+        built_events.append(event)
+
+    return built_events
+
+
+async def _finish_with_events(
+    events: list[CanonicalEventV2],
+    *,
+    plan_store: PlanStore,
+    correlation_id: str,
+) -> ReplySpec | None:
+    """Turn a fully-gated event list into a Plan and send the §8 preview --
+    the shared tail of the fresh-message path and every resume leg below,
+    once _process_remaining_segments has nothing left to pause on."""
+    result = build_plan_from_segments(events, plan_id=new_id("plan"))
+    if result.plan is None:
+        return None
+    try:
+        await plan_store.start_plan(plan=result.plan)
+        return render_plan_preview_reply(render_plan_preview(result.plan))
+    except Exception:  # noqa: BLE001 -- see module docstring: never let a
+        # plan-persist failure take down the message.
+        _log.exception("plan.persist_failed correlation_id=%s", correlation_id)
+        return None
 
 
 async def _resolve_project_and_site(
@@ -156,48 +425,36 @@ async def _build_and_preview_plan(
     plan_store: PlanStore,
     correlation_id: str,
     source_message_id: str,
+    actor: ActorIdentity | None = None,
+    actor_user_id: str = "",
+    catalog_query: MaterialCatalogQueryService | None = None,
+    inventory_query: MaterialInventoryQueryService | None = None,
+    org_settings_query: OrganizationSettingsQueryService | None = None,
+    pending_decomposition_store: PendingDecompositionStore | None = None,
 ) -> ReplySpec | None:
-    """Per-segment extract -> canonicalize -> entity-link -> persist
+    """Per-segment extract -> canonicalize -> gate -> entity-link -> persist
     all-PENDING -> the §8 preview. Shared by the fresh-message path
-    (try_start_decomposed_plan) and both project/site picker resumes below,
-    so a picker tap runs the exact same segment-building logic a message
-    that never needed one does."""
-    segment_events: list[CanonicalEventV2] = []
-    for segment_text in segments:
-        try:
-            segment_understanding = await pipeline.understand_text_segment(
-                segment_text,
-                source_message_id=source_message_id,
-                correlation_id=correlation_id,
-                expense_categories=expense_categories,
-            )
-            segment_events.append(build_canonical_event(segment_understanding, resolved))
-        except Exception:  # noqa: BLE001 -- one bad segment must not sink the
-            # rest -- build_plan_from_segments already tolerates fewer
-            # segments than were decomposed (its own "skipped" reporting is
-            # for segments it receives, not ones that never made it this far;
-            # a segment that raised here is simply absent from the plan,
-            # same net effect as decomposition itself only splitting off
-            # what turned out actionable).
-            _log.warning(
-                "plan.segment_understand_failed correlation_id=%s segment=%r",
-                correlation_id,
-                segment_text,
-                exc_info=True,
-            )
-            continue
-
-    result = build_plan_from_segments(segment_events, plan_id=new_id("plan"))
-    if result.plan is None:
-        return None
-
-    try:
-        await plan_store.start_plan(plan=result.plan)
-        return render_plan_preview_reply(render_plan_preview(result.plan))
-    except Exception:  # noqa: BLE001 -- see module docstring: never let a
-        # plan-persist failure take down the message.
-        _log.exception("plan.persist_failed correlation_id=%s", correlation_id)
-        return None
+    (try_start_decomposed_plan) and every picker resume below, so a picker
+    tap runs the exact same segment-building logic a message that never
+    needed one does."""
+    result = await _process_remaining_segments(
+        segment_texts=tuple(segments),
+        built_events=[],
+        resolved=resolved,
+        pipeline=pipeline,
+        expense_categories=expense_categories,
+        correlation_id=correlation_id,
+        source_message_id=source_message_id,
+        actor=actor,
+        actor_user_id=actor_user_id,
+        catalog_query=catalog_query,
+        inventory_query=inventory_query,
+        org_settings_query=org_settings_query,
+        pending_decomposition_store=pending_decomposition_store,
+    )
+    if isinstance(result, ReplySpec):
+        return result
+    return await _finish_with_events(result, plan_store=plan_store, correlation_id=correlation_id)
 
 
 async def try_start_decomposed_plan(
@@ -213,6 +470,9 @@ async def try_start_decomposed_plan(
     actor: ActorIdentity | None = None,
     actor_user_id: str = "",
     pending_decomposition_store: PendingDecompositionStore | None = None,
+    catalog_query: MaterialCatalogQueryService | None = None,
+    inventory_query: MaterialInventoryQueryService | None = None,
+    org_settings_query: OrganizationSettingsQueryService | None = None,
 ) -> ReplySpec | None:
     """Attempt to turn an UNKNOWN-classified message into a multi-step Plan.
 
@@ -271,6 +531,12 @@ async def try_start_decomposed_plan(
         plan_store=plan_store,
         correlation_id=correlation_id,
         source_message_id=understanding.source_message_id,
+        actor=actor,
+        actor_user_id=actor_user_id,
+        catalog_query=catalog_query,
+        inventory_query=inventory_query,
+        org_settings_query=org_settings_query,
+        pending_decomposition_store=pending_decomposition_store,
     )
 
 
@@ -282,6 +548,9 @@ async def resume_pending_decomposition_with_project(
     plan_store: PlanStore,
     pipeline: UnderstandingPipeline,
     actor: ActorIdentity | None = None,
+    catalog_query: MaterialCatalogQueryService | None = None,
+    inventory_query: MaterialInventoryQueryService | None = None,
+    org_settings_query: OrganizationSettingsQueryService | None = None,
 ) -> ReplySpec | None:
     """A tap on the project picker _resolve_project_and_site sent while
     holding a decomposition. Resolves site next (the project just picked may
@@ -329,6 +598,12 @@ async def resume_pending_decomposition_with_project(
         plan_store=plan_store,
         correlation_id=resolved.correlation_id,
         source_message_id=resolved.source_message_id,
+        actor=actor,
+        actor_user_id=actor_user_id,
+        catalog_query=catalog_query,
+        inventory_query=inventory_query,
+        org_settings_query=org_settings_query,
+        pending_decomposition_store=pending_decomposition_store,
     )
 
 
@@ -340,6 +615,9 @@ async def resume_pending_decomposition_with_site(
     plan_store: PlanStore,
     pipeline: UnderstandingPipeline,
     actor: ActorIdentity | None = None,
+    catalog_query: MaterialCatalogQueryService | None = None,
+    inventory_query: MaterialInventoryQueryService | None = None,
+    org_settings_query: OrganizationSettingsQueryService | None = None,
 ) -> ReplySpec | None:
     """A tap on the site picker _resolve_project_and_site sent once project
     was already settled. Project is fixed by this point, so this only ever
@@ -374,4 +652,445 @@ async def resume_pending_decomposition_with_site(
         plan_store=plan_store,
         correlation_id=resolved.correlation_id,
         source_message_id=resolved.source_message_id,
+        actor=actor,
+        actor_user_id=actor_user_id,
+        catalog_query=catalog_query,
+        inventory_query=inventory_query,
+        org_settings_query=org_settings_query,
+        pending_decomposition_store=pending_decomposition_store,
+    )
+
+
+async def _pop_gate_pending(
+    pending_decomposition_store: PendingDecompositionStore, actor_user_id: str
+) -> PendingDecomposition | None:
+    """Shared guard for every material/unit/stock resume leg below: pop, and
+    treat "nothing held" or "held, but not a gate pause" (pending_event is
+    None -- e.g. a stale project/site pause somehow still present) the same
+    way -- expired, never a crash."""
+    pending = await pending_decomposition_store.pop_pending(user_id=actor_user_id)
+    if pending is None or pending.pending_event is None:
+        return None
+    return pending
+
+
+async def _continue_after_segment_resolved(
+    event: CanonicalEventV2,
+    pending: PendingDecomposition,
+    *,
+    pipeline: UnderstandingPipeline,
+    plan_store: PlanStore,
+    actor: ActorIdentity | None,
+    actor_user_id: str,
+    catalog_query: MaterialCatalogQueryService | None,
+    inventory_query: MaterialInventoryQueryService | None,
+    org_settings_query: OrganizationSettingsQueryService | None,
+    pending_decomposition_store: PendingDecompositionStore | None,
+) -> ReplySpec | None:
+    """Re-gate `event` (resolving one field, e.g. material_id, can surface a
+    LATER gate on the same segment, e.g. a Stock Unit mismatch -- exactly
+    the re-run every single-message resume leg in resume.py already does)
+    and, once it fully passes, continue processing whatever segments were
+    still queued behind it."""
+    expense_categories = list(pending.expense_categories) if pending.expense_categories else None
+
+    gate_reply = await _run_segment_gates(
+        event,
+        actor=actor,
+        actor_user_id=actor_user_id,
+        catalog_query=catalog_query,
+        inventory_query=inventory_query,
+        org_settings_query=org_settings_query,
+    )
+    if gate_reply is not None:
+        if pending_decomposition_store is not None:
+            await pending_decomposition_store.set_pending(
+                user_id=actor_user_id,
+                pending=PendingDecomposition(
+                    segments=pending.segments,
+                    resolved=pending.resolved,
+                    expense_categories=tuple(expense_categories) if expense_categories else None,
+                    built_events=pending.built_events,
+                    pending_event=event,
+                ),
+            )
+        return gate_reply
+
+    result = await _process_remaining_segments(
+        segment_texts=pending.segments,
+        built_events=[*pending.built_events, event],
+        resolved=pending.resolved,
+        pipeline=pipeline,
+        expense_categories=expense_categories,
+        correlation_id=pending.resolved.correlation_id,
+        source_message_id=pending.resolved.source_message_id,
+        actor=actor,
+        actor_user_id=actor_user_id,
+        catalog_query=catalog_query,
+        inventory_query=inventory_query,
+        org_settings_query=org_settings_query,
+        pending_decomposition_store=pending_decomposition_store,
+    )
+    if isinstance(result, ReplySpec):
+        return result
+    return await _finish_with_events(
+        result, plan_store=plan_store, correlation_id=pending.resolved.correlation_id
+    )
+
+
+async def resume_pending_decomposition_with_material(
+    message: NormalizedMessage,
+    actor_user_id: str,
+    *,
+    pending_decomposition_store: PendingDecompositionStore,
+    plan_store: PlanStore,
+    pipeline: UnderstandingPipeline,
+    actor: ActorIdentity | None = None,
+    catalog_query: MaterialCatalogQueryService | None = None,
+    inventory_query: MaterialInventoryQueryService | None = None,
+    org_settings_query: OrganizationSettingsQueryService | None = None,
+) -> ReplySpec | None:
+    """A tap on the material picker a decomposition segment's own material-
+    unit gate held (mirrors resume_pending_report_with_material). "None of
+    these" falls through to the create offer (when the sender's role
+    allows) or a plain not-found reply, exactly as the single-message leg
+    does -- see _may_create_material_for_segment."""
+    if message.modality is not InputModality.INTERACTIVE:
+        return None
+    row_id = str(message.metadata.get("interactive_reply_id") or "")
+    if not row_id.startswith(_MATERIAL_ROW_PREFIX):
+        return None
+
+    pending = await _pop_gate_pending(pending_decomposition_store, actor_user_id)
+    if pending is None:
+        return ReplySpec(text="That selection expired — please resend your request.")
+    event = pending.pending_event
+    assert event is not None  # guaranteed by _pop_gate_pending
+
+    from channel.replies import MATERIAL_CANDIDATE_NONE_ROW_ID, render_material_not_found_reply
+
+    if row_id == MATERIAL_CANDIDATE_NONE_ROW_ID:
+        name = str(event.fields.get("material_name") or "")
+        if catalog_query is not None and await _may_create_material_for_segment(
+            event, actor=actor, org_settings_query=org_settings_query
+        ):
+            if pending_decomposition_store is not None:
+                await pending_decomposition_store.set_pending(
+                    user_id=actor_user_id,
+                    pending=PendingDecomposition(
+                        segments=pending.segments,
+                        resolved=pending.resolved,
+                        expense_categories=pending.expense_categories,
+                        built_events=pending.built_events,
+                        pending_event=event,
+                    ),
+                )
+            return render_material_create_offer(name)
+        return ReplySpec(text=render_material_not_found_reply(name))
+
+    event.fields["material_id"] = row_id.removeprefix(_MATERIAL_ROW_PREFIX)
+
+    return await _continue_after_segment_resolved(
+        event,
+        pending,
+        pipeline=pipeline,
+        plan_store=plan_store,
+        actor=actor,
+        actor_user_id=actor_user_id,
+        catalog_query=catalog_query,
+        inventory_query=inventory_query,
+        org_settings_query=org_settings_query,
+        pending_decomposition_store=pending_decomposition_store,
+    )
+
+
+async def resume_pending_decomposition_with_material_create(
+    message: NormalizedMessage,
+    actor_user_id: str,
+    *,
+    pending_decomposition_store: PendingDecompositionStore,
+    plan_store: PlanStore,
+    pipeline: UnderstandingPipeline,
+    actor: ActorIdentity | None = None,
+    catalog_query: MaterialCatalogQueryService | None = None,
+    inventory_query: MaterialInventoryQueryService | None = None,
+    org_settings_query: OrganizationSettingsQueryService | None = None,
+) -> ReplySpec | None:
+    """A tap on the material-create offer (mirrors
+    resume_pending_report_with_material_create). On Yes with a usable unit
+    already in the report's own words, creates the catalog entry inline; on
+    Yes without one, asks a unit picker instead (matunit_ prefix, answered
+    by resume_pending_decomposition_with_material_unit_choice)."""
+    if message.modality is not InputModality.INTERACTIVE:
+        return None
+    row_id = str(message.metadata.get("interactive_reply_id") or "")
+    if row_id not in (_MATERIAL_CREATE_YES_ROW_ID, _MATERIAL_CREATE_NO_ROW_ID):
+        return None
+
+    pending = await _pop_gate_pending(pending_decomposition_store, actor_user_id)
+    if pending is None:
+        return ReplySpec(text="That selection expired — please resend your request.")
+    event = pending.pending_event
+    assert event is not None
+
+    name = str(event.fields.get("material_name") or "")
+    if row_id == _MATERIAL_CREATE_NO_ROW_ID:
+        return ReplySpec(text=render_material_create_declined_reply(name))
+
+    if catalog_query is None:
+        return ReplySpec(text="Sorry, I couldn't add that material — please try again, or ask your admin.")
+
+    unit_text = event.fields.get("unit")
+    resolved_unit: dict | None = None
+    if unit_text:
+        try:
+            resolved_unit = await catalog_query.resolve_unit(str(unit_text))
+        except Exception:  # noqa: BLE001 -- degrade to the unit picker below
+            _log.exception(
+                "plan.material_create_unit_lookup_failed correlation_id=%s", event.correlation_id
+            )
+
+    if resolved_unit is not None:
+        confirmation = await _create_material_for_segment(
+            event,
+            unit_id=str(resolved_unit["id"]),
+            unit_display=resolved_unit.get("display_name") or str(unit_text),
+            actor_user_id=actor_user_id,
+            catalog_query=catalog_query,
+        )
+        if confirmation is None:
+            return ReplySpec(text="Sorry, I couldn't add that material — please try again, or ask your admin.")
+        reply = await _continue_after_segment_resolved(
+            event,
+            pending,
+            pipeline=pipeline,
+            plan_store=plan_store,
+            actor=actor,
+            actor_user_id=actor_user_id,
+            catalog_query=catalog_query,
+            inventory_query=inventory_query,
+            org_settings_query=org_settings_query,
+            pending_decomposition_store=pending_decomposition_store,
+        )
+        if reply is None:
+            return ReplySpec(text=confirmation)
+        return ReplySpec(
+            text=f"{confirmation}\n\n{reply.text}",
+            list_button_label=reply.list_button_label,
+            list_rows=reply.list_rows,
+            buttons=reply.buttons,
+        )
+
+    try:
+        units = await catalog_query.list_units()
+    except Exception:  # noqa: BLE001
+        _log.exception("plan.material_create_unit_list_failed correlation_id=%s", event.correlation_id)
+        units = []
+    if not units:
+        return ReplySpec(text="Sorry, I couldn't load the units list — please try again, or ask your admin.")
+
+    if pending_decomposition_store is not None:
+        await pending_decomposition_store.set_pending(
+            user_id=actor_user_id,
+            pending=PendingDecomposition(
+                segments=pending.segments,
+                resolved=pending.resolved,
+                expense_categories=pending.expense_categories,
+                built_events=pending.built_events,
+                pending_event=event,
+            ),
+        )
+    return render_material_create_unit_picker(name, [(str(u["id"]), u["display_name"]) for u in units])
+
+
+async def resume_pending_decomposition_with_material_unit_choice(
+    message: NormalizedMessage,
+    actor_user_id: str,
+    *,
+    pending_decomposition_store: PendingDecompositionStore,
+    plan_store: PlanStore,
+    pipeline: UnderstandingPipeline,
+    actor: ActorIdentity | None = None,
+    catalog_query: MaterialCatalogQueryService | None = None,
+    inventory_query: MaterialInventoryQueryService | None = None,
+    org_settings_query: OrganizationSettingsQueryService | None = None,
+) -> ReplySpec | None:
+    """A tap on the new-material unit picker (mirrors
+    resume_pending_report_with_material_unit_choice) -- creates the catalog
+    entry in the chosen unit and continues."""
+    if message.modality is not InputModality.INTERACTIVE:
+        return None
+    row_id = str(message.metadata.get("interactive_reply_id") or "")
+    if not row_id.startswith(_MATERIAL_CREATE_UNIT_PREFIX):
+        return None
+
+    pending = await _pop_gate_pending(pending_decomposition_store, actor_user_id)
+    if pending is None:
+        return ReplySpec(text="That selection expired — please resend your request.")
+    event = pending.pending_event
+    assert event is not None
+
+    if catalog_query is None:
+        return ReplySpec(text="Sorry, I couldn't add that material — please try again, or ask your admin.")
+
+    unit_id = row_id.removeprefix(_MATERIAL_CREATE_UNIT_PREFIX)
+    try:
+        unit = await catalog_query.get_unit(unit_id)
+    except Exception:  # noqa: BLE001
+        _log.exception("plan.material_create_unit_lookup_failed correlation_id=%s", event.correlation_id)
+        unit = None
+
+    confirmation = await _create_material_for_segment(
+        event,
+        unit_id=unit_id,
+        unit_display=(unit or {}).get("display_name") or "",
+        actor_user_id=actor_user_id,
+        catalog_query=catalog_query,
+    )
+    if confirmation is None:
+        return ReplySpec(text="Sorry, I couldn't add that material — please try again, or ask your admin.")
+
+    reply = await _continue_after_segment_resolved(
+        event,
+        pending,
+        pipeline=pipeline,
+        plan_store=plan_store,
+        actor=actor,
+        actor_user_id=actor_user_id,
+        catalog_query=catalog_query,
+        inventory_query=inventory_query,
+        org_settings_query=org_settings_query,
+        pending_decomposition_store=pending_decomposition_store,
+    )
+    if reply is None:
+        return ReplySpec(text=confirmation)
+    return ReplySpec(
+        text=f"{confirmation}\n\n{reply.text}",
+        list_button_label=reply.list_button_label,
+        list_rows=reply.list_rows,
+        buttons=reply.buttons,
+    )
+
+
+async def resume_pending_decomposition_with_unit(
+    message: NormalizedMessage,
+    actor_user_id: str,
+    *,
+    pending_decomposition_store: PendingDecompositionStore,
+    plan_store: PlanStore,
+    pipeline: UnderstandingPipeline,
+    actor: ActorIdentity | None = None,
+    catalog_query: MaterialCatalogQueryService | None = None,
+    inventory_query: MaterialInventoryQueryService | None = None,
+    org_settings_query: OrganizationSettingsQueryService | None = None,
+) -> ReplySpec | None:
+    """A tap on the Stock Unit mismatch clarification for an EXISTING
+    material (mirrors resume_pending_report_with_unit -- distinct from the
+    new-material unit picker above, same as the single-message legs are
+    kept distinct)."""
+    if message.modality is not InputModality.INTERACTIVE:
+        return None
+    row_id = str(message.metadata.get("interactive_reply_id") or "")
+    if row_id == _UNIT_NO_ROW_ID:
+        popped = await _pop_gate_pending(pending_decomposition_store, actor_user_id)
+        if popped is None:
+            return ReplySpec(text="That selection expired — please resend your request.")
+        return ReplySpec(text="No problem — please resend the report with the correct unit.")
+    if not row_id.startswith(_UNIT_YES_ROW_PREFIX):
+        return None
+
+    pending = await _pop_gate_pending(pending_decomposition_store, actor_user_id)
+    if pending is None:
+        return ReplySpec(text="That selection expired — please resend your request.")
+    event = pending.pending_event
+    assert event is not None
+
+    event.fields["unit_id"] = row_id.removeprefix(_UNIT_YES_ROW_PREFIX)
+
+    return await _continue_after_segment_resolved(
+        event,
+        pending,
+        pipeline=pipeline,
+        plan_store=plan_store,
+        actor=actor,
+        actor_user_id=actor_user_id,
+        catalog_query=catalog_query,
+        inventory_query=inventory_query,
+        org_settings_query=org_settings_query,
+        pending_decomposition_store=pending_decomposition_store,
+    )
+
+
+async def resume_pending_decomposition_with_stock_choice(
+    message: NormalizedMessage,
+    actor_user_id: str,
+    *,
+    pending_decomposition_store: PendingDecompositionStore,
+    plan_store: PlanStore,
+    pipeline: UnderstandingPipeline,
+    actor: ActorIdentity | None = None,
+    catalog_query: MaterialCatalogQueryService | None = None,
+    inventory_query: MaterialInventoryQueryService | None = None,
+    org_settings_query: OrganizationSettingsQueryService | None = None,
+) -> ReplySpec | None:
+    """A tap on the over-stock usage choice (mirrors
+    resume_pending_report_with_stock_choice): cap at available, treat as an
+    arrival instead, or cancel this one segment -- the rest of the
+    decomposition, if any, still continues either way."""
+    if message.modality is not InputModality.INTERACTIVE:
+        return None
+    row_id = str(message.metadata.get("interactive_reply_id") or "")
+    if row_id not in (_STOCK_CAP_ROW_ID, _STOCK_ARRIVAL_ROW_ID, _STOCK_CANCEL_ROW_ID):
+        return None
+
+    pending = await _pop_gate_pending(pending_decomposition_store, actor_user_id)
+    if pending is None:
+        return ReplySpec(text="That selection expired — please resend your request.")
+    event = pending.pending_event
+    assert event is not None
+
+    if row_id == _STOCK_CANCEL_ROW_ID:
+        # Drop just this one segment (never attempted) and continue with
+        # whatever else was queued -- mirrors a decomposed segment that
+        # turned out unroutable (build_plan_from_segments' own "skipped"
+        # handling), not a whole-message failure.
+        result = await _process_remaining_segments(
+            segment_texts=pending.segments,
+            built_events=list(pending.built_events),
+            resolved=pending.resolved,
+            pipeline=pipeline,
+            expense_categories=list(pending.expense_categories) if pending.expense_categories else None,
+            correlation_id=pending.resolved.correlation_id,
+            source_message_id=pending.resolved.source_message_id,
+            actor=actor,
+            actor_user_id=actor_user_id,
+            catalog_query=catalog_query,
+            inventory_query=inventory_query,
+            org_settings_query=org_settings_query,
+            pending_decomposition_store=pending_decomposition_store,
+        )
+        if isinstance(result, ReplySpec):
+            return result
+        return await _finish_with_events(
+            result, plan_store=plan_store, correlation_id=pending.resolved.correlation_id
+        )
+
+    if row_id == _STOCK_ARRIVAL_ROW_ID:
+        event.event_type = CanonicalEventType.MATERIAL_RECEIPT_REQUESTED
+    else:  # _STOCK_CAP_ROW_ID
+        available = event.fields.get("available_stock")
+        if available is not None:
+            event.fields["quantity"] = available
+
+    return await _continue_after_segment_resolved(
+        event,
+        pending,
+        pipeline=pipeline,
+        plan_store=plan_store,
+        actor=actor,
+        actor_user_id=actor_user_id,
+        catalog_query=catalog_query,
+        inventory_query=inventory_query,
+        org_settings_query=org_settings_query,
+        pending_decomposition_store=pending_decomposition_store,
     )

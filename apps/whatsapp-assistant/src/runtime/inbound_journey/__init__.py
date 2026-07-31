@@ -17,8 +17,13 @@ from __future__ import annotations
 
 from runtime.inbound_journey._shared import _log
 from runtime.inbound_journey.decomposed_plan import (
+    resume_pending_decomposition_with_material,
+    resume_pending_decomposition_with_material_create,
+    resume_pending_decomposition_with_material_unit_choice,
     resume_pending_decomposition_with_project,
     resume_pending_decomposition_with_site,
+    resume_pending_decomposition_with_stock_choice,
+    resume_pending_decomposition_with_unit,
 )
 from runtime.inbound_journey.pending_decomposition import (
     PendingDecomposition,
@@ -177,8 +182,13 @@ __all__ = [
     "PendingDecomposition",
     "PendingDecompositionStore",
     "render_workflow_run_reply_spec",
+    "resume_pending_decomposition_with_material",
+    "resume_pending_decomposition_with_material_create",
+    "resume_pending_decomposition_with_material_unit_choice",
     "resume_pending_decomposition_with_project",
     "resume_pending_decomposition_with_site",
+    "resume_pending_decomposition_with_stock_choice",
+    "resume_pending_decomposition_with_unit",
     "resume_pending_plan_confirmation",
     "resume_pending_report_with_material",
     "resume_pending_report_with_material_create",
