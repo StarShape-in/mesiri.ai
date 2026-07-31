@@ -440,6 +440,25 @@ before the user answers Yes.
 
 ## 9. Decomposition
 
+> **⚠️ SUPERSEDED 2026-07-31 by [`UNIFIED_UNDERSTANDING_PIPELINE.md`](UNIFIED_UNDERSTANDING_PIPELINE.md).**
+> The `semantic_type == unknown` gate settled below is **retired, not
+> re-tuned**. A second Malayalam trace of the same shape as the one that
+> settled this section returned `add_project_member` at `high` confidence
+> instead of `unknown`, so the gate missed it entirely and the user got a
+> project picker that could not contain the project they had just asked to
+> create. Two structurally identical messages, opposite classifications —
+> see that doc's §1.2. The premise below ("for exactly the messages that
+> need decomposing, `semantic_type` carries no signal at all") is disproved:
+> it can carry a confident and wrong signal.
+>
+> The `intents[]` option this section weighed and rejected is now ADR-U1
+> there. Its stated risk — regressing single-intent accuracy — was correct
+> and is now that plan's governing risk and merge gate.
+>
+> **Kept below unchanged** as the record of why the gate was chosen, and
+> because the deferred-required-field analysis at the end of this section is
+> still accurate and still open.
+
 Understanding returns exactly one `semantic_type`
 ([`understanding/pipeline.py`](../../apps/whatsapp-assistant/src/understanding/pipeline.py)).
 Two options, both real:
@@ -679,7 +698,7 @@ re-route by hand. This is the actual hard part of ADR-C2.
 
 | Risk | Mitigation |
 |---|---|
-| ~~**Two orchestrators** (§4.2)~~ | **Closed.** §4.4 accepted; one `PlanStore`, one executor, built once in Phase 1. |
+| **Two orchestrators** (§4.2) | **REOPENED 2026-07-31 — this row was wrong.** Closed only for the *entity-resolution* layer (§4.4 accepted; one `PlanStore`, one executor, built once in Phase 1). It was never true of [`workflows/batch.py`](../../apps/whatsapp-assistant/src/workflows/batch.py) + `PendingBatchStore`, which is live and wired ([`process.py:482`](../../apps/whatsapp-assistant/src/runtime/inbound_journey/process.py), [`dependencies.py:666`](../../apps/whatsapp-assistant/src/runtime/dependencies.py), [`interactions/handler.py:281`](../../apps/whatsapp-assistant/src/interactions/handler.py)) and sequences multi-segment messages with its own store, own advance path, own reply formatting, and **flat-FIFO failure semantics with no dependency notion**. §7 of this doc already prescribed that `PendingBatchStore` generalize into `PlanStore`; Phase 4 built them side by side instead, and marking this row "Closed" hid that in the one table meant to surface it. Unification is now specced as Phase A of [`UNIFIED_UNDERSTANDING_PIPELINE.md`](UNIFIED_UNDERSTANDING_PIPELINE.md). |
 | Bad decomposition silently creates five wrong records | P3 — preview before any write. Decomposition ships last (Phase 4). |
 | One YES grants project-manager rights | Accepted, with the full preview as the control. Revisit if it proves too loose in practice. |
 | ~~Role gates promoted to registry data weaken enforcement~~ | **Closed by withdrawing ADR-C5** (his §8.2). Phase 6 uses the real gates or one extracted predicate; `allowed_roles` stays advisory. |
