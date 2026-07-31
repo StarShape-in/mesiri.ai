@@ -46,6 +46,7 @@ from runtime.expense_query_service import ExpenseQueryService
 from runtime.first_message_query import FirstMessageQueryService
 from runtime.inbound_journey._shared import _log
 from runtime.inbound_journey.decomposed_plan import try_start_decomposed_plan
+from runtime.inbound_journey.pending_decomposition import PendingDecompositionStore
 from runtime.inbound_journey.reply import JourneyResult, _render_reply, _safe
 from runtime.inbound_journey.seeding import (
     _MATERIAL_EVENT_TYPES,
@@ -230,6 +231,7 @@ async def process_inbound_message(
     member_resolver: MemberNameResolutionService | None = None,
     decomposition: DecompositionProvider | None = None,
     plan_store: PlanStore | None = None,
+    pending_decomposition_store: PendingDecompositionStore | None = None,
 ) -> JourneyResult:
     mlog: MessageLogger = message_logger or NoopMessageLogger()
     tlog: TraceLogger = trace_logger or NoopTraceLogger()
@@ -585,6 +587,9 @@ async def process_inbound_message(
                 plan_store=plan_store,
                 expense_categories=expense_categories,
                 correlation_id=correlation_id,
+                actor=actor,
+                actor_user_id=actor_user_id,
+                pending_decomposition_store=pending_decomposition_store,
             )
 
         # --- Member-name resolution gate ---

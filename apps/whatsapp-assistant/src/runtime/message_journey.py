@@ -38,6 +38,8 @@ from mesiri_contracts.assistant.enums import InputModality
 from runtime.account_admin_journey import try_handle_account_admin_command
 from runtime.inbound_journey import (
     process_inbound_message,
+    resume_pending_decomposition_with_project,
+    resume_pending_decomposition_with_site,
     resume_pending_plan_confirmation,
     resume_pending_report_with_audience_candidate,
     resume_pending_report_with_material,
@@ -68,6 +70,7 @@ if TYPE_CHECKING:
     from memory.context_loader import ConversationMemoryLoader
     from memory.coordinator import ConversationMemoryCoordinator
     from memory.recent_turns import RecentTurnsStore
+    from mesiri_ai.ports.decomposition import DecompositionProvider
     from mesiri_contracts.common.storage import ObjectStoragePort
     from planner import Planner
     from planning.plan_store import PlanStore
@@ -83,6 +86,7 @@ if TYPE_CHECKING:
     from runtime.expense_category_query import ExpenseCategoryQueryService
     from runtime.expense_query_service import ExpenseQueryService
     from runtime.first_message_query import FirstMessageQueryService
+    from runtime.inbound_journey.pending_decomposition import PendingDecompositionStore
     from runtime.inventory_query import MaterialInventoryQueryService
     from runtime.labour_query_service import LabourQueryService
     from runtime.logging_ports import MessageLogger, TraceLogger
@@ -141,6 +145,8 @@ def build_message_handlers(
     first_message_query: FirstMessageQueryService,
     member_resolver: MemberNameResolutionService,
     plan_store: PlanStore,
+    pending_decomposition_store: PendingDecompositionStore,
+    decomposition: DecompositionProvider | None = None,
     recent_turns_store: RecentTurnsStore,
     labour_query_service: LabourQueryService,
     activity_search_service: ActivitySearchService,
@@ -937,6 +943,9 @@ def build_message_handlers(
                 vendor_query=vendor_query,
                 expense_query_service=expense_query_service,
                 pending_report_store=pending_report_store,
+                decomposition=decomposition,
+                plan_store=plan_store,
+                pending_decomposition_store=pending_decomposition_store,
                 memory_loader=memory_loader,
                 memory_coordinator=memory_coordinator,
                 batch_store=batch_store,
@@ -1361,6 +1370,59 @@ def build_message_handlers(
                 )
                 return
 
+            # A tap on the project/site picker sent by
+            # decomposed_plan.py's _resolve_project_and_site (docs/execution/
+            # COMPOSITE_REQUEST_PLAN_LAYER.md §14) -- the whole-decomposition
+            # equivalent of the two resumes just above, checked after them:
+            # both share the exact same "proj_"/"site_" row-id prefixes, and
+            # a user is only ever in one pending state at a time, so
+            # whichever store (PendingReportStore vs
+            # PendingDecompositionStore) actually holds something answers,
+            # while the other's resume safely no-ops.
+            plan_project_reply = await resume_pending_decomposition_with_project(
+                message,
+                ctx.user_id,
+                pending_decomposition_store=pending_decomposition_store,
+                plan_store=plan_store,
+                pipeline=pipeline,
+                actor=ctx,
+            )
+            timer.lap("resume_plan_project")
+            if plan_project_reply is not None:
+                await send_reply_spec(
+                    plan_project_reply,
+                    wa_id,
+                    send_text=sender.send_text,
+                    send_list=sender.send_list,
+                    send_button=sender.send_button,
+                )
+                await message_logger.log_reply(
+                    correlation_id=message.correlation_id, reply=plan_project_reply.text
+                )
+                return
+
+            plan_site_reply = await resume_pending_decomposition_with_site(
+                message,
+                ctx.user_id,
+                pending_decomposition_store=pending_decomposition_store,
+                plan_store=plan_store,
+                pipeline=pipeline,
+                actor=ctx,
+            )
+            timer.lap("resume_plan_site")
+            if plan_site_reply is not None:
+                await send_reply_spec(
+                    plan_site_reply,
+                    wa_id,
+                    send_text=sender.send_text,
+                    send_list=sender.send_list,
+                    send_button=sender.send_button,
+                )
+                await message_logger.log_reply(
+                    correlation_id=message.correlation_id, reply=plan_site_reply.text
+                )
+                return
+
         # #25 AI Follow-up: if Mesiri just asked "want to attach a
         # completion photo?" (interactions/handler.py, after an Activity is
         # marked COMPLETED), the very next photo answers that question --
@@ -1519,6 +1581,9 @@ def build_message_handlers(
             vendor_query=vendor_query,
             expense_query_service=expense_query_service,
             pending_report_store=pending_report_store,
+            decomposition=decomposition,
+            plan_store=plan_store,
+            pending_decomposition_store=pending_decomposition_store,
             memory_loader=memory_loader,
             memory_coordinator=memory_coordinator,
             batch_store=batch_store,

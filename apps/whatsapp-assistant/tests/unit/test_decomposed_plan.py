@@ -12,8 +12,10 @@ what happens once the user actually taps Yes.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
+from backend.ports import ActorIdentity, ProjectSummary, SiteSummary
 from mesiri.infrastructure.objectstorage.fake import FakeObjectStorage
 from mesiri_ai.fakes import (
     FakeDecompositionProvider,
@@ -22,11 +24,17 @@ from mesiri_ai.fakes import (
 )
 from mesiri_ai.models import DecompositionResult, ExtractionResult
 from mesiri_contracts.assistant.enums import InputModality
+from mesiri_contracts.assistant.normalized_message import NormalizedMessage, SenderInfo
 from mesiri_contracts.assistant.understanding_result import UnderstandingResult
 from mesiri_contracts.assistant.v2.resolved_context import ResolvedContextV2
 from planning.plan import StepStatus
 from planning.plan_store import PlanStore
-from runtime.inbound_journey.decomposed_plan import try_start_decomposed_plan
+from runtime.inbound_journey.decomposed_plan import (
+    resume_pending_decomposition_with_project,
+    resume_pending_decomposition_with_site,
+    try_start_decomposed_plan,
+)
+from runtime.inbound_journey.pending_decomposition import PendingDecompositionStore
 from understanding.pipeline import UnderstandingPipeline
 
 ORG = "11111111-1111-4111-8111-111111111111"
@@ -358,5 +366,339 @@ async def test_no_plannable_segments_falls_through_to_none():
         plan_store=PlanStore(_FakeRedis()),
         expense_categories=None,
         correlation_id="cor_1",
+    )
+    assert reply is None
+
+
+# ---------------------------------------------------------------------------
+# Project/site gate (§14, added 2026-07-30) -- _resolve_project_and_site and
+# the two picker-tap resumes.
+# ---------------------------------------------------------------------------
+
+PROJECT_A = "33333333-3333-4333-8333-333333333333"
+PROJECT_B = "44444444-4444-4444-8444-444444444444"
+SITE_A = "55555555-5555-4555-8555-555555555555"
+SITE_B = "66666666-6666-4666-8666-666666666666"
+
+
+def _actor(*, projects: list[ProjectSummary], sites: list[SiteSummary]) -> ActorIdentity:
+    return ActorIdentity(
+        user_id=USR,
+        full_name="Engineer",
+        role="engineer",
+        organization_id=ORG,
+        org_name="Org",
+        org_active=True,
+        projects=projects,
+        sites=sites,
+    )
+
+
+def _tap(row_id: str) -> NormalizedMessage:
+    return NormalizedMessage(
+        message_id="wamid.tap.1",
+        correlation_id="cor_tap",
+        sender=SenderInfo(wa_id="wa_engineer", profile_name="Engineer"),
+        timestamp=datetime(2026, 7, 30, 10, 0, tzinfo=UTC),
+        modality=InputModality.INTERACTIVE,
+        metadata={"interactive_reply_id": row_id},
+    )
+
+
+_STARSHIP_DECOMPOSITION = DecompositionResult(
+    is_multi_intent=True,
+    segments=["log 5 bags of cement used", "add a labour entry for 3 masons"],
+)
+
+
+def _one_step_extraction() -> _SequentialExtractionProvider:
+    return _SequentialExtractionProvider(
+        [ExtractionResult(semantic_type="project_create", fields={"name": "Whatever"}, provider="fake")]
+    )
+
+
+async def test_no_projects_at_all_short_circuits_with_no_projects_reply():
+    reply = await try_start_decomposed_plan(
+        message_modality=InputModality.TEXT,
+        understanding=_understanding(normalized_text="log cement used, add masons"),
+        resolved=_resolved_context(),
+        pipeline=await _pipeline(_SequentialExtractionProvider([])),
+        decomposition=FakeDecompositionProvider(_STARSHIP_DECOMPOSITION),
+        plan_store=PlanStore(_FakeRedis()),
+        expense_categories=None,
+        correlation_id="cor_1",
+        actor=_actor(projects=[], sites=[]),
+        actor_user_id=USR,
+        pending_decomposition_store=PendingDecompositionStore(_FakeRedis()),
+    )
+    assert reply is not None
+    assert "don't have any projects" in reply.text
+
+
+async def test_single_project_and_single_site_auto_resolve_without_asking():
+    """The common case: one project, one site -- the gate must not interrupt
+    with a picker just because it exists, same as _run_project_gate/
+    _run_site_gate's own single-option auto-resolve."""
+    plan_store = PlanStore(_FakeRedis())
+    extraction = _SequentialExtractionProvider(
+        [
+            ExtractionResult(semantic_type="project_create", fields={"name": "X"}, provider="fake"),
+            ExtractionResult(semantic_type="project_create", fields={"name": "Y"}, provider="fake"),
+        ]
+    )
+    reply = await try_start_decomposed_plan(
+        message_modality=InputModality.TEXT,
+        understanding=_understanding(normalized_text="log cement used, add masons"),
+        resolved=_resolved_context(),
+        pipeline=await _pipeline(extraction),
+        decomposition=FakeDecompositionProvider(_STARSHIP_DECOMPOSITION),
+        plan_store=plan_store,
+        expense_categories=None,
+        correlation_id="cor_1",
+        actor=_actor(
+            projects=[ProjectSummary(id=PROJECT_A, name="Starship")],
+            sites=[SiteSummary(id=SITE_A, name="Site A", project_id=PROJECT_A)],
+        ),
+        actor_user_id=USR,
+        pending_decomposition_store=PendingDecompositionStore(_FakeRedis()),
+    )
+    assert reply is not None
+    assert reply.buttons is not None  # the plan preview, not a picker
+    plan = await plan_store.get_plan(user_id=USR)
+    assert plan is not None
+
+
+async def test_multiple_projects_holds_the_decomposition_and_asks():
+    reply = await try_start_decomposed_plan(
+        message_modality=InputModality.TEXT,
+        understanding=_understanding(normalized_text="log cement used, add masons"),
+        resolved=_resolved_context(),
+        pipeline=await _pipeline(_one_step_extraction()),
+        decomposition=FakeDecompositionProvider(_STARSHIP_DECOMPOSITION),
+        plan_store=PlanStore(_FakeRedis()),
+        expense_categories=None,
+        correlation_id="cor_1",
+        actor=_actor(
+            projects=[
+                ProjectSummary(id=PROJECT_A, name="Starship"),
+                ProjectSummary(id=PROJECT_B, name="Paraclette"),
+            ],
+            sites=[],
+        ),
+        actor_user_id=USR,
+        pending_decomposition_store=PendingDecompositionStore(_FakeRedis()),
+    )
+    assert reply is not None
+    assert reply.text == "Which project is this for?"
+    assert reply.list_rows is not None
+    assert {row.id for row in reply.list_rows} == {f"proj_{PROJECT_A}", f"proj_{PROJECT_B}"}
+
+
+async def test_project_picker_tap_with_single_site_resolves_straight_to_the_plan_preview():
+    pending_store = PendingDecompositionStore(_FakeRedis())
+    actor = _actor(
+        projects=[
+            ProjectSummary(id=PROJECT_A, name="Starship"),
+            ProjectSummary(id=PROJECT_B, name="Paraclette"),
+        ],
+        sites=[SiteSummary(id=SITE_A, name="Site A", project_id=PROJECT_A)],
+    )
+    # First message holds the decomposition awaiting a project pick.
+    first_reply = await try_start_decomposed_plan(
+        message_modality=InputModality.TEXT,
+        understanding=_understanding(normalized_text="log cement used, add masons"),
+        resolved=_resolved_context(),
+        pipeline=await _pipeline(_one_step_extraction()),
+        decomposition=FakeDecompositionProvider(_STARSHIP_DECOMPOSITION),
+        plan_store=PlanStore(_FakeRedis()),
+        expense_categories=None,
+        correlation_id="cor_1",
+        actor=actor,
+        actor_user_id=USR,
+        pending_decomposition_store=pending_store,
+    )
+    assert first_reply is not None and first_reply.list_rows is not None
+
+    plan_store = PlanStore(_FakeRedis())
+    extraction = _SequentialExtractionProvider(
+        [
+            ExtractionResult(semantic_type="project_create", fields={"name": "X"}, provider="fake"),
+            ExtractionResult(semantic_type="project_create", fields={"name": "Y"}, provider="fake"),
+        ]
+    )
+    reply = await resume_pending_decomposition_with_project(
+        _tap(f"proj_{PROJECT_A}"),
+        USR,
+        pending_decomposition_store=pending_store,
+        plan_store=plan_store,
+        pipeline=await _pipeline(extraction),
+        actor=actor,
+    )
+    assert reply is not None
+    assert reply.buttons is not None  # site auto-resolved (only one) -- straight to the preview
+    plan = await plan_store.get_plan(user_id=USR)
+    assert plan is not None
+    assert len(plan.steps) == 2
+
+
+async def test_project_picker_tap_with_multiple_sites_asks_for_site_next():
+    pending_store = PendingDecompositionStore(_FakeRedis())
+    actor = _actor(
+        projects=[
+            ProjectSummary(id=PROJECT_A, name="Starship"),
+            ProjectSummary(id=PROJECT_B, name="Paraclette"),
+        ],
+        sites=[
+            SiteSummary(id=SITE_A, name="Site A", project_id=PROJECT_A),
+            SiteSummary(id=SITE_B, name="Site B", project_id=PROJECT_A),
+        ],
+    )
+    await try_start_decomposed_plan(
+        message_modality=InputModality.TEXT,
+        understanding=_understanding(normalized_text="log cement used, add masons"),
+        resolved=_resolved_context(),
+        pipeline=await _pipeline(_one_step_extraction()),
+        decomposition=FakeDecompositionProvider(_STARSHIP_DECOMPOSITION),
+        plan_store=PlanStore(_FakeRedis()),
+        expense_categories=None,
+        correlation_id="cor_1",
+        actor=actor,
+        actor_user_id=USR,
+        pending_decomposition_store=pending_store,
+    )
+
+    reply = await resume_pending_decomposition_with_project(
+        _tap(f"proj_{PROJECT_A}"),
+        USR,
+        pending_decomposition_store=pending_store,
+        plan_store=PlanStore(_FakeRedis()),
+        pipeline=await _pipeline(_one_step_extraction()),
+        actor=actor,
+    )
+    assert reply is not None
+    assert reply.list_rows is not None
+    assert {row.id for row in reply.list_rows} == {f"site_{SITE_A}", f"site_{SITE_B}"}
+
+
+async def test_site_picker_tap_builds_and_persists_the_plan():
+    pending_store = PendingDecompositionStore(_FakeRedis())
+    actor = _actor(
+        projects=[ProjectSummary(id=PROJECT_A, name="Starship")],
+        sites=[
+            SiteSummary(id=SITE_A, name="Site A", project_id=PROJECT_A),
+            SiteSummary(id=SITE_B, name="Site B", project_id=PROJECT_A),
+        ],
+    )
+    await try_start_decomposed_plan(
+        message_modality=InputModality.TEXT,
+        understanding=_understanding(normalized_text="log cement used, add masons"),
+        resolved=_resolved_context(),
+        pipeline=await _pipeline(_one_step_extraction()),
+        decomposition=FakeDecompositionProvider(_STARSHIP_DECOMPOSITION),
+        plan_store=PlanStore(_FakeRedis()),
+        expense_categories=None,
+        correlation_id="cor_1",
+        actor=actor,
+        actor_user_id=USR,
+        pending_decomposition_store=pending_store,
+    )
+
+    plan_store = PlanStore(_FakeRedis())
+    extraction = _SequentialExtractionProvider(
+        [
+            ExtractionResult(semantic_type="project_create", fields={"name": "X"}, provider="fake"),
+            ExtractionResult(semantic_type="project_create", fields={"name": "Y"}, provider="fake"),
+        ]
+    )
+    reply = await resume_pending_decomposition_with_site(
+        _tap(f"site_{SITE_B}"),
+        USR,
+        pending_decomposition_store=pending_store,
+        plan_store=plan_store,
+        pipeline=await _pipeline(extraction),
+        actor=actor,
+    )
+    assert reply is not None
+    assert reply.buttons is not None
+    plan = await plan_store.get_plan(user_id=USR)
+    assert plan is not None
+    assert len(plan.steps) == 2
+
+
+async def test_project_picker_tap_rejects_an_unauthorized_project_id():
+    """An interactive reply id is untrusted client input -- must be re-checked
+    against the picker's own authorized set, same defence
+    resume_pending_report_with_project applies to its own tap."""
+    pending_store = PendingDecompositionStore(_FakeRedis())
+    actor = _actor(
+        projects=[
+            ProjectSummary(id=PROJECT_A, name="Starship"),
+            ProjectSummary(id=PROJECT_B, name="Paraclette"),
+        ],
+        sites=[],
+    )
+    await try_start_decomposed_plan(
+        message_modality=InputModality.TEXT,
+        understanding=_understanding(normalized_text="log cement used, add masons"),
+        resolved=_resolved_context(),
+        pipeline=await _pipeline(_one_step_extraction()),
+        decomposition=FakeDecompositionProvider(_STARSHIP_DECOMPOSITION),
+        plan_store=PlanStore(_FakeRedis()),
+        expense_categories=None,
+        correlation_id="cor_1",
+        actor=actor,
+        actor_user_id=USR,
+        pending_decomposition_store=pending_store,
+    )
+
+    reply = await resume_pending_decomposition_with_project(
+        _tap("proj_not-a-real-project"),
+        USR,
+        pending_decomposition_store=pending_store,
+        plan_store=PlanStore(_FakeRedis()),
+        pipeline=await _pipeline(_one_step_extraction()),
+        actor=actor,
+    )
+    assert reply is not None
+    assert "isn't available to you" in reply.text
+
+
+async def test_resume_project_returns_expired_message_when_nothing_is_pending():
+    reply = await resume_pending_decomposition_with_project(
+        _tap(f"proj_{PROJECT_A}"),
+        USR,
+        pending_decomposition_store=PendingDecompositionStore(_FakeRedis()),
+        plan_store=PlanStore(_FakeRedis()),
+        pipeline=await _pipeline(_SequentialExtractionProvider([])),
+        actor=_actor(projects=[ProjectSummary(id=PROJECT_A, name="Starship")], sites=[]),
+    )
+    assert reply is not None
+    assert "expired" in reply.text
+
+
+async def test_resume_site_returns_expired_message_when_nothing_is_pending():
+    reply = await resume_pending_decomposition_with_site(
+        _tap(f"site_{SITE_A}"),
+        USR,
+        pending_decomposition_store=PendingDecompositionStore(_FakeRedis()),
+        plan_store=PlanStore(_FakeRedis()),
+        pipeline=await _pipeline(_SequentialExtractionProvider([])),
+        actor=_actor(projects=[], sites=[]),
+    )
+    assert reply is not None
+    assert "expired" in reply.text
+
+
+async def test_resume_project_ignores_a_non_project_row_id():
+    """A stray tap that isn't a project row must be a no-op (None), letting
+    the caller's dispatch chain try the next resume function -- not swallow
+    an unrelated interactive reply."""
+    reply = await resume_pending_decomposition_with_project(
+        _tap("site_not_a_project_row"),
+        USR,
+        pending_decomposition_store=PendingDecompositionStore(_FakeRedis()),
+        plan_store=PlanStore(_FakeRedis()),
+        pipeline=await _pipeline(_SequentialExtractionProvider([])),
+        actor=None,
     )
     assert reply is None

@@ -214,8 +214,15 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
     # the composite-request plan layer's Phase 4 is a second producer into
     # this same store, not a second store.
     from planning.plan_store import PlanStore
+    from runtime.inbound_journey.pending_decomposition import PendingDecompositionStore
 
     plan_store = PlanStore(redis_client)
+    # docs/execution/COMPOSITE_REQUEST_PLAN_LAYER.md §14: holds the
+    # already-decomposed segment texts while a project/site picker answers
+    # -- see decomposed_plan.py's _resolve_project_and_site. Same
+    # redis_client, same never-authoritative posture as every other store
+    # here.
+    pending_decomposition_store = PendingDecompositionStore(redis_client)
     # A second handle onto the same recent-turns keys build_conversation_
     # memory's own RecentTurnsStore writes (below) -- RecentTurnsStore holds
     # no state of its own beyond the redis client, so two instances against
@@ -833,6 +840,18 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         first_message_query=first_message_query,
         member_resolver=member_resolver,
         plan_store=plan_store,
+        # Same resolver already built above for interaction_classifier/
+        # capability_help -- DynamicAIProviderResolver implements decompose()
+        # alongside extract() (bb56705), so this needs no new provider
+        # config. Until this line, decomposition was never actually
+        # constructed anywhere in the container: process_inbound_message's
+        # own `decomposition` parameter defaulted to None at every real call
+        # site, so docs/execution/COMPOSITE_REQUEST_PLAN_LAYER.md §9's whole
+        # decomposition path was unreachable in the running app despite
+        # being fully built and unit-tested -- found auditing the per-
+        # segment project/site gate work, not by design.
+        decomposition=ai_resolver,
+        pending_decomposition_store=pending_decomposition_store,
         recent_turns_store=recent_turns_store,
         labour_query_service=labour_query_service,
         activity_search_service=activity_search_service,
