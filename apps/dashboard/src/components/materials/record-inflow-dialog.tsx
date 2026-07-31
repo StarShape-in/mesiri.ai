@@ -14,7 +14,14 @@ import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useAuth } from '@/lib/AuthContext'
 import { fetchProjects, fetchSites } from '@/lib/projects'
-import { fetchMaterials, createInflow, INFLOW_REASONS, ADJUSTMENT_REASONS, type InflowReason } from '@/lib/materials'
+import {
+  fetchMaterials,
+  createInflow,
+  newIdempotencyKey,
+  INFLOW_REASONS,
+  ADJUSTMENT_REASONS,
+  type InflowReason,
+} from '@/lib/materials'
 import type { AppScope } from '@/lib/scope-types'
 import { Combobox } from '@/components/ui/combobox'
 
@@ -45,6 +52,9 @@ export function RecordInflowDialog({ open, onOpenChange, scope }: RecordInflowDi
   const [notes, setNotes] = React.useState('')
   const [error, setError] = React.useState('')
   const [success, setSuccess] = React.useState(false)
+  // One key per dialog session, so a double tap or a retry after a timeout on
+  // site wifi replays the first result instead of recording a second delivery.
+  const [idempotencyKey, setIdempotencyKey] = React.useState(newIdempotencyKey)
 
   const canUseAdjustment = me?.role === 'ADMIN' || me?.role === 'PROJECT_MANAGER'
   const visibleReasons = INFLOW_REASONS.filter((r) => canUseAdjustment || !ADJUSTMENT_REASONS.has(r.value))
@@ -61,6 +71,7 @@ export function RecordInflowDialog({ open, onOpenChange, scope }: RecordInflowDi
       setNotes('')
       setError('')
       setSuccess(false)
+      setIdempotencyKey(newIdempotencyKey())
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
@@ -97,17 +108,20 @@ export function RecordInflowDialog({ open, onOpenChange, scope }: RecordInflowDi
 
   const mutation = useMutation({
     mutationFn: () =>
-      createInflow({
-        project_id: projectId,
-        site_id: siteId || undefined,
-        material_id: materialId,
-        unit_id: selectedMaterial!.default_unit_id,
-        quantity,
-        movement_reason: reason,
-        supplier: supplier.trim() || undefined,
-        notes: notes.trim() || undefined,
-        occurred_date: occurredDate,
-      }),
+      createInflow(
+        {
+          project_id: projectId,
+          site_id: siteId || undefined,
+          material_id: materialId,
+          unit_id: selectedMaterial!.default_unit_id,
+          quantity,
+          movement_reason: reason,
+          supplier: supplier.trim() || undefined,
+          notes: notes.trim() || undefined,
+          occurred_date: occurredDate,
+        },
+        idempotencyKey
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['materials'] })
       setSuccess(true)

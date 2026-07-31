@@ -14,7 +14,17 @@ import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useAuth } from '@/lib/AuthContext'
 import { fetchProjects, fetchSites } from '@/lib/projects'
-import { fetchMaterials, createOutflow, OUTFLOW_REASONS, ADJUSTMENT_REASONS, type OutflowReason } from '@/lib/materials'
+import {
+  fetchMaterials,
+  createOutflow,
+  fetchStockCheck,
+  asOverStockConflict,
+  newIdempotencyKey,
+  OUTFLOW_REASONS,
+  ADJUSTMENT_REASONS,
+  type OutflowReason,
+  type OverStockConflict,
+} from '@/lib/materials'
 import type { AppScope } from '@/lib/scope-types'
 import { Combobox } from '@/components/ui/combobox'
 
@@ -45,6 +55,10 @@ export function RecordOutflowDialog({ open, onOpenChange, scope }: RecordOutflow
   const [notes, setNotes] = React.useState('')
   const [error, setError] = React.useState('')
   const [success, setSuccess] = React.useState(false)
+  const [overStock, setOverStock] = React.useState<OverStockConflict | null>(null)
+  // One key per dialog session, so N clicks are one delivery. Regenerated when
+  // the dialog reopens (see the reset effect below).
+  const [idempotencyKey, setIdempotencyKey] = React.useState(newIdempotencyKey)
 
   const canUseAdjustment = me?.role === 'ADMIN' || me?.role === 'PROJECT_MANAGER'
   const visibleReasons = OUTFLOW_REASONS.filter((r) => canUseAdjustment || !ADJUSTMENT_REASONS.has(r.value))
@@ -61,6 +75,8 @@ export function RecordOutflowDialog({ open, onOpenChange, scope }: RecordOutflow
       setNotes('')
       setError('')
       setSuccess(false)
+      setOverStock(null)
+      setIdempotencyKey(newIdempotencyKey())
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
@@ -95,32 +111,59 @@ export function RecordOutflowDialog({ open, onOpenChange, scope }: RecordOutflow
     }))
   }, [catalog])
 
+  // Advisory only -- the backend re-reads the balance under a lock before
+  // deciding, so a stale number here can never let a bad write through. This
+  // exists so the user sees the problem while typing rather than after
+  // submitting.
+  const { data: stock } = useQuery({
+    queryKey: ['materials', 'stock-check', materialId, siteId],
+    queryFn: () => fetchStockCheck(materialId, siteId || undefined),
+    enabled: open && !!materialId,
+    staleTime: 10_000,
+  })
+
   const mutation = useMutation({
-    mutationFn: () =>
-      createOutflow({
-        project_id: projectId,
-        site_id: siteId || undefined,
-        material_id: materialId,
-        unit_id: selectedMaterial!.default_unit_id,
-        quantity,
-        movement_reason: reason,
-        work_item: workItem.trim() || undefined,
-        notes: notes.trim() || undefined,
-        occurred_date: occurredDate,
-      }),
+    mutationFn: (allowNegative: boolean) =>
+      createOutflow(
+        {
+          project_id: projectId,
+          site_id: siteId || undefined,
+          material_id: materialId,
+          unit_id: selectedMaterial!.default_unit_id,
+          quantity,
+          movement_reason: reason,
+          work_item: workItem.trim() || undefined,
+          notes: notes.trim() || undefined,
+          occurred_date: occurredDate,
+          allow_negative: allowNegative,
+        },
+        idempotencyKey
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['materials'] })
       setSuccess(true)
       setTimeout(() => onOpenChange(false), 900)
     },
     onError: (err: any) => {
-      setError(err.response?.data?.detail || 'Failed to record material outflow.')
+      // The over-stock 409 is a question, not a failure: negative stock is a
+      // real situation (deliveries recorded late), so we show what the server
+      // found and let the user decide, keeping everything they typed.
+      const conflict = asOverStockConflict(err)
+      if (conflict) {
+        setOverStock(conflict)
+        return
+      }
+      const detail = err.response?.data?.detail
+      setError(
+        typeof detail === 'string' ? detail : 'Failed to record material outflow.'
+      )
     },
   })
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
+    setOverStock(null)
     if (!projectId) {
       setError('Project is required.')
       return
@@ -134,7 +177,7 @@ export function RecordOutflowDialog({ open, onOpenChange, scope }: RecordOutflow
       setError('Quantity must be a positive number.')
       return
     }
-    mutation.mutate()
+    mutation.mutate(false)
   }
 
   return (
@@ -218,7 +261,14 @@ export function RecordOutflowDialog({ open, onOpenChange, scope }: RecordOutflow
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="grid gap-1.5">
-              <Label htmlFor="quantityOut">Quantity</Label>
+              <div className="flex items-baseline justify-between gap-2">
+                <Label htmlFor="quantityOut">Quantity</Label>
+                {stock && (
+                  <span className="text-[11px] text-muted-foreground tabular-nums">
+                    {stock.available} {stock.unit ?? ''} in stock
+                  </span>
+                )}
+              </div>
               <Input
                 id="quantityOut"
                 type="number"
@@ -281,11 +331,49 @@ export function RecordOutflowDialog({ open, onOpenChange, scope }: RecordOutflow
             />
           </div>
 
+          {/* Inline, not a browser confirm() -- matches the dialog idiom, and
+              keeps every typed value in place while the user decides. */}
+          {overStock && (
+            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs space-y-2">
+              <p className="font-bold text-amber-700 dark:text-amber-400">
+                Only {overStock.available} {overStock.unit} of {overStock.material_name} in stock
+              </p>
+              <p className="text-muted-foreground">
+                Recording {overStock.requested} {overStock.unit} leaves this site at{' '}
+                <span className="font-mono tabular-nums">
+                  {Number(overStock.available) - Number(overStock.requested)} {overStock.unit}
+                </span>
+                . Corrections need a Project Manager and cannot be undone by editing.
+              </p>
+              <div className="flex gap-2 pt-0.5">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  onClick={() => setOverStock(null)}
+                  disabled={mutation.isPending}
+                >
+                  Go back and fix
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => mutation.mutate(true)}
+                  disabled={mutation.isPending}
+                >
+                  Yes, record anyway
+                </Button>
+              </div>
+            </div>
+          )}
+
           <DialogFooter className="pt-2">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={mutation.isPending}>
               Cancel
             </Button>
-            <Button type="submit" disabled={mutation.isPending}>
+            <Button type="submit" disabled={mutation.isPending || !!overStock}>
               {mutation.isPending ? 'Recording...' : 'Record Outflow'}
             </Button>
           </DialogFooter>
