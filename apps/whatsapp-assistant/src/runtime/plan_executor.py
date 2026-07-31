@@ -56,7 +56,7 @@ from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
 from mesiri_contracts.common.ids import new_id as _new_id
 from planning.binding import build_event
 from planning.outputs import build_step_outputs
-from planning.plan import Plan, PlanStep, StepStatus
+from planning.plan import Plan, PlanOrigin, PlanStep, StepStatus
 from planning.plan_store import PlanStore
 from runtime.inbound_journey._shared import _log
 from runtime.inbound_journey.reply import _safe, render_workflow_run_reply_spec
@@ -267,6 +267,14 @@ async def _start_next_runnable(
     plan = await plan_store.get_plan(user_id=user_id)
     await _safe(plan_store.clear(user_id=user_id))
     if plan is None:
+        return None
+    if plan.origin is PlanOrigin.SINGLE_MESSAGE:
+        # Phase A4 (docs/execution/UNIFIED_UNDERSTANDING_PIPELINE.md): an
+        # ordinary single-intent message never showed an upfront multi-step
+        # preview, so its own step's confirmation reply (already sent by
+        # interactions/handler.py before this ever runs) is the whole story
+        # -- a second "*Here's what I did:*" message here would be a pure,
+        # user-visible regression for the ~95% of traffic this origin covers.
         return None
     return ReplySpec(text=format_plan_summary(plan))
 

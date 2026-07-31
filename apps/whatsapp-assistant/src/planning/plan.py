@@ -46,6 +46,17 @@ class PlanOrigin(str, Enum):
     RESOLUTION = "resolution"
     #: A decomposed plan that later had a resolution-inserted step spliced in.
     MIXED = "mixed"
+    #: An ordinary single-intent message (docs/execution/
+    #: UNIFIED_UNDERSTANDING_PIPELINE.md Phase A4 -- n=1 is the common case
+    #: of the general path, not a separate one, so it becomes a Plan too).
+    #: Distinguished from DECOMPOSITION's own size-1 case (e.g. a decomposed
+    #: message whose other segments all turned out unroutable) purely so the
+    #: closing summary can be suppressed for THIS origin only: the user here
+    #: never saw an upfront multi-step preview to match a later "here's what
+    #: I did" against -- their one existing confirmation reply already told
+    #: the whole story, exactly as it does today. runtime/plan_executor.py's
+    #: _start_next_runnable is the one place that reads this.
+    SINGLE_MESSAGE = "single_message"
 
 
 @dataclass(frozen=True, slots=True)
