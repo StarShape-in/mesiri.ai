@@ -115,6 +115,44 @@ async def test_mark_step_done_unblocks_its_dependent():
     assert s1.outputs == {"project_id": "proj_abc"}
 
 
+async def test_mark_step_done_persists_outcome_detail_round_trip():
+    """Phase A1: outcome_detail (the ported workflows/batch.py wording) must
+    survive a Redis round-trip like every other PlanStep field."""
+    store = PlanStore(_FakeRedis())
+    await store.start_plan(plan=_paraclette_plan())
+    await store.mark_step_done(
+        user_id=USR,
+        step_id="s1",
+        outputs={"project_id": "proj_abc"},
+        outcome_detail="Recorded.",
+    )
+
+    plan = await store.get_plan(user_id=USR)
+    assert plan.step("s1").outcome_detail == "Recorded."
+
+
+async def test_mark_step_failed_persists_outcome_detail_round_trip():
+    store = PlanStore(_FakeRedis())
+    await store.start_plan(plan=_paraclette_plan())
+    await store.mark_step_failed(
+        user_id=USR, step_id="s1", outcome_detail="Couldn't record: bad input"
+    )
+
+    plan = await store.get_plan(user_id=USR)
+    assert plan.step("s1").outcome_detail == "Couldn't record: bad input"
+
+
+async def test_outcome_detail_defaults_to_none_when_not_supplied():
+    """Backward-compatible: a caller that doesn't pass outcome_detail (any
+    pre-Phase-A1 caller) gets the same None it always did."""
+    store = PlanStore(_FakeRedis())
+    await store.start_plan(plan=_paraclette_plan())
+    await store.mark_step_done(user_id=USR, step_id="s1", outputs={})
+
+    plan = await store.get_plan(user_id=USR)
+    assert plan.step("s1").outcome_detail is None
+
+
 async def test_mark_step_failed_cancels_transitive_dependents_but_not_independent_steps():
     store = PlanStore(_FakeRedis())
     await store.start_plan(plan=_paraclette_plan())

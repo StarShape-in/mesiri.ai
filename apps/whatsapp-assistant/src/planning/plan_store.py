@@ -171,25 +171,44 @@ class PlanStore:
         return await self._replace_step(user_id=user_id, step_id=step_id, updated=updated)
 
     async def mark_step_done(
-        self, *, user_id: str, step_id: str, outputs: dict[str, str]
+        self,
+        *,
+        user_id: str,
+        step_id: str,
+        outputs: dict[str, str],
+        outcome_detail: str | None = None,
     ) -> Plan:
         """Record a step's success and the outputs it produced -- these feed
-        every StepRef in a later step's fields that names this step_id."""
+        every StepRef in a later step's fields that names this step_id.
+
+        ``outcome_detail`` (Phase A1) is the plain-language line for the
+        closing summary -- e.g. "Recorded." or "Recorded. Note: already
+        marked Completed." (a conflict note). Optional so a caller advancing
+        a step some other way (or a test) can still mark DONE without one;
+        the summary falls back to status-based wording in that case."""
         plan = await self.get_plan(user_id=user_id)
         if plan is None:
             raise PlanNotFoundError(f"no active plan for user {user_id}")
         step = plan.step(step_id)
         if step is None:
             raise StepNotFoundError(f"plan {plan.plan_id}: no step {step_id!r}")
-        updated = dataclasses.replace(step, status=StepStatus.DONE, outputs=dict(outputs))
+        updated = dataclasses.replace(
+            step, status=StepStatus.DONE, outputs=dict(outputs), outcome_detail=outcome_detail
+        )
         return await self._replace_step(user_id=user_id, step_id=step_id, updated=updated)
 
-    async def mark_step_failed(self, *, user_id: str, step_id: str) -> Plan:
+    async def mark_step_failed(
+        self, *, user_id: str, step_id: str, outcome_detail: str | None = None
+    ) -> Plan:
         """Record a step's failure and cancel every step that transitively
         depends on it, without attempting them (ADR-C4) -- a step with no
         dependency on the failed one still runs (plan-layer doc §7.4's
         Paraclette example: create-user has no dependency on create-project,
-        so it still runs even if the project step fails)."""
+        so it still runs even if the project step fails).
+
+        ``outcome_detail`` -- see mark_step_done's docstring; the same
+        optional plain-language line, here for the failure case (e.g.
+        "Couldn't record: quantity must be positive.")."""
         plan = await self.get_plan(user_id=user_id)
         if plan is None:
             raise PlanNotFoundError(f"no active plan for user {user_id}")
@@ -201,7 +220,7 @@ class PlanStore:
 
         def _apply(s: PlanStep) -> PlanStep:
             if s.step_id == step_id:
-                return dataclasses.replace(s, status=StepStatus.FAILED)
+                return dataclasses.replace(s, status=StepStatus.FAILED, outcome_detail=outcome_detail)
             if s.step_id in to_cancel and s.status is StepStatus.PENDING:
                 return dataclasses.replace(s, status=StepStatus.CANCELLED)
             return s

@@ -417,7 +417,14 @@ async def test_rejecting_the_create_user_clears_the_waiting_plan():
     The generic executor also reports this outcome honestly (P4) -- the
     retired function silently cleared the plan with no reply at all on
     rejection; the generic one names both steps' fate in a closing summary,
-    which is a genuine improvement, not a regression to paper over."""
+    which is a genuine improvement, not a regression to paper over.
+
+    Wording: "Discarded." (not the older generic "couldn't be completed") --
+    Phase A1 of docs/execution/UNIFIED_UNDERSTANDING_PIPELINE.md ports
+    workflows/batch.py's summarize_batch_outcome wording onto every plan
+    step's outcome_detail, since it is strictly more informative (a rejection
+    reads differently from a domain-validation failure) and this is the
+    wording the material->activity batch path's real users already see."""
     store = _plan_store()
     create_runtime = _FakeWorkflowRuntime(
         [_awaiting_input(WorkflowKey.CREATE_USER, "What's their WhatsApp number?")]
@@ -445,7 +452,7 @@ async def test_rejecting_the_create_user_clears_the_waiting_plan():
     )
 
     assert reply is not None
-    assert "couldn't be completed" in reply.text
+    assert "Discarded." in reply.text
     assert "skipped" in reply.text  # add_member cascaded, never attempted
     assert resume_runtime.start_calls == []
     assert await store.get_plan(user_id=USR) is None

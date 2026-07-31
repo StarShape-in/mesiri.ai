@@ -184,6 +184,96 @@ def _starship_plan(*, running_instance: str = "wf_1") -> Plan:
     )
 
 
+def test_summarize_step_outcome_matches_workflows_batch_wording_exactly():
+    """Phase A1 (docs/execution/UNIFIED_UNDERSTANDING_PIPELINE.md) ports
+    workflows/batch.py's summarize_batch_outcome verbatim, since a user
+    cannot tell which mechanism produced their message. This locks the
+    wording to the source it was ported from -- see
+    test_batch_workflow.py::test_summarize_batch_outcome_* for the original.
+
+    ALREADY_RESOLVED/NOT_RESUMABLE are ported for wording parity but are not
+    currently reachable through advance_plan (which leaves the plan
+    untouched for those two statuses, unchanged from before this port --
+    see test_already_resolved_leaves_the_plan_untouched below)."""
+    from runtime.plan_executor import _summarize_step_outcome
+
+    rejected = WorkflowResumeResult(
+        status=WorkflowResumeStatus.REJECTED, workflow_instance_id="wf_1", correlation_id="c"
+    )
+    cancelled = WorkflowResumeResult(
+        status=WorkflowResumeStatus.CANCELLED, workflow_instance_id="wf_1", correlation_id="c"
+    )
+    already_resolved = WorkflowResumeResult(
+        status=WorkflowResumeStatus.ALREADY_RESOLVED, workflow_instance_id="wf_1", correlation_id="c"
+    )
+    not_resumable = WorkflowResumeResult(
+        status=WorkflowResumeStatus.NOT_RESUMABLE, workflow_instance_id="wf_1", correlation_id="c"
+    )
+    _draft = DraftActionV2(
+        draft_id="draft_x",
+        correlation_id="c",
+        workflow_instance_id="wf_1",
+        action_type=DraftActionType.CREATE_PROJECT,
+        organization_id=ORG,
+        user_id=USR,
+        project_id=None,
+        site_id=None,
+        fields={},
+    )
+    confirmed = WorkflowResumeResult(
+        status=WorkflowResumeStatus.CONFIRMED,
+        workflow_instance_id="wf_1",
+        correlation_id="c",
+        confirmed_action=ConfirmedActionV2(
+            confirmed_action_id="conf_x",
+            workflow_instance_id="wf_1",
+            correlation_id="c",
+            draft_action=_draft,
+            confirmed_by_user_id=USR,
+        ),
+    )
+
+    assert _summarize_step_outcome(rejected, None) == "Discarded."
+    assert _summarize_step_outcome(cancelled, None) == "Cancelled."
+    assert _summarize_step_outcome(already_resolved, None) == "Already handled."
+    assert _summarize_step_outcome(not_resumable, None) == "Couldn't be resumed."
+    assert _summarize_step_outcome(confirmed, None) == "Confirmed."
+    assert (
+        _summarize_step_outcome(
+            confirmed,
+            ExecutionResult(status=ExecutionStatus.SUCCEEDED, idempotency_key="k", material_row_id="r"),
+        )
+        == "Recorded."
+    )
+    assert (
+        _summarize_step_outcome(
+            confirmed,
+            ExecutionResult(
+                status=ExecutionStatus.SUCCEEDED,
+                idempotency_key="k",
+                material_row_id="r",
+                conflict_note="Note: x.",
+            ),
+        )
+        == "Recorded. Note: x."
+    )
+    assert (
+        _summarize_step_outcome(
+            confirmed,
+            ExecutionResult(
+                status=ExecutionStatus.REJECTED, idempotency_key="k", rejection_reasons=["a", "b"]
+            ),
+        )
+        == "Couldn't record: a; b"
+    )
+    assert (
+        _summarize_step_outcome(
+            confirmed, ExecutionResult(status=ExecutionStatus.FAILED, idempotency_key="k")
+        )
+        == "Something went wrong — please resend this part."
+    )
+
+
 async def test_no_plan_is_a_silent_no_op():
     store = _plan_store()
     runtime = _FakeWorkflowRuntime([])
@@ -313,6 +403,135 @@ async def test_a_confirmed_step_whose_write_failed_is_treated_as_a_failure():
     assert plan.step("s2").status is StepStatus.CANCELLED
 
 
+async def test_a_conflict_note_on_success_is_appended_to_the_summary_line():
+    """Phase A1: outcome_detail carries workflows/batch.py's
+    summarize_batch_outcome wording, including a conflict note on an
+    otherwise-successful write (#12 Conflict Resolution) -- not just a bare
+    "recorded"."""
+    store = _plan_store()
+    plan = Plan(
+        plan_id="plan_conflict",
+        correlation_id="cor_conflict",
+        user_id=USR,
+        organization_id=ORG,
+        origin=PlanOrigin.DECOMPOSITION,
+        steps=(
+            PlanStep(
+                step_id="s1",
+                workflow_key=WorkflowKey.PROJECT_CREATE,
+                event_type=CanonicalEventType.PROJECT_CREATE_REQUESTED,
+                fields={"name": "Starship"},
+                status=StepStatus.RUNNING,
+                workflow_instance_id="wf_1",
+            ),
+        ),
+    )
+    await store.start_plan(plan=plan)
+    runtime = _FakeWorkflowRuntime([])
+
+    draft = DraftActionV2(
+        draft_id="draft_wf_1",
+        correlation_id="cor_wf_1",
+        workflow_instance_id="wf_1",
+        action_type=DraftActionType.CREATE_PROJECT,
+        organization_id=ORG,
+        user_id=USR,
+        project_id=None,
+        site_id=None,
+        fields={},
+    )
+    confirmed = ConfirmedActionV2(
+        confirmed_action_id="conf_wf_1",
+        workflow_instance_id="wf_1",
+        correlation_id="cor_wf_1",
+        draft_action=draft,
+        confirmed_by_user_id=USR,
+    )
+    handled = InteractionHandled(
+        result=WorkflowResumeResult(
+            status=WorkflowResumeStatus.CONFIRMED,
+            workflow_instance_id="wf_1",
+            correlation_id="cor_wf_1",
+            confirmed_action=confirmed,
+        ),
+        reply_text="ok",
+        execution_result=ExecutionResult(
+            status=ExecutionStatus.SUCCEEDED,
+            idempotency_key="wf_1",
+            material_row_id=PRJ,
+            conflict_note="Note: already marked Completed.",
+        ),
+    )
+
+    reply = await advance_plan(handled, plan_store=store, workflow_runtime=runtime, actor=_Actor())
+
+    assert reply is not None
+    assert "Recorded. Note: already marked Completed." in reply.text
+
+
+async def test_a_domain_rejection_reason_is_named_in_the_summary_line():
+    """Same wording source as above -- a REJECTED execution names the actual
+    rejection reason(s), not a generic "couldn't be completed"."""
+    store = _plan_store()
+    plan = Plan(
+        plan_id="plan_rejected",
+        correlation_id="cor_rejected",
+        user_id=USR,
+        organization_id=ORG,
+        origin=PlanOrigin.DECOMPOSITION,
+        steps=(
+            PlanStep(
+                step_id="s1",
+                workflow_key=WorkflowKey.PROJECT_CREATE,
+                event_type=CanonicalEventType.PROJECT_CREATE_REQUESTED,
+                fields={"name": "Starship"},
+                status=StepStatus.RUNNING,
+                workflow_instance_id="wf_1",
+            ),
+        ),
+    )
+    await store.start_plan(plan=plan)
+    runtime = _FakeWorkflowRuntime([])
+
+    draft = DraftActionV2(
+        draft_id="draft_wf_1",
+        correlation_id="cor_wf_1",
+        workflow_instance_id="wf_1",
+        action_type=DraftActionType.CREATE_PROJECT,
+        organization_id=ORG,
+        user_id=USR,
+        project_id=None,
+        site_id=None,
+        fields={},
+    )
+    confirmed = ConfirmedActionV2(
+        confirmed_action_id="conf_wf_1",
+        workflow_instance_id="wf_1",
+        correlation_id="cor_wf_1",
+        draft_action=draft,
+        confirmed_by_user_id=USR,
+    )
+    handled = InteractionHandled(
+        result=WorkflowResumeResult(
+            status=WorkflowResumeStatus.CONFIRMED,
+            workflow_instance_id="wf_1",
+            correlation_id="cor_wf_1",
+            confirmed_action=confirmed,
+        ),
+        reply_text="ok",
+        execution_result=ExecutionResult(
+            status=ExecutionStatus.REJECTED,
+            idempotency_key="wf_1",
+            rejection_reasons=["a project with this name already exists"],
+        ),
+    )
+
+    reply = await advance_plan(handled, plan_store=store, workflow_runtime=runtime, actor=_Actor())
+
+    assert reply is not None
+    assert "Couldn't record: a project with this name already exists" in reply.text
+
+
 async def test_the_last_step_completing_clears_the_plan_and_returns_a_summary():
     store = _plan_store()
     plan = Plan(
@@ -344,7 +563,12 @@ async def test_the_last_step_completing_clears_the_plan_and_returns_a_summary():
 
     assert reply is not None
     assert "Here's what I did" in reply.text
-    assert "recorded" in reply.text
+    # "Recorded." (not the older generic "recorded") -- Phase A1 of
+    # docs/execution/UNIFIED_UNDERSTANDING_PIPELINE.md ports
+    # workflows/batch.py's summarize_batch_outcome wording onto
+    # PlanStep.outcome_detail, since it is strictly more informative (a
+    # conflict note, a specific rejection reason) than a bare status label.
+    assert "Recorded." in reply.text
     assert await store.get_plan(user_id=USR) is None  # released
 
 

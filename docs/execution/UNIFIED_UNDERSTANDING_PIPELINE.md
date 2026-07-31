@@ -490,6 +490,56 @@ pipeline, so any regression B causes is unambiguously B's.
 | A6 | Delete `workflows/batch.py`, `workflows/batch_store.py`, and their wiring in `dependencies.py` / `message_journey.py` / `process.py`. | Full suite; grep for orphaned references. |
 | A7 | Measure the added `PlanStore` write on the single-intent hot path (ADR-U2's stated cost). | A latency number recorded in this doc, not an assumption. |
 
+#### A1 — done 2026-07-31. Two decisions made while implementing, recorded here:
+
+**The progress prefix and per-step confirmation rendering needed no porting.**
+`_progress_prefix` and `render_workflow_run_reply_spec` in
+`runtime/plan_executor.py` already reproduce `format_batch_prefix` and
+`render_started_segment_reply_spec`'s wording/shape exactly — built that way
+deliberately when `plan_executor.py` was first written (its own comments say
+so). The real gap was narrower than A1's original framing: only the
+**closing-summary outcome line** lost information, because `PlanStep.status`
+(DONE/FAILED/CANCELLED) cannot express *why* — a domain rejection reason, a
+conflict note — the way `workflows/batch.py`'s `summarize_batch_outcome`
+(fed by the live `WorkflowResumeResult` + `ExecutionResult`) can.
+
+**Fix:** added `PlanStep.outcome_detail: str | None`, computed in
+`advance_plan` via `_summarize_step_outcome` (ported verbatim from
+`summarize_batch_outcome` — same wording, same branches, see
+`test_summarize_step_outcome_matches_workflows_batch_wording_exactly`).
+`_outcome_line` prefers it when present, falling back to the old
+status-only wording only for a step that never got an execution result
+(CANCELLED, or a bind/start failure). This is a **strict improvement**, not
+a preserved bug: a `FAILED` step's summary line now names the actual reason
+instead of a generic "couldn't be completed." Two existing tests asserted
+the old generic wording and were updated to the richer one
+(`test_plan_executor.py`, `test_member_create_plan.py`) — both are
+disclosed wording upgrades, not silent regressions.
+
+**Decision, not yet applied: the closing message stays its own standalone
+send, not glued onto the last step's own reply.** `workflows/batch.py`
+appends `format_batch_summary`'s output onto the last resolved segment's own
+`reply_text` (one WhatsApp message, two parts). `plan_executor.py` sends the
+summary as an entirely separate follow-up message once every step is
+terminal — this is the shape the Starship/decomposed-plan preview already
+uses, and unifying onto batch's append-based composition would be a second,
+larger change (restructuring where `format_plan_summary`'s output is
+attached) than "port the formatting." Deferred to A2, where the
+material→activity live case actually moves onto this path and the
+difference becomes user-visible for the first time — see A2's own note once
+written.
+
+**The header wording change is real and accepted, not hidden.** The closing
+line reads `*Here's what I did:*`, not `workflows/batch.py`'s
+`*Batch summary:*` (with its leading blank-line separator, meaningful only
+in the append composition above). No test asserts `"Batch summary"` against
+a live end-to-end reply — `test_batch_workflow.py`'s assertions are unit
+tests on `batch.py`'s own functions in isolation, and that file is deleted
+in A6 along with everything it tests. So this is a genuine, disclosed
+wording change for the one live user-facing case (material→activity), made
+because "one plan, one wording" (U3) is the point of this whole doc — not
+an oversight discovered later.
+
 ### Phase B — Intents-plural extraction
 
 | # | Step | Verification |

@@ -50,7 +50,7 @@ from __future__ import annotations
 from backend.ports import ActorIdentity
 from channel.replies import ReplySpec
 from interactions.handler import InteractionHandled
-from mesiri_contracts.application.results.execution_result import ExecutionStatus
+from mesiri_contracts.application.results.execution_result import ExecutionResult, ExecutionStatus
 from mesiri_contracts.assistant.planner_decision import PlannerDecisionType
 from mesiri_contracts.assistant.v2.planner_decision import PlannerDecisionV2
 from mesiri_contracts.common.ids import new_id as _new_id
@@ -102,11 +102,50 @@ def _progress_prefix(plan: Plan) -> str:
     return f"({min(resolved + 1, total)} of {total}) "
 
 
+def _summarize_step_outcome(
+    result: WorkflowResumeResult, execution_result: ExecutionResult | None
+) -> str:
+    """One plain-language line for a resolved step's entry in the closing
+    summary. Ported verbatim (2026-07-31, Phase A1 of
+    docs/execution/UNIFIED_UNDERSTANDING_PIPELINE.md) from workflows/batch.py's
+    summarize_batch_outcome -- same wording, since a user cannot tell which
+    mechanism produced their message and the two must not describe outcomes
+    differently. This is the richer, execution-result-aware detail a bare
+    StepStatus cannot carry (why a FAILED step failed, a conflict note on a
+    DONE one) -- see PlanStep.outcome_detail."""
+    if result.status is WorkflowResumeStatus.REJECTED:
+        return "Discarded."
+    if result.status is WorkflowResumeStatus.CANCELLED:
+        return "Cancelled."
+    if result.status is WorkflowResumeStatus.ALREADY_RESOLVED:
+        return "Already handled."
+    if result.status is WorkflowResumeStatus.NOT_RESUMABLE:
+        return "Couldn't be resumed."
+    # CONFIRMED
+    if execution_result is None:
+        return "Confirmed."
+    if execution_result.status in (ExecutionStatus.SUCCEEDED, ExecutionStatus.ALREADY_EXECUTED):
+        if execution_result.conflict_note:
+            return f"Recorded. {execution_result.conflict_note}"
+        return "Recorded."
+    if execution_result.status is ExecutionStatus.REJECTED:
+        reasons = "; ".join(execution_result.rejection_reasons)
+        return f"Couldn't record: {reasons}"
+    return "Something went wrong — please resend this part."
+
+
 def _outcome_line(step: PlanStep, index: int) -> str:
-    """One plain-language line per step for the closing summary. Wording
-    follows workflows/batch.py's summarize_batch_outcome for the same reason
-    _progress_prefix does."""
+    """One plain-language line per step for the closing summary.
+
+    Prefers ``outcome_detail`` (the execution-result-aware wording from
+    ``_summarize_step_outcome``) when the step resolved through
+    ``advance_plan``. Falls back to status-only wording for a step that
+    never got that far -- CANCELLED (never attempted, ADR-C4) or a bind/start
+    failure inside ``_start_next_runnable``, neither of which has an
+    execution result to describe."""
     label = step.workflow_key.value
+    if step.outcome_detail is not None:
+        return f"{index}. {label}: {step.outcome_detail}"
     if step.status is StepStatus.DONE:
         return f"{index}. {label}: recorded"
     if step.status is StepStatus.FAILED:
@@ -319,6 +358,7 @@ async def advance_plan(
     if result.status is WorkflowResumeStatus.CONFIRMED:
         execution = handled.execution_result
         confirmed = result.confirmed_action
+        outcome_detail = _summarize_step_outcome(result, execution)
         if execution is not None and execution.status in _SUCCEEDED and confirmed is not None:
             await _safe(
                 plan_store.mark_step_done(
@@ -329,6 +369,7 @@ async def advance_plan(
                         row_id=execution.material_row_id,
                         draft_fields=confirmed.draft_action.fields,
                     ),
+                    outcome_detail=outcome_detail,
                 )
             )
         else:
@@ -343,12 +384,22 @@ async def advance_plan(
                 step.step_id,
                 execution.status.value if execution else None,
             )
-            await _safe(plan_store.mark_step_failed(user_id=user_id, step_id=step.step_id))
+            await _safe(
+                plan_store.mark_step_failed(
+                    user_id=user_id, step_id=step.step_id, outcome_detail=outcome_detail
+                )
+            )
     elif result.status in (WorkflowResumeStatus.REJECTED, WorkflowResumeStatus.CANCELLED):
         # The user said no to this step. Its dependents cannot run -- you
         # cannot add a site to a project you just declined to create -- but
         # independent steps still should (ADR-C4).
-        await _safe(plan_store.mark_step_failed(user_id=user_id, step_id=step.step_id))
+        await _safe(
+            plan_store.mark_step_failed(
+                user_id=user_id,
+                step_id=step.step_id,
+                outcome_detail=_summarize_step_outcome(result, None),
+            )
+        )
     else:
         # ALREADY_RESOLVED / NOT_RESUMABLE: nothing changed, so the plan is
         # left exactly as it was rather than guessed at.

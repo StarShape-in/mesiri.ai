@@ -130,6 +130,16 @@ class PlanStep:
     #: Populated once this step reaches DONE -- feeds every StepRef pointing
     #: at this step_id in a later step's fields.
     outputs: dict[str, str] = field(default_factory=dict)
+    #: A plain-language line describing what actually happened once this step
+    #: resolved -- e.g. "Recorded.", "Couldn't record: quantity must be
+    #: positive.". Ported from workflows/batch.py's summarize_batch_outcome
+    #: (docs/execution/UNIFIED_UNDERSTANDING_PIPELINE.md Phase A1): the
+    #: richer, execution-result-aware wording that a bare StepStatus cannot
+    #: carry (a FAILED step's status alone cannot say *why*). None for a step
+    #: that never resolved with an execution outcome (CANCELLED, or still
+    #: PENDING/RUNNING) -- the closing summary falls back to status-based
+    #: wording for those.
+    outcome_detail: str | None = None
     #: The WorkflowInstance this step is actually running as, once started.
     #:
     #: Load-bearing, not bookkeeping: a plan outlives the turn that created
@@ -173,6 +183,7 @@ class PlanStep:
             "scope": {k: _encode_field(v) for k, v in self.scope.items()},
             "status": self.status.value,
             "outputs": dict(self.outputs),
+            "outcome_detail": self.outcome_detail,
             "workflow_instance_id": self.workflow_instance_id,
         }
 
@@ -186,6 +197,7 @@ class PlanStep:
             scope={k: _decode_field(v) for k, v in raw.get("scope", {}).items()},
             status=StepStatus(raw.get("status", StepStatus.PENDING.value)),
             outputs=dict(raw.get("outputs", {})),
+            outcome_detail=raw.get("outcome_detail"),
             workflow_instance_id=raw.get("workflow_instance_id"),
         )
 
