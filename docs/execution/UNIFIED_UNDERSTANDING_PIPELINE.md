@@ -697,6 +697,80 @@ deselected (the extra deselected count is the other concurrently-developed
 site-issue-cancel feature's new `provider`/`integration`-marked tests, not
 this change).
 
+#### A5 — done 2026-07-31. Scoped narrower than the original phase table row,
+on purpose — the real gap turned out bigger and differently-shaped than "move
+the gates so they run per step" implied.
+
+**What tracing the gap actually found.** Project/site was already closed
+(2026-07-30, `_resolve_project_and_site`) — nothing left to do there.
+Material-unit/stock is genuinely different: each of the four gate outcomes
+(ambiguous material picker, material-create offer, Stock Unit mismatch,
+over-stock choice) has its own picker/resume shape, and every one of
+`resume.py`'s five single-message resume legs is built around
+`interactions/pending_report.py`'s `PendingReportStore` — one
+`CanonicalEventV2`, no notion of "N more segments still to come." Making
+these run "per plan step" the way A1–A4 unified execution would have meant
+teaching `plan_executor.py` to pause and resume mid-step, a new state
+machine with no existing precedent in that module. Given the choice
+presented to the user (close it fully now / defer as documentation /
+narrow to just the material picker), **"close it fully now"** was chosen —
+but implemented at the layer where the existing hold-and-resume pattern
+already lives (`decomposed_plan.py`/`PendingDecompositionStore`, the
+same 2026-07-30 project/site mechanism), not inside `plan_executor.py`.
+`workflows/batch.py`'s eventual deletion (A6) and the whole-plan preview's
+own execution phase are unaffected.
+
+**Mechanism.** `PendingDecomposition` gains two fields: `built_events`
+(every earlier segment that already passed every gate) and `pending_event`
+(the ONE segment currently paused mid-gate). `_process_remaining_segments`
+builds each segment's `CanonicalEventV2` one at a time and runs
+`_run_segment_gates` on it before moving to the next; a gate's pause
+persists `built_events`/`pending_event`/`segments` (everything after the
+paused one) and returns the picker. Five new resume legs
+(`resume_pending_decomposition_with_material`/`_material_create`/
+`_material_unit_choice`/`_unit`/`_stock_choice`) mirror `resume.py`'s own
+five single-message legs almost line for line — the only structural
+difference is "then continue the decomposition loop" where `resume.py` says
+"then call `_plan_and_run`."
+
+**`_run_segment_gates` reuses `seeding.py`'s gate functions completely
+unmodified** — no risk to the single-message path, which never calls this
+module. A throwaway `_NullPendingReportStore` swallows the gate functions'
+own `set_pending` calls (meant for `PendingReportStore`, the wrong store
+here); this module persists the real pause state itself.
+
+**A real bug found and fixed before any test passed.** The first draft
+called `_run_project_gate`/`_run_site_gate` again inside
+`_run_segment_gates`, reasoning they'd be harmless no-ops since project/site
+is already resolved. Three pre-existing tests
+(`test_decomposed_plan.py`) immediately failed: `_run_project_gate` fails
+**closed** — asks, or says "no projects" — the moment `project_id` is
+`None`, regardless of *why*, including `actor is None`. But
+`_resolve_project_and_site` deliberately treats `actor is None` as "no gate
+applicable, fall through unresolved" (its own docstring calls this "the same
+degrade every other optional dependency in this layer uses, not a new
+failure mode"). Calling the gate again silently reintroduced the exact
+failure mode resolution was built to avoid. Fixed by not calling
+`_run_project_gate`/`_run_site_gate` from `_run_segment_gates` at all —
+project/site is out of this phase's scope, confirmed by the existing test
+suite, not assumed.
+
+**Environment note, for the record.** While this phase was in progress, a
+`git reset` occurred on this shared working tree mid-session (visible in
+`git reflog` as `edac765 HEAD@{0}: reset: moving to HEAD`) that discarded
+several files' uncommitted edits twice, requiring them to be rewritten from
+this conversation's own record before recovery. Very likely caused by the
+concurrently-active entity-resolution session's own git operations on the
+same shared checkout (its own commits during this window are visible in
+`git log`) rather than anything this phase's work did. Recorded here
+because it is exactly the kind of shared-working-tree risk
+`COMPOSITE_REQUEST_PLAN_LAYER.md`'s own git-discipline notes warn about,
+and because a future session hitting the same symptom should not assume
+its own edits are wrong before checking for this.
+
+Full monorepo suite: 1687 passed (whatsapp-assistant alone), 16 skipped
+(pre-existing), 26 deselected.
+
 ### Phase B — Intents-plural extraction
 
 | # | Step | Verification |

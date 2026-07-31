@@ -595,6 +595,9 @@ async def process_inbound_message(
                 actor=actor,
                 actor_user_id=actor_user_id,
                 pending_decomposition_store=pending_decomposition_store,
+                catalog_query=catalog_query,
+                inventory_query=inventory_query,
+                org_settings_query=org_settings_query,
             )
 
         # --- Member-name resolution gate ---

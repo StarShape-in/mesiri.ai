@@ -38,8 +38,13 @@ from mesiri_contracts.assistant.enums import InputModality
 from runtime.account_admin_journey import try_handle_account_admin_command
 from runtime.inbound_journey import (
     process_inbound_message,
+    resume_pending_decomposition_with_material,
+    resume_pending_decomposition_with_material_create,
+    resume_pending_decomposition_with_material_unit_choice,
     resume_pending_decomposition_with_project,
     resume_pending_decomposition_with_site,
+    resume_pending_decomposition_with_stock_choice,
+    resume_pending_decomposition_with_unit,
     resume_pending_plan_confirmation,
     resume_pending_report_with_audience_candidate,
     resume_pending_report_with_material,
@@ -1386,6 +1391,9 @@ def build_message_handlers(
                 plan_store=plan_store,
                 pipeline=pipeline,
                 actor=ctx,
+                catalog_query=catalog_query,
+                inventory_query=inventory_query,
+                org_settings_query=org_settings_query,
             )
             timer.lap("resume_plan_project")
             if plan_project_reply is not None:
@@ -1408,6 +1416,9 @@ def build_message_handlers(
                 plan_store=plan_store,
                 pipeline=pipeline,
                 actor=ctx,
+                catalog_query=catalog_query,
+                inventory_query=inventory_query,
+                org_settings_query=org_settings_query,
             )
             timer.lap("resume_plan_site")
             if plan_site_reply is not None:
@@ -1420,6 +1431,139 @@ def build_message_handlers(
                 )
                 await message_logger.log_reply(
                     correlation_id=message.correlation_id, reply=plan_site_reply.text
+                )
+                return
+
+            # Phase A5 (docs/execution/UNIFIED_UNDERSTANDING_PIPELINE.md): a
+            # decomposition segment's own material/unit/stock gate, held the
+            # same way the project/site gates above are -- five taps, one
+            # per resume leg, mirroring resume.py's own five single-message
+            # legs for the identical row-id shapes (mat_/matnew_/matunit_/
+            # unit_yes_+unit_no/stock_*). Order does not matter for
+            # correctness (each checks its own row-id prefix/set and no-ops
+            # otherwise), only for which one actually answers a given tap.
+            plan_material_reply = await resume_pending_decomposition_with_material(
+                message,
+                ctx.user_id,
+                pending_decomposition_store=pending_decomposition_store,
+                plan_store=plan_store,
+                pipeline=pipeline,
+                actor=ctx,
+                catalog_query=catalog_query,
+                inventory_query=inventory_query,
+                org_settings_query=org_settings_query,
+            )
+            timer.lap("resume_plan_material")
+            if plan_material_reply is not None:
+                await send_reply_spec(
+                    plan_material_reply,
+                    wa_id,
+                    send_text=sender.send_text,
+                    send_list=sender.send_list,
+                    send_button=sender.send_button,
+                )
+                await message_logger.log_reply(
+                    correlation_id=message.correlation_id, reply=plan_material_reply.text
+                )
+                return
+
+            plan_material_create_reply = await resume_pending_decomposition_with_material_create(
+                message,
+                ctx.user_id,
+                pending_decomposition_store=pending_decomposition_store,
+                plan_store=plan_store,
+                pipeline=pipeline,
+                actor=ctx,
+                catalog_query=catalog_query,
+                inventory_query=inventory_query,
+                org_settings_query=org_settings_query,
+            )
+            timer.lap("resume_plan_material_create")
+            if plan_material_create_reply is not None:
+                await send_reply_spec(
+                    plan_material_create_reply,
+                    wa_id,
+                    send_text=sender.send_text,
+                    send_list=sender.send_list,
+                    send_button=sender.send_button,
+                )
+                await message_logger.log_reply(
+                    correlation_id=message.correlation_id, reply=plan_material_create_reply.text
+                )
+                return
+
+            plan_material_unit_reply = await resume_pending_decomposition_with_material_unit_choice(
+                message,
+                ctx.user_id,
+                pending_decomposition_store=pending_decomposition_store,
+                plan_store=plan_store,
+                pipeline=pipeline,
+                actor=ctx,
+                catalog_query=catalog_query,
+                inventory_query=inventory_query,
+                org_settings_query=org_settings_query,
+            )
+            timer.lap("resume_plan_material_unit")
+            if plan_material_unit_reply is not None:
+                await send_reply_spec(
+                    plan_material_unit_reply,
+                    wa_id,
+                    send_text=sender.send_text,
+                    send_list=sender.send_list,
+                    send_button=sender.send_button,
+                )
+                await message_logger.log_reply(
+                    correlation_id=message.correlation_id, reply=plan_material_unit_reply.text
+                )
+                return
+
+            plan_unit_reply = await resume_pending_decomposition_with_unit(
+                message,
+                ctx.user_id,
+                pending_decomposition_store=pending_decomposition_store,
+                plan_store=plan_store,
+                pipeline=pipeline,
+                actor=ctx,
+                catalog_query=catalog_query,
+                inventory_query=inventory_query,
+                org_settings_query=org_settings_query,
+            )
+            timer.lap("resume_plan_unit")
+            if plan_unit_reply is not None:
+                await send_reply_spec(
+                    plan_unit_reply,
+                    wa_id,
+                    send_text=sender.send_text,
+                    send_list=sender.send_list,
+                    send_button=sender.send_button,
+                )
+                await message_logger.log_reply(
+                    correlation_id=message.correlation_id, reply=plan_unit_reply.text
+                )
+                return
+
+            plan_stock_reply = await resume_pending_decomposition_with_stock_choice(
+                message,
+                ctx.user_id,
+                pending_decomposition_store=pending_decomposition_store,
+                plan_store=plan_store,
+                pipeline=pipeline,
+                actor=ctx,
+                catalog_query=catalog_query,
+                inventory_query=inventory_query,
+                org_settings_query=org_settings_query,
+            )
+            timer.lap("resume_plan_stock")
+            if plan_stock_reply is not None:
+                await send_reply_spec(
+                    plan_stock_reply,
+                    wa_id,
+                    send_text=sender.send_text,
+                    send_list=sender.send_list,
+                    send_button=sender.send_button,
+                )
+                await message_logger.log_reply(
+                    correlation_id=message.correlation_id, reply=plan_stock_reply.text
                 )
                 return
 
