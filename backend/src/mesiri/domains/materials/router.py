@@ -14,6 +14,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from mesiri.authorization.context import AuthorizationContext
+from mesiri.domains.materials.invoices import (
+    attach_invoice_document,
+    build_expense_command,
+    insert_invoice,
+    insert_invoice_line,
+)
 from mesiri.domains.materials.posting import post_material_movement
 from mesiri.domains.materials.responses import (
     MaterialCatalogListResponse,
@@ -32,7 +38,15 @@ from mesiri.domains.materials.validation import (
     role_can_adjust,
 )
 from mesiri.domains.projects.router import get_auth_context
+from mesiri.domains.shared.media import assert_downloadable_url
+from mesiri.infrastructure.objectstorage.dependency import get_object_storage
 from mesiri.infrastructure.postgres.dependency import get_db_conn
+from mesiri_contracts.application.results.execution_result import ExecutionStatus
+from mesiri_contracts.common.storage import ObjectStoragePort
+
+#: Matches the expenses router's TTL — long enough to open the document, short
+#: enough that a copied link stops working.
+_ATTACHMENT_URL_TTL_SECONDS = 600
 from mesiri.infrastructure.postgres.repositories.materials import (
     MaterialMovementsRepository,
     PostgresMaterialCatalogRepository,
@@ -944,6 +958,346 @@ async def create_outflow(
     if idempotency_key:
         await _complete_idempotency_key(conn, idempotency_key, result)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Supplier invoices (Phase C)
+# ---------------------------------------------------------------------------
+class MaterialInvoiceLine(BaseModel):
+    material_id: uuid.UUID
+    unit_id: uuid.UUID
+    quantity: Decimal
+    unit_cost: Decimal | None = None
+    total_cost: Decimal | None = None
+
+
+class MaterialInvoiceCreate(BaseModel):
+    project_id: uuid.UUID
+    site_id: uuid.UUID | None = None
+    lines: list[MaterialInvoiceLine]
+    supplier_name: str | None = None
+    vendor_id: uuid.UUID | None = None
+    invoice_number: str | None = None
+    invoice_date: datetime.date | None = None
+    # As printed on the document. Never derived from the lines: tax and freight
+    # are not extracted in V1, so this legitimately differs from their sum.
+    invoice_total: Decimal | None = None
+    currency: str = "INR"
+    notes: str | None = None
+    # Object key of the already-uploaded document. The file is never copied --
+    # Finance's expense attachment points at this same key.
+    media_object_key: str | None = None
+    source: str = "web"
+    correlation_id: str | None = None
+    # Set false only to record a purchase with no financial obligation (a free
+    # replacement, an internal transfer documented on a supplier's paper).
+    create_expense: bool = True
+
+
+@router.post("/invoices", status_code=201)
+async def create_invoice(
+    body: MaterialInvoiceCreate,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """Record one supplier invoice: N purchases, stock, evidence, one expense.
+
+    Everything lands in the request's single transaction, so a supervisor's one
+    confirmation either updates inventory *and* Finance, or does nothing at all.
+    Nobody re-keys the same document into two modules.
+    """
+    if idempotency_key:
+        replayed = await _claim_idempotency_key(conn, idempotency_key, "material_invoice_rest")
+        if replayed is not None:
+            return {**replayed, "status": "replayed"}
+
+    if not body.lines:
+        raise HTTPException(status_code=422, detail="An invoice needs at least one material line")
+
+    _authorize_write(auth_context, body.project_id, body.site_id)
+    if body.site_id is not None:
+        await _assert_site_in_project(
+            conn, auth_context.organization_id, body.project_id, body.site_id
+        )
+
+    # Resolve every line before writing anything, so an unknown material on
+    # line 3 does not leave lines 1 and 2 recorded.
+    resolved: list[tuple[MaterialInvoiceLine, dict, dict, Decimal | None, Decimal | None]] = []
+    for index, line in enumerate(body.lines, start=1):
+        if line.quantity <= 0:
+            raise HTTPException(
+                status_code=422, detail=f"Line {index}: quantity must be greater than zero"
+            )
+        try:
+            material, unit = await _resolve_and_validate_material_unit(
+                conn, auth_context.organization_id, line.material_id, line.unit_id
+            )
+        except HTTPException as exc:
+            # Re-raised with the line number attached: "unit does not match
+            # Cement's Stock Unit" is unhelpful on a 12-line invoice.
+            raise HTTPException(
+                status_code=exc.status_code, detail=f"Line {index}: {exc.detail}"
+            ) from exc
+        unit_cost, total_cost = _resolve_costs(line.quantity, line.unit_cost, line.total_cost)
+        resolved.append((line, material, unit, unit_cost, total_cost))
+
+    if body.vendor_id is not None:
+        vendor = (
+            await conn.execute(
+                text("SELECT id FROM vendors WHERE id = :id AND organization_id = :org"),
+                {"id": body.vendor_id, "org": auth_context.organization_id},
+            )
+        ).first()
+        # 404 rather than 403: confirming that another org's vendor exists
+        # would leak it.
+        if vendor is None:
+            raise HTTPException(status_code=404, detail="Vendor not found")
+
+    invoice_id = uuid.uuid4()
+    occurred_date = body.invoice_date or datetime.date.today()
+    supplier_name = body.supplier_name.strip() if body.supplier_name else None
+
+    await insert_invoice(
+        conn,
+        invoice_id=invoice_id,
+        organization_id=auth_context.organization_id,
+        project_id=body.project_id,
+        site_id=body.site_id,
+        vendor_id=body.vendor_id,
+        supplier_name=supplier_name,
+        invoice_number=body.invoice_number.strip() if body.invoice_number else None,
+        invoice_date=body.invoice_date,
+        invoice_total=body.invoice_total,
+        currency=body.currency,
+        source=body.source,
+        correlation_id=body.correlation_id,
+        notes=body.notes.strip() if body.notes else None,
+        created_by=auth_context.user_id,
+    )
+
+    receipt_ids: list[uuid.UUID] = []
+    for line, material, unit, unit_cost, total_cost in resolved:
+        receipt_ids.append(
+            await insert_invoice_line(
+                conn,
+                invoice_id=invoice_id,
+                organization_id=auth_context.organization_id,
+                project_id=body.project_id,
+                site_id=body.site_id,
+                material=material,
+                unit=unit,
+                quantity=line.quantity,
+                unit_cost=unit_cost,
+                total_cost=total_cost,
+                supplier_name=supplier_name,
+                occurred_date=occurred_date,
+                created_by=auth_context.user_id,
+            )
+        )
+
+    if body.media_object_key:
+        await attach_invoice_document(
+            conn,
+            invoice_id=invoice_id,
+            media_object_key=body.media_object_key,
+            created_by=auth_context.user_id,
+        )
+
+    expense_id = await _create_invoice_expense(conn, body, invoice_id, auth_context, resolved)
+
+    await _publish_outbox_event(
+        conn,
+        aggregate_type="material_invoice",
+        aggregate_id=invoice_id,
+        event_type="MaterialInvoiceRecorded",
+        payload={
+            "supplier_name": supplier_name,
+            "line_count": len(resolved),
+            "invoice_total": str(body.invoice_total) if body.invoice_total is not None else None,
+            "expense_id": str(expense_id) if expense_id else None,
+        },
+        correlation_id=body.correlation_id,
+    )
+
+    result = {
+        "id": invoice_id,
+        "receipt_ids": receipt_ids,
+        "expense_id": expense_id,
+        "status": "success",
+    }
+    if idempotency_key:
+        await _complete_idempotency_key(conn, idempotency_key, result)
+    return result
+
+
+@router.get("/invoices/{invoice_id}")
+async def get_invoice(
+    invoice_id: uuid.UUID,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+):
+    """One invoice with its purchases — what the Purchase History drill-in needs."""
+    row = (
+        await conn.execute(
+            text(
+                "SELECT i.*, v.name AS vendor_name "
+                "FROM material_invoices i "
+                "LEFT JOIN vendors v ON v.id = i.vendor_id "
+                "WHERE i.id = :id AND i.organization_id = :org"
+            ),
+            {"id": invoice_id, "org": auth_context.organization_id},
+        )
+    ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    invoice = dict(row)
+    if _site_filter_denied(auth_context, invoice["project_id"], invoice["site_id"]):
+        raise HTTPException(status_code=403, detail="Not authorized for this invoice")
+    _, denied = _resolve_project_ids(auth_context, invoice["project_id"])
+    if denied:
+        raise HTTPException(status_code=403, detail="Not authorized for this invoice")
+
+    lines = (
+        await conn.execute(
+            text(
+                "SELECT id, material_id, material_name, quantity, unit, unit_cost, total_cost "
+                "FROM material_receipts WHERE invoice_id = :id ORDER BY created_at"
+            ),
+            {"id": invoice_id},
+        )
+    ).mappings().all()
+    attachments = (
+        await conn.execute(
+            text(
+                "SELECT id, media_object_key, attachment_type FROM material_invoice_attachments "
+                "WHERE invoice_id = :id ORDER BY created_at"
+            ),
+            {"id": invoice_id},
+        )
+    ).mappings().all()
+
+    invoice["lines"] = [dict(r) for r in lines]
+    invoice["has_attachment"] = len(attachments) > 0
+    invoice["attachment_count"] = len(attachments)
+    return invoice
+
+
+@router.get("/invoices/{invoice_id}/attachment")
+async def get_invoice_attachment(
+    invoice_id: uuid.UUID,
+    auth_context: AuthorizationContext = Depends(get_auth_context),
+    conn: AsyncConnection = Depends(get_db_conn),
+    object_storage: ObjectStoragePort = Depends(get_object_storage),
+):
+    """A short-lived link to the original document.
+
+    Re-checked on every request rather than handed out once: an invoice shows
+    supplier pricing, which is commercially sensitive.
+    """
+    row = (
+        await conn.execute(
+            text(
+                "SELECT i.project_id, i.site_id, a.media_object_key, a.attachment_type "
+                "FROM material_invoices i "
+                "JOIN material_invoice_attachments a ON a.invoice_id = i.id "
+                "WHERE i.id = :id AND i.organization_id = :org "
+                "ORDER BY a.created_at LIMIT 1"
+            ),
+            {"id": invoice_id, "org": auth_context.organization_id},
+        )
+    ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="No document attached to this invoice")
+    if _site_filter_denied(auth_context, row["project_id"], row["site_id"]):
+        raise HTTPException(status_code=403, detail="Not authorized for this invoice")
+    _, denied = _resolve_project_ids(auth_context, row["project_id"])
+    if denied:
+        raise HTTPException(status_code=403, detail="Not authorized for this invoice")
+
+    # assert_downloadable_url turns a misconfigured storage provider into a
+    # clear 500 rather than a silently broken image in the browser.
+    url = assert_downloadable_url(
+        await object_storage.generate_presigned_url(
+            row["media_object_key"], expires_in_seconds=_ATTACHMENT_URL_TTL_SECONDS
+        )
+    )
+    return {"url": url, "attachment_type": row["attachment_type"]}
+
+
+async def _create_invoice_expense(
+    conn: AsyncConnection,
+    body: MaterialInvoiceCreate,
+    invoice_id: uuid.UUID,
+    auth_context: AuthorizationContext,
+    resolved: list,
+) -> uuid.UUID | None:
+    """Hand the obligation to Finance and record which expense it became.
+
+    Materials never inserts into the expenses tables -- it calls Finance's own
+    handler on this same connection, so the expense is created by the module
+    that owns the rules and still rolls back with the purchases if anything
+    later fails.
+
+    The amount is the invoice total as printed when there is one, falling back
+    to the sum of the priced lines. Never both: a printed total already includes
+    tax and freight that the lines do not, so adding them would double-count.
+    """
+    if not body.create_expense:
+        return None
+
+    amount = body.invoice_total
+    if amount is None:
+        line_sum = sum((t for *_, t in resolved if t is not None), Decimal("0"))
+        amount = line_sum if line_sum > 0 else None
+    # No amount anywhere means no price was recorded at all. An expense of zero
+    # would claim the delivery was free, so record the purchase and skip the
+    # obligation rather than invent one.
+    if amount is None or amount <= 0:
+        return None
+
+    from mesiri.application.expenses.handlers import RecordExpenseHandler
+    from mesiri.infrastructure.postgres.repositories.expense_execution import (
+        PostgresExpenseCategoryResolver,
+        PostgresExpenseExecutionRepository,
+        PostgresVendorResolver,
+    )
+
+    cmd = build_expense_command(
+        invoice_id=invoice_id,
+        organization_id=auth_context.organization_id,
+        project_id=body.project_id,
+        site_id=body.site_id,
+        vendor_id=body.vendor_id,
+        supplier_name=body.supplier_name.strip() if body.supplier_name else None,
+        amount=amount,
+        currency=body.currency,
+        occurred_date=body.invoice_date or datetime.date.today(),
+        media_object_key=body.media_object_key,
+        created_by=auth_context.user_id,
+        correlation_id=body.correlation_id,
+    )
+    handler = RecordExpenseHandler(
+        PostgresExpenseExecutionRepository(),
+        resolver=PostgresExpenseCategoryResolver(),
+        vendor_resolver=PostgresVendorResolver(),
+    )
+    result = await handler.handle(conn, cmd)
+    if result.status is ExecutionStatus.REJECTED:
+        # Finance refusing is not something to paper over: the purchase would
+        # silently carry no obligation and the books would be short.
+        raise HTTPException(
+            status_code=422,
+            detail=f"Could not record the Finance expense: {result.rejection_reasons}",
+        )
+
+    expense_id = uuid.UUID(result.material_row_id)
+    await conn.execute(
+        text("UPDATE material_invoices SET expense_id = :expense_id WHERE id = :id"),
+        {"expense_id": expense_id, "id": invoice_id},
+    )
+    return expense_id
 
 
 # ---------------------------------------------------------------------------

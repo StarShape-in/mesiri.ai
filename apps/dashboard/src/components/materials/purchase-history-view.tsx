@@ -9,6 +9,7 @@ import {
   ArrowUpDown,
   Truck,
   CalendarDays,
+  FileText,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -22,6 +23,7 @@ import { fetchInflows, formatMoney, INFLOW_REASONS, type MaterialReceipt } from 
 import { fetchProjects, fetchSites } from '@/lib/projects'
 import { toLocalISODate } from '@/lib/utils'
 import { PurchaseDetailsSheet } from './purchase-details-sheet'
+import { InvoiceDetailsSheet } from './invoice-details-sheet'
 
 interface PurchaseHistoryViewProps {
   projectId: string | null
@@ -36,6 +38,8 @@ export function PurchaseHistoryView({ projectId, siteId }: PurchaseHistoryViewPr
   const [reason, setReason] = React.useState('ALL')
   const [sortOrder, setSortOrder] = React.useState<SortOption>('newest')
   const [selectedId, setSelectedId] = React.useState<string | null>(null)
+  const [selectedInvoiceId, setSelectedInvoiceId] = React.useState<string | null>(null)
+  const [invoiceSheetOpen, setInvoiceSheetOpen] = React.useState(false)
   const [sheetOpen, setSheetOpen] = React.useState(false)
 
   const filters = {
@@ -73,6 +77,11 @@ export function PurchaseHistoryView({ projectId, siteId }: PurchaseHistoryViewPr
   const openPurchase = (id: string) => {
     setSelectedId(id)
     setSheetOpen(true)
+  }
+
+  const openInvoice = (id: string) => {
+    setSelectedInvoiceId(id)
+    setInvoiceSheetOpen(true)
   }
 
   // Memoized so the `?? []` fallback doesn't mint a new array identity on
@@ -289,6 +298,7 @@ export function PurchaseHistoryView({ projectId, siteId }: PurchaseHistoryViewPr
                     {showSiteColumn && <TableHead>Site</TableHead>}
                     {showProjectColumn && <TableHead>Project</TableHead>}
                     <TableHead className="text-right">Total Cost</TableHead>
+                    <TableHead>Invoice</TableHead>
                     <TableHead>Reason</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -330,6 +340,23 @@ export function PurchaseHistoryView({ projectId, siteId }: PurchaseHistoryViewPr
                           </span>
                         )}
                       </TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        {row.invoice_id ? (
+                          <button
+                            type="button"
+                            onClick={() => openInvoice(row.invoice_id!)}
+                            className="inline-flex items-center gap-1 text-primary font-semibold hover:underline"
+                          >
+                            <FileText className="size-3" />
+                            View
+                          </button>
+                        ) : (
+                          // Typed in by hand rather than read off a document.
+                          // Not a gap to chase — plenty of purchases have no
+                          // paperwork to attach.
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
                       <TableCell>
                         <Badge variant="outline" className="text-[10px]">
                           {row.movement_reason}
@@ -346,6 +373,12 @@ export function PurchaseHistoryView({ projectId, siteId }: PurchaseHistoryViewPr
 
       {/* Read-Only Purchase Details Sheet */}
       <PurchaseDetailsSheet id={selectedId} open={sheetOpen} onOpenChange={setSheetOpen} />
+
+      <InvoiceDetailsSheet
+        invoiceId={selectedInvoiceId}
+        open={invoiceSheetOpen}
+        onOpenChange={setInvoiceSheetOpen}
+      />
     </div>
   )
 }

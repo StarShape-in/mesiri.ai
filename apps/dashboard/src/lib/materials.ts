@@ -53,6 +53,9 @@ export interface MaterialReceipt {
   // A correction was posted against this purchase — its cost must be left out
   // of spend totals, because that money was netted off.
   is_reversed?: boolean
+  // Set when this purchase came from a supplier invoice — several purchases
+  // can share one, and the original document hangs off it.
+  invoice_id?: string | null
   occurred_date: string
   occurred_time: string | null
   correlation_id: string | null
@@ -257,6 +260,102 @@ export interface CreateInflowPayload {
   // as "free" in a spend total.
   unit_cost?: string | number
   total_cost?: string | number
+}
+
+// ---------------------------------------------------------------------
+// Supplier invoices
+// ---------------------------------------------------------------------
+
+export interface MaterialInvoiceLine {
+  id: string
+  material_id: string
+  material_name: string
+  quantity: string
+  unit: string
+  unit_cost: string | null
+  total_cost: string | null
+}
+
+export interface MaterialInvoice {
+  id: string
+  organization_id: string
+  project_id: string
+  site_id: string | null
+  vendor_id: string | null
+  vendor_name: string | null
+  supplier_name: string | null
+  invoice_number: string | null
+  invoice_date: string | null
+  // As printed on the document. Legitimately differs from the sum of the lines
+  // because tax and freight are not extracted — never treat the gap as an error.
+  invoice_total: string | null
+  currency: string
+  // The Finance expense this invoice created, if any.
+  expense_id: string | null
+  notes: string | null
+  created_at: string
+  lines: MaterialInvoiceLine[]
+  has_attachment: boolean
+  attachment_count: number
+}
+
+export async function fetchInvoice(id: string): Promise<MaterialInvoice> {
+  const res = await api.get<MaterialInvoice>(`/materials/invoices/${id}`)
+  return res.data
+}
+
+export interface InvoiceAttachment {
+  url: string
+  attachment_type: string
+}
+
+// Resolves the stored document to a short-lived link. Throws 404 when nothing
+// was attached — callers should treat that as "no document", not an error.
+export async function fetchInvoiceAttachment(id: string): Promise<InvoiceAttachment> {
+  const res = await api.get<InvoiceAttachment>(`/materials/invoices/${id}/attachment`)
+  return res.data
+}
+
+export interface CreateInvoicePayload {
+  project_id: string
+  site_id?: string
+  lines: Array<{
+    material_id: string
+    unit_id: string
+    quantity: string | number
+    unit_cost?: string | number
+    total_cost?: string | number
+  }>
+  supplier_name?: string
+  vendor_id?: string
+  invoice_number?: string
+  invoice_date?: string
+  invoice_total?: string | number
+  notes?: string
+  media_object_key?: string
+  correlation_id?: string
+  create_expense?: boolean
+}
+
+export interface CreateInvoiceResult {
+  id: string
+  receipt_ids: string[]
+  expense_id: string | null
+  status: string
+}
+
+// One call records every purchase on the document, updates stock, links the
+// stored file and creates the unpaid Finance expense — all in one transaction.
+export async function createInvoice(
+  payload: CreateInvoicePayload,
+  idempotencyKey?: string
+): Promise<CreateInvoiceResult> {
+  const res = await api.post<CreateInvoiceResult>(
+    '/materials/invoices',
+    payload,
+    idempotencyHeaders(idempotencyKey)
+  )
+  return res.data
 }
 
 export interface LastPurchase {
