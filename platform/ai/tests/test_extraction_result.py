@@ -9,7 +9,7 @@ way and are not migrated until Phase B5.
 
 from __future__ import annotations
 
-from mesiri_ai.models import ExtractedIntent, ExtractionResult
+from mesiri_ai.models import ExtractedIntent, ExtractionResult, parse_extracted_intents
 
 
 def test_legacy_kwargs_still_construct_a_single_intent():
@@ -120,3 +120,88 @@ def test_multiple_intents_the_bidilaj_trace_shape():
     # single answer -- the first intent, not a crash or an empty result.
     assert result.semantic_type == "project_create"
     assert result.fields == {"name": "Bidilaj"}
+
+
+# ---------------------------------------------------------------------------
+# parse_extracted_intents (Phase B4): the shared parser every adapter's
+# extract()/understand_voice() calls to turn a provider's raw "intents" JSON
+# array into list[ExtractedIntent]. Fakes only -- no live provider call.
+# ---------------------------------------------------------------------------
+
+
+def test_parses_a_single_intent_the_common_case():
+    raw = [
+        {
+            "semantic_type": "expense",
+            "fields": {"amount": 500},
+            "missing_fields": [],
+            "field_confidences": {"amount": 0.9},
+        }
+    ]
+    intents = parse_extracted_intents(raw)
+    assert len(intents) == 1
+    assert intents[0].semantic_type == "expense"
+    assert intents[0].fields == {"amount": 500}
+    assert intents[0].field_confidences == {"amount": 0.9}
+
+
+def test_parses_the_bidilaj_trace_three_real_intents():
+    raw = [
+        {"semantic_type": "project_create", "fields": {"name": "Bidilaj"}},
+        {"semantic_type": "site_create", "fields": {"name": "Site A"}},
+        {
+            "semantic_type": "add_project_member",
+            "fields": {"member_name": "Usman", "role": "site_engineer"},
+        },
+    ]
+    intents = parse_extracted_intents(raw)
+    assert len(intents) == 3
+    assert [i.semantic_type for i in intents] == [
+        "project_create",
+        "site_create",
+        "add_project_member",
+    ]
+
+
+def test_missing_intents_key_returns_an_empty_list():
+    """Falls through to ExtractionResult's own _normalize (one default
+    unknown intent) when constructed -- this function itself just returns
+    empty, it does not normalize."""
+    assert parse_extracted_intents(None) == []
+
+
+def test_non_list_intents_value_returns_an_empty_list():
+    """A provider hallucinating intents as a bare object rather than an
+    array must degrade safely, not raise."""
+    assert parse_extracted_intents({"semantic_type": "expense"}) == []
+
+
+def test_a_malformed_entry_among_good_ones_is_skipped_not_fatal():
+    """One bad entry (not a dict -- e.g. a stray string) must not sink the
+    other, valid intents in the same response."""
+    raw = [
+        {"semantic_type": "project_create", "fields": {"name": "Bidilaj"}},
+        "not a dict",
+        {"semantic_type": "site_create", "fields": {"name": "Site A"}},
+    ]
+    intents = parse_extracted_intents(raw)
+    assert len(intents) == 2
+    assert intents[0].semantic_type == "project_create"
+    assert intents[1].semantic_type == "site_create"
+
+
+def test_missing_optional_keys_on_one_entry_default_sensibly():
+    raw = [{"semantic_type": "expense"}]
+    intents = parse_extracted_intents(raw)
+    assert intents[0].fields == {}
+    assert intents[0].missing_fields == []
+    assert intents[0].field_confidences == {}
+
+
+def test_field_confidences_are_coerced_to_float():
+    """Some providers may return confidence as a JSON int/string-shaped
+    number -- must not crash the parser."""
+    raw = [{"semantic_type": "expense", "field_confidences": {"amount": 1}}]
+    intents = parse_extracted_intents(raw)
+    assert intents[0].field_confidences == {"amount": 1.0}
+    assert isinstance(intents[0].field_confidences["amount"], float)

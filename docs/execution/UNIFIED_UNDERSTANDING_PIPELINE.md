@@ -989,6 +989,102 @@ single-intent path's own existing `ValueError` handling.
 Full monorepo suite: 2702 passed (4 more — this phase's own new tests), 16
 skipped (pre-existing), 230 deselected.
 
+#### B4 — done 2026-08-01. **Real-model behavior unverified from this
+environment — see the VPS checklist below before trusting it in production.**
+
+The risk step named from the start: B1–B3 built the whole plural pipeline,
+but until the extraction prompt itself asks for more than one intent,
+`extraction.intents` is always length 1 and none of that plumbing is
+actually exercised end to end. This phase changes what the prompt asks for
+and what the adapters parse back.
+
+**Prompt change, both adapters (`platform/ai/src/mesiri_ai/adapters/
+{gemini,deepseek}/adapter.py`), same diff shape in both:** the JSON envelope
+at the top of `_EXTRACTION_PROMPT` changed from flat top-level
+`semantic_type`/`fields`/`missing_fields`/`field_confidences` keys to a
+single `"intents"` (array — one entry per DISTINCT request) key, each entry
+carrying those same 4 keys. Deliberately minimal diff: the ~400-line
+per-semantic-type field schema section below the envelope (labour/material/
+expense/etc. field definitions) is completely untouched — verified by the
+pre-existing `test_extraction_prompt_parity.py` suite passing unchanged
+against the new prompt text.
+
+**The named risk (ADR-U1):** asking for a list creates real pressure toward
+over-splitting a message that is genuinely one request. Two things in the
+prompt exist only to counter this, and are now tested for directly (not
+just implied): an explicit statement that the overwhelming majority of
+messages are one intent, with "prefer one when genuinely unsure" as the
+tiebreak; and a worked example distinguishing a report that touches several
+*fields* ("used 40 bags of cement for the foundation" — `work_item` is a
+field of that one material_update, never a second intent) from a message
+that is actually several *requests* (the Bidilaj trace).
+
+**Parsing:** new shared `parse_extracted_intents(raw_intents: object) ->
+list[ExtractedIntent]` in `platform/ai/src/mesiri_ai/models.py`, used by all
+three call sites (Gemini `extract`/`understand_voice`, DeepSeek `extract`).
+Lenient by design, since this reads a live model's JSON, not a trusted
+internal shape: non-list or missing input returns `[]` (falls through to
+`ExtractionResult`'s own B1 `_normalize`, which supplies one default
+`unknown` intent — "no intents" stays unrepresentable); a non-dict entry
+inside an otherwise-good list is skipped rather than failing the whole
+parse (one hallucinated bad entry must not sink the real ones next to it);
+`field_confidences` values are coerced to `float` (some providers may
+return them as JSON ints).
+
+**What is and is not verified.** Verified, from this environment, without
+live credentials: the prompt asks for the new envelope and states the
+anti-over-splitting instructions (`test_extraction_prompt_parity.py`, new
+section); the parser handles the well-formed case, the Bidilaj shape, and
+every malformed-input case above (`test_extraction_result.py`, new
+section); both adapters correctly wire a mocked provider response of the
+new shape into `ExtractionResult.intents` (`test_adapter_conversion.py`,
+new section, including a full 3-intent Bidilaj-shaped mock through both
+adapters). **Not verified, and not verifiable here:** whether the real
+Gemini/DeepSeek models, given the changed prompt, actually return multiple
+intents for a real multi-intent message, and — the riskier direction —
+whether they hold the line on genuinely single-intent messages rather than
+over-splitting them. No Gemini/DeepSeek credentials exist in this dev
+environment; this is a live-model behavioral question, not something a
+mocked-response test can answer honestly.
+
+**What to run on the VPS to close that gap.** New file
+`platform/ai/tests/test_phase_b4_live_verification.py`, marked
+`@pytest.mark.provider` (defined in root `pyproject.toml`, skipped by
+default — this is the first test in the repo to use that marker). It reads
+credentials exactly the way the running app does
+(`mesiri.bootstrap.settings.get_settings()`), so nothing new needs
+configuring on a box where the app already runs — it just needs
+`MESIRI_GEMINI__API_KEY` / `MESIRI_DEEPSEEK__API_KEY` to already be set,
+which production requires anyway. It calls the real provider `extract()`
+against:
+
+- the Bidilaj trace itself, asserting `len(result.intents) >= 2` and that
+  `project_create` is among them — the headline claim, checked against the
+  real message that motivated this whole design doc;
+- five deliberately single-intent messages ("used 40 bags of cement for the
+  foundation", "paid 5000 for cement", "10 masons worked on the slab
+  today", "JCB ran for 4 hours doing excavation", "raining since morning,
+  work stopped"), each asserting `len(result.intents) == 1` — the
+  over-splitting check.
+
+Run on the VPS:
+
+```bash
+cd platform/ai
+PYTHONPATH="<repo>/backend/src;<repo>/shared/contracts/src;<repo>/platform/ai/src" \
+  uv run pytest -m provider tests/test_phase_b4_live_verification.py -v
+```
+
+(adjust `PYTHONPATH` separator to `:` if the VPS is Linux, not the `;` this
+dev box needs on Windows). A pass on both halves is the actual, real-model
+confirmation this phase's headline claim needs — until that has run once
+on the VPS, treat B4 as "implemented and unit-tested" but not yet "verified
+working," and do not start B5/B6 on the strength of the mocked tests alone.
+
+Full monorepo suite (excluding the new `provider`-marked tests, which
+correctly skip without credentials): 2718 passed, 16 skipped, 230
+deselected, 0 failed.
+
 ### Phase C — Deferred, not in scope here
 
 The `whatsapp_number`-arrives-later gap (§4.2) and the whole-plan permission

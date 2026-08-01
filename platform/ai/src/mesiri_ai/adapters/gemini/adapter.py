@@ -24,6 +24,7 @@ from ...models import (
     SpeechResult,
     TranslationResult,
     VisionResult,
+    parse_extracted_intents,
 )
 
 _log = logging.getLogger("mesiri.ai.gemini")
@@ -93,6 +94,22 @@ _EXTRACTION_PROMPT = (
     'structured construction data from the text. Return strict JSON with keys: '
     '"detected_language" (the source language\'s common English name, e.g. '
     '"Malayalam", "English"), '
+    '"intents" (array -- one entry per DISTINCT request the message makes. '
+    "The OVERWHELMING majority of messages state exactly ONE thing: return a "
+    "single-entry array unless the text CLEARLY and explicitly asks for "
+    "several separate, unrelated actions in the same breath -- e.g. \"create "
+    "a project called Bidilaj, then a site called Site A, then add Usman as "
+    "site engineer\" is three entries. A single report is ONE entry even "
+    "when it touches more than one fact -- \"used 40 bags of cement for the "
+    "foundation\" is one material_update entry (the foundation work is a "
+    "field of that report, `work_item`, never a second intent); \"paid 5000 "
+    "for cement\" is one expense entry, never split into an expense plus a "
+    "material_update just because cement is mentioned. When genuinely "
+    "unsure whether something is one request or two, prefer ONE -- a wrong "
+    "split loses information the user has to notice and correct; treating "
+    "two real requests as one still lets the first be understood correctly, "
+    "so it is the safer mistake to make. "
+    "Each entry in \"intents\" is an object with: "
     '"semantic_type" (expense|equipment_usage|material_update|material_invoice|labour_update|'
     "general_site_update|activity_correction|site_issue|site_issue_update|general_question|whoami_question|inventory_query|"
     "labour_query|activity_query|dpr_request|finance_query|transfer|petty_cash|reversal|"
@@ -361,12 +378,15 @@ _EXTRACTION_PROMPT = (
     '"delete that site update", "undo my last activity report", '
     '"remove the update I just sent", "reverse the petty cash I gave Alan", '
     '"cancel that advance"). '
-    'target_kind MUST be exactly "expense", "transfer", "petty_cash", or '
-    '"activity" -- '
+    'target_kind MUST be exactly "expense", "transfer", "petty_cash", '
+    '"attendance", or "activity" -- '
     "never any other word; infer it from what the user refers to -- "
     '"site update"/"activity"/"progress report"/"the work I just logged" '
     'means "activity"; "petty cash"/"advance"/"the cash I gave <person>" '
-    'means "petty_cash"; defaulting to "expense" if genuinely ambiguous '
+    'means "petty_cash"; "attendance"/"the workers I marked"/"today\'s '
+    'labour"/"the headcount I sent" means "attendance" (e.g. "cancel that '
+    'attendance, wrong site", "scrap the labour report I just sent"); '
+    'defaulting to "expense" if genuinely ambiguous '
     "between expense and transfer, since that is the more common case. This "
     "always targets the single most recent record of that kind -- never "
     "extract an amount, date, or description for it.\n"
@@ -789,12 +809,7 @@ class GeminiProvider:
         )
         data = self._parse_json(raw_text, correlation_id)
         return ExtractionResult(
-            semantic_type=data.get("semantic_type", "unknown"),
-            fields=data.get("fields", {}) or {},
-            missing_fields=list(data.get("missing_fields", []) or []),
-            field_confidences={
-                k: float(v) for k, v in (data.get("field_confidences", {}) or {}).items()
-            },
+            intents=parse_extracted_intents(data.get("intents")),
             detected_language=data.get("detected_language"),
             provider=self.provider,
             model=self._settings.model,
@@ -880,12 +895,7 @@ class GeminiProvider:
             transcript=transcript,
             translated_text=data.get("translated_text") or transcript,
             detected_language=data.get("detected_language"),
-            semantic_type=data.get("semantic_type", "unknown"),
-            fields=data.get("fields", {}) or {},
-            missing_fields=list(data.get("missing_fields", []) or []),
-            field_confidences={
-                k: float(v) for k, v in (data.get("field_confidences", {}) or {}).items()
-            },
+            intents=parse_extracted_intents(data.get("intents")),
             provider=self.provider,
             model=self._settings.model,
             latency_ms=latency_ms,

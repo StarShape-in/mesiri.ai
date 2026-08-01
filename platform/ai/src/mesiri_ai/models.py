@@ -92,6 +92,43 @@ class ExtractedIntent(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+def parse_extracted_intents(raw_intents: object) -> list[ExtractedIntent]:
+    """Turn a provider's raw ``"intents"`` JSON array (Phase B4 of
+    docs/execution/UNIFIED_UNDERSTANDING_PIPELINE.md) into
+    ``list[ExtractedIntent]`` -- one shared parser for every adapter
+    (Gemini's ``extract``/``understand_voice``, DeepSeek's ``extract``)
+    rather than duplicating the same field-mapping three times.
+
+    Deliberately lenient, matching the rest of this module's posture: a
+    malformed entry (not a dict) is skipped rather than raising -- a
+    provider hallucinating one bad entry among several good ones must not
+    take down the whole message the way a raised exception would (the
+    adapter's own malformed-output handling already covers "the whole
+    response wasn't valid JSON at all"; this is one level narrower). An
+    empty or entirely-malformed list falls through to
+    ``ExtractionResult``'s own ``_normalize`` (one default ``unknown``
+    intent), the same invariant every other empty-intents case in this
+    module already enforces.
+    """
+    if not isinstance(raw_intents, list):
+        return []
+    intents: list[ExtractedIntent] = []
+    for entry in raw_intents:
+        if not isinstance(entry, dict):
+            continue
+        intents.append(
+            ExtractedIntent(
+                semantic_type=entry.get("semantic_type", "unknown"),
+                fields=entry.get("fields", {}) or {},
+                missing_fields=list(entry.get("missing_fields", []) or []),
+                field_confidences={
+                    k: float(v) for k, v in (entry.get("field_confidences", {}) or {}).items()
+                },
+            )
+        )
+    return intents
+
+
 class ExtractionResult(BaseModel):
     """Output of a structured-extraction call.
 

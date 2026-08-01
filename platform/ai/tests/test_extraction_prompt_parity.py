@@ -165,3 +165,57 @@ def test_decomposition_prompt_forbids_reordering(provider):
     assert "reorder" in DECOMPOSITION_PROMPTS[provider].lower(), (
         f"{provider}'s decomposition prompt never forbids reordering segments"
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase B4 (docs/execution/UNIFIED_UNDERSTANDING_PIPELINE.md): the extraction
+# prompt now asks for "intents" (a list), not a single top-level
+# "semantic_type" -- both providers must ask for the SAME envelope shape, and
+# both must carry the explicit anti-over-splitting instruction, since that is
+# the one thing standing between this change and silently degrading the
+# ~95% of messages that really are single-intent.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("provider", sorted(PROMPTS))
+def test_the_json_envelope_asks_for_an_intents_array(provider):
+    """The per-type field schema further down still legitimately describes
+    "semantic_type" as a key WITHIN each intents entry (e.g. "Each entry in
+    intents has: semantic_type (expense|...)") -- that substring alone can't
+    distinguish the old top-level envelope from the new per-entry one, so
+    this only asserts the new envelope is present, not that the old phrase
+    is absent."""
+    assert '"intents" (array' in PROMPTS[provider], (
+        f"{provider}'s prompt does not ask for the intents envelope -- it will "
+        "keep returning a bare semantic_type the B4 parser no longer reads"
+    )
+
+
+@pytest.mark.parametrize("provider", sorted(PROMPTS))
+def test_the_prompt_tells_the_model_most_messages_are_one_intent(provider):
+    """The governing risk of Phase B4 (ADR-U1): asking for a list at all
+    creates real over-splitting pressure on messages that are genuinely one
+    thing. This is the one instruction standing between the prompt change
+    and that regression -- absence here is not a wording nitpick."""
+    prompt = PROMPTS[provider].lower()
+    assert "overwhelming majority" in prompt, (
+        f"{provider}'s prompt never tells the model most messages are a "
+        "single intent -- nothing discourages reflexive splitting"
+    )
+    assert "prefer one" in prompt or "prefer  one" in prompt.replace("\n", " "), (
+        f"{provider}'s prompt never states the safer-mistake tiebreak "
+        "(prefer one intent when genuinely unsure)"
+    )
+
+
+@pytest.mark.parametrize("provider", sorted(PROMPTS))
+def test_the_prompt_gives_a_worked_example_of_a_single_report_staying_one_intent(provider):
+    """Distinguishes "the message touches more than one fact" from "the
+    message is more than one request" -- the exact confusion that would
+    make "used 40 bags of cement for the foundation" split into a
+    material_update plus a fabricated second intent about the foundation."""
+    prompt = PROMPTS[provider]
+    assert "work_item" in prompt and "never a second intent" in prompt, (
+        f"{provider}'s prompt has no worked example distinguishing a "
+        "report's own fields from a genuinely separate second request"
+    )

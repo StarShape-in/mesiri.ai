@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from mesiri_ai.adapters.deepseek.adapter import DeepSeekExtractionProvider
 from mesiri_ai.adapters.gemini.adapter import GeminiProvider
 from mesiri_ai.adapters.sarvam.adapter import SarvamSpeechProvider
 from mesiri_contracts.common.errors import MesiriError
@@ -225,7 +226,12 @@ async def test_gemini_understand_voice_returns_combined_result_in_one_call():
     """understand_voice() merges transcribe+extract into one generate_content
     call -- previously two sequential calls (~4.5s combined, measured). One
     call in, one JSON response out with transcript/translated_text/
-    detected_language alongside the usual extraction fields."""
+    detected_language alongside the usual extraction fields.
+
+    Phase B4 (docs/execution/UNIFIED_UNDERSTANDING_PIPELINE.md): the mocked
+    response uses the new "intents" envelope (a list), not the pre-B4 flat
+    "semantic_type"/"fields" shape -- this is the real, intended prompt/
+    response contract change, not a regression to work around."""
     captured: dict = {}
 
     class _FakeModels:
@@ -238,10 +244,17 @@ async def test_gemini_understand_voice_returns_combined_result_in_one_call():
                         "transcript": "ജെസിബി നാല് മണിക്കൂർ ഓടി",
                         "translated_text": "The JCB ran for 4 hours",
                         "detected_language": "Malayalam",
-                        "semantic_type": "equipment_usage",
-                        "fields": {"equipment_name": "JCB", "duration_hours": 4},
-                        "missing_fields": [],
-                        "field_confidences": {"equipment_name": 0.97, "duration_hours": 0.95},
+                        "intents": [
+                            {
+                                "semantic_type": "equipment_usage",
+                                "fields": {"equipment_name": "JCB", "duration_hours": 4},
+                                "missing_fields": [],
+                                "field_confidences": {
+                                    "equipment_name": 0.97,
+                                    "duration_hours": 0.95,
+                                },
+                            }
+                        ],
                     }
                 )
             )
@@ -518,3 +531,121 @@ async def test_deepseek_translate_raises_when_text_unchanged_for_non_english_sou
         assert exc.value.error_code == "PROVIDER_MALFORMED_OUTPUT"
     finally:
         deepseek_module.call_with_resilience = original
+
+
+# ---------------------------------------------------------------------------
+# Phase B4 (docs/execution/UNIFIED_UNDERSTANDING_PIPELINE.md): extract()
+# parses the new "intents" envelope end-to-end, through the real adapter
+# code (not just parse_extracted_intents in isolation -- see
+# test_extraction_result.py for that). The Bidilaj trace (§1) is used
+# directly: it is the real message that motivated this phase, simulated as
+# the JSON a live model would return for it.
+# ---------------------------------------------------------------------------
+
+_BIDILAJ_INTENTS_JSON = {
+    "detected_language": "Malayalam",
+    "intents": [
+        {"semantic_type": "project_create", "fields": {"name": "Bidilaj"}},
+        {"semantic_type": "site_create", "fields": {"name": "Site A"}},
+        {
+            "semantic_type": "add_project_member",
+            "fields": {"member_name": "Usman", "role": "site_engineer"},
+        },
+    ],
+}
+
+
+async def test_gemini_extract_parses_the_bidilaj_trace_into_three_intents():
+    class _FakeModels:
+        def generate_content(self, *, model, contents, config=None):
+            return SimpleNamespace(text=json.dumps(_BIDILAJ_INTENTS_JSON))
+
+    provider = GeminiProvider.__new__(GeminiProvider)
+    provider._settings = SimpleNamespace(model="gemini-test", timeout_seconds=5, max_retries=0)
+    provider._client = _aio(_FakeModels())
+
+    result = await provider.extract(
+        "Add a new project, a project named Bidilaj, and then create a site "
+        "called Site A. Then I need to add an engineer, a site engineer, "
+        "named Usman.",
+        correlation_id="cor_bidilaj",
+    )
+
+    assert result.detected_language == "Malayalam"
+    assert len(result.intents) == 3
+    assert [i.semantic_type for i in result.intents] == [
+        "project_create",
+        "site_create",
+        "add_project_member",
+    ]
+    assert result.intents[0].fields == {"name": "Bidilaj"}
+    assert result.intents[2].fields["member_name"] == "Usman"
+    # events[0]-style pre-B5 callers still see a coherent single answer.
+    assert result.semantic_type == "project_create"
+
+
+async def test_gemini_extract_single_intent_response_still_works():
+    """The overwhelmingly common case -- a real model returning exactly one
+    entry in intents, unchanged in effect from before B4."""
+
+    class _FakeModels:
+        def generate_content(self, *, model, contents, config=None):
+            return SimpleNamespace(
+                text=json.dumps(
+                    {
+                        "detected_language": "English",
+                        "intents": [
+                            {
+                                "semantic_type": "expense",
+                                "fields": {"amount": 500, "vendor": "ABC Hardware"},
+                                "missing_fields": [],
+                                "field_confidences": {"amount": 0.95},
+                            }
+                        ],
+                    }
+                )
+            )
+
+    provider = GeminiProvider.__new__(GeminiProvider)
+    provider._settings = SimpleNamespace(model="gemini-test", timeout_seconds=5, max_retries=0)
+    provider._client = _aio(_FakeModels())
+
+    result = await provider.extract("paid 500 to ABC Hardware", correlation_id="cor_1")
+
+    assert len(result.intents) == 1
+    assert result.semantic_type == "expense"
+    assert result.fields == {"amount": 500, "vendor": "ABC Hardware"}
+
+
+async def test_deepseek_extract_parses_the_bidilaj_trace_into_three_intents():
+    provider = DeepSeekExtractionProvider.__new__(DeepSeekExtractionProvider)
+    provider._s = SimpleNamespace(
+        api_key=None, base_url="https://example.test", timeout_seconds=5, max_retries=0,
+        model="deepseek-test",
+    )
+
+    async def _fake_resilience(_raw, **kwargs):
+        content = json.dumps(_BIDILAJ_INTENTS_JSON)
+        return {"choices": [{"message": {"content": content}}]}, 42.0
+
+    import mesiri_ai.adapters.deepseek.adapter as deepseek_module
+
+    original = deepseek_module.call_with_resilience
+    deepseek_module.call_with_resilience = _fake_resilience
+    try:
+        result = await provider.extract(
+            "Add a new project, a project named Bidilaj, and then create a "
+            "site called Site A. Then I need to add an engineer, a site "
+            "engineer, named Usman.",
+            correlation_id="cor_bidilaj",
+        )
+    finally:
+        deepseek_module.call_with_resilience = original
+
+    assert len(result.intents) == 3
+    assert [i.semantic_type for i in result.intents] == [
+        "project_create",
+        "site_create",
+        "add_project_member",
+    ]
+    assert result.intents[1].fields == {"name": "Site A"}
