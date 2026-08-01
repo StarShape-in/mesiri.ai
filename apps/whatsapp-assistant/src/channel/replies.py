@@ -177,8 +177,13 @@ CATEGORY_SEMANTIC_HINT: dict[str, str] = _menu_semantic_hints()
 # a photographed attendance sheet is the most common way a site records who
 # turned up, and it goes through this same mechanism rather than a
 # labour-specific image path (Labour plan ADR-L3).
+#: "Expense" and "Material Delivery" both describe a piece of paper from a
+#: supplier, so their descriptions do the disambiguating rather than their
+#: titles: a material invoice recorded as an expense would count the spend
+#: without ever touching stock, and recorded as both would count it twice.
 IMAGE_PURPOSE_ROWS: tuple[ListRow, ...] = (
-    ListRow("img_expense", "Expense", "Receipt or bill"),
+    ListRow("img_material_invoice", "Material Delivery", "Supplier invoice or challan"),
+    ListRow("img_expense", "Expense", "Something you paid for"),
     ListRow("img_attendance", "Attendance", "Who worked today"),
     ListRow("img_site_update", "Site Update", "Progress photo"),
 )
@@ -187,6 +192,7 @@ IMAGE_PURPOSE_ROWS: tuple[ListRow, ...] = (
 # HELD image being re-processed (see interactions/image_purpose.py). Same
 # nudge-not-authority principle as CATEGORY_SEMANTIC_HINT above.
 IMAGE_PURPOSE_SEMANTIC_HINT: dict[str, str] = {
+    "img_material_invoice": "material_invoice",
     "img_expense": "expense",
     "img_attendance": "labour_update",
     "img_site_update": "general_site_update",

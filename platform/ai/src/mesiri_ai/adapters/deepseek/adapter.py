@@ -53,7 +53,7 @@ _EXTRACTION_PROMPT = (
     "worker's message. Return STRICT JSON only, with keys: "
     '"detected_language" (the source language\'s common English name, e.g. '
     '"Malayalam", "English"), '
-    '"semantic_type" (one of: expense, equipment_usage, material_update, '
+    '"semantic_type" (one of: expense, equipment_usage, material_update, material_invoice, '
     "labour_update, general_site_update, activity_correction, site_issue, site_issue_update, general_question, whoami_question, "
     "inventory_query, labour_query, activity_query, dpr_request, finance_query, transfer, "
     "petty_cash, "
@@ -90,6 +90,17 @@ _EXTRACTION_PROMPT = (
     "work_item is only for used material: the activity or task it was used for "
     '(e.g. "slabing the footing area", "column casting"). Omit work_item entirely '
     "for received material.\n"
+    "- material_invoice: supplier_name, invoice_number, invoice_date, "
+    "invoice_total, line_items (array), project_name. Use this type ONLY when "
+    "the input is a supplier invoice, bill, cash memo or delivery challan "
+    "listing materials with quantities -- a document, not a sentence. "
+    'One person saying "50 bags of cement arrived" is material_update; a '
+    "printed document listing several materials is material_invoice. "
+    "Each line_items entry has: material_name, quantity, unit, and "
+    "unit_cost/line_total when a price is printed. Copy the array through "
+    "unchanged if it is already present in the input -- do not re-derive, "
+    "re-order or total it. Never invent a price that was not printed, and "
+    "never extract GST/HSN, tax breakdowns, bank details or payment terms.\n"
     "- labour_update: workers (array), contractor, hours, project_name, occurred_on. "
     "Each item in workers is ONE line of the attendance report, with keys: "
     '"name" (the person\'s name -- omit entirely for an unnamed group), '

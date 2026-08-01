@@ -58,6 +58,46 @@ def test_every_semantic_type_is_offered_to_every_provider(provider, semantic):
 
 
 @pytest.mark.parametrize("provider", sorted(PROMPTS))
+def test_material_invoice_is_asked_for_a_line_items_array(provider):
+    """Same failure shape as the labour one below: an invoice lists several
+    materials, and a prompt that does not ask for an array gets one material
+    back with the rest silently dropped -- which reads to the user as the AI
+    having misread the document rather than as us having asked wrongly."""
+    assert "line_items" in PROMPTS[provider], (
+        f"{provider} never asks for line_items, so a multi-material invoice "
+        "collapses to a single line"
+    )
+
+
+@pytest.mark.parametrize("provider", sorted(PROMPTS))
+def test_material_invoice_is_distinguished_from_a_spoken_material_update(provider):
+    """The two are one word apart and mean different things. Without an
+    explicit contrast the model classifies "50 bags of cement arrived" as an
+    invoice and tries to find a supplier and a total that were never said."""
+    prompt = PROMPTS[provider]
+    assert "material_invoice" in prompt
+    assert "document, not a sentence" in prompt, (
+        f"{provider} does not tell the model how to choose between "
+        "material_update and material_invoice"
+    )
+
+
+@pytest.mark.parametrize("provider", sorted(PROMPTS))
+def test_no_provider_is_asked_for_tax_or_bank_details(provider):
+    """V1 scope, stated in the prompt rather than filtered afterwards: every
+    field the model is asked for costs accuracy on the fields that matter, and
+    these stay legible in the stored image if they are ever needed."""
+    assert "GST/HSN" in PROMPTS[provider]
+
+
+@pytest.mark.parametrize("provider", sorted(PROMPTS))
+def test_no_provider_may_invent_a_price(provider):
+    """An invented rate is worse than a missing one: a missing rate shows as
+    'Not recorded', an invented one shows as fact and enters the spend total."""
+    assert "Never invent a price" in PROMPTS[provider]
+
+
+@pytest.mark.parametrize("provider", sorted(PROMPTS))
 def test_labour_is_asked_for_a_workers_array_not_a_flat_headcount(provider):
     """The whole named-worker feature depends on this shape. A prompt asking
     only for headcount/trade cannot express "Ravi, mason" at all."""

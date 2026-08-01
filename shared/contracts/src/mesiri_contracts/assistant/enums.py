@@ -30,6 +30,13 @@ class SemanticType(str, Enum):
     EXPENSE = "expense"
     EQUIPMENT_USAGE = "equipment_usage"
     MATERIAL_UPDATE = "material_update"
+    # A supplier's document listing several materials, not a sentence about
+    # one. Distinct from MATERIAL_UPDATE because the shapes differ in kind: a
+    # MATERIAL_UPDATE carries one material and a direction, an invoice carries
+    # a `line_items` array plus supplier and totals, and always means received.
+    # Splitting them keeps the single-material prompt (the far more common
+    # message) from having to describe an array it will never produce.
+    MATERIAL_INVOICE = "material_invoice"
     LABOUR_UPDATE = "labour_update"
     GENERAL_SITE_UPDATE = "general_site_update"
     # ADR-D14 (docs/execution/DAILY_REPORTING_PLAN.md): the user is correcting

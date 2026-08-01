@@ -108,6 +108,20 @@ python -m ruff check backend/src backend/tests backend/migrations
 
 # dashboard
 cd apps/dashboard && npx tsc -b --noEmit && npx oxlint src/ && npx vite build
+
+# platform/ai + shared contracts, when either was touched
+cd platform/ai && python -m pytest tests/ -q
+```
+
+**WhatsApp assistant — needs PYTHONPATH, and Windows uses `;` not `:`.** Without
+it the suite dies at `conftest` with `ModuleNotFoundError: No module named
+'mesiri'`, which looks like a broken environment and is easy to mistake for
+"this suite cannot be run here". It can. It takes ~9 minutes:
+
+```bash
+cd apps/whatsapp-assistant
+PYTHONPATH="<repo>/backend/src;<repo>/shared/contracts/src;<repo>/platform/ai/src;<repo>/apps/whatsapp-assistant/src" \
+  python -m pytest tests/ --ignore=tests/integration -q
 ```
 
 Then **pull, combine, push** — in that order, every time. Other people push
