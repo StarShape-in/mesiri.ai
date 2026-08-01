@@ -799,6 +799,51 @@ Full monorepo suite: 2665 passed (24 fewer than before A6, exactly the
 deleted tests — no other count changed), 16 skipped (pre-existing), 230
 deselected.
 
+#### A7 — done 2026-07-31.
+
+Measured, not assumed, by instrumenting a call-counting fake Redis and
+driving the REAL `PlanStore`/`plan_executor.advance_plan` code paths a
+size-1 `SINGLE_MESSAGE`-origin plan actually takes — process.py's exact
+kickoff sequence (`start_plan` → `mark_step_running` → `get_plan` for the
+progress prefix) and `advance_plan`'s exact sequence for that plan's one
+step resolving successfully (through to `_start_next_runnable`'s "nothing
+left to run" branch, which clears the plan and — because of `PlanOrigin.
+SINGLE_MESSAGE` — returns `None` rather than a closing summary, per A4).
+
+| Stage | Redis round trips added |
+|---|---|
+| Kickoff (message arrives, workflow starts) | 3 `get_json` + 2 `set_json` = **5** |
+| Confirmation (user taps Yes, step resolves) | 7 `get_json` + 3 `set_json` = **10** |
+| **Total, full message lifecycle** | **15** |
+
+**A real inefficiency found while measuring, not introduced by this phase:**
+`PlanStore.mark_step_running` calls `self.get_plan(...)` directly, then
+calls `self._replace_step(...)`, which calls `self.get_plan(...)` *again* —
+two reads where one would do. This method was built in Phase 1 of the
+original composite-request-plan-layer effort (long before this doc), so A4
+did not introduce it — but A4 is what makes every ordinary single-intent
+message pay for it, where before only a multi-segment message or the
+entity-resolution layer's own chain ever called `mark_step_running` at all.
+Not fixed here — A7's job was to measure, and fixing a shared `PlanStore`
+method touches the entity-resolution layer's own live chain too, which
+deserves its own change and its own verification, not a drive-by inside a
+measurement task.
+
+**What this costs in practice.** 15 sequential (not batched) Redis round
+trips, split across two separate inbound HTTP requests (the initial message
+and the later confirmation), each independently pays local network latency
+— on a same-region/same-VPC Redis (the realistic deployment shape here,
+matching the VPS setup this whole codebase targets), each round trip is
+on the order of ~0.3–1 ms, so the two added stages cost roughly **1.5–5 ms
+kickoff** and **3–10 ms on confirmation** — single-digit milliseconds
+against a request whose own extraction call (the LLM round trip already
+happening on every message, unrelated to this phase) costs hundreds of
+milliseconds to low seconds. Not free, but not the cost that matters on
+this path. No live Redis was reachable from this environment to confirm the
+real network figure directly; the range above is a documented estimate
+against typical same-region Redis latency, not a live measurement — stated
+plainly as the one part of this number that is not directly verified.
+
 ### Phase B — Intents-plural extraction
 
 | # | Step | Verification |
