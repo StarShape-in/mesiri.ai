@@ -894,6 +894,57 @@ seeing a coherent single answer.
 Full monorepo suite: 2695 passed (6 more than before — this phase's own new
 tests), 16 skipped (pre-existing), 230 deselected.
 
+#### B2 — done 2026-07-31.
+
+**Correction to §6.2 above, made while implementing:** that section said
+"add `intents: list[Candidate]`, keep `semantic_type` **and `candidates`**
+as derived properties" — the `candidates` part was wrong and has been
+struck. `candidates` is the competing-interpretations axis (`planner/
+ambiguity.py` picks one of several rival readings); `intents` is composing
+(all co-occur). ADR-U3 is explicit that conflating the two axes makes "did
+the user ask for two things, or might they have meant one of two things?"
+unanswerable — making `candidates` a derived view of `intents` would do
+exactly that. `candidates` is untouched: still a real, independently
+populated field, exactly as it always was.
+
+**Also correctly NOT derived, unlike B1:** `semantic_type`/`missing_fields`/
+`warnings` stay real fields too, not properties reading `intents[0]`.
+`ExtractionResult` (B1) is constructed once, atomically, by an adapter —
+turning its old fields into read-only properties was safe. `understanding/
+pipeline.py` builds `UnderstandingResult` **incrementally**, across several
+methods (`result.semantic_type = semantic`, `result.warnings.extend(...)`,
+`result.missing_fields = list(...)`) — a read-only property has no setter,
+so this construction style is fundamentally incompatible with the B1
+approach. Making it compatible would mean rewriting `_apply_extraction`/
+`_apply_deterministic_shortcut` to build a whole `Candidate` first and
+assign `result.intents` once at the end — real, valid future work, but a
+larger rewrite than "B2: add the field," so left as a genuine field
+addition. `CONTRACT_VERSION` stays `v1`: adding an optional field with a
+default is backward compatible, and `M2_M3_INTEGRATION_CONTRACT.md` needed
+no update — it documents the M2→M3 **input** contract
+(`NormalizedMessage`), not `UnderstandingResult`'s own output fields.
+
+**Implementation:** `understanding/pipeline.py`'s `_apply_extraction` now
+also sets `result.intents` — one `Candidate` per `extraction.intents[i]`
+(new `_build_candidate_from_intent` helper, mirroring the existing
+`_build_candidate`'s construction exactly, generalized to read an
+`ExtractedIntent` instead of `ExtractionResult`'s own `intents[0]` shim).
+`_apply_deterministic_shortcut` (the greeting/who-am-i fast path, no
+extraction call at all) sets a single trivial `Candidate(semantic_type=...)`
+— `intents` must never be empty, the same invariant B1 enforces on
+`ExtractionResult` itself. `intents` is **set**, not appended, on each call
+— unlike `candidates` (which can accumulate across separate pipeline
+stages over one message's life), one extraction call produces every intent
+a message has all at once.
+
+Added 3 tests to `test_understanding_pipeline.py`: `intents` populated
+alongside (not instead of) `candidates`; the deterministic-shortcut case;
+and `unknown_fields`/`missing_fields` correctly carried per-intent. Always
+length 1 today — B4 is what makes it genuinely plural.
+
+Full monorepo suite: 2698 passed (3 more — this phase's own new tests), 16
+skipped (pre-existing), 230 deselected.
+
 ### Phase C — Deferred, not in scope here
 
 The `whatsapp_number`-arrives-later gap (§4.2) and the whole-plan permission

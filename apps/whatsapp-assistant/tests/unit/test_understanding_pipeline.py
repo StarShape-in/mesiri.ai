@@ -360,3 +360,60 @@ async def test_understand_text_segment_passes_expense_categories_through():
     )
 
     assert extraction.last_expense_categories == ["Materials", "Fuel"]
+
+
+# ---------------------------------------------------------------------------
+# UnderstandingResult.intents (Phase B2 of docs/execution/
+# UNIFIED_UNDERSTANDING_PIPELINE.md) -- always length 1 until B4 changes the
+# extraction prompt, but must already be populated correctly, independent of
+# `candidates` (a different axis -- see ADR-U3).
+# ---------------------------------------------------------------------------
+
+
+async def test_extraction_populates_intents_alongside_candidates():
+    extraction = FakeExtractionProvider(
+        ExtractionResult(
+            semantic_type="expense", fields={"amount": 500, "vendor": "ABC"}, provider="fake"
+        )
+    )
+    pipeline = await _build(extraction=extraction)
+
+    result = await pipeline.understand(_msg(text="paid 500 to ABC"))
+
+    assert len(result.intents) == 1
+    assert result.intents[0].semantic_type == SemanticType.EXPENSE
+    assert result.intents[0].fields == {"amount": 500, "vendor": "ABC"}
+    # candidates (the competing-interpretations axis) still populated
+    # exactly as before -- unaffected by adding intents.
+    assert len(result.candidates) == 1
+    assert result.candidates[0].semantic_type == SemanticType.EXPENSE
+
+
+async def test_deterministic_greeting_shortcut_still_populates_one_intent():
+    """No extraction call happens for a deterministic "hi" -- intents must
+    still never be empty (the same invariant B1 enforces on
+    ExtractionResult itself)."""
+    pipeline = await _build()
+
+    result = await pipeline.understand(_msg(text="hi"))
+
+    assert len(result.intents) == 1
+    assert result.intents[0].semantic_type == SemanticType.UNKNOWN
+
+
+async def test_intents_reflects_unknown_fields_and_missing_fields_per_intent():
+    extraction = FakeExtractionProvider(
+        ExtractionResult(
+            semantic_type="material_update",
+            fields={"material_name": "cement"},
+            unknown_fields={"batch_no": "X1"},
+            missing_fields=["quantity"],
+            provider="fake",
+        )
+    )
+    pipeline = await _build(extraction=extraction)
+
+    result = await pipeline.understand(_msg(text="cement batch X1"))
+
+    assert result.intents[0].unknown_fields == {"batch_no": "X1"}
+    assert result.intents[0].missing_fields == ["quantity"]

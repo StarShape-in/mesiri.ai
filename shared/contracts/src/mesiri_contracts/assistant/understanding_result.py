@@ -53,6 +53,24 @@ class UnderstandingResult(BaseModel):
     # Semantic understanding.
     semantic_type: SemanticType = SemanticType.UNKNOWN
     candidates: list[Candidate] = Field(default_factory=list)
+    # Phase B of docs/execution/UNIFIED_UNDERSTANDING_PIPELINE.md. Composing,
+    # not competing -- see that doc's ADR-U3: `candidates` above are RIVAL
+    # readings of one request (planner/ambiguity.py picks one); `intents` are
+    # requests that ALL co-occur in the one message ("create a project, then
+    # a site, then add a member" is three). Deliberately NOT derived from
+    # `candidates` (a real temptation, since both are `list[Candidate]`) --
+    # conflating the two axes would make "did the user ask for two things,
+    # or might they have meant one of two things?" unanswerable. Real field,
+    # not yet a derived property the way ExtractionResult's old fields
+    # became in B1: understanding/pipeline.py builds this result
+    # incrementally across several methods (`result.semantic_type = ...`,
+    # `result.warnings.append(...)`), which a read-only property can't
+    # support without a larger rewrite of that construction style -- out of
+    # scope for B2, which only adds the field. Always length 1 until B4
+    # changes the extraction prompt; `semantic_type`/`missing_fields`/
+    # `warnings` above stay the real, independently-set fields they already
+    # are, unaffected by this addition.
+    intents: list[Candidate] = Field(default_factory=list)
 
     # Aggregate quality signals.
     overall_confidence: ConfidenceLevel = ConfidenceLevel.UNUSABLE

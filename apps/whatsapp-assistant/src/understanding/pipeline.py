@@ -22,7 +22,7 @@ from typing import Any
 
 from mesiri_ai.confidence import ConfidencePolicy, ConfidenceSignals
 from mesiri_ai.greeting_classifier import is_greeting_trigger
-from mesiri_ai.models import ExtractionResult
+from mesiri_ai.models import ExtractedIntent, ExtractionResult
 from mesiri_ai.ports.extraction import StructuredExtractionProvider
 from mesiri_ai.ports.vision import VisionUnderstandingProvider
 from mesiri_ai.ports.voice_extraction import VoiceExtractionProvider
@@ -417,6 +417,13 @@ class UnderstandingPipeline:
         """
         result.semantic_type = semantic_type
         result.overall_confidence = ConfidenceLevel.HIGH
+        # Phase B (docs/execution/UNIFIED_UNDERSTANDING_PIPELINE.md): a
+        # deterministic shortcut still names exactly one intent -- no
+        # extraction call happened to find any others, and greeting/who-am-i
+        # are never themselves part of a multi-intent message in practice.
+        # Kept non-empty (never "no intents") for the same reason
+        # ExtractionResult._normalize enforces it in B1.
+        result.intents = [Candidate(semantic_type=semantic_type)]
 
     def _apply_extraction(
         self,
@@ -436,6 +443,14 @@ class UnderstandingPipeline:
         result.candidates.append(candidate)
         result.missing_fields = list(extraction.missing_fields)
         result.warnings.extend(extraction.warnings)
+        # Phase B: intents is SET (not appended) -- one extraction call
+        # produces every intent the message has all at once (today, always
+        # exactly one; B4 changes that), unlike `candidates` above, which
+        # can accumulate across separate pipeline stages over the life of
+        # one message.
+        result.intents = [
+            self._build_candidate_from_intent(intent) for intent in extraction.intents
+        ]
         result.provider_executions.append(
             ProviderExecution(
                 provider=extraction.provider or getattr(self._extraction, "provider", "unknown"),
@@ -469,6 +484,31 @@ class UnderstandingPipeline:
             missing_fields=extraction.missing_fields,
             field_confidences=field_confidences,
             warnings=extraction.warnings,
+        )
+        if candidate_cls is Candidate:
+            kwargs["semantic_type"] = semantic
+        return candidate_cls(**kwargs)
+
+    @staticmethod
+    def _build_candidate_from_intent(intent: ExtractedIntent) -> Candidate:
+        """Same construction as _build_candidate above, generalized to read
+        one ExtractedIntent (Phase B) instead of an ExtractionResult's own
+        derived intents[0] shim -- used to build UnderstandingResult.intents,
+        which needs one Candidate per intent, not just the first."""
+        try:
+            semantic = SemanticType(intent.semantic_type)
+        except ValueError:
+            semantic = SemanticType.UNKNOWN
+        candidate_cls = CANDIDATE_TYPES.get(semantic, Candidate)
+        field_confidences = [
+            FieldConfidence(field=k, confidence=v) for k, v in intent.field_confidences.items()
+        ]
+        kwargs: dict[str, Any] = dict(
+            fields=intent.fields,
+            unknown_fields=intent.unknown_fields,
+            missing_fields=intent.missing_fields,
+            field_confidences=field_confidences,
+            warnings=intent.warnings,
         )
         if candidate_cls is Candidate:
             kwargs["semantic_type"] = semantic
