@@ -855,6 +855,45 @@ plainly as the one part of this number that is not directly verified.
 | B5 | Migrate the 15 read sites off the shims; delete the shims. | Full suite; grep for `.semantic_type`. |
 | B6 | Delete `decompose()` everywhere, `decomposed_plan.py`, `pending_decomposition.py`, the port, adapters, fakes, and the `unknown`-gated branch in `process.py`. | Full suite; §6.4's LOC accounting reconciles. |
 
+#### B1 — done 2026-07-31.
+
+Added `ExtractedIntent` (one distinct request — `semantic_type`/`fields`/
+`unknown_fields`/`missing_fields`/`field_confidences`/`warnings`, exactly
+`ExtractionResult`'s old per-intent fields moved onto their own model) and
+`ExtractionResult.intents: list[ExtractedIntent]`. The six old fields
+become `@property` methods reading `intents[0]`.
+
+**The real risk in B1 was never the schema — it was the ~100+ existing call
+sites across the monorepo that construct `ExtractionResult(semantic_type=
+..., fields=...)` directly** (every adapter, every fake, every test
+fixture), none of which are migrated until B5. Closed with a
+`model_validator(mode="before")` that translates that legacy top-level
+kwarg shape into `intents=[ExtractedIntent(...)]` before Pydantic
+validates — so construction is untouched, and only *reading* `.intents`
+directly (new code, from B3 onward) needs the plural shape at all. A
+second `model_validator(mode="after")` normalizes a bare
+`ExtractionResult()` (a real, existing pattern — `FakeExtractionProvider`'s
+own default) to one default `ExtractedIntent()`, so "no intents" is never
+representable — the same invariant `DecompositionResult._normalize`
+already enforced for its analogous case, reused here rather than
+reinvented.
+
+**Verification, not assumption:** ran the full monorepo suite with zero
+test-file changes anywhere outside this phase's own new tests — 2689
+passed, unchanged from before B1. That result *is* the proof the migration
+validator works: every one of those ~100+ legacy construction call sites
+exercised it and came out byte-identical. Added `test_extraction_result.py`
+(6 tests) covering what the wider suite can't see directly: legacy-kwargs
+construction, bare `ExtractionResult()`, new-style `intents=[...]`
+construction bypassing the legacy migrator correctly, every derived
+property reading `intents[0]`, message-level fields (`detected_language`
+etc.) staying untouched by the migrator, and the actual Bidilaj-trace shape
+(§1) — three intents constructed directly, `events[0]`-style callers still
+seeing a coherent single answer.
+
+Full monorepo suite: 2695 passed (6 more than before — this phase's own new
+tests), 16 skipped (pre-existing), 230 deselected.
+
 ### Phase C — Deferred, not in scope here
 
 The `whatsapp_number`-arrives-later gap (§4.2) and the whole-plan permission
