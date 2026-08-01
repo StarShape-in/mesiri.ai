@@ -327,31 +327,35 @@ def _normalize_labour_fields(fields: dict, *, input_modality: InputModality | No
     return out
 
 
-def build_canonical_event(
+def _build_event_from_intent(
+    *,
+    semantic_type: SemanticType,
+    candidate: Candidate | None,
     understanding: UnderstandingResult,
     context: ResolvedContextV2,
-    *,
-    direction_hint: str | None = None,
-    forwarded: bool = False,
-    frequently_forwarded: bool = False,
+    direction_hint: str | None,
+    forwarded: bool,
+    frequently_forwarded: bool,
 ) -> CanonicalEventV2:
-    """Normalize AI output + resolved context into a CanonicalEvent v2.
+    """The real work behind ``build_canonical_event`` -- extracted in Phase B3
+    (docs/execution/UNIFIED_UNDERSTANDING_PIPELINE.md) so it can build one
+    event per INTENT (``understanding.intents``, Phase B2) rather than only
+    ever reading ``understanding.semantic_type``/the one candidate that
+    matches it. ``build_canonical_event`` below is now a thin wrapper calling
+    this with the primary semantic_type/candidate; every existing caller of
+    that singular function is unaffected by this refactor -- same inputs,
+    same output, verified byte-identical by the existing test suite.
 
-    ``direction_hint`` is a fallback default only -- set when the user tapped
-    Material's Arrived/Used buttons (channel/replies.py MATERIAL_DIRECTION_
-    BUTTONS) before reporting. It's applied only if the message's own words
-    didn't already resolve to a clear "received"/"used"; an explicit spoken/
-    typed direction always wins over a stale or mismatched hint.
-
-    ``forwarded`` / ``frequently_forwarded`` come from Meta's own message
-    context (see ingress/normalization.py's `_resolve_forwarding`). They are
-    carried as fields rather than acted on here: canonicalization decides
-    business intent, not presentation, and every workflow already gates on a
-    Yes/No confirmation. What they change is what that confirmation *says* --
-    a second-hand report gets flagged as such so the sender re-reads it
-    instead of tapping Yes reflexively (see interactions/response_handler.py).
+    ``semantic_type``/``candidate`` are passed in explicitly rather than
+    re-derived from ``understanding`` so this same function serves BOTH the
+    single-intent path (n<=1, byte-identical to pre-B3 behaviour) and the
+    genuinely-plural path (n>1, only possible once B4 changes the extraction
+    prompt) -- each intent supplies its own semantic_type/candidate, while
+    message-level context (``understanding.original_content_reference``,
+    ``context.timezone``, ``forwarded``, etc.) is shared across every event
+    built from the one message, exactly as it already is for the single
+    event case.
     """
-    candidate = _select_candidate(understanding)
     fields: dict = {}
     warnings: list[str] = []
     if candidate is not None:
@@ -373,10 +377,10 @@ def build_canonical_event(
         # the source media gets this for free.
         fields["media_object_key"] = understanding.original_content_reference
 
-    if understanding.semantic_type is SemanticType.LABOUR_UPDATE:
+    if semantic_type is SemanticType.LABOUR_UPDATE:
         fields = _normalize_labour_fields(fields, input_modality=understanding.input_modality)
 
-    if understanding.semantic_type in (
+    if semantic_type in (
         SemanticType.LABOUR_UPDATE,
         SemanticType.MATERIAL_UPDATE,
         SemanticType.EXPENSE,
@@ -392,7 +396,7 @@ def build_canonical_event(
         # resolve_occurred_date was written expecting exactly this).
         fields = resolve_occurred_date(fields, timezone_name=context.timezone)
 
-    if understanding.semantic_type is SemanticType.MATERIAL_UPDATE:
+    if semantic_type is SemanticType.MATERIAL_UPDATE:
         fields = _normalize_material_fields(fields)
         if fields.get("direction") not in ("received", "used") and direction_hint in (
             "received",
@@ -430,7 +434,7 @@ def build_canonical_event(
                 warnings=warnings,
             )
 
-    event_type = resolve_event_type(understanding.semantic_type, fields)
+    event_type = resolve_event_type(semantic_type, fields)
 
     if event_type in _TERMINAL_EVENT_TYPES:
         completeness = IntentCompleteness.NOT_ACTIONABLE
@@ -464,6 +468,41 @@ def build_canonical_event(
     )
 
 
+def build_canonical_event(
+    understanding: UnderstandingResult,
+    context: ResolvedContextV2,
+    *,
+    direction_hint: str | None = None,
+    forwarded: bool = False,
+    frequently_forwarded: bool = False,
+) -> CanonicalEventV2:
+    """Normalize AI output + resolved context into a CanonicalEvent v2.
+
+    ``direction_hint`` is a fallback default only -- set when the user tapped
+    Material's Arrived/Used buttons (channel/replies.py MATERIAL_DIRECTION_
+    BUTTONS) before reporting. It's applied only if the message's own words
+    didn't already resolve to a clear "received"/"used"; an explicit spoken/
+    typed direction always wins over a stale or mismatched hint.
+
+    ``forwarded`` / ``frequently_forwarded`` come from Meta's own message
+    context (see ingress/normalization.py's `_resolve_forwarding`). They are
+    carried as fields rather than acted on here: canonicalization decides
+    business intent, not presentation, and every workflow already gates on a
+    Yes/No confirmation. What they change is what that confirmation *says* --
+    a second-hand report gets flagged as such so the sender re-reads it
+    instead of tapping Yes reflexively (see interactions/response_handler.py).
+    """
+    return _build_event_from_intent(
+        semantic_type=understanding.semantic_type,
+        candidate=_select_candidate(understanding),
+        understanding=understanding,
+        context=context,
+        direction_hint=direction_hint,
+        forwarded=forwarded,
+        frequently_forwarded=frequently_forwarded,
+    )
+
+
 # #13 Cross-Module Trigger: a material report naming a `work_item` ("used 40
 # bags of cement during plastering") is describing TWO things in one breath.
 # Only these two event types carry a work_item at all -- MaterialUpdateCandidate's
@@ -489,20 +528,44 @@ def build_canonical_events(
     build_canonical_event alone would have produced -- every existing caller
     of the singular function is unaffected by this one existing alongside it.
 
-    Scope, stated plainly: today this ONLY detects the deterministic #13
-    case below (a material report's own `work_item` field, which the
-    extraction prompt already asks for and which already flows into
-    fields unchanged -- no new AI extraction risk). It does NOT yet split a
+    Scope, as of Phase B3 (docs/execution/UNIFIED_UNDERSTANDING_PIPELINE.md):
+    when `understanding.intents` (Phase B2) is genuinely plural -- only
+    possible once B4 changes the extraction prompt -- this builds one event
+    PER intent directly, via the same `_build_event_from_intent` helper
+    `build_canonical_event` itself now delegates to. Until then (today,
+    always: B4 hasn't shipped), this function is unchanged from before B3:
+    the primary event plus the ONE deterministic case it already detected --
+    a material report's own `work_item` field (#13 Cross-Module Trigger),
+    which the extraction prompt already asks for and which already flows
+    into fields unchanged -- no new AI extraction risk. It does NOT split a
     single free-text sentence describing several unrelated things ("finished
-    plastering Block A, started painting Block B") into separate segments --
-    that needs either an extraction-prompt change (cross-review, not
-    something to tune blind) or a dedicated deterministic clause-splitter,
-    neither of which this pass attempts. The sequencing machinery this
-    function feeds (planning/decomposition.py's build_plan_from_segments,
+    plastering Block A, started painting Block B") into separate segments;
+    that is exactly what B4's prompt change is for. The sequencing machinery
+    this function feeds (planning/decomposition.py's build_plan_from_segments,
     via runtime/inbound_journey/process.py -- see docs/execution/
-    UNIFIED_UNDERSTANDING_PIPELINE.md Phase A2) is general-purpose and ready
-    for that source once it exists.
+    UNIFIED_UNDERSTANDING_PIPELINE.md Phase A2) is general-purpose and
+    already exercised by both paths below.
     """
+    if len(understanding.intents) > 1:
+        events: list[CanonicalEventV2] = []
+        for intent in understanding.intents:
+            try:
+                semantic_type = SemanticType(intent.semantic_type)
+            except ValueError:
+                semantic_type = SemanticType.UNKNOWN
+            events.append(
+                _build_event_from_intent(
+                    semantic_type=semantic_type,
+                    candidate=intent,
+                    understanding=understanding,
+                    context=context,
+                    direction_hint=direction_hint,
+                    forwarded=forwarded,
+                    frequently_forwarded=frequently_forwarded,
+                )
+            )
+        return events
+
     primary = build_canonical_event(
         understanding,
         context,

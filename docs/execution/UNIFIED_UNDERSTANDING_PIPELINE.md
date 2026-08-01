@@ -945,6 +945,50 @@ length 1 today — B4 is what makes it genuinely plural.
 Full monorepo suite: 2698 passed (3 more — this phase's own new tests), 16
 skipped (pre-existing), 230 deselected.
 
+#### B3 — done 2026-07-31.
+
+`build_canonical_event`'s entire body (fields construction, labour/material
+normalization, occurred-date resolution, the material-direction
+clarification special case, completeness/missing-fields computation) was
+extracted into a new `_build_event_from_intent` helper that takes
+`semantic_type`/`candidate` as explicit parameters instead of reading
+`understanding.semantic_type`/re-deriving the one matching candidate via
+`_select_candidate`. `build_canonical_event` itself is now a thin wrapper
+calling that helper with the primary semantic_type/candidate — same
+inputs, same output, verified byte-identical by the full suite before any
+new behavior was added (a dedicated intermediate test run, not just the
+final one).
+
+`build_canonical_events` now branches on `len(understanding.intents)`: `> 1`
+builds one event per intent directly via `_build_event_from_intent` (a new
+path, only reachable once B4 ships); `<= 1` is **completely unchanged**
+from before B3 — the primary event plus the existing deterministic
+`work_item`-linked second segment for a material report, byte-identical.
+
+**What the plural path deliberately does NOT yet handle, named rather than
+silently absent:** entity-linking (a site's `project_id` StepRef-bound to a
+project created earlier in the same message) is `planning/decomposition.py`'s
+job, downstream of this function — `build_canonical_events` only builds the
+per-intent `CanonicalEventV2`s here, unlinked; wiring them into a `Plan` with
+`StepRef`s is unaffected by B3 and already works today for the
+decompose()-based path. Whether that same linking logic needs any change
+once genuinely-plural `build_canonical_events` output starts flowing into it
+(B4) is not yet answered — flagged for verification when B4 lands, not
+assumed safe.
+
+Added `test_intents_plural_canonicalization.py` (4 tests, hand-constructing
+multi-intent `UnderstandingResult`s directly since B4 hasn't shipped and no
+real pipeline produces `len(intents) > 1` yet): the Bidilaj trace itself
+(§1) — three intents in, three events out, each with its own event_type and
+fields; every event sharing message-level context (organization_id/
+project_id/site_id); one intent needing clarification not sinking the
+others' own completeness; and an invalid `semantic_type` string on one
+intent degrading only that event to `UNRECOGNIZED`, matching the
+single-intent path's own existing `ValueError` handling.
+
+Full monorepo suite: 2702 passed (4 more — this phase's own new tests), 16
+skipped (pre-existing), 230 deselected.
+
 ### Phase C — Deferred, not in scope here
 
 The `whatsapp_number`-arrives-later gap (§4.2) and the whole-plan permission
