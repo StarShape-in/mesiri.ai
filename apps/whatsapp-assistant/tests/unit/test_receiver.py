@@ -42,6 +42,35 @@ async def test_receiver_normalizes_text_message() -> None:
 
 
 @pytest.mark.asyncio
+async def test_receiver_enqueues_claimed_messages_instead_of_processing_inline() -> None:
+    """When a durable queue is wired up (runtime/queue.py, real Redis only),
+    a claimed message must be handed to it rather than to
+    asyncio.create_task -- that in-process task is exactly what gets lost if
+    the process crashes before it finishes."""
+    deduplication_store = InMemoryDeduplicationStore()
+    message_store = InMemoryNormalizedMessageStore()
+    media_downloader = AsyncMock()
+    enqueue = AsyncMock()
+    receiver = WhatsAppReceiver(
+        deduplication_store=deduplication_store,
+        media_downloader=media_downloader,
+        message_store=message_store,
+        object_storage=FakeObjectStorage(),
+        enqueue=enqueue,
+    )
+
+    scheduled = await receiver.handle_payload(text_webhook_payload())
+    await receiver.wait_until_idle()
+
+    assert scheduled == 1
+    enqueue.assert_awaited_once()
+    (context,) = enqueue.await_args.args
+    assert context.message["id"] == "wamid.text"
+    # Never processed in-process -- that's the worker's job now.
+    assert await message_store.get("wamid.text") is None
+
+
+@pytest.mark.asyncio
 async def test_receiver_deduplicates_duplicate_webhooks() -> None:
     deduplication_store = InMemoryDeduplicationStore()
     message_store = InMemoryNormalizedMessageStore()

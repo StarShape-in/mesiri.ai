@@ -40,6 +40,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await app.state.container.redis_client.connect()
             # M8: connect the Material execution transaction owner.
             await app.state.container.material_db.connect()
+            # Durable ingress queue (see runtime/queue.py): None against
+            # FakeRedis, in which case WhatsAppReceiver already fell back to
+            # asyncio.create_task at construction time and there is nothing
+            # to connect here.
+            if app.state.container.message_enqueuer is not None:
+                await app.state.container.message_enqueuer.connect()
 
             # Context-sync watchdog: dashboard project/site assignment changes
             # are projected into the context layer best-effort (see
@@ -85,6 +91,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     with suppress(asyncio.CancelledError):
                         await automation_task
                 await app.state.container.material_db.disconnect()
+                if app.state.container.message_enqueuer is not None:
+                    await app.state.container.message_enqueuer.disconnect()
                 await app.state.container.redis_client.disconnect()
                 # Only closes anything if a render actually happened (the
                 # headless browser launches lazily on first use) -- a no-op

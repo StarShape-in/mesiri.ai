@@ -11,7 +11,7 @@ import httpx
 from fastapi import Request
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from ingress.deduplication import InMemoryDeduplicationStore
+from ingress.deduplication import DeduplicationStore, InMemoryDeduplicationStore
 from ingress.media_ingestion import MetaMediaDownloader
 from ingress.receiver import InMemoryNormalizedMessageStore, WhatsAppReceiver
 from runtime.logging_ports import MessageLogger, TraceLogger
@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from runtime.inventory_query import MaterialInventoryQueryService
     from runtime.material_catalog_query import MaterialCatalogQueryService
     from runtime.org_settings_query import OrganizationSettingsQueryService
+    from runtime.queue import MessageEnqueuer
     from understanding.pipeline import UnderstandingPipeline
     from workflows import WorkflowRuntime
 
@@ -57,9 +58,14 @@ class AppContainer:
 
     settings: Settings
     http_client: httpx.AsyncClient
-    deduplication_store: InMemoryDeduplicationStore
+    deduplication_store: DeduplicationStore
     message_store: InMemoryNormalizedMessageStore
     receiver: WhatsAppReceiver
+    # Durable ingress queue handle (see runtime/queue.py). None when running
+    # against FakeRedis (dev/test) -- WhatsAppReceiver falls back to
+    # asyncio.create_task in that case. connect()/disconnect() are called by
+    # the lifespan handler, same lifecycle pattern as redis_client.
+    message_enqueuer: MessageEnqueuer | None
     context_resolver: ContextResolver
     # The understanding pipeline (STT/vision/extraction). Held on the container
     # so out-of-band callers (e.g. the control-plane test harness in
@@ -112,7 +118,6 @@ class AppContainer:
 
 def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppContainer:
     """Construct the application dependency container."""
-    deduplication_store = InMemoryDeduplicationStore(ttl=timedelta(hours=settings.dedup_ttl_hours))
     message_store = InMemoryNormalizedMessageStore()
     media_downloader = MetaMediaDownloader(
         client=http_client,
@@ -191,7 +196,8 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
 
     # Redis for the active context store.  Use a real RedisClient when
     # MESIRI_REDIS__HOST is explicitly configured; fall back to FakeRedis.
-    if os.environ.get("MESIRI_REDIS__HOST"):
+    _real_redis_configured = bool(os.environ.get("MESIRI_REDIS__HOST"))
+    if _real_redis_configured:
         from mesiri.infrastructure.redis.client import RedisClient
 
         redis_client = RedisClient(_backend_settings.redis)
@@ -199,6 +205,39 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         from mesiri.infrastructure.redis.client import FakeRedis
 
         redis_client = FakeRedis()
+
+    # Message idempotency claims. RedisDeduplicationStore survives a restart
+    # and works across the (multiple, per infra/mesiri.service) uvicorn
+    # processes; InMemoryDeduplicationStore below loses every claim on
+    # restart and is process-local, per its own docstring in
+    # ingress/deduplication.py. Built here (after redis_client, not before
+    # it) specifically so it can share the same real-vs-fake decision above
+    # instead of always defaulting to the in-memory store regardless of
+    # whether Redis is actually configured.
+    if _real_redis_configured:
+        from ingress.deduplication import RedisDeduplicationStore
+
+        deduplication_store: DeduplicationStore = RedisDeduplicationStore(
+            redis_client, ttl=timedelta(hours=settings.dedup_ttl_hours)
+        )
+    else:
+        deduplication_store = InMemoryDeduplicationStore(
+            ttl=timedelta(hours=settings.dedup_ttl_hours)
+        )
+
+    # Durable ingress queue (see runtime/queue.py): only wired up against a
+    # real Redis, for the same reason RedisDeduplicationStore is -- FakeRedis
+    # has no persistent backing store, so there is nothing for ARQ to
+    # durably queue against. None in dev/test, and WhatsAppReceiver falls
+    # back to its previous asyncio.create_task behaviour when `enqueue` is
+    # None (see ingress/receiver.py). connect()/disconnect() happen in the
+    # lifespan handler -- build_container itself is synchronous and can't
+    # await opening the pool -- same lifecycle pattern as redis_client.
+    message_enqueuer = None
+    if _real_redis_configured:
+        from runtime.queue import MessageEnqueuer
+
+        message_enqueuer = MessageEnqueuer(_backend_settings.redis)
 
     # Ephemeral category-tap hint (see interactions/category_hint.py) -- same
     # redis_client as the active context store, never authoritative.
@@ -868,6 +907,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         on_normalized=_on_normalized,
         on_message_claimed=_mark_read_on_claim,
         trace_logger=trace_logger,
+        enqueue=message_enqueuer,
     )
     return AppContainer(
         settings=settings,
@@ -875,6 +915,7 @@ def build_container(settings: Settings, http_client: httpx.AsyncClient) -> AppCo
         deduplication_store=deduplication_store,
         message_store=message_store,
         receiver=receiver,
+        message_enqueuer=message_enqueuer,
         context_resolver=context_resolver,
         pipeline=pipeline,
         planner=planner,

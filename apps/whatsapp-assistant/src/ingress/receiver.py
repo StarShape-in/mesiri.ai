@@ -153,12 +153,23 @@ class WhatsAppReceiver:
         ) = None,
         on_message_claimed: Callable[[str], Awaitable[None]] | None = None,
         trace_logger: TraceLogger | None = None,
+        enqueue: Callable[[MessageIngressContext], Awaitable[None]] | None = None,
     ) -> None:
         self._deduplication_store = deduplication_store
         self._media_downloader = media_downloader
         self._message_store = message_store
         self._object_storage = object_storage
         self._normalizer = normalizer or MessageNormalizer()
+        # Durable handoff (see runtime/queue.py): when set, a claimed message
+        # is written to the ARQ/Redis job queue instead of being handed to
+        # asyncio.create_task. A process crash between "claimed" and "done"
+        # used to lose the message outright -- the task lived only in this
+        # process's event loop, with nothing to recover it on restart. Once
+        # `enqueue` succeeds the job survives in Redis independent of this
+        # process, and a separate worker (worker.py) does the actual
+        # processing. None in dev/test (no real Redis configured), which
+        # keeps the previous in-process behaviour for those environments.
+        self._enqueue = enqueue
         # Optional M3 handoff: invoked after a message is normalized+stored.
         # Takes a replayable envelope of the raw Meta payload alongside the
         # normalized message (see _envelope) so it can be persisted for
@@ -206,9 +217,16 @@ class WhatsAppReceiver:
                 self._background_tasks.add(ack_task)
                 ack_task.add_done_callback(self._background_tasks.discard)
 
-            task = asyncio.create_task(self._process_message(context))
-            self._background_tasks.add(task)
-            task.add_done_callback(self._background_tasks.discard)
+            if self._enqueue is not None:
+                # Durable path: this await is just a Redis write (fast), not
+                # the message processing itself -- the job sits in the queue
+                # until a worker claims it, so it survives this process
+                # dying immediately after.
+                await self._enqueue(context)
+            else:
+                task = asyncio.create_task(self._process_message(context))
+                self._background_tasks.add(task)
+                task.add_done_callback(self._background_tasks.discard)
             scheduled_count += 1
 
         logger.info("Scheduled %s WhatsApp message(s) for ingress processing", scheduled_count)
@@ -280,6 +298,18 @@ class WhatsAppReceiver:
             "phone_number_id": context.phone_number_id,
             "display_phone_number": context.display_phone_number,
         }
+
+    async def process_claimed_message(
+        self, context: MessageIngressContext
+    ) -> NormalizedMessage | None:
+        """Run ingress for a message already claimed via the dedup store.
+
+        The public entry point for the ARQ worker (worker.py): the webhook
+        process only enqueues, it never runs this itself once `enqueue` is
+        configured, so this is what the worker process calls after pulling a
+        job off the queue.
+        """
+        return await self._process_message(context)
 
     async def _process_message(
         self, context: MessageIngressContext, *, retry_of_id: str | None = None
