@@ -243,8 +243,57 @@ jobs:
             exit 1
           fi
 
+          # ── Step 1b: ARQ ingress worker (separate process from mesiri) ────
+          # Installed here, not just left as a repo file, because it was
+          # missed on the deploy that introduced it: the web process passed
+          # its health check and looked fully deployed, but nothing was
+          # consuming the Redis queue it had started writing to -- messages
+          # got a typing indicator (that fires independently) and then
+          # silently vanished, invisible even in the control plane, since
+          # message_store.save() only happens once a worker actually
+          # processes the job. `cp` (not a one-time install) so a future
+          # change to the unit file itself also lands on every deploy.
+          echo "→ Installing/refreshing mesiri-worker service..."
+          cp "${REPO}/infra/mesiri-worker.service" /etc/systemd/system/mesiri-worker.service
+          systemctl daemon-reload
+          systemctl enable mesiri-worker
+          systemctl restart mesiri-worker
+
+          echo "→ Worker health check..."
+          WORKER_HEALTHY=false
+          for i in 1 2 3 4 5; do
+            sleep 2
+            if systemctl is-active --quiet mesiri-worker; then
+              WORKER_HEALTHY=true
+              break
+            fi
+            echo "  waiting... (attempt ${i}/5)"
+          done
+
+          echo "── Worker startup logs (last 40 lines) ───"
+          journalctl -u mesiri-worker -n 40 --no-pager || true
+          echo "─────────────────────────────────────────"
+
+          if [ "${WORKER_HEALTHY}" = "false" ]; then
+            echo "✗ Worker failed to start"
+            echo ""
+            echo "── Worker diagnostics ───────────────────"
+            systemctl status mesiri-worker --no-pager -l || true
+            echo ""
+            journalctl -u mesiri-worker -n 150 --no-pager || true
+            echo "──────────────────────────────────────────"
+            echo ""
+            # Deliberately not rolled back to PREV_SHA: mesiri (the webhook/
+            # API process) is confirmed healthy above, so reverting it would
+            # throw away good backend code over a worker-only failure. This
+            # still fails the job (see Notify failure below) so the gap is
+            # never silent again -- messages will queue in Redis rather than
+            # being replied to until this is fixed, same as right now.
+            exit 1
+          fi
+
           echo "──────────────────────────────────────────"
-          echo "  Backend deploy complete"
+          echo "  Backend deploy complete (mesiri + mesiri-worker)"
           echo "──────────────────────────────────────────"
           ENDSSH
 
