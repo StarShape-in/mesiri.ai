@@ -75,7 +75,24 @@ async def process_claimed_message_job(ctx: dict, envelope: dict) -> None:
     context = context_from_envelope(envelope)
     message_id = str(context.message.get("id") or "unknown")
     logger.info("whatsapp.ingress_job_started message_id=%s", message_id)
-    await container.receiver.process_claimed_message(context)
+    result = await container.receiver.process_claimed_message(context)
+    if result is None:
+        # process_claimed_message (receiver.py's _process_message_locked)
+        # deliberately swallows its own exceptions and returns None on
+        # failure -- that's correct for its other two callers (the
+        # asyncio.create_task dev/test fallback, and the admin "retry"
+        # endpoint), which must not let one bad message crash a shared
+        # process. But from ARQ's point of view a coroutine that returns
+        # without raising IS a successfully completed job -- max_tries below
+        # would never fire, silently defeating the one retry path a
+        # transient failure (e.g. a network blip downloading media, see
+        # ingress/media_ingestion.py) has left. Raising here, and only here,
+        # converts "swallowed and logged" back into "ARQ will actually retry
+        # it" without changing that shared method's contract for its other
+        # callers.
+        raise RuntimeError(
+            f"whatsapp ingress failed for message_id={message_id} -- see trace log"
+        )
     logger.info("whatsapp.ingress_job_finished message_id=%s", message_id)
 
 
