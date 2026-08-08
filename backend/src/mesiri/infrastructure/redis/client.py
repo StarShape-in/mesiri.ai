@@ -123,6 +123,18 @@ class RedisClient:
         except Exception as exc:  # noqa: BLE001
             raise map_redis_error(exc) from exc
 
+    async def get_raw(self, key: str) -> str | None:
+        """Read a raw (non-namespaced) string key -- same non-namespaced
+        posture as delete() above. Exists for values this process didn't
+        write as JSON, e.g. ARQ's own health-check key (admin/queue_router.py),
+        which is a plain string ARQ's Worker.record_health() writes itself.
+        """
+        client = self._require_client
+        try:
+            return await client.get(key)
+        except Exception as exc:  # noqa: BLE001
+            raise map_redis_error(exc) from exc
+
 
 class FakeRedis:
     """In-memory Redis stand-in for scenarios/tests (no TTL expiry emulation)."""
@@ -165,3 +177,10 @@ class FakeRedis:
 
     async def delete(self, key: str) -> None:
         self._store.pop(key, None)
+
+    async def get_raw(self, key: str) -> str | None:
+        # Nothing ever writes ARQ's health-check key against FakeRedis --
+        # the queue is only wired up against real Redis (see runtime/queue.py) --
+        # so this always reports "worker not running", which is the correct
+        # answer for a dev/test environment with no worker process at all.
+        return self._store.get(key)

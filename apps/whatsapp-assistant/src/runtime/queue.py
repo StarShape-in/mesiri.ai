@@ -19,6 +19,8 @@ default).
 from __future__ import annotations
 
 import logging
+import re
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from arq import create_pool
@@ -40,6 +42,52 @@ PROCESS_MESSAGE_JOB = "process_claimed_message_job"
 # the unrelated JSON keys the rest of the app writes through the same Redis
 # instance (active context, dedup claims, plan store, ...).
 QUEUE_NAME = "mesiri:whatsapp:ingress"
+
+# ARQ's Worker writes a small text status to this key on every tick, TTL'd to
+# just past the interval below (see arq.worker.Worker.record_health) -- so
+# the key's mere presence already proves the worker was alive within the
+# last HEALTH_CHECK_INTERVAL_SECONDS, no timestamp parsing required. Both
+# worker.py (which writes it) and admin/queue_router.py (which reads it,
+# no SSH needed) import these two constants so they can never drift apart.
+HEALTH_CHECK_KEY = f"{QUEUE_NAME}:health-check"
+# ARQ's own default is 3600s -- far too stale for a "is it up right now"
+# dashboard. 30s keeps the check responsive without hammering Redis.
+HEALTH_CHECK_INTERVAL_SECONDS = 30
+
+_HEALTH_CHECK_PATTERN = re.compile(
+    r"j_complete=(?P<complete>\d+) j_failed=(?P<failed>\d+) "
+    r"j_retried=(?P<retried>\d+) j_ongoing=(?P<ongoing>\d+) queued=(?P<queued>\d+)"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerHealth:
+    """Parsed form of ARQ's own health-check string."""
+
+    raw: str
+    jobs_complete: int
+    jobs_failed: int
+    jobs_retried: int
+    jobs_ongoing: int
+    queue_depth: int
+
+
+def parse_worker_health(raw: str) -> WorkerHealth | None:
+    """Parse ARQ's `record_health` text -- returns None if the format ever
+    changes underneath us (unsupported ARQ version) rather than raising, so
+    the admin endpoint can still report "worker alive, details unavailable"
+    instead of 500ing."""
+    match = _HEALTH_CHECK_PATTERN.search(raw)
+    if match is None:
+        return None
+    return WorkerHealth(
+        raw=raw,
+        jobs_complete=int(match["complete"]),
+        jobs_failed=int(match["failed"]),
+        jobs_retried=int(match["retried"]),
+        jobs_ongoing=int(match["ongoing"]),
+        queue_depth=int(match["queued"]),
+    )
 
 
 def arq_redis_settings(redis_settings: RedisSettings) -> ArqRedisSettings:

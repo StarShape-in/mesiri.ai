@@ -17,7 +17,13 @@ import httpx
 
 from mesiri.bootstrap.settings import get_settings as get_backend_settings
 from runtime.dependencies import Settings, build_container
-from runtime.queue import QUEUE_NAME, arq_redis_settings, context_from_envelope
+from runtime.queue import (
+    HEALTH_CHECK_INTERVAL_SECONDS,
+    HEALTH_CHECK_KEY,
+    QUEUE_NAME,
+    arq_redis_settings,
+    context_from_envelope,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +90,12 @@ class WorkerSettings:
     # backend settings (MESIRI_REDIS__* env vars), same as RedisClient uses.
     redis_settings = arq_redis_settings(get_backend_settings().redis)
     queue_name = QUEUE_NAME
+
+    # ARQ's own liveness signal (see runtime/queue.py's HEALTH_CHECK_KEY
+    # docstring) -- admin/queue_router.py reads this same key so the control
+    # panel can show worker status without SSH.
+    health_check_key = HEALTH_CHECK_KEY
+    health_check_interval = HEALTH_CHECK_INTERVAL_SECONDS
 
     # Retries are for real infra hiccups (a DB blip, a provider 503) -- not
     # for repeatedly reprocessing a message that fails deterministically.

@@ -171,6 +171,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         logging.getLogger(__name__).warning("Reconcile router not loaded: %s", exc)
 
+    # Durable ingress queue / worker health (platform-admin only)
+    try:
+        from admin.queue_router import router as queue_router
+
+        app.include_router(queue_router)
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("Queue router not loaded: %s", exc)
+
     # Latency/performance viewer (platform-admin only)
     try:
         from admin.perf_router import router as perf_router

@@ -7,7 +7,14 @@ from unittest.mock import AsyncMock
 import pytest
 
 from ingress.receiver import MessageIngressContext
-from runtime.queue import PROCESS_MESSAGE_JOB, QUEUE_NAME, MessageEnqueuer, context_from_envelope
+from runtime.queue import (
+    HEALTH_CHECK_KEY,
+    PROCESS_MESSAGE_JOB,
+    QUEUE_NAME,
+    MessageEnqueuer,
+    context_from_envelope,
+    parse_worker_health,
+)
 
 
 def _context() -> MessageIngressContext:
@@ -61,3 +68,35 @@ def test_context_from_envelope_round_trips_the_enqueued_shape() -> None:
     assert rebuilt.contacts == context.contacts
     assert rebuilt.phone_number_id == context.phone_number_id
     assert rebuilt.display_phone_number == context.display_phone_number
+
+
+def test_parse_worker_health_reads_arqs_own_status_line() -> None:
+    """This exact format is written by arq.worker.Worker.record_health() --
+    admin/queue_router.py depends on parsing it without SSH access, so this
+    pins the format assumption."""
+    raw = "Aug-08 12:34:56 j_complete=42 j_failed=1 j_retried=2 j_ongoing=0 queued=3"
+
+    health = parse_worker_health(raw)
+
+    assert health is not None
+    assert health.jobs_complete == 42
+    assert health.jobs_failed == 1
+    assert health.jobs_retried == 2
+    assert health.jobs_ongoing == 0
+    assert health.queue_depth == 3
+    assert health.raw == raw
+
+
+def test_parse_worker_health_returns_none_for_unrecognized_text() -> None:
+    """A future ARQ version could change this format -- must degrade to
+    'unparseable', not raise, so the admin endpoint can still report the
+    worker as alive (see queue_router.py's fallback branch)."""
+    assert parse_worker_health("not the format we expect") is None
+
+
+def test_health_check_key_is_namespaced_under_the_queue_name() -> None:
+    # worker.py and admin/queue_router.py both import HEALTH_CHECK_KEY
+    # directly rather than deriving it independently -- this just documents
+    # the relationship so a change to QUEUE_NAME is obviously also a change
+    # to the key both sides read/write.
+    assert HEALTH_CHECK_KEY == f"{QUEUE_NAME}:health-check"
