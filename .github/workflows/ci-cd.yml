@@ -1,0 +1,69 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  deploy:
+    name: Deploy to Self-Hosted Runner
+    runs-on: self-hosted
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4.2.2
+
+      - name: Rebuild and Restart Docker Containers
+        env:
+          # Injected into docker compose interpolation; stored as GitHub
+          # Actions secrets, never committed. Rotating JWT_SECRET invalidates
+          # all existing JWTs (everyone must log in again). Rotating
+          # POSTGRES_PASSWORD does NOT reset data in the pgdata volume, but
+          # must match whatever the volume's Postgres user was created with.
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          SEED_ADMIN_PASSWORD: ${{ secrets.SEED_ADMIN_PASSWORD }}
+        run: |
+          echo "Rebuilding backend and frontend services..."
+          # docker-compose.yml lives at the repo root (workspace-aware builds)
+
+          if [ -z "$JWT_SECRET" ]; then
+            echo "ERROR: JWT_SECRET secret is not set in the repo. Aborting deploy." >&2
+            exit 1
+          fi
+          if [ -z "$POSTGRES_USER" ] || [ -z "$POSTGRES_PASSWORD" ]; then
+            echo "ERROR: POSTGRES_USER / POSTGRES_PASSWORD secrets are not set in the repo. Aborting deploy." >&2
+            exit 1
+          fi
+          if [ -z "$SEED_ADMIN_PASSWORD" ]; then
+            echo "ERROR: SEED_ADMIN_PASSWORD secret is not set in the repo. Aborting deploy." >&2
+            exit 1
+          fi
+
+          # Remove old containers to force clean restart
+          docker compose rm -f mercon-postgres mercon-api mercon-frontend 2>/dev/null || true
+
+          # Build and start services in detached mode
+          docker compose up -d --build
+
+          # Give mercon-api a moment to run its startup chain (prisma db push
+          # && seed && node dist/index.js), then print its logs so a crash in
+          # that chain is visible in the Actions run instead of just a 502.
+          sleep 8
+          echo "--- mercon-api logs (last 100 lines) ---"
+          docker compose logs --no-color --tail=100 mercon-api || true
+          echo "--- mercon-api container status ---"
+          docker compose ps mercon-api || true
+
+      - name: Deploy Nginx Config & Reload
+        run: |
+          echo "Deploying nginx reverse proxy config..."
+          # Copy repo-managed nginx config to sites-available
+          sudo cp nginx/mercon-api.conf /etc/nginx/sites-available/mercon-api.conf
+          # Enable it (idempotent — ok if symlink already exists)
+          sudo ln -sf /etc/nginx/sites-available/mercon-api.conf /etc/nginx/sites-enabled/mercon-api.conf
+          # Validate config before reloading to avoid taking down the server
+          sudo nginx -t
+          sudo systemctl reload nginx
+          echo "Nginx reloaded successfully."

@@ -1,0 +1,343 @@
+{
+  "driver_app": {
+    "root_navigator": "Stack",
+    "stacks": {
+      "AuthStack": {
+        "type": "Stack",
+        "presentation": "card",
+        "screens": [
+          {
+            "name": "Splash",
+            "component": "SplashScreen",
+            "options": {
+              "headerShown": false,
+              "gestureEnabled": false
+            }
+          },
+          {
+            "name": "Login",
+            "component": "LoginScreen",
+            "options": {
+              "headerShown": false,
+              "gestureEnabled": false
+            }
+          },
+          {
+            "name": "OTPVerification",
+            "component": "OTPVerificationScreen",
+            "options": {
+              "headerShown": false,
+              "gestureEnabled": true
+            }
+          }
+        ]
+      },
+      "DriverAppStack": {
+        "type": "Stack",
+        "screens": [
+          {
+            "name": "DriverTabs",
+            "component": "DriverTabNavigator",
+            "options": { "headerShown": false }
+          },
+          {
+            "name": "ActiveTrip",
+            "component": "ActiveTripScreen",
+            "options": { "headerShown": false }
+          },
+          {
+            "name": "DriverTripDetail",
+            "component": "TripDetailsScreen",
+            "options": { "headerShown": false }
+          },
+          {
+            "name": "AssignedVehicle",
+            "component": "AssignedVehicleScreen",
+            "options": { "headerShown": false }
+          },
+          {
+            "name": "DocumentVault",
+            "component": "DocumentsScreen",
+            "options": { "headerShown": false }
+          },
+          {
+            "name": "DriverNotifications",
+            "component": "NotificationsScreen",
+            "options": { "headerShown": false }
+          },
+          {
+            "name": "DriverSettings",
+            "component": "SettingsScreen",
+            "options": { "headerShown": false }
+          },
+          {
+            "name": "PickupVerification",
+            "component": "PickupVerificationScreen",
+            "options": { "headerShown": false }
+          },
+          {
+            "name": "DeliveryVerification",
+            "component": "DeliveryVerificationScreen",
+            "options": { "headerShown": false }
+          },
+          {
+            "name": "TripCompleted",
+            "component": "TripCompletedScreen",
+            "options": { "headerShown": false, "gestureEnabled": false }
+          },
+          {
+            "name": "LiveNavigation",
+            "component": "LiveNavigationScreen",
+            "options": {
+              "headerShown": false,
+              "presentation": "modal",
+              "gestureEnabled": false
+            }
+          },
+          {
+            "name": "Emergency",
+            "component": "EmergencyScreen",
+            "options": {
+              "headerShown": false,
+              "presentation": "modal"
+            }
+          },
+          {
+            "name": "ReplacementDriver",
+            "component": "ReplacementDriverScreen",
+            "options": {
+              "headerShown": false,
+              "presentation": "modal"
+            }
+          }
+        ]
+      },
+      "DriverTabNavigator": {
+        "type": "BottomTabs",
+        "tabBar": "DriverBottomNav",
+        "tabs": [
+          {
+            "name": "Home",
+            "component": "HomeScreen (Driver)",
+            "icon": "Home (lucide)"
+          },
+          {
+            "name": "Trips",
+            "component": "TripsScreen",
+            "icon": "Truck (lucide)"
+          },
+          {
+            "name": "Profile",
+            "component": "ProfileScreen (Driver)",
+            "icon": "User (lucide)"
+          }
+        ]
+      }
+    },
+    "back_behavior": {
+      "default": "swipe right from left edge (iOS), hardware back (Android)",
+      "TripCompleted": "gestureEnabled: false — must use button to navigate",
+      "LiveNavigation": "modal dismiss via back button in screen",
+      "Splash": "gestureEnabled: false",
+      "Login": "gestureEnabled: false — no back to splash"
+    },
+    "deep_links": {
+      "trip_detail": "mercon://driver/trips/:tripId",
+      "notification": "mercon://driver/notifications",
+      "documents": "mercon://driver/documents"
+    }
+  },
+  "operator_app": {
+    "root_navigator": "Stack",
+    "stacks": {
+      "OperatorAppStack": {
+        "type": "Stack",
+        "screens": [
+          {
+            "name": "OperatorTabs",
+            "component": "OperatorTabNavigator",
+            "options": { "headerShown": false }
+          },
+          {
+            "name": "TripDetails",
+            "component": "TripDetailsScreen (Operator)",
+            "options": { "headerShown": false }
+          },
+          {
+            "name": "CreateTrip",
+            "component": "CreateTripScreen",
+            "options": {
+              "headerShown": false,
+              "presentation": "modal"
+            }
+          },
+          {
+            "name": "DriverDetails",
+            "component": "DriverDetailsScreen",
+            "options": { "headerShown": false }
+          },
+          {
+            "name": "AddDriver",
+            "component": "AddDriverScreen",
+            "options": {
+              "headerShown": false,
+              "presentation": "modal"
+            }
+          },
+          {
+            "name": "VehicleDetails",
+            "component": "VehicleDetailsScreen",
+            "options": { "headerShown": false }
+          },
+          {
+            "name": "VehicleRenewal",
+            "component": "VehicleRenewalScreen",
+            "options": { "headerShown": false }
+          },
+          {
+            "name": "InvoiceDetails",
+            "component": "InvoiceDetailsScreen",
+            "options": { "headerShown": false }
+          },
+          {
+            "name": "CreateInvoice",
+            "component": "CreateInvoiceScreen",
+            "options": {
+              "headerShown": false,
+              "presentation": "modal"
+            }
+          },
+          {
+            "name": "CustomerList",
+            "component": "CustomerListScreen",
+            "options": { "headerShown": false }
+          },
+          {
+            "name": "CustomerDetails",
+            "component": "CustomerDetailsScreen",
+            "options": { "headerShown": false }
+          },
+          {
+            "name": "RateCardList",
+            "component": "RateCardListScreen",
+            "options": { "headerShown": false }
+          },
+          {
+            "name": "CreateRateCard",
+            "component": "CreateRateCardScreen",
+            "options": {
+              "headerShown": false,
+              "presentation": "modal"
+            }
+          },
+          {
+            "name": "OperatorNotifications",
+            "component": "NotificationsScreen (Operator)",
+            "options": { "headerShown": false }
+          },
+          {
+            "name": "OperatorProfile",
+            "component": "ProfileScreen (Operator)",
+            "options": { "headerShown": false }
+          },
+          {
+            "name": "OperatorSettings",
+            "component": "SettingsScreen (Operator)",
+            "options": { "headerShown": false }
+          }
+        ]
+      },
+      "OperatorTabNavigator": {
+        "type": "BottomTabs",
+        "tabBar": "OperatorBottomNav",
+        "tabs": [
+          {
+            "name": "Home",
+            "component": "HomeScreen (Operator)",
+            "icon": "Home (lucide)"
+          },
+          {
+            "name": "Trips",
+            "component": "TripListScreen",
+            "icon": "Truck (lucide)"
+          },
+          {
+            "name": "FAB",
+            "component": null,
+            "icon": "Plus (lucide, 22px)",
+            "action": "navigation.navigate('CreateTrip')",
+            "note": "FAB triggers navigation, not a tab screen"
+          },
+          {
+            "name": "Drivers",
+            "component": "DriverListScreen",
+            "icon": "Users (lucide)"
+          },
+          {
+            "name": "More",
+            "component": "MoreScreen",
+            "icon": "MoreHorizontal (lucide)"
+          }
+        ]
+      }
+    },
+    "deep_links": {
+      "trip_detail": "mercon://operator/trips/:tripId",
+      "driver_detail": "mercon://operator/drivers/:driverId",
+      "vehicle_renewal": "mercon://operator/vehicles/renewals",
+      "invoice_detail": "mercon://operator/invoices/:invoiceId",
+      "create_trip": "mercon://operator/trips/create"
+    }
+  },
+  "web_dashboard": {
+    "router": "React Router v6 or Next.js App Router",
+    "layout": {
+      "root": "DashboardLayout",
+      "sidebar": {
+        "width": "240px",
+        "background": "#1C1C2E",
+        "position": "fixed left 0 top 0 height 100vh"
+      },
+      "main": {
+        "margin_left": "240px",
+        "background": "#F5F5F7",
+        "overflow": "auto"
+      }
+    },
+    "routes": [
+      { "path": "/", "redirect": "/dashboard" },
+      { "path": "/dashboard", "component": "OverviewPage" },
+      { "path": "/trips", "component": "TripListPage" },
+      { "path": "/trips/create", "component": "CreateTripPage" },
+      { "path": "/trips/:id", "component": "TripDetailPage" },
+      { "path": "/drivers", "component": "DriverListPage" },
+      { "path": "/drivers/add", "component": "AddDriverPage" },
+      { "path": "/drivers/:id", "component": "DriverDetailPage" },
+      { "path": "/vehicles", "component": "VehicleListPage" },
+      { "path": "/vehicles/renewals", "component": "VehicleRenewalsPage" },
+      { "path": "/vehicles/:id", "component": "VehicleDetailPage" },
+      { "path": "/customers", "component": "CustomerListPage" },
+      { "path": "/customers/:id", "component": "CustomerDetailPage" },
+      { "path": "/invoices", "component": "InvoiceListPage" },
+      { "path": "/invoices/create", "component": "CreateInvoicePage" },
+      { "path": "/invoices/:id", "component": "InvoiceDetailPage" },
+      { "path": "/rate-cards", "component": "RateCardListPage" },
+      { "path": "/rate-cards/create", "component": "CreateRateCardPage" },
+      { "path": "/reports/revenue", "component": "RevenueReportPage" },
+      { "path": "/reports/performance", "component": "PerformanceReportPage" },
+      { "path": "/reports/driver", "component": "DriverReportPage" },
+      { "path": "/reports/vehicle", "component": "VehicleReportPage" },
+      { "path": "/settings/general", "component": "SettingsGeneralPage" },
+      { "path": "/settings/users", "component": "SettingsUsersPage" },
+      { "path": "/settings/billing", "component": "SettingsBillingPage" },
+      { "path": "/settings/integrations", "component": "SettingsIntegrationsPage" },
+      { "path": "/notifications", "component": "NotificationsPage" },
+      { "path": "/profile", "component": "ProfilePage" }
+    ],
+    "breadcrumbs": {
+      "enabled": true,
+      "example": "Trips / TRP-2024-0891",
+      "separator": "/"
+    }
+  }
+}

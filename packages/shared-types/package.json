@@ -1,0 +1,14 @@
+{
+  "name": "@mercon/shared-types",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Shared DTOs and enums used across the MERCON API and web dashboard.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}

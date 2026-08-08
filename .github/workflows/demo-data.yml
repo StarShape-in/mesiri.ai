@@ -1,0 +1,147 @@
+# Loads the Delay Report demo dataset into the hosted database, and removes it
+# again. Manual only — never on push.
+#
+# This is deliberately separate from two things it must not be confused with:
+#
+#   - `ci-cd.yml`, which deploys on push and runs `prisma/seed.ts` (the two real
+#     accounts, idempotent) on every container start. Untouched by this file.
+#   - `seed-db.yml`, which runs that same accounts-only production seed.
+#
+# CLAUDE.md forbids seeding fake data as part of deployment. This is not part of
+# deployment: someone has to open the Actions tab, pick an action, type a
+# confirmation word, and (via the environment) get a reviewer's approval. Every
+# row it writes is tagged so `purge` can remove exactly those rows and nothing
+# else.
+#
+# It never deletes untagged data. `DEMO_RESET` — the seeder's opt-in to wipe the
+# operational tables — is never set here, so the destructive path is unreachable
+# from CI by construction, not by convention.
+name: Demo Data (hosted)
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'seed = add the demo dataset · purge = remove it again'
+        required: true
+        type: choice
+        options:
+          - seed
+          - purge
+      confirm:
+        description: 'Type SEED or PURGE (must match the action above)'
+        required: true
+        type: string
+
+jobs:
+  demo-data:
+    name: ${{ inputs.action }} demo data
+    runs-on: self-hosted
+
+    # Gate the run behind a reviewer. Create this environment in
+    # Settings → Environments with a required reviewer; until you do, the job
+    # runs unattended, which is exactly what the confirmation input is a weak
+    # substitute for.
+    environment: demo-data
+
+    env:
+      # Only needed for the psql row counts. The seeder and purge scripts read
+      # DATABASE_URL from the API container's own environment, which
+      # docker-compose already injects.
+      POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4.2.2
+
+      # Fail before touching anything if the typed word does not match the
+      # chosen action — including the case where someone picks `seed` but types
+      # PURGE, which is the mistake a single yes/no checkbox would let through.
+      - name: Verify confirmation
+        run: |
+          set -euo pipefail
+          case "${{ inputs.action }}" in
+            seed)  expected=SEED  ;;
+            purge) expected=PURGE ;;
+            *) echo "::error::Unknown action '${{ inputs.action }}'." >&2; exit 1 ;;
+          esac
+          if [ "${{ inputs.confirm }}" != "$expected" ]; then
+            echo "::error::Confirmation mismatch. Action '${{ inputs.action }}' requires you to type exactly '$expected'." >&2
+            exit 1
+          fi
+          echo "Confirmed: ${{ inputs.action }}"
+
+      # Both scripts run inside the already-deployed API container, which is the
+      # only place DATABASE_URL resolves. `docker exec` (not `docker compose
+      # exec`) is used on purpose: the compose file declares POSTGRES_USER,
+      # POSTGRES_PASSWORD, JWT_SECRET and SEED_ADMIN_PASSWORD as required
+      # variables, so every `docker compose` subcommand — even a read-only one —
+      # would need all four secrets present just to parse the file. The
+      # containers have pinned names, so addressing them directly needs none.
+      - name: Verify containers are running
+        run: |
+          set -euo pipefail
+          for c in mercon-api mercon-postgres; do
+            if [ "$(docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null)" != "true" ]; then
+              echo "::error::Container '$c' is not running. Deploy first (push to main), then re-run this workflow." >&2
+              exit 1
+            fi
+          done
+          if [ -z "${POSTGRES_USER:-}" ]; then
+            echo "::error::POSTGRES_USER secret is not set; cannot read row counts." >&2
+            exit 1
+          fi
+          echo "mercon-api and mercon-postgres are up."
+
+      - name: Row counts before
+        id: before
+        run: |
+          set -euo pipefail
+          bash .github/scripts/demo-counts.sh > before.txt
+          cat before.txt
+
+      # DEMO_ALLOW_REMOTE is the seeder's opt-in to write to a non-local
+      # database. DEMO_RESET is its separate opt-in to delete first, and is
+      # deliberately absent — with it unset the seeder is purely additive and
+      # tags every row it writes.
+      - name: Seed demo data
+        if: inputs.action == 'seed'
+        run: |
+          set -euo pipefail
+          docker exec \
+            -e DEMO_ALLOW_REMOTE=yes-i-understand \
+            mercon-api npx ts-node scripts/seed-demo-local.ts
+
+      # Deletes only rows carrying the demo marker in `created_by`. Rows a real
+      # operator created carry a real user id or null and are left alone.
+      - name: Purge demo data
+        if: inputs.action == 'purge'
+        run: |
+          set -euo pipefail
+          docker exec mercon-api npx ts-node scripts/demo-purge.ts
+
+      - name: Row counts after
+        if: always() && steps.before.outcome == 'success'
+        run: |
+          set -euo pipefail
+          bash .github/scripts/demo-counts.sh > after.txt
+          cat after.txt
+
+          {
+            echo "## Demo data — \`${{ inputs.action }}\`"
+            echo
+            echo "| table | before (demo / total) | after (demo / total) |"
+            echo "|---|---|---|"
+            join -t'|' -j 1 \
+              <(awk 'NF{print $1"|"$2" / "$3}' before.txt | sort) \
+              <(awk 'NF{print $1"|"$2" / "$3}' after.txt  | sort) \
+              | awk -F'|' '{print "| "$1" | "$2" | "$3" |"}'
+            echo
+            echo "\`demo\` counts rows tagged with the demo marker; \`total\` counts every row."
+            echo "The gap between them is real data, which this workflow never deletes."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Reminder
+        if: success() && inputs.action == 'seed'
+        run: |
+          echo "::warning::Demo data is now in the hosted database. Run this workflow again with action=purge (confirm PURGE) before real operations begin."
