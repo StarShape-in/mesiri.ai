@@ -1,0 +1,17 @@
+{
+  "name": "@mesiri/auth",
+  "version": "1.0.0",
+  "private": true,
+  "main": "src/index.ts",
+  "scripts": {
+    "lint": "eslint --no-error-on-unmatched-pattern src/",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "expo-secure-store": "^13.0.1",
+    "axios": "^1.6.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0"
+  }
+}

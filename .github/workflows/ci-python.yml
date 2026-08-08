@@ -1,0 +1,122 @@
+name: CI (Python runtime)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, develop, "integration/**"]
+  pull_request:
+    branches: [main, develop, "integration/**"]
+
+jobs:
+  # Fast lane: lint + the full fake-backed suite. No docker, no credentials.
+  unit:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONSAFEPATH: "1"
+      TEST_PYTHONPATH: >-
+        ${{ github.workspace }}/shared/contracts/src:${{ github.workspace }}/platform/ai/src:${{ github.workspace }}/backend/src:${{ github.workspace }}/apps/whatsapp-assistant/src:${{ github.workspace }}/apps/whatsapp-assistant
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.11'
+          enable-cache: true
+      - name: Set up Python
+        run: uv venv --python 3.11 --clear
+      - name: Install (runtime + dev + infra + providers)
+        run: uv pip install -e ".[dev,infra,providers,reports]"
+      - name: Lint
+        run: uv run ruff check .
+      - name: Test (fakes only — no external services)
+        env:
+          PYTHONPATH: ${{ env.TEST_PYTHONPATH }}
+        run: |
+          cd /tmp
+          "$GITHUB_WORKSPACE/.venv/bin/python" -P -m pytest \
+            "$GITHUB_WORKSPACE/shared/contracts/tests" \
+            "$GITHUB_WORKSPACE/platform/ai/tests" \
+            "$GITHUB_WORKSPACE/backend/tests" \
+            "$GITHUB_WORKSPACE/apps/whatsapp-assistant/tests" \
+            "$GITHUB_WORKSPACE/scenarios" \
+            --rootdir=/tmp \
+            -ra -m "not integration and not provider" \
+            --import-mode=importlib \
+            -o asyncio_mode=auto
+
+  # Integration lane: real Postgres + Redis via service containers. Still no
+  # paid AI providers and no WhatsApp webhook.
+  integration:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONSAFEPATH: "1"
+      TEST_PYTHONPATH: >-
+        ${{ github.workspace }}/shared/contracts/src:${{ github.workspace }}/platform/ai/src:${{ github.workspace }}/backend/src:${{ github.workspace }}/apps/whatsapp-assistant/src:${{ github.workspace }}/apps/whatsapp-assistant
+      MESIRI_ENVIRONMENT: test
+      MESIRI_POSTGRES__HOST: localhost
+      MESIRI_POSTGRES__PASSWORD: mesiri_ci
+      MESIRI_REDIS__HOST: localhost
+      MESIRI_OBJECT_STORAGE__PROVIDER: fake
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: mesiri
+          POSTGRES_PASSWORD: mesiri_ci
+          POSTGRES_DB: mesiri
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U mesiri" --health-interval 5s
+          --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 3s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.11'
+          enable-cache: true
+      - run: uv venv --python 3.11 --clear
+      - name: Install (with infra SDKs)
+        run: uv pip install -e ".[dev,infra,providers,reports]"
+      - name: Apply migrations
+        run: uv run alembic -c backend/alembic.ini upgrade head
+      - name: GET /projects vertical slice tests
+        env:
+          PYTHONPATH: ${{ env.TEST_PYTHONPATH }}
+        run: |
+          cd /tmp
+          "$GITHUB_WORKSPACE/.venv/bin/python" -P -m pytest \
+            "$GITHUB_WORKSPACE/backend/tests/integration/test_postgres_project_repository.py" \
+            -v -m integration \
+            --rootdir=/tmp \
+            --import-mode=importlib \
+            -o asyncio_mode=auto
+          "$GITHUB_WORKSPACE/.venv/bin/python" -P -m pytest \
+            "$GITHUB_WORKSPACE/backend/tests/contract/test_projects_api_contract.py" \
+            -v -m integration \
+            --rootdir=/tmp \
+            --import-mode=importlib \
+            -o asyncio_mode=auto
+      - name: Integration tests
+        # Target the path directly — a whole-tree collection imports the repo's
+        # top-level `platform/` dir as a namespace package, shadowing stdlib
+        # `platform` (which SQLAlchemy imports).
+        env:
+          PYTHONPATH: ${{ env.TEST_PYTHONPATH }}
+        run: |
+          cd /tmp
+          "$GITHUB_WORKSPACE/.venv/bin/python" -P -m pytest \
+            "$GITHUB_WORKSPACE/backend/tests/integration" \
+            -m integration \
+            --rootdir=/tmp \
+            --import-mode=importlib \
+            -o asyncio_mode=auto
+      - name: M1 golden scenario (live Postgres + Redis)
+        env:
+          PYTHONPATH: shared/contracts/src:platform/ai/src:backend/src:apps/whatsapp-assistant/src
+          MESIRI_GOLDEN_USE_FAKES: "false"
+        run: uv run python -m mesiri.scripts.run_m1_golden_scenario

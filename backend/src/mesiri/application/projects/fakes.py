@@ -1,0 +1,166 @@
+"""In-memory fakes for CreateProject application-layer unit tests — no DB, no SQL.
+
+Mirrors mesiri.application.finance.fakes's FakeAccountAdminExecutionRepository/
+FakeDatabase shape.
+"""
+
+from __future__ import annotations
+
+import uuid
+from contextlib import asynccontextmanager
+from typing import Any
+
+from mesiri_contracts.application.results.execution_result import (
+    ExecutionResult,
+    ExecutionStatus,
+    as_replay,
+)
+
+from .add_member_commands import AddProjectMemberCommand
+from .create_commands import CreateProjectCommand
+from .create_site_commands import CreateSiteCommand
+from .name_resolution import MemberNameResolver
+from .repository import (
+    AddProjectMemberExecutionRepository,
+    CreateProjectExecutionRepository,
+    CreateSiteExecutionRepository,
+)
+
+
+class FakeDatabase:
+    """Duck-typed stand-in for PostgresDatabase — no engine, no SQL."""
+
+    @asynccontextmanager
+    async def transaction(self):
+        yield None
+
+
+class FakeCreateProjectExecutionRepository(CreateProjectExecutionRepository):
+    def __init__(self) -> None:
+        # idempotency_key -> ExecutionResult, mirrors idempotency_keys.result
+        self._claims: dict[str, ExecutionResult] = {}
+        # projects actually "written", for test assertions
+        self.project_writes: list[dict[str, Any]] = []
+
+    async def check_idempotency(self, conn: Any, key: str) -> ExecutionResult | None:
+        return self._claims.get(key)
+
+    async def persist_success(self, conn: Any, cmd: CreateProjectCommand) -> ExecutionResult:
+        if cmd.idempotency_key in self._claims:
+            return as_replay(self._claims[cmd.idempotency_key])
+
+        row_id = str(uuid.uuid4())
+        self.project_writes.append({"id": row_id, "command": cmd})
+        result = ExecutionResult(
+            status=ExecutionStatus.SUCCEEDED,
+            idempotency_key=cmd.idempotency_key,
+            material_row_id=row_id,
+        )
+        self._claims[cmd.idempotency_key] = result
+        return result
+
+    async def persist_rejection(
+        self, conn: Any, idempotency_key: str, reasons: list[str]
+    ) -> ExecutionResult:
+        if idempotency_key in self._claims:
+            return as_replay(self._claims[idempotency_key])
+
+        result = ExecutionResult(
+            status=ExecutionStatus.REJECTED,
+            idempotency_key=idempotency_key,
+            rejection_reasons=reasons,
+        )
+        self._claims[idempotency_key] = result
+        return result
+
+
+class FakeAddProjectMemberExecutionRepository(AddProjectMemberExecutionRepository):
+    def __init__(self) -> None:
+        # idempotency_key -> ExecutionResult, mirrors idempotency_keys.result
+        self._claims: dict[str, ExecutionResult] = {}
+        # membership rows actually "written", for test assertions
+        self.member_writes: list[dict[str, Any]] = []
+
+    async def check_idempotency(self, conn: Any, key: str) -> ExecutionResult | None:
+        return self._claims.get(key)
+
+    async def persist_success(
+        self, conn: Any, cmd: AddProjectMemberCommand
+    ) -> ExecutionResult:
+        if cmd.idempotency_key in self._claims:
+            return as_replay(self._claims[cmd.idempotency_key])
+
+        row_id = str(uuid.uuid4())
+        self.member_writes.append({"id": row_id, "command": cmd})
+        result = ExecutionResult(
+            status=ExecutionStatus.SUCCEEDED,
+            idempotency_key=cmd.idempotency_key,
+            material_row_id=cmd.member_user_id,
+        )
+        self._claims[cmd.idempotency_key] = result
+        return result
+
+    async def persist_rejection(
+        self, conn: Any, idempotency_key: str, reasons: list[str]
+    ) -> ExecutionResult:
+        if idempotency_key in self._claims:
+            return as_replay(self._claims[idempotency_key])
+
+        result = ExecutionResult(
+            status=ExecutionStatus.REJECTED,
+            idempotency_key=idempotency_key,
+            rejection_reasons=reasons,
+        )
+        self._claims[idempotency_key] = result
+        return result
+
+
+class FakeMemberNameResolver(MemberNameResolver):
+    """Resolves a single name against an in-memory {name (lowercased):
+    user_id} map supplied by the test -- same contract as the real
+    Postgres-backed resolver."""
+
+    def __init__(self, known: dict[str, str] | None = None) -> None:
+        self._known = {k.lower(): v for k, v in (known or {}).items()}
+
+    async def resolve(self, conn: Any, *, organization_id: str, name: str) -> str | None:
+        return self._known.get(name.strip().lower())
+
+
+class FakeCreateSiteExecutionRepository(CreateSiteExecutionRepository):
+    def __init__(self) -> None:
+        # idempotency_key -> ExecutionResult, mirrors idempotency_keys.result
+        self._claims: dict[str, ExecutionResult] = {}
+        # sites actually "written", for test assertions
+        self.site_writes: list[dict[str, Any]] = []
+
+    async def check_idempotency(self, conn: Any, key: str) -> ExecutionResult | None:
+        return self._claims.get(key)
+
+    async def persist_success(self, conn: Any, cmd: CreateSiteCommand) -> ExecutionResult:
+        if cmd.idempotency_key in self._claims:
+            return as_replay(self._claims[cmd.idempotency_key])
+
+        row_id = str(uuid.uuid4())
+        self.site_writes.append({"id": row_id, "command": cmd})
+        result = ExecutionResult(
+            status=ExecutionStatus.SUCCEEDED,
+            idempotency_key=cmd.idempotency_key,
+            material_row_id=row_id,
+        )
+        self._claims[cmd.idempotency_key] = result
+        return result
+
+    async def persist_rejection(
+        self, conn: Any, idempotency_key: str, reasons: list[str]
+    ) -> ExecutionResult:
+        if idempotency_key in self._claims:
+            return as_replay(self._claims[idempotency_key])
+
+        result = ExecutionResult(
+            status=ExecutionStatus.REJECTED,
+            idempotency_key=idempotency_key,
+            rejection_reasons=reasons,
+        )
+        self._claims[idempotency_key] = result
+        return result

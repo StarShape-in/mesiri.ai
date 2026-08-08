@@ -1,0 +1,9 @@
+{
+  "version": "v1",
+  "event_id": "evt_bad_3",
+  "correlation_id": "cor_bad_3",
+  "source_message_id": "msg_bad_3",
+  "event_type": "ExpenseRequested",
+  "completeness": "actionable",
+  "user_id": "usr_001"
+}

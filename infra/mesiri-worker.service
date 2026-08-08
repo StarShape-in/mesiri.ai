@@ -1,0 +1,40 @@
+[Unit]
+Description=Mesiri.AI WhatsApp Assistant -- ARQ ingress worker
+Documentation=https://github.com/your-org/Mesiri.AI
+# Deliberately does NOT declare After=mesiri.service: the queue (Redis) is
+# the handoff point between the two units, not a direct process dependency.
+# A worker that starts before the web process is fine -- it just waits on
+# an empty queue -- but a hard ordering dependency would mean one unit's
+# restart storm can take the other down with it.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/mesiri/apps/whatsapp-assistant/src
+
+# Same four Python source roots as mesiri.service -- this process builds the
+# exact same dependency container (runtime/dependencies.py's build_container),
+# just as a worker rather than a web server. See worker.py's module docstring.
+Environment=PYTHONPATH=/opt/mesiri/shared/contracts/src:/opt/mesiri/platform/ai/src:/opt/mesiri/backend/src:/opt/mesiri/apps/whatsapp-assistant/src
+
+# Same .env as mesiri.service -- this is the same application, one process
+# handling ingress (webhook -> enqueue), the other handling egress
+# (dequeue -> understanding -> reply). Both need every setting the app uses,
+# not just the Redis section.
+EnvironmentFile=/opt/mesiri/.env
+
+ExecStart=/opt/mesiri/.venv/bin/arq worker.WorkerSettings
+
+# Graceful shutdown: ARQ finishes in-flight jobs (bounded by job_timeout in
+# worker.py) rather than dropping them, then exits on SIGTERM.
+Restart=on-failure
+RestartSec=5s
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mesiri-worker
+
+[Install]
+WantedBy=multi-user.target

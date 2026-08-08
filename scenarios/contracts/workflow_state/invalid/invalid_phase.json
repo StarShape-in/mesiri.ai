@@ -1,0 +1,9 @@
+{
+  "version": "v1",
+  "workflow_instance_id": "wf_bad_2",
+  "workflow_key": "material.receipt",
+  "correlation_id": "cor_bad_2",
+  "organization_id": "org_001",
+  "user_id": "usr_001",
+  "phase": "extremely_confused"
+}

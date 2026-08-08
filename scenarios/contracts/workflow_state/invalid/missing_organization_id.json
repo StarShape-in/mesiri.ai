@@ -1,0 +1,7 @@
+{
+  "version": "v1",
+  "workflow_instance_id": "wf_bad_4",
+  "workflow_key": "material.receipt",
+  "correlation_id": "cor_bad_4",
+  "user_id": "usr_001"
+}

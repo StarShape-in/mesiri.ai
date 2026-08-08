@@ -1,0 +1,9 @@
+{
+  "version": "v2",
+  "workflow_instance_id": "wf_ws_bad",
+  "workflow_key": "material.receipt",
+  "correlation_id": "cor_ws_bad",
+  "organization_id": "not-uuid",
+  "user_id": "22222222-2222-4222-8222-222222222222",
+  "phase": "active"
+}

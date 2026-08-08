@@ -1,0 +1,19 @@
+{
+  "_comment": "Confirmation vocabulary for the deterministic reply classifier. Language data only — no logic. Add Hindi/Arabic/Tamil/etc. here without touching classifier.py. Match is whole-token, case-folded.",
+  "confirm": [
+    "yes", "y", "yeah", "yep", "yup", "ok", "okay", "confirm", "confirmed",
+    "correct", "right", "sure", "done", "good", "👍", "✅",
+    "ശരി", "അതെ", "ഉവ്വ്",
+    "sari", "athe"
+  ],
+  "reject": [
+    "no", "n", "nope", "wrong", "incorrect", "not right", "❌", "👎",
+    "അല്ല", "തെറ്റ്",
+    "alla"
+  ],
+  "cancel": [
+    "cancel", "stop", "abort", "nevermind", "never mind", "discard", "forget it",
+    "വേണ്ട",
+    "venda"
+  ]
+}

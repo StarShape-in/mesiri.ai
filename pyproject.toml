@@ -1,0 +1,181 @@
+# Mesiri.ai — Python runtime workspace (M1 infrastructure + M3 understanding).
+#
+# The milestone runtime is split across four import roots that are added to the
+# Python path via pytest / PYTHONPATH rather than installed as distributions.
+# This keeps the multi-package layout without packaging ceremony while the
+# architecture is still stabilising.
+#
+#   shared/contracts/src        -> mesiri_contracts   (M0 shared contracts)
+#   platform/ai/src             -> mesiri_ai          (AI Gateway: ports + adapters)
+#   backend/src                 -> mesiri             (domain / infrastructure)
+#   apps/whatsapp-assistant/src -> assistant modules  (ingress[Alan] / understanding[Ilan])
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mesiri-runtime"
+version = "0.1.0"
+description = "Mesiri.ai assistant runtime (M1 infrastructure + M3 understanding foundation)"
+# Baseline aligned with M2 (Alan) packages, which require 3.11 (use datetime.UTC).
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+]
+
+# Imports resolve via [tool.pytest.ini_options].pythonpath / PYTHONPATH, not via
+# an installed distribution. The root project exists only to pin dependencies,
+# so it deliberately ships no packages.
+[tool.setuptools]
+packages = []
+
+[project.optional-dependencies]
+# Heavy infrastructure SDKs. Imported lazily inside adapters so the core test
+# suite runs without them. Installed for the live docker golden scenario / CI
+# integration lane.
+infra = [
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.29",
+    "psycopg[binary]>=3.1",   # sync driver used by alembic migrations
+    "redis>=5.0",
+    "arq>=0.26",
+    "boto3>=1.34",
+    "alembic>=1.13",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "httpx>=0.27",
+    "PyJWT>=2.8",
+    "bcrypt>=4.0",
+    "passlib>=1.7",
+]
+# AI provider SDKs. Imported lazily inside provider adapters.
+providers = [
+    "google-genai>=0.3",
+    "sarvamai>=0.1",
+    # Downscales photos before the vision call (see the Gemini adapter's
+    # _downscale_image). A full-resolution WhatsApp photo is 1-3MB and gets
+    # tiled into far more vision tokens than reading a receipt needs.
+    # Imported lazily, and the adapter falls back to sending the original
+    # bytes if it's missing, so the core test suite runs without it.
+    "pillow>=10.0",
+]
+# LangGraph. Imported lazily inside workflows/material/graph.py so the core
+# test suite runs without it — unit/contract tests use fake graphs/registries.
+workflow = [
+    "langgraph>=0.2",
+]
+# Post-confirmation receipt image rendering (channel/receipt/). Imported
+# lazily inside render.py so the core test suite runs without a headless
+# browser installed -- data-building (data.py) is pure and fully unit-tested
+# without this group.
+receipt = [
+    "playwright>=1.40",
+    "jinja2>=3.1",
+]
+# On-demand document generation served directly by the backend (DPR PDF
+# fallback when the assistant-side Playwright render hasn't landed yet, plus
+# future Excel/PDF exports). Deliberately NOT playwright/jinja2 -- those stay
+# assistant-side per ADR-D8; fpdf2 is pure-Python, no headless browser, safe
+# to run in the backend process. Imported lazily inside the render module so
+# the core test suite runs without it.
+reports = [
+    "fpdf2>=2.7",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+    "mypy>=1.9",
+    "fastapi>=0.110",
+    "httpx>=0.27",
+]
+
+[tool.pytest.ini_options]
+# Import roots for the multi-package layout (no editable installs required).
+pythonpath = [
+    "shared/contracts/src",
+    "platform/ai/src",
+    "backend/src",
+    "apps/whatsapp-assistant/src",
+    # App root so M2's tests can `from tests.conftest import ...` (they were
+    # authored to run from the app directory). Lets the whole monorepo suite
+    # run in one invocation without editing M2's test files.
+    "apps/whatsapp-assistant",
+]
+testpaths = [
+    "shared/contracts/tests",
+    "platform/ai/tests",
+    "backend/tests",
+    "apps/whatsapp-assistant/tests",
+    "scenarios",
+]
+asyncio_mode = "auto"
+# importlib import mode: the monorepo has several same-named test dirs (e.g. two
+# `tests/unit`) without __init__.py; importlib imports each by a unique path,
+# avoiding collisions. We deliberately do NOT set consider_namespace_packages,
+# which would add the repo root to sys.path and let the top-level `platform/`
+# directory shadow the stdlib `platform` module (breaks SQLAlchemy on import).
+# Import roots are provided explicitly via `pythonpath` above.
+# Integration (docker) and provider (paid API) tests are opt-in. Run them with
+# `pytest -m integration` / `-m provider`, which overrides this default marker.
+addopts = "-ra -m 'not integration and not provider' --import-mode=importlib"
+markers = [
+    "integration: requires live Postgres/Redis/object-storage (docker). Skipped by default.",
+    "provider: requires real AI provider credentials. Skipped by default.",
+    "scenario: milestone gate scenario.",
+    "golden: milestone golden-path proof.",
+]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = [
+    "shared/contracts/src",
+    "platform/ai/src",
+    "backend/src",
+    "apps/whatsapp-assistant/src",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# UP042: keep `str, Enum` (consistent with M2's MessageType) rather than StrEnum.
+ignore = [
+    "E501",   # line too long
+    "UP042",  # use X | Y for union types (conflicts with older compat layer)
+    "B008",   # Depends() in function defaults — standard FastAPI DI pattern
+    "E402",   # module-level imports not at top — intentional in migration env.py and scripts that manipulate sys.path
+]
+
+[tool.ruff.lint.isort]
+# Explicitly declare every internal top-level package as first-party so that
+# ruff classifies them consistently whether they are installed into the venv
+# (CI path, where mesiri_contracts appears as an installed dist) or only
+# reachable via the `src` paths above (local dev path).  Without this the CI
+# ruff and the local ruff disagree on the import grouping and I001 fires.
+known-first-party = [
+    "mesiri_contracts",
+    "mesiri_ai",
+    "mesiri",
+    "interactions",
+    "workflows",
+    "auth",
+    "backend",
+    "canonicalization",
+    "channel",
+    "context",
+    "ingress",
+    "memory",
+    "planner",
+    "projects",
+    "runtime",
+    "understanding",
+    "users",
+]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_ignores = true
+ignore_missing_imports = true
+mypy_path = "shared/contracts/src:platform/ai/src:backend/src:apps/whatsapp-assistant/src"

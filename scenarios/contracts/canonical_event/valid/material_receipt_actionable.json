@@ -1,0 +1,21 @@
+{
+  "version": "v1",
+  "event_id": "evt_ce_1",
+  "correlation_id": "cor_ce_1",
+  "source_message_id": "msg_ce_1",
+  "event_type": "MaterialReceiptRequested",
+  "completeness": "actionable",
+  "organization_id": "org_001",
+  "user_id": "usr_001",
+  "project_id": "prj_001",
+  "site_id": "site_001",
+  "permissions": ["material.record"],
+  "fields": {
+    "material_name": "cement",
+    "quantity": 20,
+    "unit": "bags",
+    "direction": "received"
+  },
+  "missing_fields": [],
+  "warnings": []
+}

@@ -1,0 +1,18 @@
+{
+  "version": "v1",
+  "event_id": "evt_ce_3",
+  "correlation_id": "cor_ce_3",
+  "source_message_id": "msg_ce_3",
+  "event_type": "ClarificationRequired",
+  "completeness": "needs_clarification",
+  "organization_id": "org_001",
+  "user_id": "usr_001",
+  "project_id": "prj_001",
+  "site_id": null,
+  "permissions": [],
+  "fields": {
+    "vendor": "hardware store"
+  },
+  "missing_fields": ["amount"],
+  "warnings": []
+}

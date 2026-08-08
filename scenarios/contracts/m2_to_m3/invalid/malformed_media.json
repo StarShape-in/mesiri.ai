@@ -1,0 +1,8 @@
+{
+  "message_id": "msg_bad_3",
+  "correlation_id": "cor_bad_3",
+  "modality": "image",
+  "media": {
+    "mime_type": "image/jpeg"
+  }
+}

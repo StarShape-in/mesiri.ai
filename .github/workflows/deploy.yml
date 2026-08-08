@@ -1,0 +1,353 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+# Only one deploy can run at a time. Never cancel an in-progress deploy;
+# let it finish so the VPS is never left in a half-deployed state.
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  # ── Fast Python sanity check ────────────────────────────────────────────────
+  # Runs the unit suite (fakes only, no docker) so a bad push never reaches
+  # the VPS. Mirrors the "unit" job in ci-python.yml.
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    env:
+      PYTHONSAFEPATH: "1"
+      TEST_PYTHONPATH: >-
+        ${{ github.workspace }}/shared/contracts/src:${{ github.workspace }}/platform/ai/src:${{ github.workspace }}/backend/src:${{ github.workspace }}/apps/whatsapp-assistant/src:${{ github.workspace }}/apps/whatsapp-assistant
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.11'
+          enable-cache: true
+      - run: uv venv --python 3.11 --clear
+      - run: uv pip install -e ".[dev,infra,providers,reports]"
+      - name: Lint
+        run: uv run ruff check .
+      - name: Unit tests (fakes only)
+        env:
+          PYTHONPATH: ${{ env.TEST_PYTHONPATH }}
+          MESIRI_ENVIRONMENT: test
+          MESIRI_OBJECT_STORAGE__PROVIDER: fake
+        run: |
+          cd /tmp
+          "$GITHUB_WORKSPACE/.venv/bin/python" -P -m pytest \
+            "$GITHUB_WORKSPACE/shared/contracts/tests" \
+            "$GITHUB_WORKSPACE/platform/ai/tests" \
+            "$GITHUB_WORKSPACE/backend/tests" \
+            "$GITHUB_WORKSPACE/apps/whatsapp-assistant/tests" \
+            "$GITHUB_WORKSPACE/scenarios" \
+            --rootdir=/tmp \
+            -ra -m "not integration and not provider" \
+            --import-mode=importlib \
+            -o asyncio_mode=auto
+
+  # ── Build control-panel static assets ──────────────────────────────────────
+  build-frontend:
+    name: Build control panel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 8.15.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - run: pnpm install
+      - run: pnpm --filter @mesiri/control-panel build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: control-panel-dist
+          path: apps/control-panel/dist/
+          retention-days: 1
+
+  # ── Build dashboard static assets ──────────────────────────────────────────
+  build-dashboard:
+    name: Build dashboard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 8.15.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - run: pnpm install
+      - run: pnpm --filter @mesiri/dashboard build
+        env:
+          VITE_API_URL: https://mesiri.mercon.tech
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-dist
+          path: apps/dashboard/dist/
+          retention-days: 1
+
+  # ── Deploy ──────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to VPS
+    runs-on: ubuntu-latest
+    needs: [test, build-frontend, build-dashboard]
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download control panel build
+        uses: actions/download-artifact@v4
+        with:
+          name: control-panel-dist
+          path: frontend-dist/
+
+      - name: Download dashboard build
+        uses: actions/download-artifact@v4
+        with:
+          name: dashboard-dist
+          path: dashboard-dist/
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" | tr -d '\r' > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
+
+      # ── Step 1: update code + deps + run migrations + restart ──────────────
+      - name: Deploy backend
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh -i ~/.ssh/deploy_key "${VPS_USER}@${VPS_HOST}" bash -s << 'ENDSSH'
+          set -euo pipefail
+
+          REPO=/opt/mesiri
+          VENV=${REPO}/.venv
+          PYTHONPATH=${REPO}/shared/contracts/src:${REPO}/platform/ai/src:${REPO}/backend/src:${REPO}/apps/whatsapp-assistant/src
+          export PYTHONPATH
+
+          echo "──────────────────────────────────────────"
+          echo "  Mesiri deploy  $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          echo "──────────────────────────────────────────"
+
+          echo "→ Pulling latest code..."
+          cd "${REPO}"
+          # Save current commit so we can revert if the new code fails to start.
+          PREV_SHA=$(git rev-parse HEAD)
+          echo "  rollback point: ${PREV_SHA}"
+
+          git config credential.helper store
+          printf 'https://x-access-token:%s@github.com\n' '${{ secrets.GH_TOKEN_FOR_VPS }}' \
+            > /root/.git-credentials
+          git fetch --prune origin
+          git reset --hard origin/main
+
+          echo "→ Installing Python dependencies..."
+          ~/.local/bin/uv pip install --python ${VENV}/bin/python -e ".[infra,providers,workflow,receipt,reports]" --quiet
+
+          echo "→ Clearing stale Python bytecode cache..."
+          # Moved to run BEFORE migrations (2026-07-27): `git reset --hard`
+          # only touches tracked files -- __pycache__/ is gitignored and
+          # therefore persists untouched across every deploy on this
+          # persistent checkout. `backend/migrations` was also missing from
+          # this list entirely (only backend/src was covered), so a fix to a
+          # migration file could silently keep executing as stale cached
+          # bytecode: alembic would import the old compiled version even
+          # though `git reset --hard` had already updated the .py source on
+          # disk. Root cause of a real incident where a migration fix was
+          # pushed, confirmed correct in the git history, and still failed
+          # identically on every subsequent deploy attempt. Every root on
+          # PYTHONPATH, plus migrations specifically, swept before anything
+          # imports them.
+          for SRC in "${REPO}/shared/contracts/src" "${REPO}/platform/ai/src" \
+                     "${REPO}/backend/src" "${REPO}/backend/migrations" \
+                     "${REPO}/apps/whatsapp-assistant/src"; do
+            find "${SRC}" -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
+            find "${SRC}" -name '*.pyc' -delete 2>/dev/null || true
+          done
+
+          echo "→ Running database migrations..."
+          cd "${REPO}/backend"
+          ${VENV}/bin/alembic upgrade head
+
+          echo "→ Restarting backend service..."
+          systemctl restart mesiri
+
+          echo "→ Health check..."
+          HEALTHY=false
+          for i in 1 2 3 4 5; do
+            sleep 2
+            if curl -sf http://127.0.0.1:8000/health/live > /dev/null; then
+              echo "✓ Service is healthy"
+              HEALTHY=true
+              break
+            fi
+            echo "  waiting... (attempt ${i}/5)"
+          done
+
+          echo "── Startup logs (last 60 lines) ─────────"
+          journalctl -u mesiri -n 60 --no-pager || true
+          echo "─────────────────────────────────────────"
+
+          if [ "${HEALTHY}" = "false" ]; then
+            echo "✗ Health check failed"
+            echo ""
+            echo "── Diagnostics ──────────────────────────"
+            echo "--- systemctl status mesiri ---"
+            systemctl status mesiri --no-pager -l || true
+            echo ""
+            echo "--- journalctl -u mesiri (last 150 lines) ---"
+            journalctl -u mesiri -n 150 --no-pager || true
+            echo ""
+            echo "--- disk space ---"
+            df -h || true
+            echo ""
+            echo "--- memory ---"
+            free -h || true
+            echo ""
+            echo "--- dependent services ---"
+            systemctl is-active postgresql 2>&1 || true
+            systemctl is-active redis-server 2>&1 || true
+            echo "──────────────────────────────────────────"
+            echo ""
+            echo "Reverting to ${PREV_SHA}"
+            cd "${REPO}"
+            git reset --hard "${PREV_SHA}"
+            ~/.local/bin/uv pip install --python ${VENV}/bin/python -e ".[infra,providers,workflow,receipt,reports]" --quiet
+            systemctl restart mesiri
+            # Give the old code a moment to come back up so the VPS stays live
+            sleep 3
+            if curl -sf http://127.0.0.1:8000/health/live > /dev/null; then
+              echo "✓ Rollback succeeded — old version is live"
+            else
+              echo "✗ Rollback also failed — service may be down"
+              echo ""
+              echo "── Post-rollback diagnostics ────────────"
+              echo "--- systemctl status mesiri ---"
+              systemctl status mesiri --no-pager -l || true
+              echo ""
+              echo "--- journalctl -u mesiri (last 150 lines) ---"
+              journalctl -u mesiri -n 150 --no-pager || true
+              echo "──────────────────────────────────────────"
+            fi
+            exit 1
+          fi
+
+          # ── Step 1b: ARQ ingress worker (separate process from mesiri) ────
+          # Installed here, not just left as a repo file, because it was
+          # missed on the deploy that introduced it: the web process passed
+          # its health check and looked fully deployed, but nothing was
+          # consuming the Redis queue it had started writing to -- messages
+          # got a typing indicator (that fires independently) and then
+          # silently vanished, invisible even in the control plane, since
+          # message_store.save() only happens once a worker actually
+          # processes the job. `cp` (not a one-time install) so a future
+          # change to the unit file itself also lands on every deploy.
+          echo "→ Installing/refreshing mesiri-worker service..."
+          cp "${REPO}/infra/mesiri-worker.service" /etc/systemd/system/mesiri-worker.service
+          systemctl daemon-reload
+          systemctl enable mesiri-worker
+          systemctl restart mesiri-worker
+
+          echo "→ Worker health check..."
+          WORKER_HEALTHY=false
+          for i in 1 2 3 4 5; do
+            sleep 2
+            if systemctl is-active --quiet mesiri-worker; then
+              WORKER_HEALTHY=true
+              break
+            fi
+            echo "  waiting... (attempt ${i}/5)"
+          done
+
+          echo "── Worker startup logs (last 40 lines) ───"
+          journalctl -u mesiri-worker -n 40 --no-pager || true
+          echo "─────────────────────────────────────────"
+
+          if [ "${WORKER_HEALTHY}" = "false" ]; then
+            echo "✗ Worker failed to start"
+            echo ""
+            echo "── Worker diagnostics ───────────────────"
+            systemctl status mesiri-worker --no-pager -l || true
+            echo ""
+            journalctl -u mesiri-worker -n 150 --no-pager || true
+            echo "──────────────────────────────────────────"
+            echo ""
+            # Deliberately not rolled back to PREV_SHA: mesiri (the webhook/
+            # API process) is confirmed healthy above, so reverting it would
+            # throw away good backend code over a worker-only failure. This
+            # still fails the job (see Notify failure below) so the gap is
+            # never silent again -- messages will queue in Redis rather than
+            # being replied to until this is fixed, same as right now.
+            exit 1
+          fi
+
+          echo "──────────────────────────────────────────"
+          echo "  Backend deploy complete (mesiri + mesiri-worker)"
+          echo "──────────────────────────────────────────"
+          ENDSSH
+
+      # ── Step 2: sync static frontend ───────────────────────────────────────
+      - name: Upload control panel
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          rsync -avz --delete \
+            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
+            frontend-dist/ \
+            "${VPS_USER}@${VPS_HOST}:/var/www/mesiriadmin/"
+
+          ssh -i ~/.ssh/deploy_key "${VPS_USER}@${VPS_HOST}" \
+            "chown -R www-data:www-data /var/www/mesiriadmin/"
+
+      - name: Upload dashboard
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          rsync -avz --delete \
+            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
+            dashboard-dist/ \
+            "${VPS_USER}@${VPS_HOST}:/var/www/mesiriweb/"
+
+          ssh -i ~/.ssh/deploy_key "${VPS_USER}@${VPS_HOST}" \
+            "chown -R www-data:www-data /var/www/mesiriweb/"
+
+      - name: Notify success
+        if: success()
+        env:
+          WEBHOOK_URL: ${{ secrets.NOTIFY_WEBHOOK_URL }}
+        run: |
+          echo "✓ Production deploy finished at $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          echo "  Commit: ${{ github.sha }}"
+          echo "  Triggered by: ${{ github.actor }}"
+          if [ -n "${WEBHOOK_URL}" ]; then
+            curl -sf -X POST "${WEBHOOK_URL}" \
+              -H "Content-Type: application/json" \
+              -d "{\"text\": \"✅ *Mesiri deployed* by \`${{ github.actor }}\`\nCommit: \`${{ github.sha }}\`\"}" || true
+          fi
+
+      - name: Notify failure
+        if: failure()
+        env:
+          WEBHOOK_URL: ${{ secrets.NOTIFY_WEBHOOK_URL }}
+        run: |
+          echo "✗ Deploy FAILED at $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          echo "  Commit: ${{ github.sha }}"
+          echo "  Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          if [ -n "${WEBHOOK_URL}" ]; then
+            curl -sf -X POST "${WEBHOOK_URL}" \
+              -H "Content-Type: application/json" \
+              -d "{\"text\": \"🚨 *Mesiri deploy FAILED*\nActor: \`${{ github.actor }}\`\nCommit: \`${{ github.sha }}\`\nLogs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" || true
+          fi

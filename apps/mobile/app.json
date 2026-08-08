@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "Mesiri AI",
+    "slug": "mesiri-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "scheme": "mesiri",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {},
+    "web": {},
+    "plugins": [
+      "expo-router",
+      "expo-secure-store"
+    ]
+  }
+}

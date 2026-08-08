@@ -1,0 +1,575 @@
+"""Add activities, progress_updates, site_issues, progress_attachments.
+
+The V1 core of the Daily Reporting module
+(docs/execution/DAILY_REPORTING_PLAN.md). Implements the three-level
+hierarchy from ADR-D1:
+
+    Work Package (0420, planning, lives months)
+        -> Activity (this migration, execution, lives a day)
+            -> Progress Update (this migration, timeline, lives a moment,
+                                 APPEND ONLY -- see P1)
+
+An Activity's `work_package_id` and `location_id` are NULLABLE (P4): a site
+engineer must be able to file a useful report with no Work Package register
+and no Location tree configured. Both are backfillable from the dashboard
+later without touching the activity's own quantities.
+
+`activity_links` (ADR-D2/P3) is the *only* way this module references
+another module's records (attendance, material movements, equipment events,
+expenses) -- deliberately no FK, since it points across domain boundaries the
+application layer resolves, and deliberately no write path back into those
+tables. Daily Reporting is never a second writer into another module's
+ledger.
+
+`activity_corrections` (ADR-D14) is the audit trail for header-field edits.
+It exists precisely so a "quantity is 180 not 150" correction does NOT get
+implemented as an edit to a progress_updates row -- those stay append-only
+per P1. A correction mutates the Activity row and is audited here instead.
+
+`progress_updates.supersedes_id` lets a correction to a *timeline* fact (not
+a header fact) append a new row that supersedes an earlier one, rather than
+editing it in place -- same append-only guarantee, applied to the update
+itself rather than to the activity.
+
+`site_issues` gets its own table rather than being an update_kind on
+progress_updates because it has a lifecycle (open -> assigned -> resolved)
+an append-only update cannot express.
+
+`progress_attachments` mirrors expense_attachments' shape exactly (evidence
+pattern reuse) with two additions: `ai_caption` is a separate column from
+`caption` because the reporter's own caption is a fact and an AI-generated
+one is an insight -- PRD principle 3 (strict facts/insights boundary) is
+enforced at the schema level here, not left to rendering discipline.
+
+Every enum and table below is created only if it does not already exist
+(idempotent `upgrade()`) after a real production incident on 0420 (see that
+file's `_create_enum_if_not_exists` docstring): a deploy that partially
+applies a migration and then fails must not be permanently stuck retrying
+the same DuplicateObject/DuplicateTable error forever after.
+
+Revision ID: 0430
+Revises: 0420
+Create Date: 2026-07-27
+"""
+
+from __future__ import annotations
+
+import sqlalchemy as sa
+from alembic import op
+from sqlalchemy.dialects.postgresql import ENUM as PG_ENUM
+from sqlalchemy.dialects.postgresql import JSONB
+
+revision = "0430"
+down_revision = "0420"
+branch_labels = None
+depends_on = None
+
+# create_type=False on every enum here -- see 0420's identical convention.
+# The type is created explicitly by _create_enum_if_not_exists below. Must
+# be sqlalchemy.dialects.postgresql.ENUM (aliased PG_ENUM), not the generic
+# sa.Enum -- the generic type has no `create_type` attribute at all, so the
+# kwarg is silently discarded and never actually suppresses anything (see
+# 0420's expanded comment for the incident this caused).
+_activity_status = PG_ENUM(
+    "PLANNED", "IN_PROGRESS", "COMPLETED", "STOPPED", name="activity_status", create_type=False
+)
+_measurement_type = PG_ENUM(
+    "ACHIEVED", "CUMULATIVE", name="activity_measurement_type", create_type=False
+)
+_linked_type = PG_ENUM(
+    "ATTENDANCE",
+    "MATERIAL_MOVEMENT",
+    "EQUIPMENT_EVENT",
+    "EXPENSE",
+    name="activity_linked_type",
+    create_type=False,
+)
+_update_kind = PG_ENUM(
+    "STARTED",
+    "PROGRESS",
+    "PAUSED",
+    "RESUMED",
+    "COMPLETED",
+    "NOTE",
+    name="progress_update_kind",
+    create_type=False,
+)
+_issue_type = PG_ENUM(
+    "WEATHER",
+    "MATERIAL_SHORTAGE",
+    "LABOUR_SHORTAGE",
+    "DRAWING_PENDING",
+    "EQUIPMENT_BREAKDOWN",
+    "INSPECTION_WAITING",
+    "ACCESS",
+    "OTHER",
+    name="site_issue_type",
+    create_type=False,
+)
+_issue_severity = PG_ENUM(
+    "LOW", "MEDIUM", "HIGH", "CRITICAL", name="site_issue_severity", create_type=False
+)
+_issue_status = PG_ENUM(
+    "OPEN", "ACKNOWLEDGED", "RESOLVED", "WONT_FIX", name="site_issue_status", create_type=False
+)
+_attachment_parent_type = PG_ENUM(
+    "ACTIVITY",
+    "PROGRESS_UPDATE",
+    "SITE_ISSUE",
+    name="progress_attachment_parent_type",
+    create_type=False,
+)
+
+
+def _create_enum_if_not_exists(bind, name: str, values: tuple[str, ...]) -> None:
+    """See 0420's identical helper for the production incident this defends
+    against. Duplicated rather than imported: migration files in this repo
+    are self-contained (no cross-migration imports), matching every other
+    migration here."""
+    values_sql = ", ".join(f"'{v}'" for v in values)
+    bind.execute(
+        sa.text(
+            f"DO $$ BEGIN "
+            f"CREATE TYPE {name} AS ENUM ({values_sql}); "
+            f"EXCEPTION WHEN duplicate_object THEN NULL; END $$;"
+        )
+    )
+
+
+def upgrade() -> None:
+    bind = op.get_bind()
+
+    for name, values in (
+        ("activity_status", ("PLANNED", "IN_PROGRESS", "COMPLETED", "STOPPED")),
+        ("activity_measurement_type", ("ACHIEVED", "CUMULATIVE")),
+        (
+            "activity_linked_type",
+            ("ATTENDANCE", "MATERIAL_MOVEMENT", "EQUIPMENT_EVENT", "EXPENSE"),
+        ),
+        (
+            "progress_update_kind",
+            ("STARTED", "PROGRESS", "PAUSED", "RESUMED", "COMPLETED", "NOTE"),
+        ),
+        (
+            "site_issue_type",
+            (
+                "WEATHER",
+                "MATERIAL_SHORTAGE",
+                "LABOUR_SHORTAGE",
+                "DRAWING_PENDING",
+                "EQUIPMENT_BREAKDOWN",
+                "INSPECTION_WAITING",
+                "ACCESS",
+                "OTHER",
+            ),
+        ),
+        ("site_issue_severity", ("LOW", "MEDIUM", "HIGH", "CRITICAL")),
+        ("site_issue_status", ("OPEN", "ACKNOWLEDGED", "RESOLVED", "WONT_FIX")),
+        (
+            "progress_attachment_parent_type",
+            ("ACTIVITY", "PROGRESS_UPDATE", "SITE_ISSUE"),
+        ),
+    ):
+        _create_enum_if_not_exists(bind, name, values)
+
+    existing_tables = sa.inspect(bind).get_table_names()
+
+    if "activities" not in existing_tables:
+        _create_activities_table()
+    if "activity_quantities" not in existing_tables:
+        _create_activity_quantities_table()
+    if "activity_links" not in existing_tables:
+        _create_activity_links_table()
+    if "activity_corrections" not in existing_tables:
+        _create_activity_corrections_table()
+    if "progress_updates" not in existing_tables:
+        _create_progress_updates_table()
+    if "site_issues" not in existing_tables:
+        _create_site_issues_table()
+    if "progress_attachments" not in existing_tables:
+        _create_progress_attachments_table()
+
+
+def _create_activities_table() -> None:
+    op.create_table(
+        "activities",
+        sa.Column("id", sa.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "organization_id",
+            sa.UUID(as_uuid=True),
+            sa.ForeignKey("organizations.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "project_id",
+            sa.UUID(as_uuid=True),
+            sa.ForeignKey("projects.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "site_id",
+            sa.UUID(as_uuid=True),
+            sa.ForeignKey("sites.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        # Nullable: P4 -- capture must work with zero Work Package/Location
+        # configuration. Backfillable from the dashboard later.
+        sa.Column(
+            "work_package_id",
+            sa.UUID(as_uuid=True),
+            sa.ForeignKey("work_packages.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+        sa.Column(
+            "location_id",
+            sa.UUID(as_uuid=True),
+            sa.ForeignKey("location_nodes.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+        # Free text in V1 -- open decision #4 in the plan (promote to a
+        # reference table once real usage shows the vocabulary is stable).
+        sa.Column("work_type", sa.String(), nullable=True),
+        sa.Column("activity_date", sa.Date(), nullable=False),
+        sa.Column("started_at", sa.Time(), nullable=True),
+        sa.Column("ended_at", sa.Time(), nullable=True),
+        sa.Column("status", _activity_status, nullable=False, server_default="PLANNED"),
+        sa.Column("narrative", sa.Text(), nullable=True),
+        sa.Column("contractor", sa.String(), nullable=True),
+        sa.Column(
+            "reported_by_user_id", sa.UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=True
+        ),
+        sa.Column("source", sa.String(), nullable=False, server_default="whatsapp"),
+        sa.Column("correlation_id", sa.String(), nullable=True),
+        # ADR-D15: undo is a soft delete, never a hard delete, and only
+        # available before a DPR version has frozen this activity (P7).
+        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+    )
+    op.create_index("ix_activities_org_project", "activities", ["organization_id", "project_id"])
+    op.create_index("ix_activities_site_id", "activities", ["site_id"])
+    op.create_index("ix_activities_work_package_id", "activities", ["work_package_id"])
+    op.create_index("ix_activities_location_id", "activities", ["location_id"])
+    op.create_index("ix_activities_activity_date", "activities", ["activity_date"])
+    # "Find today's open activity for this reporter/site" -- the resolution
+    # query behind activity_continuation (P10, resolve_activity.py).
+    op.create_index(
+        "ix_activities_open_lookup",
+        "activities",
+        ["site_id", "reported_by_user_id", "activity_date", "status"],
+    )
+
+
+def _create_activity_quantities_table() -> None:
+    op.create_table(
+        "activity_quantities",
+        sa.Column("id", sa.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "activity_id",
+            sa.UUID(as_uuid=True),
+            sa.ForeignKey("activities.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("work_type", sa.String(), nullable=True),
+        sa.Column(
+            "unit_id",
+            sa.UUID(as_uuid=True),
+            sa.ForeignKey("units_of_measure.id"),
+            nullable=False,
+        ),
+        sa.Column("quantity", sa.Numeric(14, 3), nullable=False),
+        sa.Column(
+            "measurement_type", _measurement_type, nullable=False, server_default="ACHIEVED"
+        ),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+    )
+    op.create_index(
+        "ix_activity_quantities_activity_id", "activity_quantities", ["activity_id"]
+    )
+
+
+def _create_activity_links_table() -> None:
+    op.create_table(
+        "activity_links",
+        sa.Column("id", sa.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "activity_id",
+            sa.UUID(as_uuid=True),
+            sa.ForeignKey("activities.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("linked_type", _linked_type, nullable=False),
+        # No FK -- polymorphic across domain boundaries this module must not
+        # depend on structurally. Resolved in the application layer.
+        sa.Column("linked_id", sa.UUID(as_uuid=True), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+    )
+    op.create_index("ix_activity_links_activity_id", "activity_links", ["activity_id"])
+    op.create_index(
+        "ix_activity_links_linked", "activity_links", ["linked_type", "linked_id"]
+    )
+
+
+def _create_activity_corrections_table() -> None:
+    op.create_table(
+        "activity_corrections",
+        sa.Column("id", sa.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "activity_id",
+            sa.UUID(as_uuid=True),
+            sa.ForeignKey("activities.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("field_name", sa.String(), nullable=False),
+        sa.Column("old_value", JSONB, nullable=True),
+        sa.Column("new_value", JSONB, nullable=True),
+        sa.Column("reason", sa.String(), nullable=True),
+        sa.Column(
+            "corrected_by_user_id",
+            sa.UUID(as_uuid=True),
+            sa.ForeignKey("users.id"),
+            nullable=True,
+        ),
+        sa.Column("correlation_id", sa.String(), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+    )
+    op.create_index(
+        "ix_activity_corrections_activity_id", "activity_corrections", ["activity_id"]
+    )
+
+
+def _create_progress_updates_table() -> None:
+    op.create_table(
+        "progress_updates",
+        sa.Column("id", sa.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "activity_id",
+            sa.UUID(as_uuid=True),
+            sa.ForeignKey("activities.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("occurred_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("update_kind", _update_kind, nullable=False),
+        sa.Column("narrative", sa.Text(), nullable=True),
+        sa.Column("quantity", sa.Numeric(14, 3), nullable=True),
+        sa.Column(
+            "unit_id", sa.UUID(as_uuid=True), sa.ForeignKey("units_of_measure.id"), nullable=True
+        ),
+        # A correction to a timeline fact appends a new row referencing the
+        # one it supersedes -- it never edits the old row (P1).
+        sa.Column(
+            "supersedes_id",
+            sa.UUID(as_uuid=True),
+            sa.ForeignKey("progress_updates.id"),
+            nullable=True,
+        ),
+        sa.Column(
+            "reported_by_user_id", sa.UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=True
+        ),
+        sa.Column("source", sa.String(), nullable=False, server_default="whatsapp"),
+        sa.Column("correlation_id", sa.String(), nullable=True),
+        # ADR-D15: same-session undo of an update the reporter just sent is a
+        # soft delete, never a hard delete or an edit.
+        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+    )
+    op.create_index(
+        "ix_progress_updates_activity_id", "progress_updates", ["activity_id"]
+    )
+    op.create_index(
+        "ix_progress_updates_occurred_at", "progress_updates", ["occurred_at"]
+    )
+
+
+def _create_site_issues_table() -> None:
+    op.create_table(
+        "site_issues",
+        sa.Column("id", sa.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "organization_id",
+            sa.UUID(as_uuid=True),
+            sa.ForeignKey("organizations.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "project_id",
+            sa.UUID(as_uuid=True),
+            sa.ForeignKey("projects.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "site_id",
+            sa.UUID(as_uuid=True),
+            sa.ForeignKey("sites.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        # Nullable -- a blocker (e.g. "rain started") can precede any specific
+        # activity, or apply to the whole site.
+        sa.Column(
+            "activity_id",
+            sa.UUID(as_uuid=True),
+            sa.ForeignKey("activities.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+        sa.Column(
+            "work_package_id",
+            sa.UUID(as_uuid=True),
+            sa.ForeignKey("work_packages.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+        sa.Column(
+            "location_id",
+            sa.UUID(as_uuid=True),
+            sa.ForeignKey("location_nodes.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+        sa.Column("issue_type", _issue_type, nullable=False),
+        sa.Column("severity", _issue_severity, nullable=False, server_default="MEDIUM"),
+        sa.Column("narrative", sa.Text(), nullable=True),
+        sa.Column("delay_duration_minutes", sa.Integer(), nullable=True),
+        sa.Column("occurred_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("resolved_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("status", _issue_status, nullable=False, server_default="OPEN"),
+        sa.Column("resolution_notes", sa.Text(), nullable=True),
+        sa.Column(
+            "assigned_user_id", sa.UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=True
+        ),
+        sa.Column(
+            "reported_by_user_id", sa.UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=True
+        ),
+        sa.Column("correlation_id", sa.String(), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+    )
+    op.create_index("ix_site_issues_org_project", "site_issues", ["organization_id", "project_id"])
+    op.create_index("ix_site_issues_site_id", "site_issues", ["site_id"])
+    op.create_index("ix_site_issues_activity_id", "site_issues", ["activity_id"])
+    op.create_index("ix_site_issues_status", "site_issues", ["status"])
+
+
+def _create_progress_attachments_table() -> None:
+    op.create_table(
+        "progress_attachments",
+        sa.Column("id", sa.UUID(as_uuid=True), primary_key=True),
+        sa.Column("parent_type", _attachment_parent_type, nullable=False),
+        # No FK -- parent_type discriminates which table parent_id belongs to;
+        # same polymorphic shape as activity_links, resolved in the application
+        # layer.
+        sa.Column("parent_id", sa.UUID(as_uuid=True), nullable=False),
+        sa.Column("media_object_key", sa.String(), nullable=False),
+        sa.Column("attachment_type", sa.String(), nullable=False),
+        sa.Column("mime_type", sa.String(), nullable=True),
+        # The REPORTER's own caption -- a fact.
+        sa.Column("caption", sa.Text(), nullable=True),
+        # AI-generated -- an insight. Never merged into `caption` (PRD
+        # principle 3 / plan §1A.1(3)).
+        sa.Column("ai_caption", sa.Text(), nullable=True),
+        # BEFORE/AFTER/GENERAL -- open decision #8 in the plan; nullable
+        # string rather than an enum until that decision lands, since it is
+        # cheap to promote later and premature to lock in now.
+        sa.Column("role", sa.String(), nullable=True),
+        sa.Column("captured_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("gps_lat", sa.Numeric(9, 6), nullable=True),
+        sa.Column("gps_lon", sa.Numeric(9, 6), nullable=True),
+        sa.Column(
+            "uploaded_by_user_id",
+            sa.UUID(as_uuid=True),
+            sa.ForeignKey("users.id"),
+            nullable=True,
+        ),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+    )
+    op.create_index(
+        "ix_progress_attachments_parent", "progress_attachments", ["parent_type", "parent_id"]
+    )
+
+
+def downgrade() -> None:
+    op.drop_index("ix_progress_attachments_parent", table_name="progress_attachments")
+    op.drop_table("progress_attachments")
+
+    op.drop_index("ix_site_issues_status", table_name="site_issues")
+    op.drop_index("ix_site_issues_activity_id", table_name="site_issues")
+    op.drop_index("ix_site_issues_site_id", table_name="site_issues")
+    op.drop_index("ix_site_issues_org_project", table_name="site_issues")
+    op.drop_table("site_issues")
+
+    op.drop_index("ix_progress_updates_occurred_at", table_name="progress_updates")
+    op.drop_index("ix_progress_updates_activity_id", table_name="progress_updates")
+    op.drop_table("progress_updates")
+
+    op.drop_index("ix_activity_corrections_activity_id", table_name="activity_corrections")
+    op.drop_table("activity_corrections")
+
+    op.drop_index("ix_activity_links_linked", table_name="activity_links")
+    op.drop_index("ix_activity_links_activity_id", table_name="activity_links")
+    op.drop_table("activity_links")
+
+    op.drop_index("ix_activity_quantities_activity_id", table_name="activity_quantities")
+    op.drop_table("activity_quantities")
+
+    op.drop_index("ix_activities_open_lookup", table_name="activities")
+    op.drop_index("ix_activities_activity_date", table_name="activities")
+    op.drop_index("ix_activities_location_id", table_name="activities")
+    op.drop_index("ix_activities_work_package_id", table_name="activities")
+    op.drop_index("ix_activities_site_id", table_name="activities")
+    op.drop_index("ix_activities_org_project", table_name="activities")
+    op.drop_table("activities")
+
+    bind = op.get_bind()
+    for enum in (
+        _attachment_parent_type,
+        _issue_status,
+        _issue_severity,
+        _issue_type,
+        _update_kind,
+        _linked_type,
+        _measurement_type,
+        _activity_status,
+    ):
+        enum.drop(bind, checkfirst=True)

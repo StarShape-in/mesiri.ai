@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "correlation_id": "cor_ctx_1",
+  "source_message_id": "msg_ctx_1",
+  "organization_id": "org_001",
+  "user_id": "usr_001",
+  "membership_id": "mbr_001",
+  "role_ids": ["site_engineer"],
+  "permissions": ["material.record", "material.view"],
+  "project_id": "prj_001",
+  "site_id": "site_001",
+  "context_source": "user_default",
+  "context_confidence": "high",
+  "locale": "en",
+  "timezone": "Asia/Kolkata"
+}
