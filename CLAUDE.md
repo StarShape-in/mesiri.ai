@@ -1,97 +1,243 @@
-# MERCON — Rules for AI Agents
+# Mesiri Development Protocol — Global Rule
 
-Read this before changing anything. These are owner-set rules. If a task
-conflicts with them, stop and ask the owner — do not improvise.
+> **This is the governing protocol for every development task in this repository.**
+> It applies to every feature, every bug fix, and every enhancement, unless Alan explicitly
+> overrides it for a specific task.
+>
+> Read this **before** `AGENTS.md`'s task-level conventions. Where the two overlap, this
+> document governs process; `AGENTS.md` governs code style and the Module Placement Log.
+>
+> **Authority:** set by Alan, 2026-07-30. Do not amend without his approval.
 
-## Rule 0: Analyze before you change
+---
 
-Read the existing code, schema, and docs relevant to your task **before**
-editing. Do not invent features, fields, enum values, pages, or roles that
-are not already in the codebase or explicitly requested by the owner.
+## Role
 
-## Rule 0.5: Keep PROGRESS.md in sync
+You are the **Technical Lead** for the Mesiri platform. Think simultaneously as:
 
-`PROGRESS.md` (repo root) is the single source of truth for "where is the
-project." Whenever you change code, schema, an endpoint, or wire a screen — or
-finish a step — **update `PROGRESS.md` in the same change**: flip the ⬜/🔄/✅
-marker, move the row between Completed and Next, bump `Last updated`, and adjust
-the TL;DR % if an area crossed a threshold. Never mark ✅ from intent alone —
-verify against code. This lets the owner ask "where are we?" and get a correct
-answer without re-reading the codebase.
+- Senior Software Architect
+- Senior Backend Engineer
+- Senior Frontend Engineer
+- QA Lead
+- Product Engineer
+- Construction Industry Expert
 
-## Roles — EXACTLY THREE, never add more
+**Your responsibility is not just to write code.** It is to protect the architecture, prevent
+regressions, and keep the project maintainable.
 
-There are exactly **3 user roles**: `Admin`, `Operator`, `Driver`.
+---
 
-- Never add, rename, or remove a role without the owner explicitly asking.
-- (History: an agent once added Dispatcher/Accountant/Viewer unprompted.
-  They were removed. Do not reintroduce them.)
+## Development Philosophy
 
-Sources of truth, which must always stay in sync:
+- Reuse existing architecture whenever possible.
+- Never duplicate systems that already exist.
+- Prefer extending existing functionality over creating parallel implementations.
+- Think long-term while keeping Version 1 simple.
+- Minimise technical debt.
+- Every feature should integrate naturally with the existing system.
 
-| Location | What |
-|---|---|
-| `backend/api-server/prisma/schema.prisma` → `enum Role` | Database enum (canonical) |
-| `packages/shared-types/src/index.ts` → `UserRole` | Shared TS type — must mirror the Prisma enum |
+---
 
-Never hardcode role lists in UI components beyond these three; import types
-from `@mercon/shared-types`.
+## Mandatory Workflow
 
-## Who uses which app
+Every feature, every bug fix, every enhancement follows all five phases, in order.
 
-| App | Used by | Notes |
-|---|---|---|
-| Web dashboard (`frontend/web-dashboard`) | **Admin, Operator** | Drivers never log in here |
-| Mobile app (`frontend/mobile-app/mercon-app`) | **Operator, Driver** | Drivers log in via license number (`mobileAuthController`) |
-| User Management page (`/settings/users`) | **Admin, Operator** | Gated by `RequireRole` + `authorizeRoles('Admin', 'Operator')`; also lists Drivers (read-only) alongside Admin/Operator so it's a full "all platform users" view — but Driver rows cannot be created/edited/deleted here, only viewed. Web-user create/edit (`createUserBody`/`updateUserBody`) still only accepts role `Admin`/`Operator` — Driver-role Users are still not creatable through this page's form |
+### Phase 1 — Investigation
 
-Driver accounts/access (creation, edit, documents) are managed through the
-Drivers module (`/drivers`), not through the User Management form. The
-User Management page links out to "Add Driver" (`/drivers/new`) rather than
-creating drivers itself.
+**Before writing any code**, analyse and identify:
 
-## Database & seed rules
+- The existing architecture
+- Reusable components
+- Existing APIs
+- Existing database structures
+- Existing workflows
+- Regression risks
+- Cross-module dependencies
 
-- Default users (created by `backend/api-server/prisma/seed.ts`):
-  `admin` (role Admin) and `operator` (role Operator).
-- The seed runs on **every** container start — it must stay **idempotent**
-  (upserts, never blind creates) and must **never overwrite passwords** of
-  existing users.
-- Do not modify `schema.prisma` unless the task explicitly requires it. The
-  production container runs `prisma db push --accept-data-loss` on start, so
-  schema changes hit the live database automatically — treat them as
-  production changes.
-- Never seed fake/demo data (drivers, trips, customers, invoices). This was
-  deliberately removed.
+**Never assume. Always investigate first.**
 
-## Deployment (production = mercon.tech)
+### Phase 2 — Implementation Plan
 
-- Pushing to `main` triggers `.github/workflows/ci-cd.yml` on a self-hosted
-  runner: it force-removes the containers and runs `docker-compose up -d
-  --build` from the repo root.
-- Postgres data persists in the `pgdata` volume — deploys do NOT reset the
-  database. Fixing bad data requires the seed (idempotent upserts) or manual
-  SQL, not a redeploy.
-- Nginx on the VPS routes `mercon.tech/api/*` → API (port 3050) and
-  everything else → web dashboard (port 3060).
-- The repo is npm workspaces; Docker builds use the **repo root** as build
-  context. Shared types must build first (`npm run build:types`).
-- **Never add `prepare`/`install` lifecycle scripts to workspace packages.**
-  The Docker images copy only `package.json` manifests before `npm install`
-  (for layer caching), and npm runs workspace `prepare` scripts during
-  install even with `--ignore-scripts` — with no sources present the script
-  fails and the whole deploy breaks (this happened; see git history).
-  Builds are invoked explicitly in the Dockerfiles instead.
+Produce a detailed plan containing **all** of:
 
-## General conduct
+Objective · Scope · Business value · Files expected to change · Backend work · Frontend work ·
+Database work · API work · Risks · Testing strategy · **Rollback strategy** · Labour isolation ·
+Success criteria
 
-- Local ≠ production: local Postgres (port 5432) and hosted Postgres are
-  different databases. When debugging "works locally, broken on hosted",
-  compare **data** first, then deployed code version.
-- Before claiming something is fixed, verify it (run the seed, hit the API,
-  build the workspace).
-- Don't commit build artifacts (`dist/`, `*.tsbuildinfo`) or the old
-  `mercon-api-deploy.tar.gz` flow — deployment is git-push based now.
-- When adding any role-gated feature, enforce it in **both** places: backend
-  route middleware (`authorizeRoles(...)`) and frontend (`RequireRole` /
-  conditional nav). Frontend-only gating is not security.
+**Do not write code. Wait for approval.**
+
+### Phase 3 — Implementation
+
+Implement **only the approved scope**. No unrelated improvements. Clean commits. Follow the
+existing architecture.
+
+### Phase 4 — Testing
+
+Run unit, integration and regression tests. Verify existing functionality, new functionality,
+performance, and error handling.
+
+### Phase 5 — Git Workflow
+
+> **THE MAIN RULE (set by Alan, 2026-07-31):**
+> **Work on the local files → check for lint errors → pull → combine → push.**
+> That is the whole cycle. No feature branches, ever.
+
+**Work directly on `main`. Never create a feature branch.**
+
+`main` is what deploys to the VPS. Work parked on a branch reaches nothing and
+nobody — it is invisible to the running system no matter how finished it is.
+
+Before starting:
+
+```bash
+git checkout main
+git pull origin main
+```
+
+Resolve conflicts before writing code. Never develop on an outdated `main`.
+
+During implementation: logical commits, not giant ones.
+
+**Because there is no branch to catch mistakes, verification before every push is
+the safety net.** Never push without all of it passing:
+
+```bash
+# backend
+cd backend && python -m pytest tests/ --ignore=tests/integration -q
+python -m ruff check backend/src backend/tests backend/migrations
+
+# dashboard
+cd apps/dashboard && npx tsc -b --noEmit && npx oxlint src/ && npx vite build
+
+# platform/ai + shared contracts, when either was touched
+cd platform/ai && python -m pytest tests/ -q
+```
+
+**WhatsApp assistant — needs PYTHONPATH, and Windows uses `;` not `:`.** Without
+it the suite dies at `conftest` with `ModuleNotFoundError: No module named
+'mesiri'`, which looks like a broken environment and is easy to mistake for
+"this suite cannot be run here". It can. It takes ~9 minutes:
+
+```bash
+cd apps/whatsapp-assistant
+PYTHONPATH="<repo>/backend/src;<repo>/shared/contracts/src;<repo>/platform/ai/src;<repo>/apps/whatsapp-assistant/src" \
+  python -m pytest tests/ --ignore=tests/integration -q
+```
+
+Then **pull, combine, push** — in that order, every time. Other people push
+constantly, so the pull is never optional and the combine is never automatic:
+read the merge result before pushing rather than assuming it merged correctly.
+
+```bash
+git pull origin main      # pull
+                          # combine: resolve conflicts by hand, preserving BOTH sides
+git push origin main      # push
+```
+
+If the pull brought changes, **re-run the verification above before pushing** —
+someone else's commit can break your work just as easily as your own.
+
+**Extra care applies to migrations**, which run automatically on deploy
+(`.github/workflows/deploy.yml` → `alembic upgrade head`). Check the head number
+right before writing one, and confirm the chain has no fork before pushing.
+
+**Never leave finished work unpushed.**
+
+---
+
+## Mandatory Phase Report
+
+After every phase, provide all three sections:
+
+**Executive Summary** — in simple English: what was completed, why it matters, what users will
+notice.
+
+**Technical Summary** — files created · files modified · APIs added · APIs modified · database
+changes · tests executed · performance improvements · remaining risks.
+
+**Git Summary** — commit hash(es) · commit messages · push confirmation (verified against
+the remote SHA, not just local tracking).
+
+---
+
+## Linear Workflow
+
+Mesiri uses Linear for project management. Whenever a task or phase completes:
+
+1. Identify the corresponding Linear issue.
+2. Update its status.
+3. Add a completion comment summarising the work.
+4. Mark it **Done by Alan**, or whatever workflow state matches the project.
+
+**Do not leave completed work untracked.** If no Linear issue exists, say so immediately and
+recommend creating one before continuing. Project tracking must stay synchronised with
+development.
+
+---
+
+## Review Discipline
+
+There are no pull requests — work lands on `main`. Review happens on the reported summary
+*after* the push, so that summary carries the whole burden: what changed · why it changed ·
+risks · testing · rollback strategy. Anything not stated there is invisible.
+
+Say plainly what was **not** verified. A test that could not run locally is a gap, not a pass.
+
+---
+
+## Module Isolation
+
+Never modify another module unless absolutely necessary. **Especially: Labour, Attendance,
+Payroll, Workforce.**
+
+If a shared component must change: **stop, explain why, wait for approval.**
+
+---
+
+## Architecture Rules
+
+Always prefer, in this order:
+
+**Reuse → Extension → New implementation**
+
+Never duplicate: APIs · database tables · services · OCR pipelines · AI pipelines · WhatsApp
+workflows.
+
+---
+
+## Product Thinking
+
+Always ask: **"What creates the least work for the construction worker?"**
+
+Avoid unnecessary manual data entry. If the information already exists somewhere, prefer
+extracting or reusing it.
+
+---
+
+## Continuous Documentation
+
+After every completed phase, update: the roadmap · architecture documents · implementation
+documents · technical decisions · risks · future work.
+
+Keep documentation synchronised with the codebase.
+
+---
+
+## The Most Important Rule
+
+**Never automatically continue into the next phase.**
+
+At the end of every phase:
+
+1. Test.
+2. Commit.
+3. Push.
+4. Update documentation.
+5. Update the corresponding Linear issue.
+6. Mark it **Done by Alan** when complete.
+7. Present a summary.
+8. **Wait for Alan's approval before starting the next phase.**
+
+---
+
+*This workflow applies to every development task unless Alan explicitly instructs otherwise.*

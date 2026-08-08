@@ -1,56 +1,47 @@
-version: '3.8'
-
+# Mesiri.ai — local development stack (M1 "Infrastructure Alive").
+#
+# Brings up the required local dependencies for the runtime:
+#   - PostgreSQL (business + infrastructure persistence)
+#   - Redis      (idempotency, checkpointing, coordination — capability only in M1)
+#
+# Object storage (Cloudflare R2) is NOT meaningfully emulated locally; the
+# runtime uses the in-process fake object-storage adapter behind the same M0
+# ObjectStorage interface (MESIRI_OBJECT_STORAGE__PROVIDER=fake). Business logic
+# never couples to R2 directly — see docs/architecture Object Storage Boundary.
+#
+# Start everything:  make dev   (or)  docker compose up -d
 services:
-  postgres-db:
-    image: postgres:15-alpine
-    container_name: mercon-postgres
-    restart: unless-stopped
+  postgres:
+    image: postgres:16-alpine
+    container_name: mesiri-postgres
     environment:
-      POSTGRES_USER: "${POSTGRES_USER:?POSTGRES_USER must be provided (set it as a GitHub Actions secret / env var)}"
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be provided (set it as a GitHub Actions secret / env var)}"
-      POSTGRES_DB: mercon_db
+      POSTGRES_USER: ${MESIRI_POSTGRES__USER:-mesiri}
+      POSTGRES_PASSWORD: ${MESIRI_POSTGRES__PASSWORD:-mesiri_local_dev}
+      POSTGRES_DB: ${MESIRI_POSTGRES__DATABASE:-mesiri}
     ports:
-      - '127.0.0.1:15432:5432' # Localhost-only: tunnel in via SSH for Beekeeper Studio, never exposed publicly
+      - "${MESIRI_POSTGRES__PORT:-5432}:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - mesiri_pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d mercon_db"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD-SHELL", "pg_isready -U ${MESIRI_POSTGRES__USER:-mesiri} -d ${MESIRI_POSTGRES__DATABASE:-mesiri}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
-  mercon-api:
-    build:
-      context: .
-      dockerfile: backend/api-server/Dockerfile
-    container_name: mercon-api
-    restart: unless-stopped
+  redis:
+    image: redis:7-alpine
+    container_name: mesiri-redis
+    command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - '3050:3000' # Exposed for Nginx proxy on a safe port
-    environment:
-      DATABASE_URL: "postgresql://${POSTGRES_USER:?POSTGRES_USER must be provided}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be provided}@postgres-db:5432/mercon_db?schema=public"
-      JWT_SECRET: "${JWT_SECRET:?JWT_SECRET must be provided (set it as a GitHub Actions secret / env var)}"
-      SEED_ADMIN_PASSWORD: "${SEED_ADMIN_PASSWORD:?SEED_ADMIN_PASSWORD must be provided (set it as a GitHub Actions secret / env var)}"
-      PORT: 3000
+      - "${MESIRI_REDIS__PORT:-6379}:6379"
     volumes:
-      - ./backend/api-server/uploads:/app/backend/api-server/uploads # Local VPS storage for files
-    depends_on:
-      postgres-db:
-        condition: service_healthy
+      - mesiri_redis_data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  mercon-frontend:
-    build:
-      context: .
-      dockerfile: frontend/web-dashboard/Dockerfile
-    container_name: mercon-frontend
-    restart: unless-stopped
-    ports:
-      - '3060:80' # Exposed for Nginx proxy on a safe port
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
 volumes:
-  pgdata:
+  mesiri_pg_data:
+  mesiri_redis_data:
